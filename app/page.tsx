@@ -41,7 +41,7 @@ export default function Home() {
   return (
     <div className="h-full">
       {/* Two columns that fill the whole viewport below the header */}
-      <div className="mx-auto max-w-6xl h-full grid gap-8 md:grid-cols-2 items-stretch px-6 py-6">
+      <div className="mx-auto max-w-6xl h-full min-h-0 grid gap-8 md:grid-cols-2 items-stretch px-6 py-6">
         {/* LEFT: fixed photo (never scrolls) */}
         <section className="h-full rounded-3xl overflow-hidden shadow-2xl ring-1 ring-black/5 bg-white">
           <div className="relative h-full w-full p-2">
@@ -57,7 +57,7 @@ export default function Home() {
         </section>
 
         {/* RIGHT: chat card fills column and only messages scroll */}
-        <section className="h-full flex flex-col rounded-3xl bg-white/75 backdrop-blur border border-black/5 shadow-xl">
+        <section className="h-full min-h-0 flex flex-col rounded-3xl bg-white/75 backdrop-blur border border-black/5 shadow-xl">
           {/* Header */}
           <div className="p-6 sm:p-8 border-b border-black/5">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Ask Śrīla Prabhupāda</h1>
@@ -68,7 +68,7 @@ export default function Home() {
           </div>
 
           {/* Messages — the ONLY scrollable area */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
