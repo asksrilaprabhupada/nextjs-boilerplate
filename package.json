@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
-    "start": "next start"
+    "start": "next start",
+    "ingest": "node scripts/ingest-bg.mjs",
+    "ingest:local": "INGEST_FILE=public/bhagavadgita.json node scripts/ingest-bg.mjs"
   },
   "dependencies": {
     "dotenv": "^17.2.1",
@@ -22,5 +24,9 @@
     "@types/react-dom": "^19",
     "tailwindcss": "^4",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=9.0.0"
   }
 }
