@@ -1,10 +1,10 @@
 // scripts/ingest-bg.mjs
 
-// 1) Prefer IPv4 everywhere (avoids rare DNS/IPv6 quirks on some runners)
+// 1) Prefer IPv4 (avoids rare IPv6 DNS quirks on runners)
 import { setDefaultResultOrder } from "node:dns";
 setDefaultResultOrder("ipv4first");
 
-// 2) Load .env locally but NEVER override CI secrets (GitHub Actions)
+// 2) Load .env locally, but never override CI env
 import { config as loadEnv } from "dotenv";
 loadEnv({ override: false });
 
@@ -13,42 +13,47 @@ import * as path from "node:path";
 import OpenAI from "openai";
 import pg from "pg";
 
-// ---- sanity checks for required env ----
-const DB_URL = process.env.DATABASE_URL;
+// ---- required env ----
 const OPENAI_KEY = process.env.OPENAI_API_KEY;
+if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY is missing.");
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 const INPUT_FILE = process.env.INGEST_FILE || "public/bhagavadgita.json";
 
-if (!DB_URL) {
+// Build a pg Pool from PG* vars (preferred) or DATABASE_URL if provided.
+const DB_URL = process.env.DATABASE_URL;
+
+const pool = DB_URL
+  ? new pg.Pool({
+      connectionString: DB_URL,
+      ssl: { rejectUnauthorized: false },
+    })
+  : new pg.Pool({
+      host: process.env.PGHOST,
+      port: Number(process.env.PGPORT || 6543),
+      database: process.env.PGDATABASE || "postgres",
+      user: process.env.PGUSER || "postgres",
+      password: process.env.PGPASSWORD,
+      ssl: { rejectUnauthorized: false },
+    });
+
+if (!DB_URL && !process.env.PGPASSWORD) {
   throw new Error(
-    "DATABASE_URL is missing. In GitHub Actions, set it as a secret (pooler URI, port 6543, username = postgres.<project_ref>)."
+    "DB credentials missing: set PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD (recommended) or DATABASE_URL."
   );
 }
-if (!OPENAI_KEY) {
-  throw new Error("OPENAI_API_KEY is missing. In GitHub Actions, set it as a secret (sk-...).");
-}
-
-const pool = new pg.Pool({
-  connectionString: DB_URL,
-  max: 5,
-  idleTimeoutMillis: 30_000,
-  allowExitOnIdle: false,
-});
 
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
-// ---------- robust JSON parsing (array, NDJSON, concatenated objects) ----------
+// ---------- parse JSON (array, NDJSON, or concatenated objects) ----------
 function parseVersesFile(text) {
   const t = (text || "").trim();
 
-  // A) Standard JSON: array or single object
   try {
     const v = JSON.parse(t);
     if (Array.isArray(v)) return v;
     if (v && typeof v === "object") return [v];
   } catch (_) {}
 
-  // B) NDJSON (one object per non-empty line)
   const lines = t.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   const nd = [];
   let ok = lines.length > 0;
@@ -58,7 +63,6 @@ function parseVersesFile(text) {
   }
   if (ok && nd.length) return nd;
 
-  // C) Concatenated objects: {}{}{}
   const objs = [];
   let depth = 0, start = -1;
   for (let i = 0; i < t.length; i++) {
@@ -78,18 +82,18 @@ function parseVersesFile(text) {
   throw new Error("Could not parse bhagavadgita.json (expected array, NDJSON, or concatenated objects).");
 }
 
-// ---------- embeddings helper ----------
+// ---------- embeddings ----------
 async function embed(text) {
   const clean = (text || "").trim();
   if (!clean) return null;
   const r = await openai.embeddings.create({
-    model: EMBEDDING_MODEL, // text-embedding-3-small => 1536 dims
+    model: EMBEDDING_MODEL,
     input: clean,
   });
-  return r.data[0].embedding; // number[]
+  return r.data[0].embedding;
 }
 
-// ---------- ensure schema (safe to run multiple times) ----------
+// ---------- ensure schema ----------
 async function ensureSchema() {
   await pool.query(`
     create extension if not exists vector;
@@ -112,7 +116,6 @@ async function ensureSchema() {
     create unique index if not exists passages_unique_loc
       on passages(work, chapter, verse);
 
-    -- ivfflat index only if not already present
     do $$
     begin
       if not exists (
@@ -140,7 +143,7 @@ function textForEmbedding(p) {
 }
 
 async function upsertPassage(p, vec) {
-  const vecLiteral = vec ? JSON.stringify(vec) : null; // => "[...]" for pgvector
+  const vecLiteral = vec ? JSON.stringify(vec) : null; // "[...]" pgvector literal
   await pool.query(
     `
     insert into passages
@@ -171,19 +174,8 @@ async function upsertPassage(p, vec) {
 
 // ---------- main ----------
 async function main() {
-  // tiny debug log (no secrets)
-  {
-    const u = DB_URL || "";
-    const looksPooler = u.includes(".pooler.");
-    const has6543 = u.includes(":6543");
-    const userLooksRight = /postgres\.[a-z0-9]{22}/.test(u);
-    console.log(`ENV ok -> POOLER:${looksPooler} PORT6543:${has6543} USER_OK:${userLooksRight}`);
-  }
-
   const filePath = path.resolve(INPUT_FILE);
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`INGEST_FILE not found at: ${filePath}`);
-  }
+  if (!fs.existsSync(filePath)) throw new Error(`INGEST_FILE not found at: ${filePath}`);
 
   const raw = await fs.promises.readFile(filePath, "utf8");
   const items = parseVersesFile(raw);

@@ -6,8 +6,7 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "ingest": "node scripts/ingest-bg.mjs",
-    "ingest:local": "INGEST_FILE=public/bhagavadgita.json node scripts/ingest-bg.mjs"
+    "ingest": "node scripts/ingest-bg.mjs"
   },
   "dependencies": {
     "dotenv": "^17.2.1",

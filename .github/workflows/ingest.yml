@@ -2,12 +2,6 @@ name: Ingest
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - "scripts/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/ingest.yml"
 
 jobs:
   ingest:
@@ -27,10 +21,17 @@ jobs:
         run: npm ci
 
       - name: Run ingest
-        run: npm run ingest
+        run: node scripts/ingest-bg.mjs
         env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # ---- Postgres via Supabase (pooled port 6543) ----
+          PGHOST: db.${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
+          PGPORT: 6543
+          PGDATABASE: postgres
+          PGUSER: postgres
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          PGSSLMODE: require
+
+          # ---- App env ----
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          # Optional overrides:
-          EMBEDDING_MODEL: ${{ vars.EMBEDDING_MODEL }}
-          INGEST_FILE: ${{ vars.INGEST_FILE }}
+          INGEST_FILE: public/bhagavadgita.json
+          EMBEDDING_MODEL: text-embedding-3-small
