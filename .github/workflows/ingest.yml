@@ -18,13 +18,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run ingest over HTTPS
-        run: node scripts/ingest-bg.mjs
+      - name: Import Gita JSON (no OpenAI)
+        run: node scripts/import-json.mjs
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           INGEST_FILE: public/bhagavadgita.json
-          EMBEDDING_MODEL: text-embedding-3-small
-          INGEST_CONCURRENCY: 2
-          # INGEST_MAX: 30  # <- uncomment for a 30-row smoke test, then remove to run all
+          # INGEST_MAX: 50   # uncomment to test a small batch first
