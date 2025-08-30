@@ -1,10 +1,11 @@
 // scripts/ingest-bg.mjs
 
-// 1) Prefer IPv4 (avoids rare IPv6 DNS quirks on runners)
+// Prefer IPv4 to avoid IPv6 routing issues on some runners
 import { setDefaultResultOrder } from "node:dns";
+import { lookup as dnsLookup } from "node:dns/promises";
 setDefaultResultOrder("ipv4first");
 
-// 2) Load .env locally, but never override CI env
+// Load env locally (doesn't override CI)
 import { config as loadEnv } from "dotenv";
 loadEnv({ override: false });
 
@@ -19,32 +20,55 @@ if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY is missing.");
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 const INPUT_FILE = process.env.INGEST_FILE || "public/bhagavadgita.json";
 
-// Build a pg Pool from PG* vars (preferred) or DATABASE_URL if provided.
+// Either a full DATABASE_URL or PG* vars
 const DB_URL = process.env.DATABASE_URL;
 
-const pool = DB_URL
-  ? new pg.Pool({
-      connectionString: DB_URL,
-      ssl: { rejectUnauthorized: false },
-    })
-  : new pg.Pool({
-      host: process.env.PGHOST,
-      port: Number(process.env.PGPORT || 6543),
-      database: process.env.PGDATABASE || "postgres",
-      user: process.env.PGUSER || "postgres",
-      password: process.env.PGPASSWORD,
-      ssl: { rejectUnauthorized: false },
-    });
+let pool; // will be initialized in initPool()
 
-if (!DB_URL && !process.env.PGPASSWORD) {
-  throw new Error(
-    "DB credentials missing: set PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD (recommended) or DATABASE_URL."
-  );
+async function resolveIPv4(host) {
+  // If an IPv4 is already provided, keep it
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host || "")) return host;
+  try {
+    const { address } = await dnsLookup(host, { family: 4 });
+    return address; // force IPv4 literal
+  } catch {
+    return host; // fallback
+  }
 }
 
-const openai = new OpenAI({ apiKey: OPENAI_KEY });
+async function initPool() {
+  if (DB_URL) {
+    // Use URL as-is (still enable TLS)
+    pool = new pg.Pool({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });
+    return;
+  }
 
-// ---------- parse JSON (array, NDJSON, or concatenated objects) ----------
+  const hostEnv = process.env.PGHOST;
+  const port = Number(process.env.PGPORT || 6543);
+  const database = process.env.PGDATABASE || "postgres";
+  const user = process.env.PGUSER || "postgres";
+  const password = process.env.PGPASSWORD;
+
+  if (!password || !hostEnv) {
+    throw new Error(
+      "DB credentials missing: set PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD (recommended) or DATABASE_URL."
+    );
+  }
+
+  const hostIPv4 = await resolveIPv4(hostEnv);
+  console.log(`DB target -> host:${hostEnv} => ipv4:${hostIPv4} port:${port} db:${database} user:${user}`);
+
+  pool = new pg.Pool({
+    host: hostIPv4,          // <-- IPv4 literal forces IPv4 connect
+    port,
+    database,
+    user,
+    password,
+    ssl: { rejectUnauthorized: false },
+  });
+}
+
+// ---------- parse JSON (array, NDJSON, concatenated objects) ----------
 function parseVersesFile(text) {
   const t = (text || "").trim();
 
@@ -83,17 +107,16 @@ function parseVersesFile(text) {
 }
 
 // ---------- embeddings ----------
+const openai = new OpenAI({ apiKey: OPENAI_KEY });
+
 async function embed(text) {
   const clean = (text || "").trim();
   if (!clean) return null;
-  const r = await openai.embeddings.create({
-    model: EMBEDDING_MODEL,
-    input: clean,
-  });
+  const r = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: clean });
   return r.data[0].embedding;
 }
 
-// ---------- ensure schema ----------
+// ---------- schema ----------
 async function ensureSchema() {
   await pool.query(`
     create extension if not exists vector;
@@ -131,13 +154,7 @@ async function ensureSchema() {
 }
 
 function textForEmbedding(p) {
-  const parts = [
-    p.sanskrit,
-    p.transliteration,
-    p.synonyms,
-    p.translation,
-    p.purport,
-  ].filter(Boolean);
+  const parts = [p.sanskrit, p.transliteration, p.synonyms, p.translation, p.purport].filter(Boolean);
   const joined = parts.join("\n\n");
   return joined.length > 100_000 ? joined.slice(0, 100_000) : joined;
 }
@@ -174,6 +191,8 @@ async function upsertPassage(p, vec) {
 
 // ---------- main ----------
 async function main() {
+  await initPool(); // <-- create pool with forced IPv4 resolution
+
   const filePath = path.resolve(INPUT_FILE);
   if (!fs.existsSync(filePath)) throw new Error(`INGEST_FILE not found at: ${filePath}`);
 
