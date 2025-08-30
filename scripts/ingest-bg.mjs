@@ -1,83 +1,33 @@
 // scripts/ingest-bg.mjs
+// Ingest over HTTPS via Supabase REST RPC (no TCP/pg, no IPv6 headaches)
 
-// Prefer IPv4 to avoid IPv6 routing issues on some runners
-import { setDefaultResultOrder } from "node:dns";
-import { lookup as dnsLookup } from "node:dns/promises";
-setDefaultResultOrder("ipv4first");
-
-// Load env locally (doesn't override CI)
 import { config as loadEnv } from "dotenv";
 loadEnv({ override: false });
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import OpenAI from "openai";
-import pg from "pg";
 
-// ---- required env ----
-const OPENAI_KEY = process.env.OPENAI_API_KEY;
-if (!OPENAI_KEY) throw new Error("OPENAI_API_KEY is missing.");
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL; // e.g. https://abc123xyz.supabase.co
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 const INPUT_FILE = process.env.INGEST_FILE || "public/bhagavadgita.json";
 
-// Either a full DATABASE_URL or PG* vars
-const DB_URL = process.env.DATABASE_URL;
+if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is missing.");
+if (!SUPABASE_URL) throw new Error("SUPABASE_URL is missing.");
+if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing.");
 
-let pool; // will be initialized in initPool()
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-async function resolveIPv4(host) {
-  // If an IPv4 is already provided, keep it
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(host || "")) return host;
-  try {
-    const { address } = await dnsLookup(host, { family: 4 });
-    return address; // force IPv4 literal
-  } catch {
-    return host; // fallback
-  }
-}
-
-async function initPool() {
-  if (DB_URL) {
-    // Use URL as-is (still enable TLS)
-    pool = new pg.Pool({ connectionString: DB_URL, ssl: { rejectUnauthorized: false } });
-    return;
-  }
-
-  const hostEnv = process.env.PGHOST;
-  const port = Number(process.env.PGPORT || 6543);
-  const database = process.env.PGDATABASE || "postgres";
-  const user = process.env.PGUSER || "postgres";
-  const password = process.env.PGPASSWORD;
-
-  if (!password || !hostEnv) {
-    throw new Error(
-      "DB credentials missing: set PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD (recommended) or DATABASE_URL."
-    );
-  }
-
-  const hostIPv4 = await resolveIPv4(hostEnv);
-  console.log(`DB target -> host:${hostEnv} => ipv4:${hostIPv4} port:${port} db:${database} user:${user}`);
-
-  pool = new pg.Pool({
-    host: hostIPv4,          // <-- IPv4 literal forces IPv4 connect
-    port,
-    database,
-    user,
-    password,
-    ssl: { rejectUnauthorized: false },
-  });
-}
-
-// ---------- parse JSON (array, NDJSON, concatenated objects) ----------
 function parseVersesFile(text) {
   const t = (text || "").trim();
-
   try {
     const v = JSON.parse(t);
     if (Array.isArray(v)) return v;
     if (v && typeof v === "object") return [v];
   } catch (_) {}
-
+  // NDJSON
   const lines = t.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
   const nd = [];
   let ok = lines.length > 0;
@@ -87,6 +37,7 @@ function parseVersesFile(text) {
   }
   if (ok && nd.length) return nd;
 
+  // Concatenated {}
   const objs = [];
   let depth = 0, start = -1;
   for (let i = 0; i < t.length; i++) {
@@ -103,54 +54,7 @@ function parseVersesFile(text) {
   }
   if (objs.length) return objs;
 
-  throw new Error("Could not parse bhagavadgita.json (expected array, NDJSON, or concatenated objects).");
-}
-
-// ---------- embeddings ----------
-const openai = new OpenAI({ apiKey: OPENAI_KEY });
-
-async function embed(text) {
-  const clean = (text || "").trim();
-  if (!clean) return null;
-  const r = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: clean });
-  return r.data[0].embedding;
-}
-
-// ---------- schema ----------
-async function ensureSchema() {
-  await pool.query(`
-    create extension if not exists vector;
-
-    create table if not exists passages (
-      id bigserial primary key,
-      work text not null,
-      chapter int not null,
-      verse int not null,
-      sanskrit text,
-      transliteration text,
-      synonyms text,
-      translation text,
-      purport text,
-      embedding vector(1536),
-      created_at timestamptz default now(),
-      updated_at timestamptz default now()
-    );
-
-    create unique index if not exists passages_unique_loc
-      on passages(work, chapter, verse);
-
-    do $$
-    begin
-      if not exists (
-        select 1 from pg_class c
-        join pg_namespace n on n.oid = c.relnamespace
-        where c.relname = 'passages_embedding_idx' and n.nspname = 'public'
-      ) then
-        execute 'create index passages_embedding_idx on passages using ivfflat (embedding vector_cosine_ops) with (lists = 100)';
-      end if;
-    end
-    $$;
-  `);
+  throw new Error("Could not parse bhagavadgita.json");
 }
 
 function textForEmbedding(p) {
@@ -159,71 +63,79 @@ function textForEmbedding(p) {
   return joined.length > 100_000 ? joined.slice(0, 100_000) : joined;
 }
 
-async function upsertPassage(p, vec) {
-  const vecLiteral = vec ? JSON.stringify(vec) : null; // "[...]" pgvector literal
-  await pool.query(
-    `
-    insert into passages
-      (work, chapter, verse, sanskrit, transliteration, synonyms, translation, purport, embedding, updated_at)
-    values ($1,$2,$3,$4,$5,$6,$7,$8,$9::vector, now())
-    on conflict (work, chapter, verse) do update set
-      sanskrit = excluded.sanskrit,
-      transliteration = excluded.transliteration,
-      synonyms = excluded.synonyms,
-      translation = excluded.translation,
-      purport = excluded.purport,
-      embedding = excluded.embedding,
-      updated_at = now()
-  `,
-    [
-      p.work || "bhagavad-gita",
-      Number(p.chapter || p.chapter_number || 0),
-      Number(p.verse || p.verse_number || 0),
-      p.sanskrit || null,
-      p.transliteration || null,
-      p.synonyms || null,
-      p.translation || null,
-      p.purport || null,
-      vecLiteral,
-    ]
-  );
+async function embed(text) {
+  const clean = (text || "").trim();
+  if (!clean) return null;
+  const r = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: clean });
+  return r.data[0].embedding;
 }
 
-// ---------- main ----------
+async function callUpsertRPC(payload) {
+  const url = `${SUPABASE_URL}/rest/v1/rpc/upsert_passage`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "apikey": SUPABASE_SERVICE_ROLE_KEY,
+      "Authorization": `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+      "Content-Type": "application/json",
+      "Prefer": "return=minimal"   // no row body
+    },
+    body: JSON.stringify({ p: payload })
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Supabase RPC failed (${res.status}): ${text}`);
+  }
+}
+
 async function main() {
-  await initPool(); // <-- create pool with forced IPv4 resolution
-
   const filePath = path.resolve(INPUT_FILE);
-  if (!fs.existsSync(filePath)) throw new Error(`INGEST_FILE not found at: ${filePath}`);
-
+  if (!fs.existsSync(filePath)) throw new Error(`INGEST_FILE not found: ${filePath}`);
   const raw = await fs.promises.readFile(filePath, "utf8");
   const items = parseVersesFile(raw);
 
   console.log(`Parsed ${items.length} items from ${filePath}`);
-  await ensureSchema();
 
   let done = 0, skipped = 0;
-  for (const p of items) {
-    try {
-      const text = textForEmbedding(p);
-      const vec = await embed(text);
-      if (!vec) { skipped++; continue; }
-      await upsertPassage(p, vec);
-      done++;
-      if (done % 25 === 0) console.log(`Upserted ${done}/${items.length}...`);
-    } catch (e) {
-      console.error(`Failed at chapter ${p.chapter} verse ${p.verse}:`, e.message);
+  // modest concurrency to be gentle on APIs
+  const concurrency = 4;
+  const queue = [...items];
+
+  async function worker() {
+    while (queue.length) {
+      const p = queue.shift();
+      try {
+        const txt = textForEmbedding(p);
+        const vec = await embed(txt);
+        if (!vec) { skipped++; continue; }
+        // Convert to vector literal string like "[1,2,3]"
+        const embStr = `[${vec.join(",")}]`;
+        const payload = {
+          work: p.work || "bhagavad-gita",
+          chapter: Number(p.chapter || p.chapter_number || 0),
+          verse: Number(p.verse || p.verse_number || 0),
+          sanskrit: p.sanskrit || null,
+          transliteration: p.transliteration || null,
+          synonyms: p.synonyms || null,
+          translation: p.translation || null,
+          purport: p.purport || null,
+          embedding: embStr
+        };
+        await callUpsertRPC(payload);
+        done++;
+        if (done % 25 === 0) console.log(`Upserted ${done}/${items.length}...`);
+      } catch (e) {
+        console.error(`Failed at chapter ${p?.chapter} verse ${p?.verse}: ${e.message}`);
+      }
     }
   }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
   console.log(`Done. Upserted ${done}, skipped ${skipped}.`);
 }
 
-main()
-  .catch((e) => {
-    console.error("Fatal ingest error:", e);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    try { await pool.end(); } catch {}
-  });
+main().catch((e) => {
+  console.error("Fatal ingest error:", e);
+  process.exitCode = 1;
+});
