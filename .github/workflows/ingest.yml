@@ -1,37 +1,28 @@
 name: Ingest
-
 on:
   workflow_dispatch:
-
 jobs:
   ingest:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-
       - name: Install dependencies
         run: npm ci
-
       - name: Run ingest
         run: node scripts/ingest-bg.mjs
         env:
-          # ---- Postgres via Supabase (pooled port 6543) ----
+          # Supabase (pooled)
           PGHOST: db.${{ vars.SUPABASE_PROJECT_REF }}.supabase.co
           PGPORT: 6543
           PGDATABASE: postgres
           PGUSER: postgres
           PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           PGSSLMODE: require
-
-          # ---- App env ----
+          # App
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           INGEST_FILE: public/bhagavadgita.json
           EMBEDDING_MODEL: text-embedding-3-small
