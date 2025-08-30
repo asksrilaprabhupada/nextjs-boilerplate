@@ -1,5 +1,18 @@
 // scripts/ingest-bg.mjs
-// HTTPS ingest -> Supabase RPC (no DB sockets). Handles verse ranges + sections{}.
+// Ingest Bhagavad-gītā JSON into Supabase via HTTPS RPCs.
+// - Supports verse ranges like "16-18" (stores start/end + verse_label).
+// - Lifts fields from `sections{}` to top-level.
+// - Builds embeddings with OpenAI (text-embedding-3-small).
+// - Clear per-item logs; optional limits and concurrency via env.
+//
+// Env (CI/local):
+//   OPENAI_API_KEY=sk-...
+//   SUPABASE_URL=https://<project-ref>.supabase.co
+//   SUPABASE_SERVICE_ROLE_KEY=<service_role>
+//   INGEST_FILE=public/bhagavadgita.json
+//   EMBEDDING_MODEL=text-embedding-3-small
+//   INGEST_MAX=0            # optional; if >0, only process first N items
+//   INGEST_CONCURRENCY=2    # optional; default 2
 
 import { config as loadEnv } from "dotenv";
 loadEnv({ override: false });
@@ -8,11 +21,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import OpenAI from "openai";
 
+// ---- env checks ----
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const SUPABASE_URL = process.env.SUPABASE_URL; // e.g. https://<ref>.supabase.co
+const SUPABASE_URL = process.env.SUPABASE_URL; // https://<ref>.supabase.co
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "text-embedding-3-small";
 const INPUT_FILE = process.env.INGEST_FILE || "public/bhagavadgita.json";
+const INGEST_MAX = Number(process.env.INGEST_MAX || 0);
+const CONCURRENCY = Math.max(1, Number(process.env.INGEST_CONCURRENCY || 2));
 
 if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is missing.");
 if (!SUPABASE_URL) throw new Error("SUPABASE_URL is missing.");
@@ -20,13 +36,18 @@ if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY is mi
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
+// ---------- file parsing (array / NDJSON / concatenated objects) ----------
 function parseVersesFile(text) {
   const t = (text || "").trim();
+
+  // Standard JSON
   try {
     const v = JSON.parse(t);
     if (Array.isArray(v)) return v;
     if (v && typeof v === "object") return [v];
   } catch {}
+
+  // NDJSON
   const lines = t.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   const nd = [];
   let ok = lines.length > 0;
@@ -36,6 +57,7 @@ function parseVersesFile(text) {
   }
   if (ok && nd.length) return nd;
 
+  // Concatenated {}{}...
   const objs = [];
   let depth = 0, start = -1;
   for (let i = 0; i < t.length; i++) {
@@ -55,52 +77,66 @@ function parseVersesFile(text) {
   throw new Error("Could not parse bhagavadgita.json (array, NDJSON, or concatenated objects expected).");
 }
 
-// Lift sections{}, keep range label, compute start/end
+// ---------- normalizer: lift sections + decode verse range ----------
 function normalize(p) {
   const s = p.sections || {};
-  const raw = String(p.verse ?? p.verse_number ?? "").trim(); // e.g. "16-18"
-  const nums = (raw.match(/\d+/g) || []).map(n => parseInt(n,10));
-  const start = nums[0] ?? 0;
-  const end   = nums[1] ?? start;
+
+  const raw = String(p.verse ?? p.verse_number ?? "").trim(); // e.g. "16-18" or "21–22"
+  const nums = (raw.match(/\d+/g) || []).map(n => parseInt(n, 10));
+  let start = nums[0];
+  let end = nums[1];
+
+  // allow explicit start_verse/end_verse if present
+  if (!Number.isInteger(start)) start = p.start_verse != null ? Number(p.start_verse) : 0;
+  if (!Number.isInteger(end))   end   = p.end_verse   != null ? Number(p.end_verse)   : start;
 
   const chapter = Number(p.chapter ?? p.chapter_number ?? 0);
 
+  // if there is no label but we have numbers, synthesize a label
+  const label = raw || (start ? (end && end !== start ? `${start}–${end}` : String(start)) : null);
+
   return {
     ...p,
-    ...s, // lift sections.sanskrit/transliteration/synonyms/translation/purport
+    ...s,                 // lift fields from sections{}
     chapter,
-    verse: start,                 // numeric (kept for unique key)
-    verse_label: raw || null,     // original "16–18"
-    start_verse: start,
-    end_verse: end,
+    verse: start || 0,    // keep legacy numeric field (start)
+    verse_label: label || null,
+    start_verse: start || 0,
+    end_verse: end || (start || 0),
   };
 }
 
-// Build text to embed (robust)
+// ---------- text selection for embedding ----------
 function textForEmbedding(p) {
+  // Preferred keys likely to have the text we want
   const preferred = [
     "sanskrit","sloka","shloka","verse_text","text",
     "transliteration","synonyms","word_meanings",
     "translation","meaning",
     "purport","commentary","explanation","notes"
   ];
+
   const parts = [];
   for (const k of preferred) {
     const v = p?.[k];
     if (typeof v === "string" && v.trim()) parts.push(v.trim());
   }
+
+  // Fallback: include any non-trivial string fields (skip tiny labels)
   if (parts.length === 0) {
     for (const [k, v] of Object.entries(p)) {
       if (typeof v === "string") {
         const s = v.trim();
-        if (s && s.length > 1 && k !== "work") parts.push(s);
+        if (s && s.length > 1 && !/^work$/.test(k)) parts.push(s);
       }
     }
   }
+
   const joined = parts.join("\n\n");
   return joined.length > 100_000 ? joined.slice(0, 100_000) : joined;
 }
 
+// ---------- embeddings ----------
 async function embed(text) {
   const clean = (text || "").trim();
   if (!clean) return { vec: null, err: "no-text" };
@@ -112,6 +148,7 @@ async function embed(text) {
   }
 }
 
+// ---------- Supabase RPC ----------
 async function callUpsertRPC(payload) {
   const url = `${SUPABASE_URL}/rest/v1/rpc/upsert_passage`;
   const res = await fetch(url, {
@@ -130,52 +167,89 @@ async function callUpsertRPC(payload) {
   }
 }
 
+// ---------- one item ----------
+async function processOne(raw, idx, total) {
+  const n = normalize(raw);
+  const label = n.verse_label ?? n.verse;
+  const head = `[${idx + 1}/${total}] ch ${n.chapter} v ${label}`;
+
+  const text = textForEmbedding(n);
+  if (!text) {
+    console.log(`${head} -> no text, skip`);
+    return { done: 0, skipped: 1, noText: 1, embedFail: 0, rpcFail: 0 };
+  }
+
+  const { vec, err } = await embed(text);
+  if (!vec) {
+    console.log(`${head} -> embed fail: ${err}`);
+    return { done: 0, skipped: 1, noText: 0, embedFail: 1, rpcFail: 0 };
+  }
+
+  const payload = {
+    work: n.work || "bhagavad-gita",
+    chapter: n.chapter,
+    verse: n.verse,                 // numeric start
+    verse_label: n.verse_label,     // "16–18"
+    start_verse: n.start_verse,
+    end_verse: n.end_verse,
+    sanskrit: n.sanskrit || n.sloka || n.shloka || n.verse_text || n.text || null,
+    transliteration: n.transliteration || null,
+    synonyms: n.synonyms || n.word_meanings || null,
+    translation: n.translation || n.meaning || null,
+    purport: n.purport || n.commentary || n.explanation || null,
+    embedding: `[${vec.join(",")}]`,
+  };
+
+  await callUpsertRPC(payload);
+  console.log(`${head} -> upserted OK`);
+  return { done: 1, skipped: 0, noText: 0, embedFail: 0, rpcFail: 0 };
+}
+
+// ---------- main ----------
 async function main() {
   const filePath = path.resolve(INPUT_FILE);
   const raw = await fs.promises.readFile(filePath, "utf8");
   const items = parseVersesFile(raw);
+
   console.log(`Parsed ${items.length} items from ${filePath}`);
   if (items.length) {
     const keys = Object.keys(items[0]).slice(0, 30);
     console.log(`Sample keys: ${keys.join(", ")}`);
   }
 
-  let done = 0, skipped = 0, noText = 0, embedFail = 0, rpcFail = 0;
+  const list = INGEST_MAX ? items.slice(0, INGEST_MAX) : items;
+  console.log(`Ingesting ${list.length} items with concurrency=${CONCURRENCY} …`);
 
-  for (const p of items) {
-    try {
-      const n = normalize(p);
-      const text = textForEmbedding(n);
-      if (!text) { skipped++; noText++; continue; }
+  const total = list.length;
+  let stats = { done: 0, skipped: 0, noText: 0, embedFail: 0, rpcFail: 0 };
+  let i = 0;
 
-      const { vec, err } = await embed(text);
-      if (!vec) { skipped++; if (err === "no-text") noText++; else embedFail++; continue; }
-
-      const payload = {
-        work: n.work || "bhagavad-gita",
-        chapter: n.chapter,
-        verse: n.verse,                // numeric start
-        verse_label: n.verse_label,    // original "16–18"
-        start_verse: n.start_verse,
-        end_verse: n.end_verse,
-        sanskrit: n.sanskrit || n.sloka || n.shloka || n.verse_text || n.text || null,
-        transliteration: n.transliteration || null,
-        synonyms: n.synonyms || n.word_meanings || null,
-        translation: n.translation || n.meaning || null,
-        purport: n.purport || n.commentary || n.explanation || null,
-        embedding: `[${vec.join(",")}]`,
-      };
-
-      await callUpsertRPC(payload);
-      done++;
-      if (done % 25 === 0) console.log(`Upserted ${done}/${items.length}...`);
-    } catch (e) {
-      rpcFail++; skipped++;
-      console.error(`Row failed (ch ${p?.chapter ?? p?.chapter_number}, v ${p?.verse ?? p?.verse_number}): ${(e && e.message) || e}`);
+  async function worker() {
+    while (true) {
+      const idx = i++;
+      if (idx >= total) break;
+      try {
+        const r = await processOne(list[idx], idx, total);
+        stats.done += r.done;
+        stats.skipped += r.skipped;
+        stats.noText += r.noText;
+        stats.embedFail += r.embedFail;
+        stats.rpcFail += r.rpcFail;
+      } catch (e) {
+        console.log(`[${idx + 1}/${total}] unexpected error: ${e?.message || e}`);
+        stats.skipped += 1;
+        stats.rpcFail += 1;
+      }
     }
   }
 
-  console.log(`Done. Upserted ${done}, skipped ${skipped} (noText ${noText}, embedFail ${embedFail}, rpcFail ${rpcFail}).`);
+  const workers = Array.from({ length: CONCURRENCY }, () => worker());
+  await Promise.all(workers);
+
+  console.log(
+    `Done. Upserted ${stats.done}, skipped ${stats.skipped} ` +
+    `(noText ${stats.noText}, embedFail ${stats.embedFail}, rpcFail ${stats.rpcFail}).`
+  );
 }
 
 main().catch(e => {

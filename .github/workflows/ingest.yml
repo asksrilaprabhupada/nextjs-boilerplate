@@ -6,13 +6,18 @@ jobs:
   ingest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+
       - name: Install dependencies
         run: npm ci
+
       - name: Run ingest over HTTPS
         run: node scripts/ingest-bg.mjs
         env:
@@ -21,3 +26,5 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           INGEST_FILE: public/bhagavadgita.json
           EMBEDDING_MODEL: text-embedding-3-small
+          INGEST_CONCURRENCY: 2
+          # INGEST_MAX: 30  # <- uncomment for a 30-row smoke test, then remove to run all
