@@ -138,4 +138,18 @@ async function main() {
         sanskrit: n.sanskrit,
         transliteration: n.transliteration,
         synonyms: n.synonyms,
-        translat
+        translation: n.translation,
+        purport: n.purport
+      });
+      ok++;
+      if (ok % 25 === 0) console.log(`… upserted ${ok}`);
+    } catch (e) {
+      console.log(`${head} -> RPC fail: ${e.message || e}`);
+      skip++;
+    }
+  }
+
+  console.log(`Done. Upserted ${ok}, skipped ${skip}.`);
+}
+
+main().catch(e => { console.error(e); process.exitCode = 1; });
