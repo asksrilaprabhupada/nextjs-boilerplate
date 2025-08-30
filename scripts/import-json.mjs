@@ -1,5 +1,5 @@
 // scripts/import-json.mjs
-// Import Bhagavad-gītā JSON into Supabase via HTTPS (no OpenAI).
+// Import Bhagavad-gītā JSON into Supabase via HTTPS (NO OpenAI).
 import { config as loadEnv } from "dotenv";
 loadEnv({ override: false });
 
@@ -16,19 +16,59 @@ if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error("SUPABASE_SERVICE_ROLE_KEY missi
 
 function parseVersesFile(text) {
   const t = (text || "").trim();
-  try { const v = JSON.parse(t); return Array.isArray(v) ? v : [v]; } catch {}
+
+  // A) Standard JSON
+  try {
+    const v = JSON.parse(t);
+    if (Array.isArray(v)) return v;
+    if (v && typeof v === "object") return [v];
+  } catch {}
+
+  // B) NDJSON (one JSON per line)
   const lines = t.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  const nd = [];
-  let ok = lines.length > 0;
-  for (const line of lines) { try { nd.push(JSON.parse(line)); } catch { ok = false; break; } }
-  if (ok && nd.length) return nd;
-  throw new Error("Could not parse JSON (array or NDJSON required).");
+  if (lines.length) {
+    const nd = [];
+    let ok = true;
+    for (const line of lines) {
+      if (!line.startsWith("{") && !line.startsWith("[")) { ok = false; break; }
+      try { nd.push(JSON.parse(line)); } catch { ok = false; break; }
+    }
+    if (ok && nd.length) return nd.flat(); // flatten just in case
+  }
+
+  // C) Concatenated objects: {}{}{} (no commas)
+  const objs = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < t.length; i++) {
+    const ch = t[i];
+    if (inStr) {
+      if (esc) { esc = false; continue; }
+      if (ch === "\\") { esc = true; continue; }
+      if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === "{") { if (depth === 0) start = i; depth++; continue; }
+    if (ch === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const slice = t.slice(start, i + 1);
+        try { objs.push(JSON.parse(slice)); } catch {}
+        start = -1;
+      }
+    }
+  }
+  if (objs.length) return objs;
+
+  const preview = t.slice(0, 400).replace(/\s+/g, " ");
+  throw new Error("Could not parse JSON (array, NDJSON, or concatenated objects required). Preview: " + preview);
 }
 
 function normalize(p) {
   const s = p.sections || {};
-  const raw = String(p.verse ?? p.verse_number ?? "").trim(); // e.g. "16–18"
-  const nums = (raw.match(/\d+/g) || []).map(n => parseInt(n,10));
+
+  const raw = String(p.verse ?? p.verse_number ?? "").trim(); // e.g. "16-18" / "21–22"
+  const nums = (raw.match(/\d+/g) || []).map(n => parseInt(n, 10));
   const start = Number.isFinite(nums[0]) ? nums[0] : Number(p.start_verse || 0);
   const end   = Number.isFinite(nums[1]) ? nums[1] : Number(p.end_verse || start);
   const chapter = Number(p.chapter ?? p.chapter_number ?? 0);
@@ -36,6 +76,7 @@ function normalize(p) {
 
   return {
     ...p, ...s,
+    work: p.work || "bhagavad-gita",
     chapter,
     verse: start || 0,
     verse_label: label || null,
@@ -46,7 +87,6 @@ function normalize(p) {
     synonyms: p.synonyms || s.synonyms || p.word_meanings || null,
     translation: p.translation || s.translation || p.meaning || null,
     purport: p.purport || s.purport || p.commentary || p.explanation || null,
-    work: p.work || "bhagavad-gita",
   };
 }
 
@@ -69,15 +109,20 @@ async function main() {
   const filePath = path.resolve(INPUT_FILE);
   const raw = await fs.promises.readFile(filePath, "utf8");
   const items = parseVersesFile(raw);
-  const list = INGEST_MAX ? items.slice(0, INGEST_MAX) : items;
 
-  console.log(`Parsed ${items.length} items; importing ${list.length}…`);
+  if (items.length) {
+    const sample = items[0];
+    console.log(`Parsed ${items.length} items from ${filePath}`);
+    console.log("Sample keys:", Object.keys(sample).slice(0, 30).join(", "));
+  }
+
+  const list = INGEST_MAX ? items.slice(0, INGEST_MAX) : items;
   let ok = 0, skip = 0;
 
   for (let i = 0; i < list.length; i++) {
     const n = normalize(list[i]);
-    const head = `[${i+1}/${list.length}] ch ${n.chapter} v ${n.verse_label ?? n.verse}`;
-    // If absolutely nothing to store, skip
+    const head = `[${i + 1}/${list.length}] ch ${n.chapter} v ${n.verse_label ?? n.verse}`;
+
     const hasAnyText = [n.sanskrit, n.transliteration, n.synonyms, n.translation, n.purport]
       .some(v => typeof v === "string" && v.trim());
     if (!hasAnyText) { console.log(`${head} -> no text, skip`); skip++; continue; }
@@ -93,16 +138,4 @@ async function main() {
         sanskrit: n.sanskrit,
         transliteration: n.transliteration,
         synonyms: n.synonyms,
-        translation: n.translation,
-        purport: n.purport
-      });
-      ok++; if (ok % 25 === 0) console.log(`… upserted ${ok}`);
-    } catch (e) {
-      console.log(`${head} -> RPC fail: ${e.message || e}`);
-      skip++;
-    }
-  }
-  console.log(`Done. Upserted ${ok}, skipped ${skip}.`);
-}
-
-main().catch(e => { console.error(e); process.exitCode = 1; });
+        translat
