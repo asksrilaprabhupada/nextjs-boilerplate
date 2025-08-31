@@ -9,19 +9,19 @@ export default function TopNav() {
   const panelRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
-  // Close on outside click
+  // close menu on outside click
   useEffect(() => {
-    function onDocClick(e: MouseEvent) {
+    function onDoc(e: MouseEvent) {
       if (!open) return;
       const t = e.target as Node;
       if (panelRef.current?.contains(t) || btnRef.current?.contains(t)) return;
       setOpen(false);
     }
-    document.addEventListener("click", onDocClick);
-    return () => document.removeEventListener("click", onDocClick);
+    document.addEventListener("click", onDoc);
+    return () => document.removeEventListener("click", onDoc);
   }, [open]);
 
-  // Close on Escape
+  // close on Esc
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") setOpen(false);
@@ -31,22 +31,22 @@ export default function TopNav() {
   }, []);
 
   return (
-    <header className="h-16 sticky top-0 z-[70] bg-white/85 backdrop-blur border-b border-black/5">
-      <nav className="mx-auto max-w-6xl h-full px-4 sm:px-6 flex items-center justify-between">
-        {/* Title (single line on mobile) */}
+    <header className="sticky top-0 z-[100] bg-white text-gray-900 shadow-sm border-b border-black/10">
+      <nav className="mx-auto max-w-6xl h-16 px-4 sm:px-6 flex items-center justify-between">
+        {/* Title (single line) */}
         <Link
           href="/"
-          className="font-semibold tracking-tight whitespace-nowrap text-[15px] sm:text-base"
           aria-label="Go to home"
+          className="font-semibold tracking-tight whitespace-nowrap text-[16px] sm:text-base"
         >
           Ask Śrīla Prabhupāda
         </Link>
 
         {/* Desktop links (no Home) */}
         <div className="hidden md:flex items-center gap-6 text-sm">
-          <Link href="/team" className="hover:underline">Team</Link>
-          <Link href="/inspiration" className="hover:underline">Inspiration</Link>
-          <Link href="/updates" className="hover:underline">Updates</Link>
+          <Link href="/team" className="hover:text-gray-700">Team</Link>
+          <Link href="/inspiration" className="hover:text-gray-700">Inspiration</Link>
+          <Link href="/updates" className="hover:text-gray-700">Updates</Link>
         </div>
 
         {/* Mobile hamburger */}
@@ -55,53 +55,51 @@ export default function TopNav() {
             ref={btnRef}
             aria-label="Open menu"
             aria-expanded={open}
-            aria-controls="topnav-menu"
             onClick={() => setOpen((v) => !v)}
-            className="p-2 rounded-lg border border-black/20 bg-white shadow-md active:scale-[0.98]"
+            className="p-2 rounded-xl bg-white border border-black/20 shadow-md text-gray-900 active:scale-[0.98]"
           >
-            <svg width="22" height="22" viewBox="0 0 20 20" fill="none">
-              <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+            <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           </button>
 
-          {/* Dim background when open (helps readability over photo) */}
+          {/* Dim page for contrast */}
           {open && (
             <div
-              className="fixed inset-0 z-[60] bg-black/20"
+              className="fixed inset-0 z-[90] bg-black/35"
               aria-hidden="true"
               onClick={() => setOpen(false)}
             />
           )}
 
-          {/* Dropdown panel */}
+          {/* Menu panel (high contrast) */}
           <div
-            id="topnav-menu"
             ref={panelRef}
             className={[
-              "absolute right-0 mt-2 w-48 rounded-xl bg-white/95 backdrop-blur",
-              "shadow-2xl ring-1 ring-black/10 overflow-hidden z-[70]",
-              open ? "opacity-100 translate-y-0" : "pointer-events-none opacity-0 -translate-y-1",
-              "transition-all duration-150",
+              "absolute right-0 mt-2 w-48 rounded-2xl bg-white text-gray-900",
+              "shadow-2xl ring-1 ring-black/10 overflow-hidden z-[100]",
+              "transition-all duration-150 origin-top-right",
+              open ? "opacity-100 translate-y-0 scale-100" : "pointer-events-none opacity-0 -translate-y-1 scale-95",
             ].join(" ")}
           >
             <Link
               href="/team"
               onClick={() => setOpen(false)}
-              className="block px-4 py-3 text-[15px] hover:bg-gray-50"
+              className="block px-4 py-3 text-[15px] font-medium hover:bg-gray-50"
             >
               Team
             </Link>
             <Link
               href="/inspiration"
               onClick={() => setOpen(false)}
-              className="block px-4 py-3 text-[15px] hover:bg-gray-50"
+              className="block px-4 py-3 text-[15px] font-medium hover:bg-gray-50"
             >
               Inspiration
             </Link>
             <Link
               href="/updates"
               onClick={() => setOpen(false)}
-              className="block px-4 py-3 text-[15px] hover:bg-gray-50"
+              className="block px-4 py-3 text-[15px] font-medium hover:bg-gray-50"
             >
               Updates
             </Link>
