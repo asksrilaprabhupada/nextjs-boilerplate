@@ -22,7 +22,7 @@ export default function Home() {
     {
       role: "assistant",
       text:
-        "Hare Kṛṣṇa! Ask anything. Replies are fetched from Vaiṣṇava literatures stored in Supabase (Bhagavad-gītā As It Is, etc.).",
+        "Hare Kṛṣṇa! Ask anything. Answers come directly from Vaiṣṇava literatures.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -30,14 +30,13 @@ export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [messages]);
 
-  async function onSend(e: FormEvent) {
-    e.preventDefault();
-    const q = input.trim();
-    if (!q || loading) return;
-
+  async function runSearch(q: string) {
     setMessages((m) => [...m, { role: "user", text: q }]);
     setInput("");
     setLoading(true);
@@ -60,46 +59,78 @@ export default function Home() {
     } catch (err: any) {
       setMessages((m) => [
         ...m,
-        { role: "assistant", text: `Error: ${err?.message || "Something went wrong."}` },
+        {
+          role: "assistant",
+          text: `Error: ${err?.message || "Something went wrong."}`,
+        },
       ]);
     } finally {
       setLoading(false);
     }
   }
 
+  async function onSend(e: FormEvent) {
+    e.preventDefault();
+    const q = input.trim();
+    if (!q || loading) return;
+    await runSearch(q);
+  }
+
   return (
     <div className="h-full">
       {/* Two columns that fill the whole viewport below the header */}
       <div className="mx-auto max-w-6xl h-full min-h-0 grid gap-8 md:grid-cols-2 items-stretch px-6 py-6">
-        {/* LEFT: fixed photo */}
+        {/* LEFT: photo with entrance + gentle breathing animation */}
         <section className="h-full rounded-3xl overflow-hidden shadow-2xl ring-1 ring-black/5 bg-white">
-          <div className="relative h-full w-full p-2">
-            <Image
-              src="/prabhupada-left.jpg"
-              alt="Śrīla Prabhupāda"
-              fill
-              sizes="(max-width: 768px) 100vw, 50vw"
-              className="object-cover object-center"
-              priority
-            />
+          <div className="relative h-full w-full p-2 sp-hero-in">
+            <div className="h-full w-full relative sp-hero-breathe">
+              <Image
+                src="/prabhupada-left.jpg"
+                alt="Śrīla Prabhupāda"
+                fill
+                sizes="(max-width: 768px) 100vw, 50vw"
+                className="object-cover object-center"
+                priority
+              />
+            </div>
           </div>
         </section>
 
-        {/* RIGHT: chat card fills column and only messages scroll */}
+        {/* RIGHT: chat card */}
         <section className="h-full min-h-0 flex flex-col rounded-3xl bg-white/75 backdrop-blur border border-black/5 shadow-xl">
           {/* Header */}
           <div className="p-6 sm:p-8 border-b border-black/5">
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Ask Śrīla Prabhupāda</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+              Ask Śrīla Prabhupāda
+            </h1>
             <p className="mt-2 text-sm sm:text-base text-gray-700">
-              Answers come directly from the scriptures stored in{" "}
-              <span className="font-semibold">Supabase</span>.
+              Answers come directly from <span className="font-semibold">Vaiṣṇava literatures</span>.
             </p>
+
+            {/* Quick chip */}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                className="rounded-full bg-orange-500/10 text-orange-700 border border-orange-300 px-3 py-1 text-sm hover:bg-orange-500/15"
+                onClick={() => runSearch("Bhagavad-gita 15.1")}
+                disabled={loading}
+              >
+                Bhagavad-gītā 15.1
+              </button>
+            </div>
           </div>
 
           {/* Messages — the ONLY scrollable area */}
-          <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
+          <div
+            ref={scrollRef}
+            className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4"
+          >
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              <div
+                key={i}
+                className={`flex ${
+                  m.role === "user" ? "justify-end" : "justify-start"
+                }`}
+              >
                 <div
                   className={[
                     "max-w-[85%] rounded-2xl px-3 py-2 text-[0.95rem] leading-6 whitespace-pre-wrap shadow-sm",
@@ -110,7 +141,6 @@ export default function Home() {
                 >
                   <p>{m.text}</p>
 
-                  {/* Render search results if present */}
                   {"rows" in m && m.rows?.length ? (
                     <ul className="mt-3 space-y-3">
                       {m.rows.map((row, idx) => {
@@ -118,13 +148,20 @@ export default function Home() {
                         return (
                           <li key={idx} className="border rounded-lg p-3">
                             <div className="text-xs text-gray-600">
-                              {row.work} {row.chapter}.{label} · score {(row.rank ?? 0).toFixed(3)}
+                              {row.work} {row.chapter}.{label} · score{" "}
+                              {(row.rank ?? 0).toFixed(3)}
                             </div>
-                            {row.translation && <p className="mt-1">{row.translation}</p>}
+                            {row.translation && (
+                              <p className="mt-1">{row.translation}</p>
+                            )}
                             {row.purport && (
                               <details className="mt-2">
-                                <summary className="cursor-pointer">Purport</summary>
-                                <p className="mt-1 whitespace-pre-wrap">{row.purport}</p>
+                                <summary className="cursor-pointer">
+                                  Purport
+                                </summary>
+                                <p className="mt-1 whitespace-pre-wrap">
+                                  {row.purport}
+                                </p>
                               </details>
                             )}
                           </li>
@@ -138,7 +175,10 @@ export default function Home() {
           </div>
 
           {/* Input */}
-          <form onSubmit={onSend} className="p-4 sm:p-6 bg-white/70 backdrop-blur border-t border-black/5">
+          <form
+            onSubmit={onSend}
+            className="p-4 sm:p-6 bg-white/70 backdrop-blur border-t border-black/5"
+          >
             <div className="flex items-center gap-2">
               <input
                 suppressHydrationWarning
@@ -156,7 +196,8 @@ export default function Home() {
               </button>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              Press <kbd className="px-1 py-0.5 rounded border">Enter</kbd> to search.
+              Press <kbd className="px-1 py-0.5 rounded border">Enter</kbd> to
+              search.
             </p>
           </form>
         </section>
