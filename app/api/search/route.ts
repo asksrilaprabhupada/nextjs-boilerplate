@@ -3,23 +3,32 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(req: NextRequest) {
   try {
     const { q, k = 5 } = await req.json();
-    const query = (q ?? "").toString().trim();
-    const limit = Math.min(Number(k) || 5, 20);
-
-    if (!query) {
+    if (!q || typeof q !== "string") {
       return NextResponse.json({ error: "q is required" }, { status: 400 });
     }
 
-    // Call the Supabase RPC that does full-text search (no OpenAI)
-    const url = `${process.env.SUPABASE_URL}/rest/v1/rpc/search_passages_text`;
-    const r = await fetch(url, {
+    const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/+$/, "");
+    const SERVICE_KEY   = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!SUPABASE_URL || !SERVICE_KEY) {
+      return NextResponse.json(
+        { error: "Missing env", details: { SUPABASE_URL: !!SUPABASE_URL, SERVICE_KEY: !!SERVICE_KEY } },
+        { status: 500 }
+      );
+    }
+
+    // 🔁 call the function that exists in your DB
+    const rpcUrl = `${SUPABASE_URL}/rest/v1/rpc/search_passages_fts`;
+
+    const r = await fetch(rpcUrl, {
       method: "POST",
       headers: {
-        apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!,
-        Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY!}`,
+        apikey: SERVICE_KEY,
+        Authorization: `Bearer ${SERVICE_KEY}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ q: query, k: limit }),
+      // 🔁 send the param names the function expects (q, k)
+      body: JSON.stringify({ q, k: Number(k) || 5 }),
       cache: "no-store",
     });
 
