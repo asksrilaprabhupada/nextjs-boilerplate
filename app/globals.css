@@ -1,38 +1,33 @@
- @import "tailwindcss";
+@import "tailwindcss";
 
- :root {
-   --background: #ffffff;
-   --foreground: #171717;
- }
+/* Light & dark tokens */
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
 
- @theme inline {
-   --color-background: var(--background);
-   --color-foreground: var(--foreground);
-   --font-sans: var(--font-geist-sans);
-   --font-mono: var(--font-geist-mono);
- }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
 
- @media (prefers-color-scheme: dark) {
-   :root {
-     --background: #0a0a0a;
-     --foreground: #ededed;
-   }
- }
+/* Base body styles
+   NOTE: No 'background' here so the Tailwind gradient from layout.tsx shows */
+body {
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
 
- body {
--  background: var(--background);
-   color: var(--foreground);
-   font-family: Arial, Helvetica, sans-serif;
- }
-
-+/* Hero image animations */
-+@keyframes sp-float-in {
-+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
-+  to   { opacity: 1; transform: translateY(0) scale(1); }
-+}
-+@keyframes sp-breathe {
-+  0%,100% { transform: scale(1); }
-+  50%     { transform: scale(1.01); }
-+}
-+.sp-hero-in { animation: sp-float-in 800ms ease-out both; }
-+.sp-hero-breathe { animation: sp-breathe 12s ease-in-out 1s infinite; }
+/* Hero image animations */
+@keyframes sp-float-in {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes sp-breathe {
+  0%,100% { transform: scale(1); }
+  50%     { transform: scale(1.01); }
+}
+.sp-hero-in { animation: sp-float-in 800ms ease-out both; }
+.sp-hero-breathe { animation: sp-breathe 12s ease-in-out 1s infinite; }
