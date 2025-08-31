@@ -1,14 +1,13 @@
-// app/_components/TopNav.tsx
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function TopNav() {
   const [open, setOpen] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
 
-  // close popup when clicking outside
+  // close dropdown when clicking outside
   useEffect(() => {
     function onDoc(e: MouseEvent) {
       if (!popRef.current) return;
@@ -19,12 +18,20 @@ export default function TopNav() {
   }, [open]);
 
   return (
-    <header className="h-16 sticky top-0 z-50 bg-white/70 backdrop-blur border-b border-black/5">
-      <nav className="mx-auto max-w-6xl h-full px-4 sm:px-6 flex items-center justify-between">
-        {/* Title stays on a single line */}
+    <header
+      className="
+        sticky top-0 z-50
+        h-14 md:h-16
+        bg-white md:bg-white/80 supports-[backdrop-filter]:backdrop-blur
+        border-b border-black/5
+        shadow-sm md:shadow-none
+      "
+    >
+      <nav className="mx-auto max-w-6xl h-full px-3 sm:px-6 flex items-center justify-between">
+        {/* Title – keep on one line, strong contrast on mobile */}
         <Link
           href="/"
-          className="font-semibold tracking-tight whitespace-nowrap text-[15px] sm:text-base"
+          className="whitespace-nowrap font-semibold tracking-tight text-gray-900 text-[15px] sm:text-base"
         >
           Ask Śrīla Prabhupāda
         </Link>
@@ -39,36 +46,42 @@ export default function TopNav() {
         {/* Mobile hamburger */}
         <div className="md:hidden relative" ref={popRef}>
           <button
-            aria-label="Menu"
-            onClick={() => setOpen((v) => !v)}
-            className="p-2 rounded-lg border border-black/10 bg-white/80 shadow-sm active:scale-[0.98]"
+            aria-label="Open menu"
+            aria-expanded={open}
+            onClick={() => setOpen(v => !v)}
+            className="p-2 rounded-xl border border-black/10 bg-white text-gray-700 shadow active:scale-[0.98]"
           >
-            {/* 3 lines icon */}
             <svg width="22" height="22" viewBox="0 0 20 20" fill="none">
-              <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+              <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
             </svg>
           </button>
 
           {open && (
-            <div className="absolute right-0 mt-2 w-44 rounded-xl bg-white shadow-lg border border-black/10 overflow-hidden">
+            <div
+              className="
+                absolute right-0 mt-2 w-48
+                rounded-2xl bg-white shadow-xl ring-1 ring-black/10
+                overflow-hidden z-50
+              "
+            >
               <Link
                 href="/team"
                 onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 text-sm hover:bg-gray-50"
+                className="block px-4 py-3 text-[15px] hover:bg-gray-50"
               >
                 Team
               </Link>
               <Link
                 href="/inspiration"
                 onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 text-sm hover:bg-gray-50"
+                className="block px-4 py-3 text-[15px] hover:bg-gray-50"
               >
                 Inspiration
               </Link>
               <Link
                 href="/updates"
                 onClick={() => setOpen(false)}
-                className="block px-4 py-2.5 text-sm hover:bg-gray-50"
+                className="block px-4 py-3 text-[15px] hover:bg-gray-50"
               >
                 Updates
               </Link>
