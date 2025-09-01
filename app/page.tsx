@@ -18,6 +18,9 @@ type Msg =
   | { role: "assistant"; text: string; rows?: Row[] };
 
 export default function Home() {
+  // Splash is shown on mobile only (hidden by CSS on md+)
+  const [showSplash, setShowSplash] = useState(true);
+
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "assistant",
@@ -27,14 +30,22 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const chatTopRef = useRef<HTMLDivElement>(null);
 
   // auto-scroll messages
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  // When splash closes on mobile, scroll the chat into view
+  useEffect(() => {
+    if (!showSplash) {
+      // Little delay lets layout settle before scrolling
+      setTimeout(() => chatTopRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
+  }, [showSplash]);
 
   async function onSend(e: FormEvent) {
     e.preventDefault();
@@ -74,10 +85,10 @@ export default function Home() {
   }
 
   return (
-    <div className="h-[calc(100svh-4rem)] overflow-hidden">
-      {/* 2 columns on desktop; mobile shows only chat */}
-      <div className="mx-auto max-w-6xl h-full min-h-0 grid gap-8 md:grid-cols-2 items-stretch px-4 sm:px-6 py-5">
-        {/* LEFT: photo (hidden on mobile so outer page never scrolls) */}
+    <div className="h-[calc(100dvh-4rem)]"> {/* 4rem = header height */}
+      <div className="mx-auto max-w-6xl h-full min-h-0 grid gap-6 md:grid-cols-2 items-stretch px-4 sm:px-6 py-4">
+
+        {/* LEFT: Photo (visible on desktop; on mobile we use the splash) */}
         <section className="hidden md:block h-full rounded-3xl overflow-hidden shadow-2xl ring-1 ring-black/5 bg-white">
           <div className="relative h-full w-full p-2">
             <Image
@@ -133,9 +144,7 @@ export default function Home() {
                               {row.work} {row.chapter}.{label} · score{" "}
                               {(row.rank ?? 0).toFixed(3)}
                             </div>
-                            {row.translation && (
-                              <p className="mt-1">{row.translation}</p>
-                            )}
+                            {row.translation && <p className="mt-1">{row.translation}</p>}
                             {row.purport && (
                               <details className="mt-2">
                                 <summary className="cursor-pointer">
@@ -186,6 +195,34 @@ export default function Home() {
           </form>
         </section>
       </div>
+
+      {/* MOBILE-ONLY SPLASH (full screen under the sticky header) */}
+      {showSplash && (
+        <div
+          className="md:hidden fixed z-50 inset-x-0 bottom-0 top-16" /* 16 = header height */
+          onClick={() => setShowSplash(false)}
+          role="button"
+          aria-label="Tap to start asking"
+        >
+          <Image
+            src="/prabhupada-left.jpg"
+            alt="Śrīla Prabhupāda"
+            fill
+            priority
+            className="object-cover"
+          />
+          {/* gradient veil for readability */}
+          <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/25 to-transparent" />
+          <div className="absolute inset-x-0 bottom-0 p-6 text-center select-none">
+            <p className="text-white/90 text-lg font-medium drop-shadow">
+              Tap anywhere to ask me anything
+            </p>
+            <p className="mt-1 text-white/70 text-xs drop-shadow">
+              Answers from Vaiṣṇava literatures
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
