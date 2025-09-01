@@ -1,0 +1,63 @@
+.
+├── .env.local
+├── .github
+│   └── workflows
+│       └── ingest.yml
+├── .gitignore
+├── README.md
+├── app
+│   ├── _components
+│   │   └── TopNav.tsx
+│   ├── api
+│   │   └── search
+│   │       ├── contact
+│   │       │   └── route.ts
+│   │       ├── feature
+│   │       │   └── route.ts
+│   │       ├── route.ts
+│   │       └── terms
+│   │           └── route.ts
+│   ├── contact
+│   │   └── page.tsx
+│   ├── favicon.ico
+│   ├── globals.css
+│   ├── inspiration
+│   │   └── page.tsx
+│   ├── layout.tsx
+│   ├── page.tsx
+│   ├── page.tsx.bak
+│   ├── request-feature
+│   │   └── page.tsx
+│   ├── search
+│   │   └── page.tsx
+│   ├── team
+│   │   └── page.tsx
+│   └── updates
+│       └── page.tsx
+├── git
+├── lib
+│   ├── mailer.ts
+│   ├── sheets.ts
+│   └── terms.ts
+├── next-env.d.ts
+├── next.config.ts
+├── package-lock.json
+├── package.json
+├── postcss.config.mjs
+├── public
+│   ├── bhagavadgita.json
+│   ├── favicon.ico
+│   ├── file.svg
+│   ├── globe.svg
+│   ├── next.svg
+│   ├── prabhupada-left.jpg
+│   ├── prabhupada.jpg
+│   ├── vercel.svg
+│   └── window.svg
+├── repo-tree.txt
+├── scripts
+│   ├── import-json.mjs
+│   └── ingest-bg.mjs
+└── tsconfig.json
+
+19 directories, 42 files
