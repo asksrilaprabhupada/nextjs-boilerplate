@@ -28,15 +28,15 @@ type Row = {
   verse_label: string | null;
   translation: string | null;
   purport: string | null;
-  // If your table has Sanskrit, it will come through because we "select *"
-  // @ts-ignore: optional in DB
+  // optional Sanskrit column supported
+  // @ts-ignore
   sanskrit?: string | null;
   rank?: number;
 };
 
 export const runtime = "nodejs";
 
-// Try both possible RPC names so you never hit the 404 again
+// Try both possible RPC names
 async function rpcSearch({
   supabaseUrl,
   serviceKey,
@@ -68,26 +68,32 @@ async function rpcSearch({
   throw new Error("RPC 404: Neither search_passages_text nor search_passages_fts exists.");
 }
 
-// Shorten a string safely
-function shorten(s: string | null | undefined, n: number): string {
+/** Clip to complete sentences (no artificial ellipsis) */
+function clipToSentences(s: string | null | undefined, maxChars: number): string {
   const t = (s || "").replace(/\s+/g, " ").trim();
-  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+  if (t.length <= maxChars) return t;
+  // find last sentence end within window
+  const window = t.slice(0, maxChars);
+  const lastPeriod = Math.max(window.lastIndexOf(". "), window.lastIndexOf("। "), window.lastIndexOf("!") , window.lastIndexOf("?"));
+  if (lastPeriod > 60) return window.slice(0, lastPeriod + 1).trim();
+  // if no sentence break, hard cut but no ellipsis
+  return window.trim();
 }
 
-// Build compact context for a chapter: include Sanskrit (if present), and short quotes
-function buildChapterContext(rows: Row[]) {
+/** Build compact context (keeps full sentences; larger budgets to avoid chopped quotes) */
+function buildContext(rows: Row[]) {
   return rows
     .sort((a, b) => a.verse - b.verse)
     .map((r) => {
       const label = r.verse_label || String(r.verse);
-      const sa = shorten(r.sanskrit || "", 120);
-      const tr = shorten(r.translation || "", 260);
-      const pp = shorten(r.purport || "", 260);
+      const sa = clipToSentences(r.sanskrit || "", 160);
+      const tr = clipToSentences(r.translation || "", 700); // allow a full sentence
+      const pp = clipToSentences(r.purport || "", 1100);    // allow a full thought
       return [
         `BG ${r.chapter}.${label}`,
         sa ? `Sanskrit: ${sa}` : "",
-        `Translation: ${tr || "(no translation)"}`,
-        `Purport: ${pp || "(no purport)"}`,
+        tr ? `Translation: ${tr}` : "Translation: (missing)",
+        pp ? `Purport: ${pp}` : "Purport: (missing)",
       ]
         .filter(Boolean)
         .join("\n");
@@ -95,25 +101,51 @@ function buildChapterContext(rows: Row[]) {
     .join("\n\n");
 }
 
-// Build compact context for general Q&A (top search hits)
-function buildSnippetContext(rows: Row[], cap = 10) {
-  return rows
-    .slice(0, cap)
-    .map((r) => {
-      const label = r.verse_label || String(r.verse);
-      const sa = shorten(r.sanskrit || "", 80);
-      const tr = shorten(r.translation || "", 220);
-      const pp = shorten(r.purport || "", 220);
-      return [
-        `BG ${r.chapter}.${label}`,
-        sa ? `Sanskrit: ${sa}` : "",
-        `Translation: ${tr || "(no translation)"}`,
-        `Purport: ${pp || "(no purport)"}`,
-      ]
-        .filter(Boolean)
-        .join("\n");
-    })
-    .join("\n\n");
+/** Light “importance” heuristic for chapter candidates */
+function verseHeuristicScore(r: Row): number {
+  const trL = (r.translation || "").length;
+  const ppL = (r.purport || "").length;
+  const rangeBoost = (r.verse_label || "").includes("-") ? 0.25 : 0;
+  return (ppL / 500) + (trL / 300) + rangeBoost;
+}
+
+/** Build a small, good candidate set for chapter questions */
+async function pickChapterCandidates(
+  supabaseUrl: string,
+  serviceKey: string,
+  q: string,
+  chapter: number,
+  allInChapter: Row[],
+  cap = 12
+): Promise<Row[]> {
+  let candidates: Row[] = [];
+  try {
+    const hits = await rpcSearch({ supabaseUrl, serviceKey, q, k: 30 });
+    const inChapter = hits.filter((h) => h.chapter === chapter);
+    candidates.push(...inChapter);
+  } catch {
+    // ignore; heuristic fallback
+  }
+
+  const seen = new Set<string>();
+  const dedup = (arr: Row[]) =>
+    arr.filter((r) => {
+      const key = `${r.chapter}:${r.verse_label || r.verse}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+  candidates = dedup(candidates);
+
+  if (candidates.length < cap) {
+    const remaining = allInChapter
+      .filter((r) => !seen.has(`${r.chapter}:${r.verse_label || r.verse}`))
+      .sort((a, b) => verseHeuristicScore(b) - verseHeuristicScore(a));
+    candidates.push(...remaining.slice(0, Math.max(0, cap - candidates.length)));
+  }
+
+  return candidates.slice(0, cap);
 }
 
 export async function POST(req: NextRequest) {
@@ -153,7 +185,7 @@ export async function POST(req: NextRequest) {
       rows = (await r.json()) as Row[];
     }
 
-    // B) Chapter-only → fetch ALL verses in that chapter (no limit)
+    // B) Chapter-only: fetch all, then choose a compact subset
     let isChapterOnly = false;
     if (!rows.length && ref && !ref.verse) {
       isChapterOnly = true;
@@ -168,10 +200,11 @@ export async function POST(req: NextRequest) {
         cache: "no-store",
       });
       if (!r.ok) return NextResponse.json({ error: `REST ${r.status}: ${await r.text()}` }, { status: 500 });
-      rows = (await r.json()) as Row[];
+      const allInChapter = (await r.json()) as Row[];
+      rows = await pickChapterCandidates(SUPABASE_URL, SERVICE_KEY, q, ref.chapter, allInChapter, 12);
     }
 
-    // C) Otherwise full-text search
+    // C) Otherwise: general text search
     if (!rows.length) {
       rows = await rpcSearch({
         supabaseUrl: SUPABASE_URL,
@@ -192,72 +225,29 @@ export async function POST(req: NextRequest) {
     const client = new OpenAI({ apiKey: OPENAI_API_KEY });
 
     if (isChapterOnly) {
-      // ————————————————————————————————————————————————————————————————
-      // PRABHUPADA-ONLY CHAPTER MODE (pick most important verses, quote directly)
-      // ————————————————————————————————————————————————————————————————
-      const chapterCtx = buildChapterContext(rows);
+      // ————————————————————————————————————
+      // CHAPTER MODE → Narrative with refs
+      // ————————————————————————————————————
+      const ctx = buildContext(rows);
       const chapterNum = rows[0]?.chapter;
 
       const prompt = `
-You will answer ONLY from the provided text: Bhagavad-gītā As It Is (translation & purports by Śrīla Prabhupāda).
+Answer ONLY from the provided Bhagavad-gītā As It Is (translation & purports by Śrīla Prabhupāda).
 User asked about Chapter ${chapterNum}: "${q}"
 
-GOAL
-- Give a concise, devotional explanation of this chapter that an everyday reader understands.
-- Select the 6–10 MOST IMPORTANT verses to the user's topic (if any). Do NOT list all verses.
-
-STRICT RULES
-- Use SHORT DIRECT QUOTES from translation/purport for substance. Do NOT paraphrase quotes.
-- Your own words must be minimal, only to connect quotes (e.g., “Prabhupāda says…”).
-- If Sanskrit is provided, include the first few words of the śloka before the quotes (optional).
-- The CONCLUSION must be from Prabhupāda’s own words (quoted) — not your opinion.
-- Cite each bullet as BG ${chapterNum}.x.
+STYLE
+- Write a smooth NARRATIVE (not bullets). Connect events/points in order: “this happens, then this…”.
+- Use SHORT DIRECT QUOTES from translation/purport (full sentences). Do NOT add "..." unless it is in the original.
+- Minimal connector words like “Prabhupāda explains…”, “He emphasizes…”.
+- Add verse references in brackets like (BG ${chapterNum}.1), or multiple like (BG ${chapterNum}.28, ${chapterNum}.30).
+- The CONCLUSION must be directly quoted from Prabhupāda.
 
 FORMAT (plain text, no markdown)
-INTRODUCTION: 1–2 short sentences. You may include one short quote.
-KEY VERSES (6–10 bullets):
-- BG ${chapterNum}.x — [Sanskrit if provided]; "short translation quote"; "short purport quote"
-CONCLUSION (Śrīla Prabhupāda): 1–2 sentences formed from direct quotes that express His conclusion.
+INTRODUCTION: 1–2 sentences.
+NARRATIVE: 5–8 brief paragraphs. Each paragraph may include 1–2 quotes and ends with bracketed refs.
+CONCLUSION (Śrīla Prabhupāda): 1–2 sentences, quoted, with refs.
 
-TEXT (chapter snippets):
-${chapterCtx}
-`.trim();
-
-      const out = await client.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: "Use ONLY the provided text. Prefer direct quotes. No outside info." },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.1,
-        max_tokens: 1200,
-      });
-
-      const answer = out.choices[0]?.message?.content?.trim() || "Here are related verses.";
-      return NextResponse.json({ answer, rows });
-    } else {
-      // ————————————————————————————————————————————————————————————————
-      // GENERAL MODE (question or specific verse): pick 3–6 key verses, quote directly
-      // ————————————————————————————————————————————————————————————————
-      const ctx = buildSnippetContext(rows, 12);
-
-      const prompt = `
-Answer ONLY from the provided Bhagavad-gītā As It Is verses/purports by Śrīla Prabhupāda.
-
-User question: "${q}"
-
-RULES
-- Select the 3–6 most relevant verses.
-- Use SHORT DIRECT QUOTES from translation/purport for substance. Do NOT paraphrase quotes.
-- Minimal connector words (e.g., “Prabhupāda explains…”).
-- End with a brief CONCLUSION strictly in Prabhupāda’s own words (quoted).
-
-FORMAT (plain text, no markdown)
-KEY VERSES:
-- BG c.v — "short translation quote"; "short purport quote"
-CONCLUSION (Śrīla Prabhupāda): "short quoted line"
-
-TEXT (snippets):
+TEXT (subset for Chapter ${chapterNum}):
 ${ctx}
 `.trim();
 
@@ -268,7 +258,45 @@ ${ctx}
           { role: "user", content: prompt },
         ],
         temperature: 0.1,
-        max_tokens: 700,
+        max_tokens: 1100,
+      });
+
+      const answer = out.choices[0]?.message?.content?.trim() || "Here are related verses.";
+      return NextResponse.json({ answer, rows });
+    } else {
+      // ————————————————————————————————————
+      // GENERAL MODE → Short narrative with refs
+      // ————————————————————————————————————
+      const ctx = buildContext(rows.slice(0, 12));
+
+      const prompt = `
+Answer ONLY from the provided Bhagavad-gītā As It Is text (Śrīla Prabhupāda).
+
+User question: "${q}"
+
+STYLE
+- Write a SHORT NARRATIVE (not bullets).
+- Use SHORT DIRECT QUOTES from translation/purport (full sentences). Do not add "..." unless original has it.
+- Minimal connector words only; substance must be quoted.
+- Add verse refs in brackets like (BG c.v) at the end of the paragraph(s).
+- End with a brief CONCLUSION, directly quoted from Prabhupāda.
+
+FORMAT (plain text, no markdown)
+NARRATIVE: 2–4 brief paragraphs with direct quotes + refs.
+CONCLUSION (Śrīla Prabhupāda): one quoted sentence with ref.
+
+TEXT (subset):
+${ctx}
+`.trim();
+
+      const out = await client.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: "Use ONLY the provided text. Prefer direct quotes. No outside info." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0.1,
+        max_tokens: 750,
       });
 
       const answer = out.choices[0]?.message?.content?.trim() || "Here are related verses.";
