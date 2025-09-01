@@ -1,8 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { appendRow } from '../../../lib/sheets';
-import { sendMail } from '../../../lib/mailer';
-import dayjs from 'dayjs';
-import { z } from 'zod';
+// app/api/feature/route.ts
+import { NextRequest, NextResponse } from "next/server";
+import { appendRow } from "../../../lib/sheets";
+import { sendMail } from "../../../lib/mailer";
+import dayjs from "dayjs";
+import { z } from "zod";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 const schema = z.object({
   name: z.string().min(1),
@@ -17,22 +21,32 @@ export async function POST(req: NextRequest) {
 
     await appendRow({
       spreadsheetId: process.env.GOOGLE_SHEETS_FEATURE_ID!,
-      values: [dayjs().toISOString(), name.trim(), email.trim().toLowerCase(),
-               country.trim(), feature.trim(), 'feature-form'],
+      values: [
+        dayjs().toISOString(),
+        name.trim(),
+        email.trim().toLowerCase(),
+        country.trim(),
+        feature.trim(),
+        "feature-form",
+      ],
     });
 
     await sendMail({
       to: email,
-      subject: 'We received your feature suggestion — Ask Śrīla Prabhupāda',
+      subject: "We received your feature suggestion — Ask Śrīla Prabhupāda",
       html: `<p>Hare Kṛṣṇa ${name},</p>
              <p>Thank you for your suggestion. Here is a copy:</p>
-             <hr/><p><strong>Country:</strong> ${country}</p>
-             <p><strong>Feature:</strong><br/>${feature.replace(/\n/g,'<br/>')}</p>`,
+             <hr/>
+             <p><strong>Country:</strong> ${country}</p>
+             <p><strong>Feature:</strong><br/>${feature.replace(/\n/g, "<br/>")}</p>`,
     });
 
     return NextResponse.json({ ok: true });
-  } catch (e) {
-    console.error('FEATURE_FORM_ERROR', e);
-    return NextResponse.json({ error: 'Invalid or failed submission' }, { status: 400 });
+  } catch (e: any) {
+    console.error("FEATURE_FORM_ERROR", e?.message || e);
+    return NextResponse.json(
+      { error: "Invalid or failed submission" },
+      { status: 400 }
+    );
   }
 }

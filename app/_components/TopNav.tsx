@@ -47,6 +47,9 @@ export default function TopNav() {
           <Link href="/team" className="hover:text-gray-700">Team</Link>
           <Link href="/inspiration" className="hover:text-gray-700">Inspiration</Link>
           <Link href="/updates" className="hover:text-gray-700">Updates</Link>
+          {/* NEW */}
+          <Link href="/request-feature" className="hover:text-gray-700">Request Feature</Link>
+          <Link href="/contact" className="hover:text-gray-700">Contact</Link>
         </div>
 
         {/* Mobile hamburger */}
@@ -102,6 +105,21 @@ export default function TopNav() {
               className="block px-4 py-3 text-[15px] font-medium hover:bg-gray-50"
             >
               Updates
+            </Link>
+            {/* NEW */}
+            <Link
+              href="/request-feature"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-3 text-[15px] font-medium hover:bg-gray-50"
+            >
+              Request Feature
+            </Link>
+            <Link
+              href="/contact"
+              onClick={() => setOpen(false)}
+              className="block px-4 py-3 text-[15px] font-medium hover:bg-gray-50"
+            >
+              Contact
             </Link>
           </div>
         </div>
