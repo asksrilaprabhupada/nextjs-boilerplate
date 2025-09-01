@@ -1,7 +1,6 @@
-// app/api/feature/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { appendRow } from "../../../lib/sheets";
-import { sendMail } from "../../../lib/mailer";
+import { appendRow } from "@/lib/sheets";
+import { sendMail } from "@/lib/mailer";
 import dayjs from "dayjs";
 import { z } from "zod";
 
@@ -16,19 +15,16 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  try {
-    const { name, email, country, feature } = schema.parse(await req.json());
+  const body = await req.json().catch(() => ({}));
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: "Invalid" }, { status: 400 });
 
+  const { name, email, country, feature } = parsed.data;
+
+  try {
     await appendRow({
       spreadsheetId: process.env.GOOGLE_SHEETS_FEATURE_ID!,
-      values: [
-        dayjs().toISOString(),
-        name.trim(),
-        email.trim().toLowerCase(),
-        country.trim(),
-        feature.trim(),
-        "feature-form",
-      ],
+      values: [dayjs().toISOString(), name, email, country, feature, "feature-form"],
     });
 
     await sendMail({
@@ -42,11 +38,8 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    console.error("FEATURE_FORM_ERROR", e?.message || e);
-    return NextResponse.json(
-      { error: "Invalid or failed submission" },
-      { status: 400 }
-    );
+  } catch (e) {
+    console.error("FEATURE_FORM_ERROR", e);
+    return NextResponse.json({ error: "Failed" }, { status: 500 });
   }
 }

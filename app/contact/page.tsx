@@ -27,49 +27,30 @@ export default function ContactPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="block text-sm font-medium">Name</label>
-              <input
-                className="mt-1 w-full rounded-xl border px-3 py-2"
-                required
-                value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-              />
+              <input className="mt-1 w-full rounded-xl border px-3 py-2" required
+                value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}/>
             </div>
             <div>
               <label className="block text-sm font-medium">Email</label>
-              <input
-                type="email"
-                className="mt-1 w-full rounded-xl border px-3 py-2"
-                required
-                value={form.email}
-                onChange={(e) => setForm({ ...form, email: e.target.value })}
-              />
+              <input type="email" className="mt-1 w-full rounded-xl border px-3 py-2" required
+                value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })}/>
             </div>
           </div>
 
           <div>
             <label className="block text-sm font-medium">Subject</label>
-            <input
-              className="mt-1 w-full rounded-xl border px-3 py-2"
-              required
-              value={form.subject}
-              onChange={(e) => setForm({ ...form, subject: e.target.value })}
-            />
+            <input className="mt-1 w-full rounded-xl border px-3 py-2" required
+              value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })}/>
           </div>
 
           <div>
             <label className="block text-sm font-medium">Message</label>
-            <textarea
-              className="mt-1 w-full rounded-2xl border px-3 py-3 min-h-32"
-              required
-              value={form.message}
-              onChange={(e) => setForm({ ...form, message: e.target.value })}
-            />
+            <textarea className="mt-1 w-full rounded-2xl border px-3 py-3 min-h-32" required
+              value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })}/>
           </div>
 
-          <button
-            disabled={status === "sending"}
-            className="inline-flex items-center justify-center rounded-full bg-orange-500 px-5 py-2 text-white shadow hover:bg-orange-600 disabled:opacity-50"
-          >
+          <button disabled={status === "sending"}
+            className="inline-flex items-center justify-center rounded-full bg-orange-500 px-5 py-2 text-white shadow hover:bg-orange-600 disabled:opacity-50">
             {status === "sending" ? "Sending…" : "Send"}
           </button>
 

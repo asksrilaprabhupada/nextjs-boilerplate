@@ -1,7 +1,6 @@
-// app/api/contact/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { sendMail } from "../../../lib/mailer";
-import { appendRow } from "../../../lib/sheets";
+import { sendMail } from "@/lib/mailer";
+import { appendRow } from "@/lib/sheets";
 import dayjs from "dayjs";
 import { z } from "zod";
 
@@ -16,10 +15,14 @@ const schema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  try {
-    const { name, email, subject, message } = schema.parse(await req.json());
+  const body = await req.json().catch(() => ({}));
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) return NextResponse.json({ error: "Invalid" }, { status: 400 });
 
-    // Send to you (your email never exposed in UI)
+  const { name, email, subject, message } = parsed.data;
+
+  try {
+    // Send to you (email not exposed publicly)
     await sendMail({
       to: process.env.ADMIN_EMAIL!,
       subject: `Contact: ${subject}`,
@@ -29,7 +32,7 @@ export async function POST(req: NextRequest) {
       replyTo: email,
     });
 
-    // Optional log to a contact sheet (if set)
+    // Optional: log to sheet if configured
     if (process.env.GOOGLE_SHEETS_CONTACT_ID) {
       await appendRow({
         spreadsheetId: process.env.GOOGLE_SHEETS_CONTACT_ID!,
@@ -37,7 +40,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Auto-ack to the sender
+    // Ack to the sender
     await sendMail({
       to: email,
       subject: "We received your message — Ask Śrīla Prabhupāda",
@@ -45,11 +48,8 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    console.error("CONTACT_FORM_ERROR", e?.message || e);
-    return NextResponse.json(
-      { error: "Invalid or failed submission" },
-      { status: 400 }
-    );
+  } catch (e) {
+    console.error("CONTACT_FORM_ERROR", e);
+    return NextResponse.json({ error: "Failed" }, { status: 500 });
   }
 }
