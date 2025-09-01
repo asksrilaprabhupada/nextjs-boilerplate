@@ -8,73 +8,68 @@ const WHATS_NEXT: string[] = [
   "Cross-references: Prabhupāda-līlāmṛta and ācārya commentaries.",
 ];
 
-// ⬇️ Today’s work added on top
 const UPDATES: Update[] = [
   {
     date: "2025-09-01",
     title:
-      "Request Feature + Contact tabs, Google Sheets logging, email confirmations, and deploy/debug fixes",
+      "Request Feature & Contact tabs + Sheets logging + deploy/debug fixes",
     details: [
-      "Added /request-feature and /contact pages with high-contrast, clean forms; wired links in TopNav (desktop & mobile).",
-      "Back-end: /api/feature and /api/contact (Node runtime). Feature requests append to Google Sheets (GOOGLE_SHEETS_FEATURE_ID) and email a copy to the sender; Contact sends privately to ADMIN_EMAIL (never exposed).",
-      "Introduced Terminologies: /terms and /api/terms, showing verses for key Sanskrit terms.",
-      "Search: direct verse refs like “BG 15.1” and ranges like “13.6–7” resolve via PostgREST; keyword queries use Supabase RPC `search_passages_text`.",
-      "Deployment reliability: switched to classic `next build`; fixed Google `JWT` constructor for googleapis v159; added `@types/nodemailer`; created /api/_env and /api/_health for production checks; moved API routes out of /api/search/* to correct paths.",
+      "Added /request-feature and /contact; linked in TopNav (desktop & mobile).",
+      "Feature saves to Google Sheets (sender gets a copy); Contact emails us privately.",
+      "Stabilized deploys: classic build, fixed Google JWT for googleapis v159, added types and /api/_env & /api/_health.",
     ],
   },
-
-  // Existing history below (unchanged)
   {
     date: "2025-08-31",
     title: "Mobile landing + chat-only flow; desktop preserved",
     details: [
-      "New mobile welcome: full photo with “Tap to enter”, then single-column chat.",
-      "Desktop keeps two-column layout; gentle entrance + ‘breathing’ animation for the photo.",
-      "Changed tagline to: “Answers come directly from Vaiṣṇava literatures.”",
-      "Enabled scrolling on Team, Inspiration, and Updates pages.",
+      "Mobile welcome: full photo with “Tap to enter”, then single-column chat.",
+      "Desktop keeps two-column layout with gentle entrance animation.",
+      "Tagline updated: “Answers come directly from Vaiṣṇava literatures.”",
     ],
   },
   {
     date: "2025-08-31",
     title: "Build fix + styles",
     details: [
-      "Resolved Vercel PostCSS error by removing body background override; gradient now comes from layout.",
-      "Added tiny animation CSS to globals.css (float-in + breathe).",
+      "Resolved Vercel/PostCSS issue by removing body background override.",
+      "Gradient moved into layout for reliability.",
+      "Added small animation utilities in globals.css (float-in, breathe).",
     ],
   },
   {
     date: "2025-08-31",
     title: "Home chat wired to Supabase search",
     details: [
-      "Server API route `/api/search` created; calls Supabase RPC `search_passages_text`.",
-      "Client shows verse label ranges (e.g., ‘13.6–7’) and expandable Purport.",
-      "Added quick-chip example: “Bhagavad-gītā 15.1”.",
+      "Server API `/api/search` with direct verse fallback (e.g., 13.6–7).",
+      "Keyword search via RPC `search_passages_text`.",
+      "Results show verse labels and expandable Purport.",
     ],
   },
   {
     date: "2025-08-30",
     title: "Bhagavad-gītā fully imported + verified",
     details: [
-      "Cleaned JSON and ran import (Actions log confirmed upserts).",
-      "Wrote coverage checks by chapter; identified gaps; fixed by adding BG 13.6–7 as a combined entry (range with one purport).",
-      "Final tally: all 700 verses present (ranges represented correctly).",
+      "Cleaned JSON and ran import; verified coverage by chapter.",
+      "Added BG 13.6–7 as a combined entry (one purport).",
+      "All 700 verses present; ranges represented correctly.",
     ],
   },
   {
     date: "2025-08-30",
     title: "Supabase schema + RPCs",
     details: [
-      "Created `passages` table with `vector` extension and IVFFlat index.",
-      "RPC `upsert_passage(jsonb)` for safe idempotent imports.",
-      "RPC `search_passages` (vector/text) to return top-k matches with verse_label support.",
+      "Created `passages` table (with verse_label support).",
+      "RPC for idempotent upserts.",
+      "Search RPC set up (text/vector ready).",
     ],
   },
   {
     date: "2025-08-29",
     title: "Repo hygiene + CI",
     details: [
-      "Fixed `.gitignore` (ignored `node_modules/` to avoid 100MB push errors).",
-      "Learned/used `git pull --rebase` to resolve non-fast-forward pushes cleanly.",
+      "Fixed `.gitignore` (ignore `node_modules/`).",
+      "Learned/used `git pull --rebase` to avoid non-fast-forward errors.",
       "Added import script and GitHub Action to ingest JSON from `public/`.",
     ],
   },
@@ -83,7 +78,7 @@ const UPDATES: Update[] = [
     title: "Project bootstrap",
     details: [
       "Next.js app scaffolded and deployed to Vercel.",
-      "Top navigation (Home, Team, Inspiration, Updates) created.",
+      "Top navigation (Home, Team, Inspiration, Updates).",
     ],
   },
 ];
@@ -93,7 +88,7 @@ export default function UpdatesPage() {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-14">
         <h1 className="text-3xl font-bold tracking-tight">Updates</h1>
-        <p className="mt-2 text-gray-700">A living log of progress. Latest first.</p>
+        <p className="mt-2 text-gray-700">Short and simple notes on what changed.</p>
 
         {/* What's next — pinned at the top */}
         <div className="mt-8 rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
@@ -104,8 +99,8 @@ export default function UpdatesPage() {
             ))}
           </ul>
           <p className="mt-3 text-gray-700">
-            <span className="font-semibold">Status:</span> Bhagavad-gītā is ready and searchable. Donations will help us
-            enable OpenAI features in production and expand the library.
+            <span className="font-semibold">Status:</span> Bhagavad-gītā is ready and searchable.
+            Donations will help us enable advanced features and expand the library.
           </p>
         </div>
 
@@ -117,7 +112,7 @@ export default function UpdatesPage() {
               <time className="text-xs uppercase tracking-wide text-gray-500">{u.date}</time>
               <h2 className="mt-1 text-lg font-semibold">{u.title}</h2>
               <ul className="mt-2 list-disc pl-5 text-gray-800 space-y-1">
-                {u.details.map((d, j) => (
+                {u.details.slice(0, 3).map((d, j) => (
                   <li key={j}>{d}</li>
                 ))}
               </ul>
