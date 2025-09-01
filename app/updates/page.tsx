@@ -10,67 +10,32 @@ const WHATS_NEXT: string[] = [
   "Filters (chapter, topic tags) and better snippet highlighting.",
 ];
 
+// ✅ Only the top three, most recent changes
 const UPDATES: Update[] = [
   {
     date: "2025-08-31",
     title: "Mobile landing + chat-only flow; desktop preserved",
     details: [
-      "New mobile welcome: full photo with “Tap to enter”, then single-column chat.",
+      "New mobile welcome: full-screen photo with “Tap to enter”, then single-column chat.",
       "Desktop keeps two-column layout; gentle entrance + ‘breathing’ animation for the photo.",
       "Changed tagline to: “Answers come directly from Vaiṣṇava literatures.”",
-      "Enabled scrolling on Team, Inspiration, and Updates pages.",
     ],
   },
   {
     date: "2025-08-31",
     title: "Build fix + styles",
     details: [
-      "Resolved Vercel PostCSS error by removing body background override; gradient now comes from layout.",
-      "Added tiny animation CSS to globals.css (float-in + breathe).",
+      "Resolved Vercel/PostCSS issue; gradient moved to layout for reliability.",
+      "Added small animation utilities in globals.css (float-in + breathe).",
     ],
   },
   {
     date: "2025-08-31",
     title: "Home chat wired to Supabase search",
     details: [
-      "Server API route `/api/search` created; calls Supabase RPC `search_passages`.",
-      "Client shows verse label ranges (e.g., ‘13.6–7’) and expandable Purport.",
-      "Added quick-chip example: “Bhagavad-gītā 15.1”.",
-    ],
-  },
-  {
-    date: "2025-08-30",
-    title: "Bhagavad-gītā fully imported + verified",
-    details: [
-      "Cleaned JSON and ran import (Actions log confirmed upserts).",
-      "Wrote coverage checks by chapter; identified gaps; fixed by adding BG 13.6–7 as a combined entry (range with one purport).",
-      "Final tally: all 700 verses present (ranges represented correctly).",
-    ],
-  },
-  {
-    date: "2025-08-30",
-    title: "Supabase schema + RPCs",
-    details: [
-      "Created `passages` table with `vector` extension and IVFFlat index.",
-      "RPC `upsert_passage(jsonb)` for safe idempotent imports.",
-      "RPC `search_passages` (vector/text) to return top-k matches with verse_label support.",
-    ],
-  },
-  {
-    date: "2025-08-29",
-    title: "Repo hygiene + CI",
-    details: [
-      "Fixed `.gitignore` (ignored `node_modules/` to avoid 100MB push errors).",
-      "Learned/used `git pull --rebase` to resolve non-fast-forward pushes cleanly.",
-      "Added import script and GitHub Action to ingest JSON from `public/`.",
-    ],
-  },
-  {
-    date: "2025-08-28",
-    title: "Project bootstrap",
-    details: [
-      "Next.js app scaffolded and deployed to Vercel.",
-      "Top navigation (Home, Team, Inspiration, Updates) created.",
+      "Server API route `/api/search` created.",
+      "Calls Supabase RPC `search_passages_text` with direct verse fallback (e.g., 13.6–7).",
+      "Results show verse-label ranges and expandable Purport.",
     ],
   },
 ];
@@ -82,7 +47,7 @@ export default function UpdatesPage() {
         <h1 className="text-3xl font-bold tracking-tight">Updates</h1>
         <p className="mt-2 text-gray-700">A living log of progress. Latest first.</p>
 
-        {/* What's next — now at the very top */}
+        {/* What's next — pinned at the top */}
         <div className="mt-8 rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
           <h2 className="text-xl font-semibold">What’s next</h2>
           <ul className="mt-3 list-disc pl-5 text-gray-800 space-y-1">
