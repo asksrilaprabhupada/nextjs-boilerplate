@@ -11,7 +11,7 @@ type Row = {
   verse_label: string | null;
   translation: string | null;
   purport: string | null;
-  rank: number;
+  rank?: number;
 };
 
 type Msg =
@@ -20,8 +20,7 @@ type Msg =
 
 /* --- Component ----------------------------------------------------------- */
 export default function Home() {
-  const [showSplash, setShowSplash] = useState(false);
-
+  const [showSplash, setShowSplash] = useState(true);
   const [messages, setMessages] = useState<Msg[]>([
     {
       role: "assistant",
@@ -34,34 +33,12 @@ export default function Home() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const chatTopRef = useRef<HTMLDivElement>(null);
 
-  // First-visit splash (mobile only via CSS)
   useEffect(() => {
-    const seen = typeof window !== "undefined" && localStorage.getItem("asksp_seen") === "1";
-    if (!seen) setShowSplash(true);
-  }, []);
-  useEffect(() => {
-    if (showSplash) document.documentElement.style.overflow = "hidden";
-    else document.documentElement.style.overflow = "";
-    return () => {
-      document.documentElement.style.overflow = "";
-    };
-  }, [showSplash]);
-
-  // Stick to bottom on new messages
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  // Nudge into view when splash closes
   useEffect(() => {
-    if (!showSplash) {
-      setTimeout(
-        () => chatTopRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-        50
-      );
-    }
+    if (!showSplash) setTimeout(() => chatTopRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
   }, [showSplash]);
 
   async function onSend(e: FormEvent) {
@@ -74,25 +51,20 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const r = await fetch("/api/search", {
+      const r = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q, k: 5 }),
+        body: JSON.stringify({ q, k: 8 }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data?.error || "Search failed");
 
       const rows: Row[] = data.rows || [];
-      const text = rows.length
-        ? `Top results (${rows.length}):`
-        : "No passages found. Try a different phrase or keyword.";
+      const answer: string = data.answer || (rows.length ? "Here are related verses." : "No passages found.");
 
-      setMessages((m) => [...m, { role: "assistant", text, rows }]);
+      setMessages((m) => [...m, { role: "assistant", text: answer, rows }]);
     } catch (err: any) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", text: `Error: ${err?.message || "Something went wrong."}` },
-      ]);
+      setMessages((m) => [...m, { role: "assistant", text: `Error: ${err?.message || "Something went wrong."}` }]);
     } finally {
       setLoading(false);
     }
@@ -101,7 +73,7 @@ export default function Home() {
   return (
     <div className="h-[calc(100dvh-4rem)]">
       <div className="mx-auto max-w-6xl h-full min-h-0 grid gap-6 md:grid-cols-2 items-stretch px-4 sm:px-6 py-4">
-        {/* LEFT: photo (desktop) */}
+        {/* LEFT: Photo (desktop) */}
         <section className="hidden md:block h-full rounded-3xl overflow-hidden shadow-2xl ring-1 ring-black/5 bg-white">
           <div className="relative h-full w-full p-2">
             <Image
@@ -115,22 +87,22 @@ export default function Home() {
           </div>
         </section>
 
-        {/* RIGHT: chat card */}
-        <section
-          ref={chatTopRef}
-          className="h-full min-h-0 flex flex-col rounded-3xl bg-white/85 backdrop-blur border border-black/5 shadow-xl"
-        >
+        {/* RIGHT: Chat */}
+        <section ref={chatTopRef} className="h-full min-h-0 flex flex-col rounded-3xl bg-white/85 backdrop-blur border border-black/5 shadow-xl">
           <div className="p-4 sm:p-6 border-b border-black/5">
-            <h1 className="hidden md:block text-2xl sm:text-3xl font-bold tracking-tight">
-              Ask Śrīla Prabhupāda
-            </h1>
+            <h1 className="hidden md:block text-2xl sm:text-3xl font-bold tracking-tight">Ask Śrīla Prabhupāda</h1>
             <p className="mt-1 sm:mt-2 text-[0.95rem] sm:text-base text-gray-700">
               Answers come directly from <span className="font-semibold">Vaiṣṇava literatures</span>.
             </p>
           </div>
 
-          {/* messages (only scrollable area) */}
+          {/* Messages */}
           <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
+            {/* Example chip */}
+            <div className="inline-flex items-center">
+              <span className="rounded-full bg-orange-500 text-white px-4 py-2 text-sm">Bhagavad Gita Chapter 15 verse 1</span>
+            </div>
+
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
@@ -150,7 +122,8 @@ export default function Home() {
                         return (
                           <li key={idx} className="border rounded-lg p-3">
                             <div className="text-xs text-gray-600">
-                              {row.work} {row.chapter}.{label} · score {(row.rank ?? 0).toFixed(3)}
+                              {row.work} {row.chapter}.{label}
+                              {row.rank != null ? <> · score {(row.rank ?? 0).toFixed(3)}</> : null}
                             </div>
                             {row.translation && <p className="mt-1">{row.translation}</p>}
                             {row.purport && (
@@ -169,7 +142,7 @@ export default function Home() {
             ))}
           </div>
 
-          {/* input */}
+          {/* Input */}
           <form onSubmit={onSend} className="p-3 sm:p-4 bg-white/80 backdrop-blur border-t border-black/5">
             <div className="flex items-center gap-2">
               <input
@@ -194,33 +167,21 @@ export default function Home() {
         </section>
       </div>
 
-      {/* mobile-only full-screen welcome (first visit only) */}
+      {/* MOBILE SPLASH */}
       {showSplash && (
-        <button
+        <div
           className="md:hidden fixed z-50 inset-x-0 bottom-0 top-16"
-          onClick={() => {
-            localStorage.setItem("asksp_seen", "1");
-            setShowSplash(false);
-          }}
+          onClick={() => setShowSplash(false)}
+          role="button"
           aria-label="Tap to start asking"
         >
-          <Image
-            src="/prabhupada-left.jpg"
-            alt="Śrīla Prabhupāda"
-            fill
-            priority
-            className="object-cover"
-          />
+          <Image src="/prabhupada-left.jpg" alt="Śrīla Prabhupāda" fill priority className="object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/25 to-transparent" />
           <div className="absolute inset-x-0 bottom-0 p-6 text-center select-none">
-            <p className="text-white/90 text-lg font-medium drop-shadow">
-              Tap anywhere to ask me anything
-            </p>
-            <p className="mt-1 text-white/70 text-xs drop-shadow">
-              Answers from Vaiṣṇava literatures
-            </p>
+            <p className="text-white/90 text-lg font-medium drop-shadow">Tap anywhere to ask me anything</p>
+            <p className="mt-1 text-white/70 text-xs drop-shadow">Answers from Vaiṣṇava literatures</p>
           </div>
-        </button>
+        </div>
       )}
     </div>
   );
