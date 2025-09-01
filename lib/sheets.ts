@@ -1,25 +1,43 @@
 // lib/sheets.ts
 import { google } from "googleapis";
 
-const scopes = ["https://www.googleapis.com/auth/spreadsheets"];
-
-function getAuth() {
+function getJwtClient() {
   const email = process.env.GOOGLE_SA_EMAIL!;
   const key = (process.env.GOOGLE_SA_PRIVATE_KEY || "").replace(/\\n/g, "\n");
-  return new google.auth.JWT(email, undefined, key, scopes);
+
+  // New signature: pass an options object
+  return new google.auth.JWT({
+    email,
+    key,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
 }
 
+/**
+ * Append a single row to the FIRST sheet in the spreadsheet.
+ * Values should be a flat array: [ts, name, email, ...]
+ */
 export async function appendRow(opts: {
   spreadsheetId: string;
-  values: (string | number | null)[];
+  values: (string | number | boolean | null | undefined)[];
 }) {
-  const auth = getAuth();
+  const { spreadsheetId, values } = opts;
+  const auth = getJwtClient();
   const sheets = google.sheets({ version: "v4", auth });
+
+  // Get the first sheet name to be safe (works even if user renamed the sheet)
+  const meta = await sheets.spreadsheets.get({ spreadsheetId });
+  const sheetName =
+    meta.data.sheets?.[0]?.properties?.title || "Sheet1";
+
+  // Append at A1 (Google will insert a new row at the end)
   await sheets.spreadsheets.values.append({
-    spreadsheetId: opts.spreadsheetId,
-    range: "A1",
-    valueInputOption: "RAW",
+    spreadsheetId,
+    range: `${sheetName}!A1`,
+    valueInputOption: "USER_ENTERED",
     insertDataOption: "INSERT_ROWS",
-    requestBody: { values: [opts.values] },
+    requestBody: {
+      values: [values],
+    },
   });
 }
