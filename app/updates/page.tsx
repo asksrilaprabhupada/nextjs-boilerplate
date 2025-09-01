@@ -6,36 +6,84 @@ const WHATS_NEXT: string[] = [
   "Accept donations to enable OpenAI features in production (semantic search at scale).",
   "Ingest Śrīmad-Bhāgavatam; then Caitanya-caritāmṛta.",
   "Cross-references: Prabhupāda-līlāmṛta and ācārya commentaries.",
-  "Verse permalinks and share buttons (e.g., /bg/15/1).",
-  "Filters (chapter, topic tags) and better snippet highlighting.",
 ];
 
-// ✅ Only the top three, most recent changes
+// ⬇️ Today’s work added on top
 const UPDATES: Update[] = [
+  {
+    date: "2025-09-01",
+    title:
+      "Request Feature + Contact tabs, Google Sheets logging, email confirmations, and deploy/debug fixes",
+    details: [
+      "Added /request-feature and /contact pages with high-contrast, clean forms; wired links in TopNav (desktop & mobile).",
+      "Back-end: /api/feature and /api/contact (Node runtime). Feature requests append to Google Sheets (GOOGLE_SHEETS_FEATURE_ID) and email a copy to the sender; Contact sends privately to ADMIN_EMAIL (never exposed).",
+      "Introduced Terminologies: /terms and /api/terms, showing verses for key Sanskrit terms.",
+      "Search: direct verse refs like “BG 15.1” and ranges like “13.6–7” resolve via PostgREST; keyword queries use Supabase RPC `search_passages_text`.",
+      "Deployment reliability: switched to classic `next build`; fixed Google `JWT` constructor for googleapis v159; added `@types/nodemailer`; created /api/_env and /api/_health for production checks; moved API routes out of /api/search/* to correct paths.",
+    ],
+  },
+
+  // Existing history below (unchanged)
   {
     date: "2025-08-31",
     title: "Mobile landing + chat-only flow; desktop preserved",
     details: [
-      "New mobile welcome: full-screen photo with “Tap to enter”, then single-column chat.",
+      "New mobile welcome: full photo with “Tap to enter”, then single-column chat.",
       "Desktop keeps two-column layout; gentle entrance + ‘breathing’ animation for the photo.",
       "Changed tagline to: “Answers come directly from Vaiṣṇava literatures.”",
+      "Enabled scrolling on Team, Inspiration, and Updates pages.",
     ],
   },
   {
     date: "2025-08-31",
     title: "Build fix + styles",
     details: [
-      "Resolved Vercel/PostCSS issue; gradient moved to layout for reliability.",
-      "Added small animation utilities in globals.css (float-in + breathe).",
+      "Resolved Vercel PostCSS error by removing body background override; gradient now comes from layout.",
+      "Added tiny animation CSS to globals.css (float-in + breathe).",
     ],
   },
   {
     date: "2025-08-31",
     title: "Home chat wired to Supabase search",
     details: [
-      "Server API route `/api/search` created.",
-      "Calls Supabase RPC `search_passages_text` with direct verse fallback (e.g., 13.6–7).",
-      "Results show verse-label ranges and expandable Purport.",
+      "Server API route `/api/search` created; calls Supabase RPC `search_passages_text`.",
+      "Client shows verse label ranges (e.g., ‘13.6–7’) and expandable Purport.",
+      "Added quick-chip example: “Bhagavad-gītā 15.1”.",
+    ],
+  },
+  {
+    date: "2025-08-30",
+    title: "Bhagavad-gītā fully imported + verified",
+    details: [
+      "Cleaned JSON and ran import (Actions log confirmed upserts).",
+      "Wrote coverage checks by chapter; identified gaps; fixed by adding BG 13.6–7 as a combined entry (range with one purport).",
+      "Final tally: all 700 verses present (ranges represented correctly).",
+    ],
+  },
+  {
+    date: "2025-08-30",
+    title: "Supabase schema + RPCs",
+    details: [
+      "Created `passages` table with `vector` extension and IVFFlat index.",
+      "RPC `upsert_passage(jsonb)` for safe idempotent imports.",
+      "RPC `search_passages` (vector/text) to return top-k matches with verse_label support.",
+    ],
+  },
+  {
+    date: "2025-08-29",
+    title: "Repo hygiene + CI",
+    details: [
+      "Fixed `.gitignore` (ignored `node_modules/` to avoid 100MB push errors).",
+      "Learned/used `git pull --rebase` to resolve non-fast-forward pushes cleanly.",
+      "Added import script and GitHub Action to ingest JSON from `public/`.",
+    ],
+  },
+  {
+    date: "2025-08-28",
+    title: "Project bootstrap",
+    details: [
+      "Next.js app scaffolded and deployed to Vercel.",
+      "Top navigation (Home, Team, Inspiration, Updates) created.",
     ],
   },
 ];
