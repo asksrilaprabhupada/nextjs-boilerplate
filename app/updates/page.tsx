@@ -3,82 +3,72 @@
 type Update = { date: string; title: string; details: string[] };
 
 const WHATS_NEXT: string[] = [
-  "Accept donations to enable OpenAI features in production (semantic search at scale).",
-  "Ingest Śrīmad-Bhāgavatam; then Caitanya-caritāmṛta.",
-  "Cross-references: Prabhupāda-līlāmṛta and ācārya commentaries.",
+  "Open donations to fund advanced features.",
+  "Add Śrīmad-Bhāgavatam, then Caitanya-caritāmṛta.",
+  "Add cross-references with Prabhupāda-līlāmṛta and other commentaries.",
 ];
 
 const UPDATES: Update[] = [
   {
     date: "2025-09-01",
-    title:
-      "Request Feature & Contact tabs + Sheets logging + deploy/debug fixes",
+    title: "New pages + messages and feature requests",
     details: [
-      "Added /request-feature and /contact; linked in TopNav (desktop & mobile).",
-      "Feature saves to Google Sheets (sender gets a copy); Contact emails us privately.",
-      "Stabilized deploys: classic build, fixed Google JWT for googleapis v159, added types and /api/_env & /api/_health.",
+      "Added two pages: Request a Feature and Contact.",
+      "Feature requests go to our Google Sheet; you also get a copy by email.",
+      "Made the site more stable and easier to update.",
     ],
   },
   {
     date: "2025-08-31",
-    title: "Mobile landing + chat-only flow; desktop preserved",
+    title: "Better experience on phones",
     details: [
-      "Mobile welcome: full photo with “Tap to enter”, then single-column chat.",
-      "Desktop keeps two-column layout with gentle entrance animation.",
-      "Tagline updated: “Answers come directly from Vaiṣṇava literatures.”",
+      "On phones: new welcome screen—tap to start.",
+      "Phones show a clean chat view; computers keep two columns.",
+      "Text and colors are easier to read.",
     ],
   },
   {
     date: "2025-08-31",
-    title: "Build fix + styles",
+    title: "Search connected to scripture",
     details: [
-      "Resolved Vercel/PostCSS issue by removing body background override.",
-      "Gradient moved into layout for reliability.",
-      "Added small animation utilities in globals.css (float-in, breathe).",
-    ],
-  },
-  {
-    date: "2025-08-31",
-    title: "Home chat wired to Supabase search",
-    details: [
-      "Server API `/api/search` with direct verse fallback (e.g., 13.6–7).",
-      "Keyword search via RPC `search_passages_text`.",
-      "Results show verse labels and expandable Purport.",
+      "You can ask by verse (like “BG 15.1”) or by a keyword.",
+      "We show the verse and translation; you can open the purport.",
+      "Results are clearer to read.",
     ],
   },
   {
     date: "2025-08-30",
-    title: "Bhagavad-gītā fully imported + verified",
+    title: "Bhagavad-gītā fully loaded",
     details: [
-      "Cleaned JSON and ran import; verified coverage by chapter.",
-      "Added BG 13.6–7 as a combined entry (one purport).",
-      "All 700 verses present; ranges represented correctly.",
+      "All 700 verses are in the app.",
+      "The special case 13.6–7 is stored correctly.",
+      "We checked each chapter for gaps.",
     ],
   },
   {
     date: "2025-08-30",
-    title: "Supabase schema + RPCs",
+    title: "Database prepared",
     details: [
-      "Created `passages` table (with verse_label support).",
-      "RPC for idempotent upserts.",
-      "Search RPC set up (text/vector ready).",
+      "Set up the database for verses.",
+      "Imports are safe to run again if needed.",
+      "Search is set up and ready.",
     ],
   },
   {
     date: "2025-08-29",
-    title: "Repo hygiene + CI",
+    title: "Project cleanup",
     details: [
-      "Fixed `.gitignore` (ignore `node_modules/`).",
-      "Learned/used `git pull --rebase` to avoid non-fast-forward errors.",
-      "Added import script and GitHub Action to ingest JSON from `public/`.",
+      "Cleaned up project files.",
+      "Fixed problems when pushing code.",
+      "Added a simple script to import verses.",
     ],
   },
   {
     date: "2025-08-28",
-    title: "Project bootstrap",
+    title: "Project started",
     details: [
-      "Next.js app scaffolded and deployed to Vercel.",
-      "Top navigation (Home, Team, Inspiration, Updates).",
+      "Launched the website.",
+      "Added the main menu and pages.",
     ],
   },
 ];
@@ -88,7 +78,7 @@ export default function UpdatesPage() {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-14">
         <h1 className="text-3xl font-bold tracking-tight">Updates</h1>
-        <p className="mt-2 text-gray-700">Short and simple notes on what changed.</p>
+        <p className="mt-2 text-gray-700">Short, simple notes on what changed.</p>
 
         {/* What's next — pinned at the top */}
         <div className="mt-8 rounded-2xl border border-black/5 bg-white p-6 shadow-sm">
@@ -99,8 +89,8 @@ export default function UpdatesPage() {
             ))}
           </ul>
           <p className="mt-3 text-gray-700">
-            <span className="font-semibold">Status:</span> Bhagavad-gītā is ready and searchable.
-            Donations will help us enable advanced features and expand the library.
+            <span className="font-semibold">Status:</span> Bhagavad-gītā is ready and searchable. Donations will help us
+            add more books and features.
           </p>
         </div>
 
