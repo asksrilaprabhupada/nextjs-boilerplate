@@ -1,28 +1,61 @@
 import { NextRequest, NextResponse } from "next/server";
 
-/** Parse "15.1", "BG 15:1", "chapter 15 verse 1", "13.6-7" etc. */
-function parseRef(q: string): null | { chapter: number; verse: number; end?: number } {
+/** Parse "BG 15.1", "13:6-7", "chapter 12 verse 1", or just "chapter 12" */
+function parseRef(q: string): null | { chapter: number; verse?: number; end?: number } {
   const s = q.trim();
 
-  // 13.6-7 / 10:21-25 / 15.1
   let m = s.match(/\b(\d{1,2})\s*(?:[.:])\s*(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?\b/);
+  if (m) return { chapter: +m[1], verse: +m[2], end: m[3] ? +m[3] : undefined };
+
+  m = s.match(/\b(?:bg|bhagavad(?:-|\s*)g[iī]t[āa])?(?:.*?\b)?chapter\s*(\d{1,2})(?:\s*(?:verse|v\.?)\s*(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?)?/i);
   if (m) {
-    const chapter = parseInt(m[1], 10);
-    const verse = parseInt(m[2], 10);
-    const end = m[3] ? parseInt(m[3], 10) : undefined;
+    const chapter = +m[1];
+    const verse = m[2] ? +m[2] : undefined;
+    const end = m[3] ? +m[3] : undefined;
     return { chapter, verse, end };
   }
-
-  // "chapter X verse Y" (BG optional)
-  m = s.match(/\b(?:bg|bhagavad(?:-|\s*)g[iī]t[āa])?(?:.*?\b)?chapter\s*(\d{1,2})\s*(?:verse|v\.?)\s*(\d{1,2})(?:\s*[-–]\s*(\d{1,2}))?/i);
-  if (m) {
-    const chapter = parseInt(m[1], 10);
-    const verse = parseInt(m[2], 10);
-    const end = m[3] ? parseInt(m[3], 10) : undefined;
-    return { chapter, verse, end };
-  }
-
   return null;
+}
+
+type Row = {
+  work: string;
+  chapter: number;
+  verse: number;
+  verse_label: string | null;
+  translation: string | null;
+  purport: string | null;
+  rank?: number;
+};
+
+async function rpcSearch({
+  supabaseUrl,
+  serviceKey,
+  q,
+  k,
+}: {
+  supabaseUrl: string;
+  serviceKey: string;
+  q: string;
+  k: number;
+}): Promise<Row[]> {
+  const tryNames = ["search_passages_text", "search_passages_fts"];
+  for (const fn of tryNames) {
+    const r = await fetch(`${supabaseUrl}/rest/v1/rpc/${fn}`, {
+      method: "POST",
+      headers: {
+        apikey: serviceKey,
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ q, k }),
+      cache: "no-store",
+    });
+    if (r.ok) return (await r.json()) as Row[];
+    if (r.status === 404) continue;
+    const text = await r.text();
+    throw new Error(`RPC ${r.status}: ${text}`);
+  }
+  throw new Error("RPC 404: Neither search_passages_text nor search_passages_fts exists.");
 }
 
 export async function POST(req: NextRequest) {
@@ -42,9 +75,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 1) direct verse fetch
+    // 1) Direct verse (or range)
     const ref = parseRef(q);
-    if (ref) {
+    if (ref && ref.verse) {
       const work = "Bhagavad-gita As It Is";
       const base = `${SUPABASE_URL}/rest/v1/passages`;
       const params = new URLSearchParams();
@@ -61,7 +94,10 @@ export async function POST(req: NextRequest) {
 
       const url = `${base}?${params.toString()}`;
       const r = await fetch(url, {
-        headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
+        headers: {
+          apikey: SERVICE_KEY,
+          Authorization: `Bearer ${SERVICE_KEY}`,
+        },
         cache: "no-store",
       });
 
@@ -70,29 +106,39 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `REST ${r.status}: ${text}` }, { status: 500 });
       }
 
-      const rows = await r.json();
+      const rows = (await r.json()) as Row[];
       return NextResponse.json({ rows });
     }
 
-    // 2) full-text RPC
-    const rpcUrl = `${SUPABASE_URL}/rest/v1/rpc/search_passages_text`;
-    const r = await fetch(rpcUrl, {
-      method: "POST",
-      headers: {
-        apikey: SERVICE_KEY,
-        Authorization: `Bearer ${SERVICE_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ q, k: Number(k) || 5 }),
-      cache: "no-store",
-    });
-
-    if (!r.ok) {
-      const text = await r.text();
-      return NextResponse.json({ error: `RPC ${r.status}: ${text}` }, { status: 500 });
+    // 1b) Only chapter (e.g., “chapter 12”)
+    if (ref && !ref.verse) {
+      const base = `${SUPABASE_URL}/rest/v1/passages`;
+      const params = new URLSearchParams();
+      params.set("select", "*");
+      params.set("work", `eq.Bhagavad-gita As It Is`);
+      params.set("chapter", `eq.${ref.chapter}`);
+      params.set("order", "verse.asc");
+      params.set("limit", "20");
+      const r = await fetch(`${base}?${params}`, {
+        headers: { apikey: SERVICE_KEY, Authorization: `Bearer ${SERVICE_KEY}` },
+        cache: "no-store",
+      });
+      if (!r.ok) {
+        const text = await r.text();
+        return NextResponse.json({ error: `REST ${r.status}: ${text}` }, { status: 500 });
+      }
+      const rows = (await r.json()) as Row[];
+      return NextResponse.json({ rows });
     }
 
-    const rows = await r.json();
+    // 2) Full-text search (with fallback RPC name)
+    const rows = await rpcSearch({
+      supabaseUrl: SUPABASE_URL,
+      serviceKey: SERVICE_KEY,
+      q,
+      k: Number(k) || 5,
+    });
+
     return NextResponse.json({ rows });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "unknown error" }, { status: 500 });
