@@ -3,7 +3,6 @@
 import Image from "next/image";
 import { useEffect, useRef, useState, FormEvent } from "react";
 
-/* --- Types --------------------------------------------------------------- */
 type Row = {
   work: string;
   chapter: number;
@@ -14,11 +13,17 @@ type Row = {
   rank?: number;
 };
 
+type SourceLink = { label: string; url: string };
+
 type Msg =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; rows?: Row[] };
+  | { role: "assistant"; text: string; rows?: Row[]; sources?: SourceLink[] };
 
-/* --- Component ----------------------------------------------------------- */
+function vedabaseUrl(chapter: number, verse_label: string | null, verse: number) {
+  const label = (verse_label || String(verse)).replace(/[^\d-]/g, "");
+  return `https://vedabase.io/en/library/bg/${chapter}/${label}/`;
+}
+
 export default function Home() {
   const [showSplash, setShowSplash] = useState(true);
   const [messages, setMessages] = useState<Msg[]>([
@@ -51,18 +56,55 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const r = await fetch("/api/ask", {
+      // Prefer narrative endpoint; fall back to bare search if not found
+      let r = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ q, k: 8 }),
+        body: JSON.stringify({ q }),
       });
+
+      if (r.status === 404) {
+        // Fallback to legacy search
+        r = await fetch("/api/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ q, k: 5 }),
+        });
+      }
+
       const data = await r.json();
-      if (!r.ok) throw new Error(data?.error || "Search failed");
+      if (!r.ok) throw new Error(data?.error || "Request failed");
 
+      const answer: string | undefined = data.answer;
       const rows: Row[] = data.rows || [];
-      const answer: string = data.answer || (rows.length ? "Here are related verses." : "No passages found.");
+      const sources: SourceLink[] =
+        data.sources ||
+        (rows.length
+          ? Array.from(
+              new Map(
+                rows.map((row: Row) => {
+                  const label = row.verse_label || String(row.verse);
+                  return [`${row.chapter}:${label}`, { label: `BG ${row.chapter}.${label}`, url: vedabaseUrl(row.chapter, row.verse_label, row.verse) }];
+                })
+              ).values()
+            )
+          : []);
 
-      setMessages((m) => [...m, { role: "assistant", text: answer, rows }]);
+      if (answer) {
+        setMessages((m) => [...m, { role: "assistant", text: answer, sources }]);
+      } else if (rows.length) {
+        // Only if there's no narrative, show raw cards (fallback)
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            text: `Here are related verses (${rows.length}).`,
+            rows,
+          },
+        ]);
+      } else {
+        setMessages((m) => [...m, { role: "assistant", text: "No passages found." }]);
+      }
     } catch (err: any) {
       setMessages((m) => [...m, { role: "assistant", text: `Error: ${err?.message || "Something went wrong."}` }]);
     } finally {
@@ -87,8 +129,11 @@ export default function Home() {
           </div>
         </section>
 
-        {/* RIGHT: Chat */}
-        <section ref={chatTopRef} className="h-full min-h-0 flex flex-col rounded-3xl bg-white/85 backdrop-blur border border-black/5 shadow-xl">
+        {/* RIGHT: Chat card */}
+        <section
+          ref={chatTopRef}
+          className="h-full min-h-0 flex flex-col rounded-3xl bg-white/85 backdrop-blur border border-black/5 shadow-xl"
+        >
           <div className="p-4 sm:p-6 border-b border-black/5">
             <h1 className="hidden md:block text-2xl sm:text-3xl font-bold tracking-tight">Ask Śrīla Prabhupāda</h1>
             <p className="mt-1 sm:mt-2 text-[0.95rem] sm:text-base text-gray-700">
@@ -96,13 +141,8 @@ export default function Home() {
             </p>
           </div>
 
-          {/* Messages */}
+          {/* Messages — the ONLY scrollable area */}
           <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
-            {/* Example chip */}
-            <div className="inline-flex items-center">
-              <span className="rounded-full bg-orange-500 text-white px-4 py-2 text-sm">Bhagavad Gita Chapter 15 verse 1</span>
-            </div>
-
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 <div
@@ -115,15 +155,31 @@ export default function Home() {
                 >
                   <p>{m.text}</p>
 
-                  {"rows" in m && m.rows?.length ? (
+                  {/* Narrative answers: show Vedabase links only */}
+                  {"sources" in m && m.sources && m.sources.length > 0 ? (
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-sm text-gray-700">Sources (Vedabase)</summary>
+                      <ul className="mt-2 space-y-1 text-sm">
+                        {m.sources.map((s, j) => (
+                          <li key={j}>
+                            <a className="text-orange-600 hover:underline" href={s.url} target="_blank" rel="noopener noreferrer">
+                              {s.label}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+
+                  {/* Legacy fallback: only show cards if there is NO narrative */}
+                  {"rows" in m && m.rows?.length && !("sources" in m) ? (
                     <ul className="mt-3 space-y-3">
                       {m.rows.map((row, idx) => {
                         const label = row.verse_label ?? String(row.verse);
                         return (
                           <li key={idx} className="border rounded-lg p-3">
                             <div className="text-xs text-gray-600">
-                              {row.work} {row.chapter}.{label}
-                              {row.rank != null ? <> · score {(row.rank ?? 0).toFixed(3)}</> : null}
+                              {row.work} {row.chapter}.{label} · score {(row.rank ?? 0).toFixed(3)}
                             </div>
                             {row.translation && <p className="mt-1">{row.translation}</p>}
                             {row.purport && (
@@ -157,7 +213,7 @@ export default function Home() {
                 disabled={loading}
                 className="rounded-xl px-4 py-3 bg-orange-500 text-white font-medium hover:bg-orange-600 active:translate-y-[1px] shadow disabled:opacity-50"
               >
-                {loading ? "Searching…" : "Send"}
+                {loading ? "Thinking…" : "Send"}
               </button>
             </div>
             <p className="mt-2 text-xs text-gray-600">
@@ -167,7 +223,7 @@ export default function Home() {
         </section>
       </div>
 
-      {/* MOBILE SPLASH */}
+      {/* MOBILE-ONLY SPLASH */}
       {showSplash && (
         <div
           className="md:hidden fixed z-50 inset-x-0 bottom-0 top-16"
