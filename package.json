@@ -1,17 +1,17 @@
 {
-  "name": "nextjs",
+  "name": "ask-srila-prabhupada",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build --turbopack",
+    "build": "next build",
     "start": "next start",
     "ingest": "node scripts/ingest-bg.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "dayjs": "^1.11.18",
-    "dotenv": "^17.2.1",
+    "dotenv": "^16.4.5",
     "framer-motion": "^12.23.12",
     "googleapis": "^159.0.0",
     "next": "15.5.0",
@@ -23,12 +23,12 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.0.0"
   },
   "engines": {
     "node": ">=20.0.0",
