@@ -2,7 +2,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useRef, useState, FormEvent } from "react";
+import { useEffect, useRef, useState, FormEvent } from "react";
 
 /* ---------- Types (unchanged) ---------- */
 type Row = {
@@ -40,12 +40,14 @@ const HERO_IMAGES = [
 export default function Home() {
   /* Landing splash */
   const [showSplash, setShowSplash] = useState(true);
-  // pick a random hero on the client to avoid hydration mismatches
-  const heroSrc = useMemo(
-    () => HERO_IMAGES[Math.floor(Math.random() * HERO_IMAGES.length)],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [showSplash] // new random each visit to splash
-  );
+  // FIX 1: Start with null so Server and Client agree on the first render
+  const [heroSrc, setHeroSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Only pick the random image on the client after mount
+    const randomImg = HERO_IMAGES[Math.floor(Math.random() * HERO_IMAGES.length)];
+    setHeroSrc(randomImg);
+  }, [showSplash]);
 
   /* Chat + history */
   const [historyOpen, setHistoryOpen] = useState(true);
@@ -74,7 +76,6 @@ export default function Home() {
     setLoading(true);
 
     try {
-      // Prefer narrative endpoint; fall back to bare search if not found
       let r = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,7 +83,6 @@ export default function Home() {
       });
 
       if (r.status === 404) {
-        // Fallback to legacy search
         r = await fetch("/api/search", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -133,9 +133,9 @@ export default function Home() {
   }
 
   return (
-    <div className="h-[calc(100dvh-4rem)]"> {/* header is 4rem high in your layout */}
-      {/* ---------------- FULL-SCREEN LANDING (covers TopNav) ---------------- */}
-      {showSplash && (
+    <div className="h-[calc(100dvh-4rem)]">
+      {/* ---------------- FULL-SCREEN LANDING ---------------- */}
+      {showSplash && heroSrc && (
         <button
           type="button"
           aria-label="Enter"
@@ -165,7 +165,6 @@ export default function Home() {
           historyOpen ? "grid-cols-[260px_minmax(0,1fr)]" : "grid-cols-[0px_minmax(0,1fr)]",
         ].join(" ")}
       >
-        {/* History panel */}
         <aside
           className={[
             "overflow-hidden rounded-2xl bg-white/85 backdrop-blur border border-black/10 shadow-sm",
@@ -178,7 +177,6 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => {
-                  // start a new chat
                   setMessages([
                     { role: "assistant", text: "Hare Kṛṣṇa! Ask anything. Answers come directly from Vaiṣṇava literatures." },
                   ]);
@@ -199,12 +197,14 @@ export default function Home() {
           <div className="p-2">
             <div className="rounded-xl border border-black/10 bg-white/90 px-3 py-3 text-sm">
               <div className="font-medium">New chat</div>
-              <div className="mt-0.5 text-xs text-gray-600">{new Date().toLocaleDateString()}</div>
+              {/* FIX 2: Added suppressHydrationWarning to prevent date mismatch errors */}
+              <div className="mt-0.5 text-xs text-gray-600" suppressHydrationWarning>
+                {new Date().toLocaleDateString()}
+              </div>
             </div>
           </div>
         </aside>
 
-        {/* Chat column */}
         <section className="h-full min-h-0 flex flex-col rounded-3xl bg-white/85 backdrop-blur border border-black/5 shadow-xl">
           <div className="p-4 sm:p-6 border-b border-black/5">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Ask Śrīla Prabhupāda</h1>
@@ -213,7 +213,6 @@ export default function Home() {
             </p>
           </div>
 
-          {/* Messages — only scrollable area */}
           <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -226,8 +225,6 @@ export default function Home() {
                   ].join(" ")}
                 >
                   <p>{m.text}</p>
-
-                  {/* Narrative answers: show Vedabase links only */}
                   {"sources" in m && m.sources && m.sources.length > 0 ? (
                     <details className="mt-3">
                       <summary className="cursor-pointer text-sm text-gray-700">Sources (Vedabase)</summary>
@@ -247,8 +244,6 @@ export default function Home() {
                       </ul>
                     </details>
                   ) : null}
-
-                  {/* Legacy fallback: only show cards if there is NO narrative */}
                   {"rows" in m && m.rows?.length && !("sources" in m) ? (
                     <ul className="mt-3 space-y-3">
                       {m.rows.map((row, idx) => {
@@ -275,11 +270,9 @@ export default function Home() {
             ))}
           </div>
 
-          {/* Input */}
           <form onSubmit={onSend} className="p-3 sm:p-4 bg-white/80 backdrop-blur border-t border-black/5">
             <div className="flex items-center gap-2">
               <input
-                suppressHydrationWarning
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Type your question…"
@@ -300,7 +293,6 @@ export default function Home() {
         </section>
       </div>
 
-      {/* Floating opener when history is hidden */}
       {!historyOpen && !showSplash && (
         <button
           onClick={() => setHistoryOpen(true)}
