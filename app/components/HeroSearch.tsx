@@ -52,6 +52,9 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
         padding: heroVisible ? "80px clamp(20px, 4vw, 80px) 60px" : "80px 20px 20px",
         position: "relative",
         transition: "all 0.6s var(--ease-smooth)",
+        background: heroVisible
+          ? "linear-gradient(180deg, var(--bg-deepest) 0%, var(--bg-primary) 50%, var(--bg-elevated) 100%)"
+          : "var(--bg-primary)",
       }}
     >
       {/* Background glow */}
@@ -64,7 +67,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
             transform: "translate(-50%, -50%)",
             width: 800,
             height: 600,
-            background: "radial-gradient(ellipse, rgba(232,130,12,0.05) 0%, transparent 70%)",
+            background: "radial-gradient(ellipse, rgba(212,122,10,0.06) 0%, transparent 70%)",
             animation: "breathe 8s ease-in-out infinite",
             pointerEvents: "none",
           }}
@@ -93,8 +96,8 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               gap: 6,
               padding: "5px 14px 5px 8px",
               borderRadius: 100,
-              background: "rgba(232,130,12,0.08)",
-              border: "1px solid rgba(232,130,12,0.12)",
+              background: "rgba(212,122,10,0.08)",
+              border: "1px solid rgba(212,122,10,0.15)",
               marginBottom: 24,
             }}
           >
@@ -133,6 +136,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               letterSpacing: "-0.025em",
               lineHeight: 1.2,
               marginBottom: 16,
+              color: "var(--text-primary)",
             }}
           >
             Every answer from
@@ -196,19 +200,20 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               fontWeight: 400,
               border: "1.5px solid var(--border-medium)",
               borderRadius: 16,
-              background: "var(--bg-elevated)",
+              background: "var(--card-bg)",
               color: "var(--text-primary)",
               outline: "none",
               transition: "border-color 0.3s ease, box-shadow 0.3s ease",
+              boxShadow: "var(--card-shadow)",
             }}
             onFocus={(e) => {
               e.currentTarget.style.borderColor = "var(--saffron)";
               e.currentTarget.style.boxShadow =
-                "var(--shadow-medium), 0 0 0 4px rgba(232,130,12,0.1)";
+                "var(--shadow-medium), 0 0 0 4px rgba(212,122,10,0.08)";
             }}
             onBlur={(e) => {
               e.currentTarget.style.borderColor = "var(--border-medium)";
-              e.currentTarget.style.boxShadow = "none";
+              e.currentTarget.style.boxShadow = "var(--card-shadow)";
             }}
           />
           <button
@@ -245,11 +250,11 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           >
             {isSearching ? (
               <svg width="18" height="18" viewBox="0 0 24 24" style={{ animation: "rotate-mandala 1s linear infinite" }}>
-                <circle cx="12" cy="12" r="10" fill="none" stroke="#080E1A" strokeWidth="2" strokeDasharray="30 70" />
+                <circle cx="12" cy="12" r="10" fill="none" stroke="#fff" strokeWidth="2" strokeDasharray="30 70" />
               </svg>
             ) : (
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M5 12h14M12 5l7 7-7 7" stroke="#080E1A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M5 12h14M12 5l7 7-7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}
           </button>
@@ -278,86 +283,30 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
                   padding: "7px 16px",
                   borderRadius: 100,
                   border: "1px solid var(--border-medium)",
-                  background: "var(--bg-elevated)",
+                  background: "var(--card-bg)",
                   fontSize: "0.82rem",
                   fontWeight: 500,
                   color: "var(--text-secondary)",
                   cursor: "pointer",
                   transition: "all 0.2s ease",
                   whiteSpace: "nowrap",
+                  boxShadow: "var(--shadow-subtle)",
                 }}
                 onMouseEnter={(e) => {
                   e.currentTarget.style.borderColor = "var(--saffron)";
                   e.currentTarget.style.color = "var(--saffron)";
-                  e.currentTarget.style.background = "rgba(232,130,12,0.05)";
+                  e.currentTarget.style.background = "rgba(212,122,10,0.04)";
                   e.currentTarget.style.transform = "translateY(-2px)";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = "var(--border-medium)";
                   e.currentTarget.style.color = "var(--text-secondary)";
-                  e.currentTarget.style.background = "var(--bg-elevated)";
+                  e.currentTarget.style.background = "var(--card-bg)";
                   e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
                 ✦ {pill}
               </button>
-            ))}
-          </div>
-        )}
-
-        {/* Source Badges */}
-        {heroVisible && (
-          <div
-            className="animate-fade-in-up"
-            style={{
-              animationDelay: "0.95s",
-              display: "flex",
-              gap: 24,
-              justifyContent: "center",
-              marginTop: 48,
-              opacity: 0.4,
-            }}
-          >
-            {[
-              { name: "Bhagavad Gītā", count: "657 verses" },
-              { name: "Śrīmad Bhāgavatam", count: "13,004 verses" },
-              { name: "Caitanya Caritāmṛta", count: "11,359 verses" },
-            ].map((source) => (
-              <div
-                key={source.name}
-                style={{
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 4,
-                  transition: "opacity 0.3s ease",
-                }}
-                onMouseEnter={(e) => {
-                  (e.currentTarget.parentElement as HTMLElement).style.opacity = "0.7";
-                }}
-                onMouseLeave={(e) => {
-                  (e.currentTarget.parentElement as HTMLElement).style.opacity = "0.4";
-                }}
-              >
-                <span
-                  className="font-dm-sans"
-                  style={{
-                    fontSize: "0.68rem",
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.06em",
-                    color: "var(--text-primary)",
-                  }}
-                >
-                  {source.name}
-                </span>
-                <span
-                  className="font-dm-sans"
-                  style={{ fontSize: "0.62rem", color: "var(--text-muted)" }}
-                >
-                  {source.count}
-                </span>
-              </div>
             ))}
           </div>
         )}

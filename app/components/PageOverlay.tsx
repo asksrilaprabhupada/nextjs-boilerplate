@@ -41,7 +41,7 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
             position: "fixed",
             inset: 0,
             zIndex: 200,
-            background: "rgba(8, 14, 26, 0.6)",
+            background: "rgba(26, 26, 46, 0.3)",
             backdropFilter: "blur(8px)",
             WebkitBackdropFilter: "blur(8px)",
             display: "flex",
@@ -61,10 +61,11 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
               maxWidth: 560,
               maxHeight: "80vh",
               overflowY: "auto",
-              background: "var(--bg-elevated)",
+              background: "var(--card-bg)",
               borderRadius: 20,
               padding: 40,
               boxShadow: "var(--shadow-elevated)",
+              border: "1px solid var(--card-border)",
               position: "relative",
             }}
           >
@@ -79,8 +80,8 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
                 width: 36,
                 height: 36,
                 borderRadius: 10,
-                border: "none",
-                background: "rgba(255,248,240,0.04)",
+                border: "1px solid var(--border-subtle)",
+                background: "var(--bg-elevated)",
                 color: "var(--text-muted)",
                 cursor: "pointer",
                 display: "flex",
@@ -90,11 +91,11 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
                 transition: "all 0.2s ease",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = "rgba(255,248,240,0.08)";
+                e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text-primary)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "rgba(255,248,240,0.04)";
+                e.currentTarget.style.background = "var(--bg-elevated)";
                 e.currentTarget.style.color = "var(--text-muted)";
               }}
             >

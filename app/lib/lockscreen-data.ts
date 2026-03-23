@@ -4,48 +4,45 @@ export interface SlideImage {
   kenBurnsDirection: "zoom-in" | "pan-left" | "pan-right";
 }
 
+/**
+ * Local Śrīla Prabhupāda photos.
+ * Admin: upload images to public/images/lockscreen/ and update filenames here.
+ */
 export const slideshowImages: SlideImage[] = [
   {
-    url: "https://images.unsplash.com/photo-1609619385002-f40f1df827b8?w=1920&q=80",
-    alt: "Sacred temple at dawn",
+    url: "/images/lockscreen/prabhupada-1.jpg",
+    alt: "Śrīla Prabhupāda",
     kenBurnsDirection: "zoom-in",
   },
   {
-    url: "https://images.unsplash.com/photo-1544735716-392fe2489ffa?w=1920&q=80",
-    alt: "Temple architecture with warm light",
+    url: "/images/lockscreen/prabhupada-2.jpg",
+    alt: "Śrīla Prabhupāda teaching",
     kenBurnsDirection: "pan-left",
   },
   {
-    url: "https://images.unsplash.com/photo-1564804955013-e02ad9516046?w=1920&q=80",
-    alt: "Serene spiritual setting",
+    url: "/images/lockscreen/prabhupada-3.jpg",
+    alt: "Śrīla Prabhupāda with devotees",
     kenBurnsDirection: "pan-right",
   },
   {
-    url: "https://images.unsplash.com/photo-1604928141064-207cea6f571f?w=1920&q=80",
-    alt: "Temple spires at sunset",
+    url: "/images/lockscreen/prabhupada-4.jpg",
+    alt: "Śrīla Prabhupāda in Vṛndāvana",
     kenBurnsDirection: "zoom-in",
   },
   {
-    url: "https://images.unsplash.com/photo-1587135941948-670b381f08ce?w=1920&q=80",
-    alt: "Sacred river at dawn",
-    kenBurnsDirection: "pan-left",
-  },
-  {
-    url: "https://images.unsplash.com/photo-1590050752117-238cb0fb12b1?w=1920&q=80",
-    alt: "Ancient temple corridor",
-    kenBurnsDirection: "pan-right",
-  },
-  {
-    url: "https://images.unsplash.com/photo-1623070100956-0cbdfbd49a14?w=1920&q=80",
-    alt: "Spiritual landscape",
-    kenBurnsDirection: "zoom-in",
-  },
-  {
-    url: "https://images.unsplash.com/photo-1524492412937-b28074a5d7da?w=1920&q=80",
-    alt: "Majestic temple at twilight",
+    url: "/images/lockscreen/prabhupada-5.jpg",
+    alt: "Śrīla Prabhupāda chanting",
     kenBurnsDirection: "pan-left",
   },
 ];
+
+/**
+ * Optional video background for the lock screen.
+ * Admin: upload an mp4 to public/videos/lockscreen/ and set the path here.
+ * Set to null to use the photo slideshow instead.
+ */
+export const lockscreenVideo: string | null = null;
+// Example: export const lockscreenVideo = "/videos/lockscreen/prabhupada.mp4";
 
 export interface DailyVerse {
   text: string;

@@ -12,20 +12,22 @@ export default function ContactOverlay() {
     padding: "12px 16px",
     borderRadius: 12,
     border: "1.5px solid var(--border-medium)",
-    background: "var(--bg-primary)",
+    background: "var(--bg-deepest)",
     color: "var(--text-primary)",
     fontSize: "0.95rem",
     fontFamily: "'DM Sans', sans-serif",
     outline: "none",
-    transition: "border-color 0.3s ease",
+    transition: "border-color 0.3s ease, box-shadow 0.3s ease",
   };
 
   const handleFocus = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     e.currentTarget.style.borderColor = "var(--saffron)";
+    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(212,122,10,0.08)";
   };
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     e.currentTarget.style.borderColor = "var(--border-medium)";
+    e.currentTarget.style.boxShadow = "none";
   };
 
   return (
@@ -139,10 +141,12 @@ export default function ContactOverlay() {
             transition: "all 0.3s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255,248,240,0.12)";
+            e.currentTarget.style.background = "var(--saffron)";
+            e.currentTarget.style.color = "#fff";
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = "var(--bg-hover)";
+            e.currentTarget.style.color = "var(--text-primary)";
           }}
         >
           Send Message

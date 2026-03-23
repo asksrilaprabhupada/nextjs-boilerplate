@@ -55,7 +55,7 @@ export default function VerseDetailPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "var(--bg-primary)",
+          background: "var(--bg-deepest)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -80,7 +80,7 @@ export default function VerseDetailPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "var(--bg-primary)",
+          background: "var(--bg-deepest)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -128,7 +128,7 @@ export default function VerseDetailPage() {
     : [];
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-primary)" }}>
+    <div style={{ minHeight: "100vh", background: "var(--bg-deepest)" }}>
       <div
         style={{
           maxWidth: 680,
@@ -159,174 +159,185 @@ export default function VerseDetailPage() {
           ← Back to results
         </button>
 
-        {/* Scripture name */}
+        {/* Verse detail card */}
         <div
-          className="font-dm-sans"
           style={{
-            fontSize: "0.72rem",
-            fontWeight: 600,
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            color: "var(--text-muted)",
-            marginBottom: 8,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
+            background: "var(--card-bg)",
+            borderRadius: "var(--card-radius)",
+            border: "1px solid var(--card-border)",
+            boxShadow: "var(--card-shadow)",
+            padding: "32px clamp(20px, 3vw, 36px)",
           }}
         >
-          <span style={{ color: "var(--saffron)" }}>───</span>
-          {scriptureName}
-          <span style={{ color: "var(--saffron)" }}>───</span>
-        </div>
-
-        {/* Chapter and verse number */}
-        <h1
-          className="font-cormorant"
-          style={{
-            fontSize: "clamp(1.5rem, 3vw, 1.8rem)",
-            fontWeight: 600,
-            color: "var(--text-primary)",
-            marginBottom: 4,
-          }}
-        >
-          Chapter {cantoPrefix}{chapterNum}, Verse {verse.verse_number}
-        </h1>
-
-        {chapterTitle && (
-          <p
-            className="font-cormorant"
-            style={{
-              fontSize: "1rem",
-              fontStyle: "italic",
-              color: "var(--text-muted)",
-              marginBottom: 32,
-            }}
-          >
-            {chapterTitle}
-          </p>
-        )}
-
-        {/* Sanskrit */}
-        {verse.sanskrit_devanagari && (
+          {/* Scripture name */}
           <div
+            className="font-dm-sans"
             style={{
-              borderLeft: "3px solid var(--saffron)",
-              background: "rgba(232,130,12,0.04)",
-              padding: 20,
-              borderRadius: "0 12px 12px 0",
-              marginBottom: 24,
+              fontSize: "0.72rem",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+              marginBottom: 8,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
             }}
           >
-            <p
-              className="font-devanagari"
-              style={{
-                fontSize: "1.15rem",
-                lineHeight: 1.9,
-                fontWeight: 500,
-                color: "var(--text-primary)",
-              }}
-            >
-              {verse.sanskrit_devanagari}
-            </p>
+            <span style={{ color: "var(--saffron)" }}>───</span>
+            {scriptureName}
+            <span style={{ color: "var(--saffron)" }}>───</span>
           </div>
-        )}
 
-        {/* Transliteration */}
-        {verse.transliteration && (
-          <p
+          {/* Chapter and verse number */}
+          <h1
             className="font-cormorant"
             style={{
-              fontSize: "1rem",
-              fontStyle: "italic",
-              color: "var(--text-muted)",
-              lineHeight: 1.8,
-              marginBottom: 32,
+              fontSize: "clamp(1.5rem, 3vw, 1.8rem)",
+              fontWeight: 600,
+              color: "var(--text-primary)",
+              marginBottom: 4,
             }}
           >
-            {verse.transliteration}
-          </p>
-        )}
+            Chapter {cantoPrefix}{chapterNum}, Verse {verse.verse_number}
+          </h1>
 
-        {/* Synonyms */}
-        {synonymEntries.length > 0 && (
-          <div style={{ marginBottom: 32 }}>
-            <SectionLabel text="Synonyms" />
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-                gap: "8px 20px",
-                marginTop: 12,
-              }}
-            >
-              {synonymEntries.map((entry, i) => (
-                <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-                  <span
-                    className="font-devanagari"
-                    style={{
-                      fontSize: "0.88rem",
-                      fontWeight: 600,
-                      color: "var(--text-primary)",
-                    }}
-                  >
-                    {entry.term}
-                  </span>
-                  {entry.meaning && (
-                    <span
-                      className="font-cormorant"
-                      style={{ fontSize: "0.88rem", color: "var(--text-muted)" }}
-                    >
-                      — {entry.meaning}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Translation */}
-        {verse.translation && (
-          <div style={{ marginBottom: 32 }}>
-            <SectionLabel text="Translation" />
+          {chapterTitle && (
             <p
               className="font-cormorant"
               style={{
-                fontSize: "1.1rem",
-                fontWeight: 400,
+                fontSize: "1rem",
                 fontStyle: "italic",
-                lineHeight: 1.7,
-                color: "var(--text-primary)",
-                marginTop: 12,
+                color: "var(--text-muted)",
+                marginBottom: 32,
               }}
             >
-              &ldquo;{verse.translation}&rdquo;
+              {chapterTitle}
             </p>
-          </div>
-        )}
+          )}
 
-        {/* Purport */}
-        {verse.purport && (
-          <div style={{ marginBottom: 32 }}>
-            <SectionLabel text="Purport" />
+          {/* Sanskrit */}
+          {verse.sanskrit_devanagari && (
             <div
+              style={{
+                borderLeft: "3px solid var(--saffron)",
+                background: "var(--bg-elevated)",
+                padding: 20,
+                borderRadius: "0 12px 12px 0",
+                marginBottom: 24,
+              }}
+            >
+              <p
+                className="font-devanagari"
+                style={{
+                  fontSize: "1.15rem",
+                  lineHeight: 1.9,
+                  fontWeight: 500,
+                  color: "var(--text-primary)",
+                }}
+              >
+                {verse.sanskrit_devanagari}
+              </p>
+            </div>
+          )}
+
+          {/* Transliteration */}
+          {verse.transliteration && (
+            <p
               className="font-cormorant"
               style={{
-                fontSize: "0.98rem",
-                fontWeight: 400,
+                fontSize: "1rem",
+                fontStyle: "italic",
+                color: "var(--text-muted)",
                 lineHeight: 1.8,
-                color: "var(--text-secondary)",
-                marginTop: 12,
+                marginBottom: 32,
               }}
             >
-              {verse.purport.split("\n").map((paragraph, i) => (
-                <p key={i} style={{ marginBottom: paragraph.trim() ? 16 : 0 }}>
-                  {paragraph}
-                </p>
-              ))}
+              {verse.transliteration}
+            </p>
+          )}
+
+          {/* Synonyms */}
+          {synonymEntries.length > 0 && (
+            <div style={{ marginBottom: 32 }}>
+              <SectionLabel text="Synonyms" />
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                  gap: "8px 20px",
+                  marginTop: 12,
+                }}
+              >
+                {synonymEntries.map((entry, i) => (
+                  <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                    <span
+                      className="font-devanagari"
+                      style={{
+                        fontSize: "0.88rem",
+                        fontWeight: 600,
+                        color: "var(--text-primary)",
+                      }}
+                    >
+                      {entry.term}
+                    </span>
+                    {entry.meaning && (
+                      <span
+                        className="font-cormorant"
+                        style={{ fontSize: "0.88rem", color: "var(--text-muted)" }}
+                      >
+                        — {entry.meaning}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Translation */}
+          {verse.translation && (
+            <div style={{ marginBottom: 32 }}>
+              <SectionLabel text="Translation" />
+              <p
+                className="font-cormorant"
+                style={{
+                  fontSize: "1.1rem",
+                  fontWeight: 400,
+                  fontStyle: "italic",
+                  lineHeight: 1.7,
+                  color: "var(--text-primary)",
+                  marginTop: 12,
+                }}
+              >
+                &ldquo;{verse.translation}&rdquo;
+              </p>
+            </div>
+          )}
+
+          {/* Purport */}
+          {verse.purport && (
+            <div style={{ marginBottom: 32 }}>
+              <SectionLabel text="Purport" />
+              <div
+                className="font-cormorant"
+                style={{
+                  fontSize: "0.98rem",
+                  fontWeight: 400,
+                  lineHeight: 1.8,
+                  color: "var(--text-secondary)",
+                  marginTop: 12,
+                }}
+              >
+                {verse.purport.split("\n").map((paragraph, i) => (
+                  <p key={i} style={{ marginBottom: paragraph.trim() ? 16 : 0 }}>
+                    {paragraph}
+                  </p>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

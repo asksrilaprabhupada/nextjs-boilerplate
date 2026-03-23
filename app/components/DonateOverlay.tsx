@@ -1,6 +1,47 @@
 "use client";
 
+import { useState, useEffect } from "react";
+
+interface DonateData {
+  bankName: string;
+  accountName: string;
+  accountNumber: string;
+  ifscCode: string;
+  remark: string;
+  upiId: string;
+}
+
 export default function DonateOverlay() {
+  const [data, setData] = useState<DonateData | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/data/donate.json")
+      .then((res) => res.json())
+      .then((json) => setData(json))
+      .catch(() => {});
+  }, []);
+
+  const handleCopy = async (value: string, field: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(null), 1500);
+    } catch {
+      // clipboard API may fail in some contexts
+    }
+  };
+
+  const fields: { label: string; key: keyof DonateData }[] = [
+    { label: "Bank Name", key: "bankName" },
+    { label: "Account Name", key: "accountName" },
+    { label: "Account Number", key: "accountNumber" },
+    { label: "IFSC Code", key: "ifscCode" },
+    { label: "Remark", key: "remark" },
+    { label: "UPI ID", key: "upiId" },
+  ];
+
   return (
     <div>
       <h2
@@ -9,66 +50,138 @@ export default function DonateOverlay() {
           fontSize: "1.6rem",
           fontWeight: 500,
           color: "var(--text-primary)",
-          marginBottom: 20,
+          marginBottom: 8,
         }}
       >
         Support this project
       </h2>
-      <div
+      <p
         className="font-cormorant"
         style={{
-          fontSize: "1rem",
-          lineHeight: 1.8,
-          color: "var(--text-secondary)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-        }}
-      >
-        <p>
-          Ask Śrīla Prabhupāda is free, open source, and entirely volunteer-built. We believe
-          Śrīla Prabhupāda&apos;s teachings should be accessible to everyone, without barriers.
-        </p>
-        <p>
-          Your donations help cover server costs, API usage for scripture search, and
-          ongoing development to improve the platform for devotees worldwide.
-        </p>
-        <p>
-          Every contribution, no matter how small, helps keep this service running and
-          expanding to serve more devotees.
-        </p>
-      </div>
-      <button
-        className="font-dm-sans"
-        style={{
-          marginTop: 24,
-          padding: "14px 32px",
-          borderRadius: 12,
-          border: "none",
-          background: "var(--saffron)",
-          color: "#080E1A",
           fontSize: "0.95rem",
-          fontWeight: 600,
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          boxShadow: "var(--shadow-saffron-glow)",
-          transition: "all 0.3s ease",
-          width: "100%",
-          justifyContent: "center",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "var(--saffron-light)";
-          e.currentTarget.style.transform = "translateY(-2px)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "var(--saffron)";
-          e.currentTarget.style.transform = "translateY(0)";
+          lineHeight: 1.7,
+          color: "var(--text-muted)",
+          marginBottom: 24,
         }}
       >
-        Contribute
-      </button>
+        Your donations help cover server costs and ongoing development to serve devotees worldwide.
+      </p>
+
+      {/* Bank Details Card */}
+      <div
+        style={{
+          background: "var(--bg-deepest)",
+          borderRadius: "var(--card-radius)",
+          border: "1px solid var(--card-border)",
+          overflow: "hidden",
+          boxShadow: "var(--shadow-subtle)",
+        }}
+      >
+        {data &&
+          fields.map((field, i) => {
+            const value = data[field.key];
+            if (!value) return null;
+            return (
+              <div
+                key={field.key}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "14px 20px",
+                  borderBottom:
+                    i < fields.length - 1 ? "1px solid var(--border-subtle)" : "none",
+                  gap: 12,
+                }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    className="font-dm-sans"
+                    style={{
+                      fontSize: "0.68rem",
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: "var(--text-muted)",
+                      marginBottom: 2,
+                    }}
+                  >
+                    {field.label}
+                  </div>
+                  <div
+                    className="font-dm-sans"
+                    style={{
+                      fontSize: "0.92rem",
+                      fontWeight: 500,
+                      color: "var(--text-primary)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {value}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleCopy(value, field.key)}
+                  aria-label={`Copy ${field.label}`}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 8,
+                    border: "1px solid var(--border-medium)",
+                    background: copiedField === field.key ? "var(--saffron)" : "var(--card-bg)",
+                    color: copiedField === field.key ? "#fff" : "var(--text-muted)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                    transition: "all 0.2s ease",
+                    position: "relative",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (copiedField !== field.key) {
+                      e.currentTarget.style.borderColor = "var(--saffron)";
+                      e.currentTarget.style.color = "var(--saffron)";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (copiedField !== field.key) {
+                      e.currentTarget.style.borderColor = "var(--border-medium)";
+                      e.currentTarget.style.color = "var(--text-muted)";
+                    }
+                  }}
+                >
+                  {copiedField === field.key ? (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <path d="M5 13l4 4L19 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <rect x="9" y="9" width="13" height="13" rx="2" stroke="currentColor" strokeWidth="2" />
+                      <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" stroke="currentColor" strokeWidth="2" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            );
+          })}
+
+        {data && !Object.values(data).some((v) => v) && (
+          <div
+            className="font-cormorant"
+            style={{
+              padding: "32px 20px",
+              textAlign: "center",
+              color: "var(--text-muted)",
+              fontStyle: "italic",
+            }}
+          >
+            Bank details will be updated soon.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

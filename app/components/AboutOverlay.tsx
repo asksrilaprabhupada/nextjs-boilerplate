@@ -54,7 +54,16 @@ export default function AboutOverlay() {
             marginTop: 8,
           }}
         >
-          Open source on GitHub. Created and maintained by devotees.
+          Open source on{" "}
+          <a
+            href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--saffron)", textDecoration: "none" }}
+          >
+            GitHub
+          </a>
+          . Created and maintained by devotees.
         </p>
       </div>
     </div>
