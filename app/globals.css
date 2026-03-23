@@ -1,42 +1,58 @@
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:wght@300;400;500;600&family=Noto+Serif+Devanagari:wght@400;500;600&display=swap');
 
 @import "tailwindcss";
 
 /* ============================================================
-   AURORA DESIGN SYSTEM — Deep Twilight + Northern Lights
+   GARDEN DESIGN SYSTEM — Lavender Fields + Tulip Gardens
+   Light theme with glassmorphism
    ============================================================ */
 
 :root {
-  /* === Backgrounds (softened dark — NOT pure black) === */
-  --bg-deep: #0F0E1A;
-  --bg-surface: #161428;
-  --bg-card: #1C1936;
-  --bg-card-hover: #242044;
-  --bg-input: #13112266;
+  /* === Backgrounds (warm whites + lavender tints) === */
+  --bg-deep: #FDFBFF;
+  --bg-surface: #F5F0FF;
+  --bg-card: rgba(255, 255, 255, 0.55);
+  --bg-card-hover: rgba(255, 255, 255, 0.75);
+  --bg-input: rgba(255, 255, 255, 0.65);
 
-  /* === Aurora gradient colors === */
+  /* === Garden palette === */
+  --garden-lavender: #C4B5FD;
+  --garden-violet: #8B5CF6;
+  --garden-deep-violet: #7C3AED;
+  --garden-rose: #FDA4AF;
+  --garden-blush: #FBCFE8;
+  --garden-sage: #BBF7D0;
+  --garden-gold: #FDE68A;
+
+  /* === Legacy aurora aliases (for components that reference them) === */
   --aurora-violet: #8B5CF6;
-  --aurora-purple: #A855F7;
-  --aurora-fuchsia: #D946EF;
-  --aurora-pink: #EC4899;
-  --aurora-teal: #2DD4BF;
-  --aurora-cyan: #22D3EE;
+  --aurora-purple: #7C3AED;
+  --aurora-fuchsia: #A855F7;
+  --aurora-pink: #F9A8D4;
+  --aurora-teal: #7C3AED;
+  --aurora-cyan: #818CF8;
   --aurora-indigo: #6366F1;
 
-  /* === Text === */
-  --text-primary: #F0EEF8;
-  --text-secondary: #A8A3C0;
-  --text-muted: #6B6588;
+  /* === Text (dark on light) === */
+  --text-primary: #1E1B4B;
+  --text-secondary: #4B5563;
+  --text-muted: #9CA3AF;
 
   /* === Borders === */
-  --border-subtle: rgba(139, 92, 246, 0.12);
-  --border-glow: rgba(139, 92, 246, 0.25);
+  --border-subtle: rgba(196, 181, 253, 0.25);
+  --border-glow: rgba(139, 92, 246, 0.20);
 
   /* === Semantic === */
-  --success: #2DD4BF;
-  --warning: #FBBF24;
-  --error: #F87171;
-  --info: #22D3EE;
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  --info: #6366F1;
+
+  /* === Glassmorphism === */
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-blur: 20px;
+  --glass-shadow: 0 8px 32px rgba(139, 92, 246, 0.08);
 
   /* === Transitions === */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -63,7 +79,7 @@ body {
 
 /* Font families */
 .font-display {
-  font-family: 'Instrument Serif', serif;
+  font-family: 'Cormorant Garamond', serif;
 }
 
 .font-body {
@@ -84,17 +100,17 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.2);
+  background: rgba(196, 181, 253, 0.4);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.35);
+  background: rgba(139, 92, 246, 0.5);
 }
 
 /* Selection */
 ::selection {
-  background: rgba(139, 92, 246, 0.25);
+  background: rgba(196, 181, 253, 0.3);
   color: var(--text-primary);
 }
 
@@ -102,21 +118,40 @@ body {
    ANIMATIONS
    ============================================================ */
 
-@keyframes auroraShift {
+@keyframes gardenDrift {
   0% {
-    transform: translate(0, 0) rotate(0deg) scale(1);
+    transform: translate(0, 0) scale(1);
   }
   25% {
-    transform: translate(10px, -15px) rotate(0.5deg) scale(1.02);
+    transform: translate(15px, -10px) scale(1.03);
   }
   50% {
-    transform: translate(-5px, 10px) rotate(-1deg) scale(0.97);
+    transform: translate(-10px, 15px) scale(0.97);
   }
   75% {
-    transform: translate(-10px, -5px) rotate(1.5deg) scale(1.03);
+    transform: translate(-15px, -5px) scale(1.02);
   }
   100% {
-    transform: translate(0, 0) rotate(0deg) scale(1);
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+/* Keep old name as alias */
+@keyframes auroraShift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  25% {
+    transform: translate(15px, -10px) scale(1.03);
+  }
+  50% {
+    transform: translate(-10px, 15px) scale(0.97);
+  }
+  75% {
+    transform: translate(-15px, -5px) scale(1.02);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
   }
 }
 
@@ -178,38 +213,46 @@ body {
 }
 
 /* ============================================================
-   CARD SYSTEM
+   GLASSMORPHISM CARD SYSTEM
    ============================================================ */
 
-.aurora-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
+.aurora-card,
+.glass-card {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  border: 1px solid var(--glass-border);
   border-radius: 20px;
   padding: 32px;
   position: relative;
   overflow: hidden;
+  box-shadow: var(--glass-shadow);
   transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.aurora-card::before {
+.aurora-card::before,
+.glass-card::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--aurora-violet), var(--aurora-teal), transparent);
+  background: linear-gradient(90deg, transparent, var(--garden-lavender), var(--garden-rose), transparent);
   opacity: 0;
   transition: opacity 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.aurora-card:hover {
+.aurora-card:hover,
+.glass-card:hover {
   background: var(--bg-card-hover);
   border-color: var(--border-glow);
-  transform: translateY(-4px);
+  box-shadow: 0 12px 40px rgba(139, 92, 246, 0.12);
+  transform: translateY(-3px);
 }
 
-.aurora-card:hover::before {
+.aurora-card:hover::before,
+.glass-card:hover::before {
   opacity: 1;
 }
 
@@ -221,7 +264,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(135deg, var(--aurora-violet), var(--aurora-fuchsia));
+  background: linear-gradient(135deg, var(--garden-violet), var(--garden-deep-violet));
   color: white;
   border: none;
   border-radius: 100px;
@@ -239,7 +282,7 @@ body {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, var(--aurora-fuchsia), var(--aurora-teal));
+  background: linear-gradient(135deg, var(--garden-deep-violet), var(--aurora-indigo));
   opacity: 0;
   transition: opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1);
   border-radius: 100px;
@@ -247,7 +290,7 @@ body {
 
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 30px rgba(139, 92, 246, 0.3);
+  box-shadow: 0 8px 30px rgba(139, 92, 246, 0.25);
 }
 
 .btn-primary:hover::before {
@@ -263,7 +306,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: transparent;
+  background: rgba(255, 255, 255, 0.6);
   color: var(--text-primary);
   border: 1px solid var(--border-glow);
   border-radius: 100px;
@@ -272,13 +315,16 @@ body {
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .btn-ghost:hover {
-  border-color: var(--aurora-violet);
+  border-color: var(--garden-violet);
   background: rgba(139, 92, 246, 0.08);
   transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(139, 92, 246, 0.1);
 }
 
 /* ============================================================
@@ -288,10 +334,10 @@ body {
 .section-label {
   font-family: 'DM Sans', sans-serif;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.15em;
-  color: var(--aurora-teal);
+  color: var(--garden-violet);
   margin-bottom: 16px;
 }
 
@@ -300,7 +346,7 @@ body {
    ============================================================ */
 
 .gradient-text {
-  background: linear-gradient(135deg, var(--aurora-violet) 0%, var(--aurora-teal) 40%, var(--aurora-pink) 70%, var(--aurora-cyan) 100%);
+  background: linear-gradient(135deg, var(--garden-violet) 0%, #6366F1 40%, var(--garden-deep-violet) 70%, #818CF8 100%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;

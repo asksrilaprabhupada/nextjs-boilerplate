@@ -65,8 +65,8 @@ export default function VerseDetailPage() {
             width: 40,
             height: 40,
             borderRadius: "50%",
-            border: "2px solid var(--border-subtle)",
-            borderTopColor: "var(--aurora-violet)",
+            border: "2px solid rgba(196, 181, 253, 0.3)",
+            borderTopColor: "#8B5CF6",
             animation: "spin 0.8s linear infinite",
           }}
         />
@@ -86,7 +86,7 @@ export default function VerseDetailPage() {
           gap: 16,
         }}
       >
-        <p className="font-display" style={{ fontSize: "1.2rem", color: "var(--text-muted)" }}>
+        <p className="font-display" style={{ fontSize: "1.2rem", color: "#9CA3AF" }}>
           Verse not found
         </p>
         <Link
@@ -94,7 +94,7 @@ export default function VerseDetailPage() {
           className="font-body"
           style={{
             fontSize: 14,
-            color: "var(--aurora-violet)",
+            color: "#8B5CF6",
             textDecoration: "none",
             fontWeight: 500,
           }}
@@ -113,7 +113,7 @@ export default function VerseDetailPage() {
 
   const synonymEntries = verse.synonyms
     ? verse.synonyms.split(";").map((entry) => {
-        const parts = entry.trim().split("—");
+        const parts = entry.trim().split("\u2014");
         if (parts.length < 2) {
           const dashParts = entry.trim().split("-");
           if (dashParts.length >= 2) {
@@ -121,7 +121,7 @@ export default function VerseDetailPage() {
           }
           return { term: entry.trim(), meaning: "" };
         }
-        return { term: parts[0].trim(), meaning: parts.slice(1).join("—").trim() };
+        return { term: parts[0].trim(), meaning: parts.slice(1).join("\u2014").trim() };
       })
     : [];
 
@@ -148,7 +148,7 @@ export default function VerseDetailPage() {
           style={{
             fontSize: 14,
             fontWeight: 500,
-            color: "var(--aurora-violet)",
+            color: "#8B5CF6",
             background: "none",
             border: "none",
             cursor: "pointer",
@@ -175,16 +175,16 @@ export default function VerseDetailPage() {
               fontWeight: 500,
               textTransform: "uppercase",
               letterSpacing: "0.12em",
-              color: "var(--text-muted)",
+              color: "#9CA3AF",
               marginBottom: 8,
               display: "flex",
               alignItems: "center",
               gap: 8,
             }}
           >
-            <span style={{ color: "var(--aurora-violet)", opacity: 0.4 }}>───</span>
+            <span style={{ color: "#C4B5FD", opacity: 0.6 }}>&mdash;&mdash;&mdash;</span>
             {scriptureName}
-            <span style={{ color: "var(--aurora-violet)", opacity: 0.4 }}>───</span>
+            <span style={{ color: "#C4B5FD", opacity: 0.6 }}>&mdash;&mdash;&mdash;</span>
           </div>
 
           {/* Chapter and verse number */}
@@ -192,8 +192,8 @@ export default function VerseDetailPage() {
             className="font-display"
             style={{
               fontSize: "clamp(1.4rem, 3vw, 1.7rem)",
-              fontWeight: 400,
-              color: "var(--text-primary)",
+              fontWeight: 600,
+              color: "#1E1B4B",
               marginBottom: 4,
               letterSpacing: "-0.02em",
             }}
@@ -207,7 +207,7 @@ export default function VerseDetailPage() {
               style={{
                 fontSize: "1rem",
                 fontStyle: "italic",
-                color: "var(--text-muted)",
+                color: "#9CA3AF",
                 marginBottom: 32,
               }}
             >
@@ -219,8 +219,8 @@ export default function VerseDetailPage() {
           {verse.sanskrit_devanagari && (
             <div
               style={{
-                borderLeft: "3px solid var(--aurora-violet)",
-                background: "rgba(139, 92, 246, 0.06)",
+                borderLeft: "3px solid #8B5CF6",
+                background: "rgba(139, 92, 246, 0.04)",
                 padding: 20,
                 borderRadius: "0 14px 14px 0",
                 marginBottom: 24,
@@ -232,7 +232,7 @@ export default function VerseDetailPage() {
                   fontSize: "1.15rem",
                   lineHeight: 1.9,
                   fontWeight: 500,
-                  color: "var(--text-primary)",
+                  color: "#1E1B4B",
                 }}
               >
                 {verse.sanskrit_devanagari}
@@ -247,7 +247,7 @@ export default function VerseDetailPage() {
               style={{
                 fontSize: "1rem",
                 fontStyle: "italic",
-                color: "var(--text-muted)",
+                color: "#9CA3AF",
                 lineHeight: 1.8,
                 marginBottom: 32,
               }}
@@ -275,7 +275,7 @@ export default function VerseDetailPage() {
                         fontFamily: "'Noto Serif Devanagari', serif",
                         fontSize: "0.88rem",
                         fontWeight: 600,
-                        color: "var(--text-primary)",
+                        color: "#1E1B4B",
                       }}
                     >
                       {entry.term}
@@ -283,7 +283,7 @@ export default function VerseDetailPage() {
                     {entry.meaning && (
                       <span
                         className="font-body"
-                        style={{ fontSize: "0.88rem", color: "var(--text-muted)" }}
+                        style={{ fontSize: "0.88rem", color: "#9CA3AF" }}
                       >
                         — {entry.meaning}
                       </span>
@@ -305,7 +305,7 @@ export default function VerseDetailPage() {
                   fontWeight: 400,
                   fontStyle: "italic",
                   lineHeight: 1.7,
-                  color: "var(--text-primary)",
+                  color: "#1E1B4B",
                   marginTop: 12,
                 }}
               >
@@ -322,9 +322,9 @@ export default function VerseDetailPage() {
                 className="font-body"
                 style={{
                   fontSize: 15,
-                  fontWeight: 300,
+                  fontWeight: 400,
                   lineHeight: 1.8,
-                  color: "var(--text-secondary)",
+                  color: "#4B5563",
                   marginTop: 12,
                 }}
               >
@@ -349,7 +349,7 @@ function SectionLabel({ text }: { text: string }) {
         style={{
           width: 20,
           height: 2,
-          background: "var(--aurora-violet)",
+          background: "#8B5CF6",
           borderRadius: 1,
           opacity: 0.5,
         }}
@@ -361,7 +361,7 @@ function SectionLabel({ text }: { text: string }) {
           fontWeight: 500,
           textTransform: "uppercase",
           letterSpacing: "0.12em",
-          color: "var(--text-muted)",
+          color: "#9CA3AF",
         }}
       >
         {text}

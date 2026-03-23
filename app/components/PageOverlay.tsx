@@ -41,7 +41,7 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
             position: "fixed",
             inset: 0,
             zIndex: 200,
-            background: "rgba(15, 14, 26, 0.6)",
+            background: "rgba(30, 27, 75, 0.2)",
             backdropFilter: "blur(12px)",
             WebkitBackdropFilter: "blur(12px)",
             display: "flex",
@@ -61,13 +61,13 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
               maxWidth: 560,
               maxHeight: "80vh",
               overflowY: "auto",
-              background: "var(--bg-card)",
+              background: "rgba(255, 255, 255, 0.85)",
               backdropFilter: "blur(24px)",
               WebkitBackdropFilter: "blur(24px)",
               borderRadius: 22,
               padding: 40,
-              boxShadow: "0 24px 80px rgba(0,0,0,0.4)",
-              border: "1px solid var(--border-subtle)",
+              boxShadow: "0 24px 80px rgba(139, 92, 246, 0.12), 0 8px 32px rgba(0,0,0,0.06)",
+              border: "1px solid rgba(255, 255, 255, 0.7)",
               position: "relative",
             }}
           >
@@ -82,9 +82,9 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
                 width: 36,
                 height: 36,
                 borderRadius: 10,
-                border: "1px solid var(--border-subtle)",
-                background: "var(--bg-surface)",
-                color: "var(--text-muted)",
+                border: "1px solid rgba(196, 181, 253, 0.25)",
+                background: "rgba(255, 255, 255, 0.6)",
+                color: "#9CA3AF",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -93,14 +93,14 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
                 transition: "all 0.3s ease",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-card-hover)";
-                e.currentTarget.style.color = "var(--text-primary)";
-                e.currentTarget.style.borderColor = "var(--border-glow)";
+                e.currentTarget.style.background = "rgba(139, 92, 246, 0.08)";
+                e.currentTarget.style.color = "#1E1B4B";
+                e.currentTarget.style.borderColor = "rgba(139, 92, 246, 0.2)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "var(--bg-surface)";
-                e.currentTarget.style.color = "var(--text-muted)";
-                e.currentTarget.style.borderColor = "var(--border-subtle)";
+                e.currentTarget.style.background = "rgba(255, 255, 255, 0.6)";
+                e.currentTarget.style.color = "#9CA3AF";
+                e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.25)";
               }}
             >
               ✕

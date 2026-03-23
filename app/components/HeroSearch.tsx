@@ -67,19 +67,19 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
         overflow: "hidden",
       }}
     >
-      {/* Floating blurred orb behind content */}
+      {/* Soft lavender glow behind content */}
       {heroVisible && (
         <div
           style={{
             position: "absolute",
-            top: "30%",
+            top: "25%",
             left: "50%",
             transform: "translateX(-50%)",
-            width: 500,
-            height: 500,
+            width: 600,
+            height: 600,
             borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(139,92,246,0.2) 0%, rgba(217,70,239,0.1) 40%, rgba(45,212,191,0.05) 70%, transparent 100%)",
-            filter: "blur(60px)",
+            background: "radial-gradient(circle, rgba(196,181,253,0.20) 0%, rgba(253,164,175,0.10) 40%, rgba(187,247,208,0.05) 70%, transparent 100%)",
+            filter: "blur(80px)",
             animation: "floatOrb 20s ease-in-out infinite",
             pointerEvents: "none",
           }}
@@ -108,8 +108,8 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               gap: 8,
               padding: "6px 16px 6px 10px",
               borderRadius: 100,
-              background: "rgba(139,92,246,0.1)",
-              border: "1px solid rgba(139,92,246,0.2)",
+              background: "rgba(139,92,246,0.08)",
+              border: "1px solid rgba(196,181,253,0.3)",
               marginBottom: 32,
             }}
           >
@@ -118,17 +118,17 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
                 width: 7,
                 height: 7,
                 borderRadius: "50%",
-                background: "var(--aurora-teal)",
+                background: "#8B5CF6",
                 animation: "pulseDot 2.5s ease-in-out infinite",
               }}
             />
             <span
               style={{
                 fontSize: 12,
-                fontWeight: 500,
+                fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: "0.15em",
-                color: "var(--aurora-teal)",
+                color: "#7C3AED",
               }}
             >
               Scripture-grounded answers
@@ -136,19 +136,19 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </div>
         )}
 
-        {/* Hero Headline — Instrument Serif */}
+        {/* Hero Headline — Cormorant Garamond */}
         {heroVisible && (
           <h1
             className="font-display"
             style={{
               ...stagger(1),
               fontSize: "clamp(48px, 7vw, 88px)",
-              fontWeight: 400,
+              fontWeight: 600,
               textAlign: "center",
               letterSpacing: "-0.03em",
               lineHeight: 1.05,
               marginBottom: 24,
-              color: "var(--text-primary)",
+              color: "#1E1B4B",
             }}
           >
             Every answer from
@@ -160,15 +160,15 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </h1>
         )}
 
-        {/* Subtitle — DM Sans 300 */}
+        {/* Subtitle */}
         {heroVisible && (
           <p
             className="font-body"
             style={{
               ...stagger(2),
               fontSize: "clamp(16px, 1.8vw, 17px)",
-              fontWeight: 300,
-              color: "var(--text-secondary)",
+              fontWeight: 400,
+              color: "#4B5563",
               textAlign: "center",
               maxWidth: 540,
               lineHeight: 1.7,
@@ -209,7 +209,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </div>
         )}
 
-        {/* Search Input */}
+        {/* Search Input — glassmorphism */}
         <form
           onSubmit={handleSubmit}
           style={{
@@ -239,22 +239,23 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               padding: "16px 54px 16px 22px",
               fontSize: 16,
               fontWeight: 400,
-              border: "1px solid var(--border-subtle)",
+              border: "1px solid rgba(196, 181, 253, 0.3)",
               borderRadius: 14,
-              background: "var(--bg-input)",
+              background: "rgba(255, 255, 255, 0.70)",
               backdropFilter: "blur(20px)",
               WebkitBackdropFilter: "blur(20px)",
-              color: "var(--text-primary)",
+              color: "#1E1B4B",
               outline: "none",
               transition: "border-color 0.3s ease, box-shadow 0.3s ease",
+              boxShadow: "0 4px 24px rgba(139, 92, 246, 0.06)",
             }}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = "var(--aurora-violet)";
-              e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.15)";
+              e.currentTarget.style.borderColor = "#8B5CF6";
+              e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.12), 0 4px 24px rgba(139,92,246,0.06)";
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = "var(--border-subtle)";
-              e.currentTarget.style.boxShadow = "none";
+              e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.3)";
+              e.currentTarget.style.boxShadow = "0 4px 24px rgba(139, 92, 246, 0.06)";
             }}
           />
           <button
@@ -269,7 +270,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               width: 38,
               height: 38,
               borderRadius: 10,
-              background: "linear-gradient(135deg, var(--aurora-violet), var(--aurora-fuchsia))",
+              background: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
               border: "none",
               cursor: query.trim() ? "pointer" : "default",
               display: "flex",
@@ -281,7 +282,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
             onMouseEnter={(e) => {
               if (query.trim()) {
                 e.currentTarget.style.transform = "translateY(-50%) scale(1.06)";
-                e.currentTarget.style.boxShadow = "0 4px 24px rgba(139,92,246,0.3)";
+                e.currentTarget.style.boxShadow = "0 4px 24px rgba(139,92,246,0.25)";
               }
             }}
             onMouseLeave={(e) => {
@@ -322,25 +323,27 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
                 style={{
                   padding: "7px 16px",
                   borderRadius: 100,
-                  border: "1px solid var(--border-subtle)",
-                  background: "transparent",
+                  border: "1px solid rgba(196, 181, 253, 0.3)",
+                  background: "rgba(255, 255, 255, 0.5)",
                   fontSize: 13,
                   fontWeight: 400,
-                  color: "var(--text-muted)",
+                  color: "#6B7280",
                   cursor: "pointer",
                   transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)",
                   whiteSpace: "nowrap",
+                  backdropFilter: "blur(10px)",
+                  WebkitBackdropFilter: "blur(10px)",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "var(--aurora-violet)";
-                  e.currentTarget.style.color = "var(--text-primary)";
+                  e.currentTarget.style.borderColor = "#C4B5FD";
+                  e.currentTarget.style.color = "#7C3AED";
                   e.currentTarget.style.background = "rgba(139,92,246,0.08)";
                   e.currentTarget.style.transform = "translateY(-2px)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "var(--border-subtle)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.background = "transparent";
+                  e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.3)";
+                  e.currentTarget.style.color = "#6B7280";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.5)";
                   e.currentTarget.style.transform = "translateY(0)";
                 }}
               >

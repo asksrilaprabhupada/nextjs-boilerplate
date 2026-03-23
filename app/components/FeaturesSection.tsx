@@ -10,7 +10,8 @@ const features = [
         <path d="m21 21-4.3-4.3" />
       </svg>
     ),
-    color: "var(--aurora-violet)",
+    color: "#8B5CF6",
+    bgTint: "rgba(139, 92, 246, 0.10)",
     title: "Verse-Level Search",
     description: "Search across 25,020 verses from three scriptures. Every result maps directly to an original verse.",
     span: false,
@@ -21,7 +22,8 @@ const features = [
         <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
       </svg>
     ),
-    color: "var(--aurora-teal)",
+    color: "#7C3AED",
+    bgTint: "rgba(124, 58, 237, 0.10)",
     title: "Three Scriptures United",
     description: "Bhagavad Gītā, Śrīmad Bhāgavatam, and Caitanya Caritāmṛta — all searchable from one interface.",
     span: true,
@@ -33,7 +35,8 @@ const features = [
         <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
       </svg>
     ),
-    color: "var(--aurora-fuchsia)",
+    color: "#A855F7",
+    bgTint: "rgba(168, 85, 247, 0.10)",
     title: "Prabhupāda's Purports",
     description: "Access the complete commentary and purports by His Divine Grace for every verse in the database.",
     span: false,
@@ -44,7 +47,8 @@ const features = [
         <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
       </svg>
     ),
-    color: "var(--aurora-cyan)",
+    color: "#6366F1",
+    bgTint: "rgba(99, 102, 241, 0.10)",
     title: "Narrative Responses",
     description: "Receive answers woven together from scripture — not just raw results, but contextual narratives connecting the verses.",
     span: true,
@@ -57,7 +61,8 @@ const features = [
         <path d="M9 21V9" />
       </svg>
     ),
-    color: "var(--aurora-pink)",
+    color: "#8B5CF6",
+    bgTint: "rgba(139, 92, 246, 0.10)",
     title: "Layered Exploration",
     description: "Go deeper with progressive scripture layers — each level reveals more verses and commentary.",
     span: false,
@@ -68,7 +73,8 @@ const features = [
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10" />
       </svg>
     ),
-    color: "var(--aurora-indigo)",
+    color: "#6366F1",
+    bgTint: "rgba(99, 102, 241, 0.10)",
     title: "Open Source",
     description: "Built with Next.js, TypeScript, and Supabase. Fully open source — inspect, contribute, or self-host.",
     span: false,
@@ -106,6 +112,8 @@ export default function FeaturesSection() {
         padding: "100px clamp(20px, 5vw, 80px)",
         maxWidth: 1200,
         margin: "0 auto",
+        background: "rgba(245, 240, 255, 0.4)",
+        borderRadius: 0,
       }}
     >
       <div className="scroll-reveal" style={{ textAlign: "center", marginBottom: 60 }}>
@@ -114,10 +122,10 @@ export default function FeaturesSection() {
           className="font-display"
           style={{
             fontSize: "clamp(32px, 4vw, 52px)",
-            fontWeight: 400,
+            fontWeight: 600,
             lineHeight: 1.15,
             letterSpacing: "-0.02em",
-            color: "var(--text-primary)",
+            color: "#1E1B4B",
           }}
         >
           Everything you need to <span className="gradient-text">explore scripture</span>
@@ -145,7 +153,7 @@ export default function FeaturesSection() {
                 width: 48,
                 height: 48,
                 borderRadius: 14,
-                background: `color-mix(in srgb, ${f.color} 12%, transparent)`,
+                background: f.bgTint,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -160,7 +168,7 @@ export default function FeaturesSection() {
               style={{
                 fontSize: 19,
                 fontWeight: 500,
-                color: "var(--text-primary)",
+                color: "#1E1B4B",
                 marginBottom: 10,
               }}
             >
@@ -170,9 +178,9 @@ export default function FeaturesSection() {
               className="font-body"
               style={{
                 fontSize: 16,
-                fontWeight: 300,
+                fontWeight: 400,
                 lineHeight: 1.7,
-                color: "var(--text-secondary)",
+                color: "#4B5563",
               }}
             >
               {f.description}

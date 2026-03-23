@@ -48,8 +48,8 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
             width: 40,
             height: 40,
             borderRadius: "50%",
-            border: "2px solid var(--border-subtle)",
-            borderTopColor: "var(--aurora-violet)",
+            border: "2px solid rgba(196, 181, 253, 0.3)",
+            borderTopColor: "#8B5CF6",
             animation: "spin 0.8s linear infinite",
           }}
         />
@@ -58,7 +58,7 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
           style={{
             fontSize: "1.05rem",
             fontStyle: "italic",
-            color: "var(--text-muted)",
+            color: "#9CA3AF",
           }}
         >
           Searching through the scriptures...

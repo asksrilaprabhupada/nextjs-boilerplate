@@ -21,7 +21,7 @@ export default function GoDeeper({ transitionText, onClick }: GoDeeperProps) {
           width: "100%",
           maxWidth: 200,
           height: 1,
-          background: "var(--border-subtle)",
+          background: "rgba(196, 181, 253, 0.3)",
         }}
       />
       <p
@@ -29,7 +29,7 @@ export default function GoDeeper({ transitionText, onClick }: GoDeeperProps) {
         style={{
           fontSize: "1.02rem",
           fontStyle: "italic",
-          color: "var(--text-muted)",
+          color: "#9CA3AF",
           textAlign: "center",
           maxWidth: 480,
           lineHeight: 1.6,

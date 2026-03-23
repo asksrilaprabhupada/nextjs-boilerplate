@@ -128,12 +128,12 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         </>
       )}
 
-      {/* Dark gradient overlay */}
+      {/* Warm light gradient overlay — lavender tinted */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: `linear-gradient(to top, rgba(15,14,26,0.95) 0%, rgba(15,14,26,0.6) 30%, rgba(15,14,26,0.3) 55%, rgba(15,14,26,0.15) 100%)`,
+          background: `linear-gradient(to top, rgba(30,27,75,0.85) 0%, rgba(30,27,75,0.5) 30%, rgba(139,92,246,0.15) 55%, rgba(196,181,253,0.10) 100%)`,
         }}
       />
 
@@ -146,10 +146,10 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           left: "50%",
           width: "min(75vw, 550px)",
           height: "min(75vw, 550px)",
-          opacity: 0.04,
+          opacity: 0.06,
           animation: "rotate-mandala 120s linear infinite",
           pointerEvents: "none",
-          color: "var(--aurora-violet)",
+          color: "#C4B5FD",
           transform: "translate(-50%, -50%)",
         }}
       >
@@ -188,7 +188,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
             fontSize: "clamp(0.95rem, 2vw, 1.28rem)",
             fontWeight: 400,
             fontStyle: "italic",
-            color: "rgba(240,238,248,0.7)",
+            color: "rgba(255,255,255,0.8)",
             maxWidth: 500,
             textAlign: "center",
             lineHeight: 1.75,
@@ -204,7 +204,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           style={{
             fontSize: 13,
             fontWeight: 500,
-            color: "rgba(139,92,246,0.7)",
+            color: "rgba(196,181,253,0.8)",
             marginTop: 14,
             letterSpacing: "0.04em",
           }}
@@ -227,7 +227,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
               width: 36,
               height: 36,
               borderRadius: "50%",
-              border: "1px solid rgba(240,238,248,0.15)",
+              border: "1px solid rgba(255,255,255,0.2)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -235,7 +235,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
             }}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: "rotate(180deg)" }}>
-              <path d="M8 12V4M4 8l4-4 4 4" stroke="rgba(240,238,248,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M8 12V4M4 8l4-4 4 4" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <span
@@ -245,7 +245,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
               fontWeight: 500,
               textTransform: "uppercase",
               letterSpacing: "0.14em",
-              color: "rgba(240,238,248,0.25)",
+              color: "rgba(255,255,255,0.3)",
             }}
           >
             Click anywhere to enter
