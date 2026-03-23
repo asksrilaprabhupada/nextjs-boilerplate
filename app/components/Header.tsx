@@ -30,17 +30,20 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         right: 0,
         zIndex: 100,
         height: 60,
-        background: scrolled ? "rgba(253, 251, 255, 0.75)" : "rgba(253, 251, 255, 0.5)",
+        background: scrolled
+          ? "linear-gradient(120deg, rgba(255, 248, 252, 0.92), rgba(246, 238, 255, 0.88) 52%, rgba(255, 241, 238, 0.88))"
+          : "linear-gradient(120deg, rgba(255, 248, 252, 0.75), rgba(246, 238, 255, 0.70) 52%, rgba(255, 241, 238, 0.68))",
         backdropFilter: "blur(20px) saturate(1.3)",
         WebkitBackdropFilter: "blur(20px) saturate(1.3)",
         borderBottom: scrolled
-          ? "1px solid rgba(196, 181, 253, 0.2)"
-          : "1px solid transparent",
+          ? "1px solid rgba(214, 195, 255, 0.55)"
+          : "1px solid rgba(255, 255, 255, 0)",
         padding: "0 clamp(20px, 4vw, 48px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        transition: "border-color 0.4s ease, background 0.4s ease",
+        boxShadow: scrolled ? "0 10px 34px rgba(145, 121, 190, 0.14)" : "none",
+        transition: "border-color 0.4s ease, background 0.4s ease, box-shadow 0.4s ease",
       }}
     >
       {/* Logo */}
@@ -50,7 +53,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           style={{
             fontSize: "1.4rem",
             fontWeight: 600,
-            background: "linear-gradient(135deg, #7C3AED, #6366F1)",
+            background: "linear-gradient(135deg, #9D7AF8 0%, #C786B3 48%, #F3958B 100%)",
             backgroundClip: "text",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
@@ -86,20 +89,20 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
               transition: "all 0.3s ease",
               background:
                 activeNav === item
-                  ? "rgba(139, 92, 246, 0.10)"
+                  ? "rgba(214, 195, 255, 0.45)"
                   : "transparent",
               color:
-                activeNav === item ? "#7C3AED" : "#4B5563",
+                activeNav === item ? "#7446CB" : "#5B6274",
             }}
             onMouseEnter={(e) => {
               if (activeNav !== item) {
-                e.currentTarget.style.color = "#1E1B4B";
-                e.currentTarget.style.background = "rgba(139, 92, 246, 0.05)";
+                e.currentTarget.style.color = "#3A315F";
+                e.currentTarget.style.background = "rgba(255, 181, 193, 0.24)";
               }
             }}
             onMouseLeave={(e) => {
               if (activeNav !== item) {
-                e.currentTarget.style.color = "#4B5563";
+                e.currentTarget.style.color = "#5B6274";
                 e.currentTarget.style.background = "transparent";
               }
             }}
@@ -113,7 +116,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           style={{
             width: 1,
             height: 18,
-            background: "rgba(196, 181, 253, 0.3)",
+            background: "linear-gradient(180deg, rgba(214, 195, 255, 0.7), rgba(255, 181, 193, 0.66))",
             margin: "0 8px",
           }}
         />
@@ -131,14 +134,14 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#9CA3AF",
+            color: "#8D86A7",
             transition: "all 0.3s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = "#1E1B4B";
+            e.currentTarget.style.color = "#4A3D70";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = "#9CA3AF";
+            e.currentTarget.style.color = "#8D86A7";
           }}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
@@ -159,7 +162,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           borderRadius: 8,
           border: "none",
           background: "transparent",
-          color: "#4B5563",
+          color: "#5B6274",
           cursor: "pointer",
           alignItems: "center",
           justifyContent: "center",
@@ -182,10 +185,10 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             top: 60,
             left: 0,
             right: 0,
-            background: "rgba(253, 251, 255, 0.95)",
+            background: "linear-gradient(140deg, rgba(255, 248, 252, 0.97), rgba(246, 238, 255, 0.95) 58%, rgba(255, 241, 238, 0.95))",
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
-            borderBottom: "1px solid rgba(196, 181, 253, 0.2)",
+            borderBottom: "1px solid rgba(214, 195, 255, 0.55)",
             padding: "8px 16px 12px",
             display: "flex",
             flexDirection: "column",
@@ -208,8 +211,8 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
                 border: "none",
                 cursor: "pointer",
                 textAlign: "left",
-                background: activeNav === item ? "rgba(139,92,246,0.10)" : "transparent",
-                color: activeNav === item ? "#7C3AED" : "#4B5563",
+                background: activeNav === item ? "rgba(214,195,255,0.45)" : "transparent",
+                color: activeNav === item ? "#7446CB" : "#5B6274",
               }}
             >
               {item}
