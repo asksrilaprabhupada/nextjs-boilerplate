@@ -27,16 +27,19 @@ interface ScriptureLayerProps {
 
 const scriptureConfig = {
   BG: {
-    label: "FROM BHAGAVAD GĪTĀ AS IT IS",
-    iconGradient: "linear-gradient(135deg, var(--gold), var(--saffron))",
+    label: "FROM BHAGAVAD GITA AS IT IS",
+    accentColor: "var(--indigo)",
+    iconGradient: "linear-gradient(135deg, var(--indigo), #8B5CF6)",
   },
   SB: {
-    label: "FROM ŚRĪMAD BHĀGAVATAM",
-    iconGradient: "linear-gradient(135deg, var(--saffron), var(--rose-gold))",
+    label: "FROM SRIMAD BHAGAVATAM",
+    accentColor: "var(--indigo-light)",
+    iconGradient: "linear-gradient(135deg, #8B5CF6, #A78BFA)",
   },
   CC: {
-    label: "FROM ŚRĪ CAITANYA CARITĀMṚTA",
-    iconGradient: "linear-gradient(135deg, var(--temple-red), var(--lotus-pink))",
+    label: "FROM SRI CAITANYA CARITAMRTA",
+    accentColor: "#7C3AED",
+    iconGradient: "linear-gradient(135deg, #7C3AED, #A78BFA)",
   },
 };
 
@@ -78,17 +81,19 @@ export default function ScriptureLayer({
     >
       <div
         style={{
-          maxWidth: 720,
+          maxWidth: 700,
           margin: "0 auto",
           padding: "48px clamp(20px, 4vw, 40px)",
         }}
       >
-        {/* Scripture section card */}
+        {/* Scripture section card — frosted glass */}
         <div
           style={{
             background: "var(--card-bg)",
+            backdropFilter: "var(--glass-blur)",
+            WebkitBackdropFilter: "var(--glass-blur)",
             borderRadius: "var(--card-radius)",
-            border: "1px solid var(--card-border)",
+            border: "1px solid var(--glass-border)",
             boxShadow: "var(--card-shadow)",
             padding: "32px clamp(20px, 3vw, 32px)",
           }}
@@ -99,40 +104,41 @@ export default function ScriptureLayer({
               display: "flex",
               alignItems: "center",
               gap: 10,
-              marginBottom: 8,
+              marginBottom: 6,
             }}
           >
             <div
               style={{
-                width: 24,
-                height: 24,
-                borderRadius: 6,
+                width: 22,
+                height: 22,
+                borderRadius: 7,
                 background: config.iconGradient,
                 flexShrink: 0,
               }}
             />
             <span
-              className="font-dm-sans"
+              className="font-satoshi"
               style={{
-                fontSize: "0.72rem",
-                fontWeight: 600,
+                fontSize: "0.7rem",
+                fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.06em",
-                color: "var(--text-muted)",
+                color: "var(--text-dim)",
               }}
             >
               {config.label}
             </span>
           </div>
 
-          {/* Saffron underline */}
+          {/* Accent line */}
           <div
             style={{
-              width: 60,
+              width: 50,
               height: 2,
-              background: "var(--saffron)",
+              background: config.accentColor,
               marginBottom: 24,
               borderRadius: 1,
+              opacity: 0.6,
             }}
           />
 
@@ -143,10 +149,10 @@ export default function ScriptureLayer({
             transition={{ delay: 0.2 }}
             className="font-cormorant"
             style={{
-              fontSize: "1.02rem",
+              fontSize: "1.05rem",
               fontWeight: 400,
               lineHeight: 1.8,
-              color: "var(--text-secondary)",
+              color: "var(--text-body)",
               marginBottom: 24,
             }}
           >
@@ -180,7 +186,7 @@ export default function ScriptureLayer({
                     fontSize: "1.02rem",
                     fontWeight: 400,
                     lineHeight: 1.8,
-                    color: "var(--text-secondary)",
+                    color: "var(--text-body)",
                     margin: "20px 0",
                   }}
                 >

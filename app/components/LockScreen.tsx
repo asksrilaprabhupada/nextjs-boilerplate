@@ -12,7 +12,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
   const [entered, setEntered] = useState(false);
 
   useEffect(() => {
-    if (lockscreenVideo) return; // skip slideshow if video is set
+    if (lockscreenVideo) return;
     const interval = setInterval(() => {
       setTransitioning(true);
       setTimeout(() => {
@@ -24,7 +24,6 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Entrance animation
   useEffect(() => {
     const timer = setTimeout(() => setEntered(true), 100);
     return () => clearTimeout(timer);
@@ -70,7 +69,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
     <div
       role="button"
       tabIndex={0}
-      aria-label="Click to enter Ask Śrīla Prabhupāda"
+      aria-label="Click to enter Ask Srila Prabhupada"
       onClick={handleDismiss}
       style={{
         position: "fixed",
@@ -102,7 +101,6 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         </video>
       ) : (
         <>
-          {/* Photo slideshow background */}
           <div
             style={{
               position: "absolute",
@@ -130,12 +128,12 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         </>
       )}
 
-      {/* Gradient overlay — light tinted for readability */}
+      {/* Cool-toned gradient overlay */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: `linear-gradient(to top, rgba(20,15,40,0.85) 0%, rgba(20,15,40,0.5) 30%, rgba(20,15,40,0.15) 60%, transparent 100%)`,
+          background: `linear-gradient(to top, rgba(30,27,75,0.90) 0%, rgba(30,27,75,0.55) 30%, rgba(30,27,75,0.20) 55%, rgba(30,27,75,0.05) 100%)`,
         }}
       />
 
@@ -146,12 +144,12 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           position: "absolute",
           top: "50%",
           left: "50%",
-          width: "min(80vw, 600px)",
-          height: "min(80vw, 600px)",
+          width: "min(75vw, 550px)",
+          height: "min(75vw, 550px)",
           opacity: 0.04,
           animation: "rotate-mandala 120s linear infinite",
           pointerEvents: "none",
-          color: "#fff",
+          color: "#EDE9FE",
         }}
       >
         {[...Array(12)].map((_, i) => (
@@ -178,21 +176,21 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           justifyContent: "flex-end",
           paddingBottom: "clamp(60px, 12vh, 120px)",
           opacity: entered ? 1 : 0,
-          transform: entered ? "translateY(0)" : "translateY(30px)",
-          transition: "opacity 1.2s var(--ease-smooth), transform 1.2s var(--ease-smooth)",
+          transform: entered ? "translateY(0)" : "translateY(24px)",
+          transition: "opacity 1s var(--ease-smooth), transform 1s var(--ease-smooth)",
         }}
       >
         {/* Verse */}
         <div
           className="font-cormorant"
           style={{
-            fontSize: "clamp(1rem, 2.2vw, 1.35rem)",
+            fontSize: "clamp(0.95rem, 2vw, 1.28rem)",
             fontWeight: 400,
             fontStyle: "italic",
-            color: "rgba(255,248,240,0.7)",
-            maxWidth: 520,
+            color: "rgba(237,233,254,0.75)",
+            maxWidth: 500,
             textAlign: "center",
-            lineHeight: 1.7,
+            lineHeight: 1.75,
             padding: "0 24px",
           }}
         >
@@ -201,12 +199,13 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
 
         {/* Citation */}
         <div
-          className="font-dm-sans"
+          className="font-satoshi"
           style={{
-            fontSize: "0.82rem",
-            color: "var(--saffron-glow)",
-            opacity: 0.8,
-            marginTop: 12,
+            fontSize: "0.75rem",
+            fontWeight: 500,
+            color: "rgba(139,92,246,0.7)",
+            marginTop: 14,
+            letterSpacing: "0.04em",
           }}
         >
           — {verse.citation}
@@ -215,7 +214,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         {/* CTA */}
         <div
           style={{
-            marginTop: 48,
+            marginTop: 44,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
@@ -224,28 +223,28 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         >
           <div
             style={{
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               borderRadius: "50%",
-              border: "1px solid rgba(255,248,240,0.2)",
+              border: "1px solid rgba(237,233,254,0.18)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               animation: "pulse-arrow 3s ease-in-out infinite",
             }}
           >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ transform: "rotate(180deg)" }}>
-              <path d="M8 12V4M4 8l4-4 4 4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: "rotate(180deg)" }}>
+              <path d="M8 12V4M4 8l4-4 4 4" stroke="rgba(237,233,254,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <span
-            className="font-dm-sans"
+            className="font-satoshi"
             style={{
-              fontSize: "0.68rem",
+              fontSize: "0.62rem",
               fontWeight: 500,
               textTransform: "uppercase",
-              letterSpacing: "0.12em",
-              color: "rgba(255,248,240,0.45)",
+              letterSpacing: "0.14em",
+              color: "rgba(237,233,254,0.3)",
             }}
           >
             Click anywhere to enter

@@ -41,9 +41,9 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
             position: "fixed",
             inset: 0,
             zIndex: 200,
-            background: "rgba(26, 26, 46, 0.3)",
-            backdropFilter: "blur(8px)",
-            WebkitBackdropFilter: "blur(8px)",
+            background: "rgba(30, 27, 75, 0.25)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -61,11 +61,13 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
               maxWidth: 560,
               maxHeight: "80vh",
               overflowY: "auto",
-              background: "var(--card-bg)",
-              borderRadius: 20,
+              background: "rgba(255, 255, 255, 0.85)",
+              backdropFilter: "blur(24px)",
+              WebkitBackdropFilter: "blur(24px)",
+              borderRadius: 22,
               padding: 40,
               boxShadow: "var(--shadow-elevated)",
-              border: "1px solid var(--card-border)",
+              border: "1px solid var(--glass-border)",
               position: "relative",
             }}
           >
@@ -81,21 +83,21 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
                 height: 36,
                 borderRadius: 10,
                 border: "1px solid var(--border-subtle)",
-                background: "var(--bg-elevated)",
+                background: "var(--bg-lavender-soft)",
                 color: "var(--text-muted)",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "1.1rem",
+                fontSize: "1rem",
                 transition: "all 0.2s ease",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = "var(--text-primary)";
+                e.currentTarget.style.background = "var(--indigo-soft)";
+                e.currentTarget.style.color = "var(--indigo)";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.background = "var(--bg-elevated)";
+                e.currentTarget.style.background = "var(--bg-lavender-soft)";
                 e.currentTarget.style.color = "var(--text-muted)";
               }}
             >

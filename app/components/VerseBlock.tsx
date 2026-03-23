@@ -41,19 +41,19 @@ export default function VerseBlock({ sanskrit, translation, verseRef, verseId }:
       <div style={{ textAlign: "right", marginTop: 10 }}>
         <Link
           href={verseId ? `/verse/${verseId}` : "#"}
-          className="font-dm-sans"
+          className="font-satoshi"
           style={{
-            fontSize: "0.78rem",
-            color: "var(--saffron)",
+            fontSize: "0.75rem",
+            color: "var(--indigo)",
             textDecoration: "none",
             fontWeight: 500,
             transition: "color 0.2s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--saffron-light)";
+            e.currentTarget.style.color = "var(--indigo-light)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--saffron)";
+            e.currentTarget.style.color = "var(--indigo)";
           }}
         >
           — {verseRef}
