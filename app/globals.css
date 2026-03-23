@@ -9,17 +9,17 @@
 
 :root {
   /* === Backgrounds (warm whites + lavender tints) === */
-  --bg-deep: #FDFBFF;
-  --bg-surface: #F5F0FF;
+  --bg-deep: #FFF8FC;
+  --bg-surface: #F6EEFF;
   --bg-card: rgba(255, 255, 255, 0.55);
   --bg-card-hover: rgba(255, 255, 255, 0.75);
   --bg-input: rgba(255, 255, 255, 0.65);
 
   /* === Garden palette === */
-  --garden-lavender: #C4B5FD;
+  --garden-lavender: #D6C3FF;
   --garden-violet: #8B5CF6;
   --garden-deep-violet: #7C3AED;
-  --garden-rose: #FDA4AF;
+  --garden-rose: #FFB5C1;
   --garden-blush: #FBCFE8;
   --garden-sage: #BBF7D0;
   --garden-gold: #FDE68A;
@@ -70,7 +70,11 @@ html {
 
 body {
   font-family: 'DM Sans', sans-serif;
-  background: var(--bg-deep);
+  background:
+    radial-gradient(circle at 18% 15%, rgba(214, 195, 255, 0.45) 0%, rgba(214, 195, 255, 0) 36%),
+    radial-gradient(circle at 82% 10%, rgba(255, 181, 193, 0.35) 0%, rgba(255, 181, 193, 0) 34%),
+    linear-gradient(180deg, #fff8fc 0%, #f8f1ff 46%, #fff6f3 100%);
+  background-attachment: fixed;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
