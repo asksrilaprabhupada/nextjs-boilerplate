@@ -78,7 +78,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         cursor: "pointer",
         transform: visible ? "translateY(0)" : "translateY(-100%)",
         opacity: visible ? 1 : 0,
-        transition: `transform 0.9s var(--ease-out-expo), opacity 0.6s ease`,
+        transition: `transform 0.9s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.6s ease`,
         overflow: "hidden",
       }}
     >
@@ -128,12 +128,12 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         </>
       )}
 
-      {/* Cool-toned gradient overlay */}
+      {/* Dark gradient overlay */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: `linear-gradient(to top, rgba(30,27,75,0.90) 0%, rgba(30,27,75,0.55) 30%, rgba(30,27,75,0.20) 55%, rgba(30,27,75,0.05) 100%)`,
+          background: `linear-gradient(to top, rgba(15,14,26,0.95) 0%, rgba(15,14,26,0.6) 30%, rgba(15,14,26,0.3) 55%, rgba(15,14,26,0.15) 100%)`,
         }}
       />
 
@@ -149,7 +149,8 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           opacity: 0.04,
           animation: "rotate-mandala 120s linear infinite",
           pointerEvents: "none",
-          color: "#EDE9FE",
+          color: "var(--aurora-violet)",
+          transform: "translate(-50%, -50%)",
         }}
       >
         {[...Array(12)].map((_, i) => (
@@ -177,17 +178,17 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           paddingBottom: "clamp(60px, 12vh, 120px)",
           opacity: entered ? 1 : 0,
           transform: entered ? "translateY(0)" : "translateY(24px)",
-          transition: "opacity 1s var(--ease-smooth), transform 1s var(--ease-smooth)",
+          transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)",
         }}
       >
         {/* Verse */}
         <div
-          className="font-cormorant"
+          className="font-display"
           style={{
             fontSize: "clamp(0.95rem, 2vw, 1.28rem)",
             fontWeight: 400,
             fontStyle: "italic",
-            color: "rgba(237,233,254,0.75)",
+            color: "rgba(240,238,248,0.7)",
             maxWidth: 500,
             textAlign: "center",
             lineHeight: 1.75,
@@ -199,9 +200,9 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
 
         {/* Citation */}
         <div
-          className="font-satoshi"
+          className="font-body"
           style={{
-            fontSize: "0.75rem",
+            fontSize: 13,
             fontWeight: 500,
             color: "rgba(139,92,246,0.7)",
             marginTop: 14,
@@ -226,7 +227,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
               width: 36,
               height: 36,
               borderRadius: "50%",
-              border: "1px solid rgba(237,233,254,0.18)",
+              border: "1px solid rgba(240,238,248,0.15)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -234,17 +235,17 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
             }}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: "rotate(180deg)" }}>
-              <path d="M8 12V4M4 8l4-4 4 4" stroke="rgba(237,233,254,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M8 12V4M4 8l4-4 4 4" stroke="rgba(240,238,248,0.5)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <span
-            className="font-satoshi"
+            className="font-body"
             style={{
-              fontSize: "0.62rem",
+              fontSize: 11,
               fontWeight: 500,
               textTransform: "uppercase",
               letterSpacing: "0.14em",
-              color: "rgba(237,233,254,0.3)",
+              color: "rgba(240,238,248,0.25)",
             }}
           >
             Click anywhere to enter

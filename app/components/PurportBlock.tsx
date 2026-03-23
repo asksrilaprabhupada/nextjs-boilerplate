@@ -6,14 +6,23 @@ interface PurportBlockProps {
 
 export default function PurportBlock({ text }: PurportBlockProps) {
   return (
-    <div className="purport-block" style={{ margin: "20px 0" }}>
+    <div
+      style={{
+        margin: "12px 0 16px 0",
+        background: "rgba(139, 92, 246, 0.04)",
+        border: "1px solid var(--border-subtle)",
+        borderLeft: "3px solid var(--aurora-purple)",
+        padding: "24px 28px",
+        borderRadius: 20,
+      }}
+    >
       <p
-        className="font-cormorant"
+        className="font-body"
         style={{
-          fontSize: "0.98rem",
-          fontWeight: 400,
+          fontSize: 15,
+          fontWeight: 300,
           lineHeight: 1.8,
-          color: "var(--text-body)",
+          color: "var(--text-secondary)",
         }}
       >
         {text}

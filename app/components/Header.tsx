@@ -30,51 +30,35 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         right: 0,
         zIndex: 100,
         height: 60,
-        background: scrolled
-          ? "rgba(248, 250, 255, 0.85)"
-          : "rgba(248, 250, 255, 0.5)",
-        backdropFilter: "blur(24px) saturate(1.5)",
-        WebkitBackdropFilter: "blur(24px) saturate(1.5)",
+        background: "rgba(15, 14, 26, 0.6)",
+        backdropFilter: "blur(20px) saturate(1.4)",
+        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
         borderBottom: scrolled
-          ? "1px solid rgba(79, 70, 229, 0.08)"
+          ? "1px solid var(--border-subtle)"
           : "1px solid transparent",
         padding: "0 clamp(20px, 4vw, 48px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        transition: "all 0.4s ease",
+        transition: "border-color 0.4s ease",
       }}
     >
-      {/* Logo */}
+      {/* Logo — Instrument Serif with gradient text */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <div
-          style={{
-            width: 30,
-            height: 30,
-            borderRadius: 9,
-            background: "linear-gradient(135deg, var(--indigo), var(--indigo-light))",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "0 2px 10px rgba(79,70,229,0.3)",
-            flexShrink: 0,
-          }}
-        >
-          <span className="font-devanagari" style={{ color: "#fff", fontSize: 13, fontWeight: 600 }}>
-            प्र
-          </span>
-        </div>
         <span
-          className="font-satoshi"
+          className="font-display"
           style={{
-            fontSize: "0.95rem",
-            fontWeight: 700,
-            color: "var(--text-primary)",
+            fontSize: "1.3rem",
+            fontWeight: 400,
+            background: "linear-gradient(135deg, var(--aurora-violet), var(--aurora-teal))",
+            backgroundClip: "text",
+            WebkitBackgroundClip: "text",
+            WebkitTextFillColor: "transparent",
             whiteSpace: "nowrap",
-            letterSpacing: "-0.02em",
+            letterSpacing: "-0.01em",
           }}
         >
-          Ask Srila Prabhupada
+          Ask Prabhupāda
         </span>
       </div>
 
@@ -83,7 +67,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 2,
+          gap: 4,
         }}
         className="desktop-nav"
       >
@@ -91,32 +75,30 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           <button
             key={item}
             onClick={() => onNavChange(item)}
-            className="font-satoshi"
+            className="font-body"
             style={{
-              padding: "6px 14px",
+              padding: "6px 16px",
               borderRadius: 8,
-              fontSize: "0.8rem",
-              fontWeight: 500,
+              fontSize: 14,
+              fontWeight: 400,
               border: "none",
               cursor: "pointer",
-              transition: "all 0.25s ease",
+              transition: "all 0.3s ease",
               background:
                 activeNav === item
-                  ? "var(--indigo)"
+                  ? "rgba(139, 92, 246, 0.12)"
                   : "transparent",
               color:
-                activeNav === item ? "#fff" : "var(--text-muted)",
+                activeNav === item ? "var(--text-primary)" : "var(--text-secondary)",
             }}
             onMouseEnter={(e) => {
               if (activeNav !== item) {
-                e.currentTarget.style.background = "var(--indigo-soft)";
-                e.currentTarget.style.color = "var(--indigo)";
+                e.currentTarget.style.color = "var(--text-primary)";
               }
             }}
             onMouseLeave={(e) => {
               if (activeNav !== item) {
-                e.currentTarget.style.background = "transparent";
-                e.currentTarget.style.color = "var(--text-muted)";
+                e.currentTarget.style.color = "var(--text-secondary)";
               }
             }}
           >
@@ -129,7 +111,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           style={{
             width: 1,
             height: 18,
-            background: "var(--border-medium)",
+            background: "var(--border-subtle)",
             margin: "0 8px",
           }}
         />
@@ -147,16 +129,14 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "var(--text-dim)",
-            transition: "all 0.25s ease",
+            color: "var(--text-muted)",
+            transition: "all 0.3s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--indigo-soft)";
-            e.currentTarget.style.color = "var(--indigo)";
+            e.currentTarget.style.color = "var(--text-primary)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-            e.currentTarget.style.color = "var(--text-dim)";
+            e.currentTarget.style.color = "var(--text-muted)";
           }}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
@@ -177,7 +157,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           borderRadius: 8,
           border: "none",
           background: "transparent",
-          color: "var(--text-muted)",
+          color: "var(--text-secondary)",
           cursor: "pointer",
           alignItems: "center",
           justifyContent: "center",
@@ -200,8 +180,8 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             top: 60,
             left: 0,
             right: 0,
-            background: "rgba(248, 250, 255, 0.96)",
-            backdropFilter: "blur(24px)",
+            background: "rgba(15, 14, 26, 0.95)",
+            backdropFilter: "blur(20px)",
             borderBottom: "1px solid var(--border-subtle)",
             padding: "8px 16px 12px",
             display: "flex",
@@ -216,17 +196,17 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
                 onNavChange(item);
                 setMobileMenuOpen(false);
               }}
-              className="font-satoshi"
+              className="font-body"
               style={{
                 padding: "10px 14px",
                 borderRadius: 10,
-                fontSize: "0.88rem",
+                fontSize: 14,
                 fontWeight: 500,
                 border: "none",
                 cursor: "pointer",
                 textAlign: "left",
-                background: activeNav === item ? "var(--indigo)" : "transparent",
-                color: activeNav === item ? "#fff" : "var(--text-muted)",
+                background: activeNav === item ? "rgba(139,92,246,0.12)" : "transparent",
+                color: activeNav === item ? "var(--text-primary)" : "var(--text-secondary)",
               }}
             >
               {item}
@@ -234,17 +214,6 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           ))}
         </div>
       )}
-
-      <style jsx>{`
-        @media (max-width: 768px) {
-          .desktop-nav {
-            display: none !important;
-          }
-          .mobile-menu-btn {
-            display: flex !important;
-          }
-        }
-      `}</style>
     </header>
   );
 }

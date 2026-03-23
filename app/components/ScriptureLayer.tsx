@@ -27,19 +27,19 @@ interface ScriptureLayerProps {
 
 const scriptureConfig = {
   BG: {
-    label: "FROM BHAGAVAD GITA AS IT IS",
-    accentColor: "var(--indigo)",
-    iconGradient: "linear-gradient(135deg, var(--indigo), #8B5CF6)",
+    label: "FROM BHAGAVAD GĪTĀ AS IT IS",
+    color: "var(--aurora-violet)",
+    iconGradient: "linear-gradient(135deg, var(--aurora-violet), var(--aurora-purple))",
   },
   SB: {
-    label: "FROM SRIMAD BHAGAVATAM",
-    accentColor: "var(--indigo-light)",
-    iconGradient: "linear-gradient(135deg, #8B5CF6, #A78BFA)",
+    label: "FROM ŚRĪMAD BHĀGAVATAM",
+    color: "var(--aurora-teal)",
+    iconGradient: "linear-gradient(135deg, var(--aurora-teal), var(--aurora-cyan))",
   },
   CC: {
-    label: "FROM SRI CAITANYA CARITAMRTA",
-    accentColor: "#7C3AED",
-    iconGradient: "linear-gradient(135deg, #7C3AED, #A78BFA)",
+    label: "FROM ŚRĪ CAITANYA CARITĀMṚTA",
+    color: "var(--aurora-fuchsia)",
+    iconGradient: "linear-gradient(135deg, var(--aurora-fuchsia), var(--aurora-pink))",
   },
 };
 
@@ -74,7 +74,6 @@ export default function ScriptureLayer({
       animate={{ opacity: 1, height: "auto" }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
       style={{
-        background: "var(--bg-deepest)",
         width: "100%",
         overflow: "hidden",
       }}
@@ -86,17 +85,9 @@ export default function ScriptureLayer({
           padding: "48px clamp(20px, 4vw, 40px)",
         }}
       >
-        {/* Scripture section card — frosted glass */}
         <div
-          style={{
-            background: "var(--card-bg)",
-            backdropFilter: "var(--glass-blur)",
-            WebkitBackdropFilter: "var(--glass-blur)",
-            borderRadius: "var(--card-radius)",
-            border: "1px solid var(--glass-border)",
-            boxShadow: "var(--card-shadow)",
-            padding: "32px clamp(20px, 3vw, 32px)",
-          }}
+          className="aurora-card"
+          style={{ padding: "32px clamp(20px, 3vw, 32px)" }}
         >
           {/* Section marker */}
           <div
@@ -117,13 +108,13 @@ export default function ScriptureLayer({
               }}
             />
             <span
-              className="font-satoshi"
+              className="font-body"
               style={{
-                fontSize: "0.7rem",
-                fontWeight: 700,
+                fontSize: 11,
+                fontWeight: 500,
                 textTransform: "uppercase",
-                letterSpacing: "0.06em",
-                color: "var(--text-dim)",
+                letterSpacing: "0.1em",
+                color: "var(--text-muted)",
               }}
             >
               {config.label}
@@ -135,7 +126,7 @@ export default function ScriptureLayer({
             style={{
               width: 50,
               height: 2,
-              background: config.accentColor,
+              background: config.color,
               marginBottom: 24,
               borderRadius: 1,
               opacity: 0.6,
@@ -147,12 +138,12 @@ export default function ScriptureLayer({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             transition={{ delay: 0.2 }}
-            className="font-cormorant"
+            className="font-body"
             style={{
-              fontSize: "1.05rem",
-              fontWeight: 400,
-              lineHeight: 1.8,
-              color: "var(--text-body)",
+              fontSize: 16,
+              fontWeight: 300,
+              lineHeight: 1.7,
+              color: "var(--text-secondary)",
               marginBottom: 24,
             }}
           >
@@ -178,15 +169,14 @@ export default function ScriptureLayer({
                 <PurportBlock text={truncatePurport(verse.purport)} />
               )}
 
-              {/* Connector text */}
               {narrativeConnectors[i] && (
                 <p
-                  className="font-cormorant"
+                  className="font-body"
                   style={{
-                    fontSize: "1.02rem",
-                    fontWeight: 400,
-                    lineHeight: 1.8,
-                    color: "var(--text-body)",
+                    fontSize: 16,
+                    fontWeight: 300,
+                    lineHeight: 1.7,
+                    color: "var(--text-secondary)",
                     margin: "20px 0",
                   }}
                 >

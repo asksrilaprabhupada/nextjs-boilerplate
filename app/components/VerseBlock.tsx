@@ -11,11 +11,20 @@ interface VerseBlockProps {
 
 export default function VerseBlock({ sanskrit, translation, verseRef, verseId }: VerseBlockProps) {
   return (
-    <div className="verse-block" style={{ margin: "20px 0" }}>
+    <div
+      style={{
+        margin: "20px 0",
+        background: "var(--bg-surface)",
+        border: "1px solid var(--border-subtle)",
+        borderLeft: "3px solid var(--aurora-violet)",
+        padding: "24px 28px",
+        borderRadius: 20,
+      }}
+    >
       {sanskrit && (
         <p
-          className="font-devanagari"
           style={{
+            fontFamily: "'Noto Serif Devanagari', serif",
             fontSize: "1.15rem",
             lineHeight: 1.9,
             fontWeight: 500,
@@ -27,7 +36,7 @@ export default function VerseBlock({ sanskrit, translation, verseRef, verseId }:
         </p>
       )}
       <p
-        className="font-cormorant"
+        className="font-display"
         style={{
           fontSize: "1.1rem",
           fontWeight: 400,
@@ -41,19 +50,19 @@ export default function VerseBlock({ sanskrit, translation, verseRef, verseId }:
       <div style={{ textAlign: "right", marginTop: 10 }}>
         <Link
           href={verseId ? `/verse/${verseId}` : "#"}
-          className="font-satoshi"
+          className="font-body"
           style={{
-            fontSize: "0.75rem",
-            color: "var(--indigo)",
+            fontSize: 13,
+            color: "var(--aurora-violet)",
             textDecoration: "none",
             fontWeight: 500,
-            transition: "color 0.2s ease",
+            transition: "color 0.3s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--indigo-light)";
+            e.currentTarget.style.color = "var(--aurora-teal)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--indigo)";
+            e.currentTarget.style.color = "var(--aurora-violet)";
           }}
         >
           — {verseRef}

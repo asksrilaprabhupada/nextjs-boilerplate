@@ -11,32 +11,33 @@ export default function ContactOverlay() {
     width: "100%",
     padding: "12px 16px",
     borderRadius: 12,
-    border: "1.5px solid var(--border-medium)",
-    background: "var(--bg-lavender-soft)",
+    border: "1px solid var(--border-subtle)",
+    background: "var(--bg-input)",
     color: "var(--text-primary)",
-    fontSize: "0.95rem",
-    fontFamily: "'Satoshi', sans-serif",
+    fontSize: 15,
+    fontFamily: "'DM Sans', sans-serif",
+    fontWeight: 400,
     outline: "none",
     transition: "border-color 0.3s ease, box-shadow 0.3s ease",
   };
 
   const handleFocus = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    e.currentTarget.style.borderColor = "var(--indigo)";
-    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(79,70,229,0.08)";
+    e.currentTarget.style.borderColor = "var(--aurora-violet)";
+    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.15)";
   };
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    e.currentTarget.style.borderColor = "var(--border-medium)";
+    e.currentTarget.style.borderColor = "var(--border-subtle)";
     e.currentTarget.style.boxShadow = "none";
   };
 
   return (
     <div>
       <h2
-        className="font-satoshi"
+        className="font-display"
         style={{
           fontSize: "1.5rem",
-          fontWeight: 900,
+          fontWeight: 400,
           color: "var(--text-primary)",
           marginBottom: 20,
           letterSpacing: "-0.02em",
@@ -50,15 +51,15 @@ export default function ContactOverlay() {
       >
         <div>
           <label
-            className="font-satoshi"
+            className="font-body"
             style={{
-              fontSize: "0.75rem",
-              fontWeight: 700,
+              fontSize: 12,
+              fontWeight: 500,
               color: "var(--text-muted)",
               marginBottom: 6,
               display: "block",
               textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              letterSpacing: "0.1em",
             }}
           >
             Name
@@ -75,15 +76,15 @@ export default function ContactOverlay() {
         </div>
         <div>
           <label
-            className="font-satoshi"
+            className="font-body"
             style={{
-              fontSize: "0.75rem",
-              fontWeight: 700,
+              fontSize: 12,
+              fontWeight: 500,
               color: "var(--text-muted)",
               marginBottom: 6,
               display: "block",
               textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              letterSpacing: "0.1em",
             }}
           >
             Email
@@ -100,15 +101,15 @@ export default function ContactOverlay() {
         </div>
         <div>
           <label
-            className="font-satoshi"
+            className="font-body"
             style={{
-              fontSize: "0.75rem",
-              fontWeight: 700,
+              fontSize: 12,
+              fontWeight: 500,
               color: "var(--text-muted)",
               marginBottom: 6,
               display: "block",
               textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              letterSpacing: "0.1em",
             }}
           >
             Message
@@ -129,30 +130,10 @@ export default function ContactOverlay() {
         </div>
         <button
           type="submit"
-          className="font-satoshi"
-          style={{
-            padding: "12px 24px",
-            borderRadius: 12,
-            border: "none",
-            background: "var(--indigo)",
-            color: "#fff",
-            fontSize: "0.88rem",
-            fontWeight: 700,
-            cursor: "pointer",
-            transition: "all 0.3s ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "var(--indigo-dark)";
-            e.currentTarget.style.boxShadow = "var(--shadow-indigo-glow)";
-            e.currentTarget.style.transform = "translateY(-1px)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "var(--indigo)";
-            e.currentTarget.style.boxShadow = "none";
-            e.currentTarget.style.transform = "translateY(0)";
-          }}
+          className="btn-primary"
+          style={{ width: "100%", justifyContent: "center" }}
         >
-          Send Message
+          <span>Send Message</span>
         </button>
       </form>
     </div>

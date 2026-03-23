@@ -45,10 +45,10 @@ export default function DonateOverlay() {
   return (
     <div>
       <h2
-        className="font-satoshi"
+        className="font-display"
         style={{
           fontSize: "1.5rem",
-          fontWeight: 900,
+          fontWeight: 400,
           color: "var(--text-primary)",
           marginBottom: 8,
           letterSpacing: "-0.02em",
@@ -57,10 +57,11 @@ export default function DonateOverlay() {
         Support this project
       </h2>
       <p
-        className="font-cormorant"
+        className="font-body"
         style={{
-          fontSize: "0.95rem",
+          fontSize: 15,
           lineHeight: 1.7,
+          fontWeight: 300,
           color: "var(--text-muted)",
           marginBottom: 24,
         }}
@@ -68,14 +69,12 @@ export default function DonateOverlay() {
         Your donations help cover server costs and ongoing development to serve devotees worldwide.
       </p>
 
-      {/* Bank Details Card — frosted glass */}
       <div
         style={{
-          background: "var(--bg-lavender-soft)",
-          borderRadius: "var(--card-radius)",
-          border: "1px solid var(--card-border)",
+          background: "var(--bg-surface)",
+          borderRadius: 20,
+          border: "1px solid var(--border-subtle)",
           overflow: "hidden",
-          boxShadow: "var(--shadow-subtle)",
         }}
       >
         {data &&
@@ -97,22 +96,22 @@ export default function DonateOverlay() {
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
-                    className="font-satoshi"
+                    className="font-body"
                     style={{
-                      fontSize: "0.68rem",
-                      fontWeight: 700,
+                      fontSize: 11,
+                      fontWeight: 500,
                       textTransform: "uppercase",
-                      letterSpacing: "0.06em",
-                      color: "var(--text-dim)",
+                      letterSpacing: "0.1em",
+                      color: "var(--text-muted)",
                       marginBottom: 2,
                     }}
                   >
                     {field.label}
                   </div>
                   <div
-                    className="font-satoshi"
+                    className="font-body"
                     style={{
-                      fontSize: "0.92rem",
+                      fontSize: 15,
                       fontWeight: 500,
                       color: "var(--text-primary)",
                       overflow: "hidden",
@@ -130,26 +129,25 @@ export default function DonateOverlay() {
                     width: 34,
                     height: 34,
                     borderRadius: 8,
-                    border: "1px solid var(--border-medium)",
-                    background: copiedField === field.key ? "var(--indigo)" : "var(--card-bg-solid)",
+                    border: "1px solid var(--border-subtle)",
+                    background: copiedField === field.key ? "var(--aurora-violet)" : "var(--bg-card)",
                     color: copiedField === field.key ? "#fff" : "var(--text-muted)",
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
                     flexShrink: 0,
-                    transition: "all 0.2s ease",
-                    position: "relative",
+                    transition: "all 0.3s ease",
                   }}
                   onMouseEnter={(e) => {
                     if (copiedField !== field.key) {
-                      e.currentTarget.style.borderColor = "var(--indigo)";
-                      e.currentTarget.style.color = "var(--indigo)";
+                      e.currentTarget.style.borderColor = "var(--border-glow)";
+                      e.currentTarget.style.color = "var(--aurora-violet)";
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (copiedField !== field.key) {
-                      e.currentTarget.style.borderColor = "var(--border-medium)";
+                      e.currentTarget.style.borderColor = "var(--border-subtle)";
                       e.currentTarget.style.color = "var(--text-muted)";
                     }
                   }}
@@ -171,12 +169,13 @@ export default function DonateOverlay() {
 
         {data && !Object.values(data).some((v) => v) && (
           <div
-            className="font-cormorant"
+            className="font-body"
             style={{
               padding: "32px 20px",
               textAlign: "center",
               color: "var(--text-muted)",
               fontStyle: "italic",
+              fontWeight: 300,
             }}
           >
             Bank details will be updated soon.
