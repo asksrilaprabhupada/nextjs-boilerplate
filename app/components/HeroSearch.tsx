@@ -78,8 +78,8 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
             width: 600,
             height: 600,
             borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(196,181,253,0.20) 0%, rgba(253,164,175,0.10) 40%, rgba(187,247,208,0.05) 70%, transparent 100%)",
-            filter: "blur(80px)",
+            background: "radial-gradient(circle, rgba(167,139,250,0.26) 0%, rgba(244,114,182,0.12) 42%, rgba(251,191,36,0.09) 72%, transparent 100%)",
+            filter: "blur(72px)",
             animation: "floatOrb 20s ease-in-out infinite",
             pointerEvents: "none",
           }}
@@ -241,13 +241,13 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               fontWeight: 400,
               border: "1px solid rgba(196, 181, 253, 0.3)",
               borderRadius: 14,
-              background: "rgba(255, 255, 255, 0.70)",
+              background: "rgba(255, 255, 255, 0.86)",
               backdropFilter: "blur(20px)",
               WebkitBackdropFilter: "blur(20px)",
               color: "#1E1B4B",
               outline: "none",
               transition: "border-color 0.3s ease, box-shadow 0.3s ease",
-              boxShadow: "0 4px 24px rgba(139, 92, 246, 0.06)",
+              boxShadow: "0 14px 28px rgba(111, 74, 177, 0.12)",
             }}
             onFocus={(e) => {
               e.currentTarget.style.borderColor = "#8B5CF6";
@@ -324,7 +324,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
                   padding: "7px 16px",
                   borderRadius: 100,
                   border: "1px solid rgba(196, 181, 253, 0.3)",
-                  background: "rgba(255, 255, 255, 0.5)",
+                  background: "rgba(255, 255, 255, 0.76)",
                   fontSize: 13,
                   fontWeight: 400,
                   color: "#6B7280",
@@ -343,7 +343,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
                 onMouseLeave={(e) => {
                   e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.3)";
                   e.currentTarget.style.color = "#6B7280";
-                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.5)";
+                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.76)";
                   e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
