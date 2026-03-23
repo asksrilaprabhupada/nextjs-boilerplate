@@ -1,13 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import LockScreen from "./components/LockScreen";
 import Header from "./components/Header";
 import HeroSearch from "./components/HeroSearch";
 import NarrativeResponse, { SearchResults } from "./components/NarrativeResponse";
-import FeaturesSection from "./components/FeaturesSection";
 import StatsSection from "./components/StatsSection";
-import StepsSection from "./components/StepsSection";
 import TestimonialsSection from "./components/TestimonialsSection";
 import CTASection from "./components/CTASection";
 import FooterSection from "./components/FooterSection";
@@ -16,20 +14,23 @@ import AboutOverlay from "./components/AboutOverlay";
 import DonateOverlay from "./components/DonateOverlay";
 import ContactOverlay from "./components/ContactOverlay";
 
+type OverlayItem = "About" | "Donate" | "Contact";
+
 export default function Home() {
   const [lockScreenVisible, setLockScreenVisible] = useState(true);
-  const [activeNav, setActiveNav] = useState("Search");
-  const [overlayOpen, setOverlayOpen] = useState<string | null>(null);
+  const [overlayOpen, setOverlayOpen] = useState<OverlayItem | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);
 
-  const handleNavChange = useCallback((nav: string) => {
-    if (nav === "About" || nav === "Donate" || nav === "Contact") {
-      setOverlayOpen(nav);
-    } else {
-      setActiveNav(nav);
-      setOverlayOpen(null);
+  useEffect(() => {
+    const overlay = new URLSearchParams(window.location.search).get("overlay");
+    if (overlay === "about" || overlay === "donate" || overlay === "contact") {
+      const normalized = (overlay[0].toUpperCase() + overlay.slice(1)) as OverlayItem;
+      setOverlayOpen(normalized);
+      return;
     }
+
+    setOverlayOpen(null);
   }, []);
 
   const handleSearch = useCallback(async (query: string) => {
@@ -51,12 +52,8 @@ export default function Home() {
 
   return (
     <>
-      {/* Lock Screen */}
-      {lockScreenVisible && (
-        <LockScreen onDismiss={() => setLockScreenVisible(false)} />
-      )}
+      {lockScreenVisible && <LockScreen onDismiss={() => setLockScreenVisible(false)} />}
 
-      {/* Main App */}
       <div
         style={{
           opacity: lockScreenVisible ? 0 : 1,
@@ -66,26 +63,22 @@ export default function Home() {
           flexDirection: "column",
         }}
       >
-        <Header activeNav={activeNav} onNavChange={handleNavChange} />
+        <Header onMoreItemSelect={setOverlayOpen} />
 
         <main style={{ flex: 1 }}>
-          <HeroSearch
-            onSearch={handleSearch}
-            isSearching={isSearching}
-            hasResults={searchResults !== null}
-          />
+          <div id="search">
+            <HeroSearch
+              onSearch={handleSearch}
+              isSearching={isSearching}
+              hasResults={searchResults !== null}
+            />
+          </div>
 
-          <NarrativeResponse
-            results={searchResults}
-            isLoading={isSearching}
-          />
+          <NarrativeResponse results={searchResults} isLoading={isSearching} />
 
-          {/* Landing page sections — shown when no search results */}
           {!searchResults && (
             <>
-              <FeaturesSection />
               <StatsSection />
-              <StepsSection />
               <TestimonialsSection />
               <CTASection />
               <FooterSection />
@@ -94,7 +87,6 @@ export default function Home() {
         </main>
       </div>
 
-      {/* Modal Overlays */}
       <PageOverlay
         isOpen={overlayOpen === "About"}
         onClose={() => setOverlayOpen(null)}
