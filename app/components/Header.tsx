@@ -1,25 +1,95 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
+import { CSSProperties, useEffect, useRef, useState } from "react";
 
 interface HeaderProps {
-  activeNav: string;
-  onNavChange: (nav: string) => void;
+  onMoreItemSelect?: (item: "About" | "Donate" | "Contact") => void;
 }
 
-export default function Header({ activeNav, onNavChange }: HeaderProps) {
+type MoreItem = "About" | "Donate" | "Contact";
+
+const primaryNav = [
+  { label: "Search", href: "/#search" },
+  { label: "Features", href: "/features" },
+  { label: "How it works", href: "/how-it-works" },
+];
+
+const moreItems: MoreItem[] = ["About", "Donate", "Contact"];
+
+export default function Header({ onMoreItemSelect }: HeaderProps) {
+  const pathname = usePathname();
+  const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleScroll = () => {
       setScrolled(window.scrollY > 20);
     };
+
+    handleScroll();
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  const navItems = ["Search", "About", "Donate", "Contact"];
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setMoreOpen(false);
+    setMobileMoreOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const isActive = (href: string) => {
+    if (href === "/#search") {
+      return pathname === "/";
+    }
+    return pathname === href;
+  };
+
+  const handleMoreItemClick = (item: MoreItem) => {
+    setMoreOpen(false);
+    setMobileMenuOpen(false);
+
+    if (onMoreItemSelect && pathname === "/") {
+      onMoreItemSelect(item);
+      return;
+    }
+
+    router.push(`/?overlay=${item.toLowerCase()}`);
+  };
+
+  const navButtonStyle = (active: boolean): CSSProperties => ({
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    textDecoration: "none",
+    padding: "7px 16px",
+    borderRadius: 9,
+    fontSize: 14,
+    fontWeight: active ? 500 : 400,
+    border: "none",
+    cursor: "pointer",
+    transition: "all 0.3s ease",
+    background: active ? "rgba(214, 195, 255, 0.45)" : "transparent",
+    color: active ? "#7446CB" : "#5B6274",
+    lineHeight: 1,
+    whiteSpace: "nowrap",
+  });
 
   return (
     <header
@@ -46,8 +116,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         transition: "border-color 0.4s ease, background 0.4s ease, box-shadow 0.4s ease",
       }}
     >
-      {/* Logo */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
         <span
           className="font-display"
           style={{
@@ -60,97 +129,98 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         >
           Ask Śrīla Prabhupāda
         </span>
-      </div>
+      </Link>
 
-      {/* Desktop Nav */}
       <nav
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 4,
+          gap: 6,
         }}
         className="desktop-nav"
       >
-        {navItems.map((item) => (
-          <button
-            key={item}
-            onClick={() => onNavChange(item)}
+        {primaryNav.map((item) => (
+          <Link
+            key={item.label}
+            href={item.href}
             className="font-body"
-            style={{
-              padding: "6px 16px",
-              borderRadius: 8,
-              fontSize: 14,
-              fontWeight: activeNav === item ? 500 : 400,
-              border: "none",
-              cursor: "pointer",
-              transition: "all 0.3s ease",
-              background:
-                activeNav === item
-                  ? "rgba(214, 195, 255, 0.45)"
-                  : "transparent",
-              color:
-                activeNav === item ? "#7446CB" : "#5B6274",
-            }}
-            onMouseEnter={(e) => {
-              if (activeNav !== item) {
-                e.currentTarget.style.color = "#3A315F";
-                e.currentTarget.style.background = "rgba(255, 181, 193, 0.24)";
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (activeNav !== item) {
-                e.currentTarget.style.color = "#5B6274";
-                e.currentTarget.style.background = "transparent";
-              }
-            }}
+            style={navButtonStyle(isActive(item.href))}
           >
-            {item}
-          </button>
+            {item.label}
+          </Link>
         ))}
 
-        {/* Divider */}
-        <div
-          style={{
-            width: 1,
-            height: 18,
-            background: "linear-gradient(180deg, rgba(214, 195, 255, 0.7), rgba(255, 181, 193, 0.66))",
-            margin: "0 8px",
-          }}
-        />
+        <div style={{ position: "relative" }} ref={moreMenuRef}>
+          <button
+            onClick={() => setMoreOpen((prev) => !prev)}
+            className="font-body"
+            aria-expanded={moreOpen}
+            aria-haspopup="menu"
+            style={{
+              ...navButtonStyle(moreOpen),
+              gap: 6,
+            }}
+          >
+            More
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d={moreOpen ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"} />
+            </svg>
+          </button>
 
-        {/* GitHub icon */}
-        <a
-          href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="View on GitHub"
-          style={{
-            width: 32,
-            height: 32,
-            borderRadius: 8,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#8D86A7",
-            transition: "all 0.3s ease",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = "#4A3D70";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = "#8D86A7";
-          }}
-        >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
-          </svg>
-        </a>
+          {moreOpen && (
+            <div
+              role="menu"
+              style={{
+                position: "absolute",
+                top: "calc(100% + 8px)",
+                right: 0,
+                minWidth: 168,
+                borderRadius: 14,
+                background:
+                  "linear-gradient(145deg, rgba(255, 248, 252, 0.98), rgba(246, 238, 255, 0.96) 58%, rgba(255, 241, 238, 0.96))",
+                border: "1px solid rgba(214, 195, 255, 0.55)",
+                boxShadow: "0 16px 30px rgba(109, 74, 176, 0.16)",
+                padding: 6,
+              }}
+            >
+              {moreItems.map((item) => (
+                <button
+                  key={item}
+                  role="menuitem"
+                  onClick={() => handleMoreItemClick(item)}
+                  className="font-body"
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    background: "transparent",
+                    color: "#4B5563",
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    fontSize: 14,
+                    fontWeight: 500,
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(214, 195, 255, 0.32)";
+                    e.currentTarget.style.color = "#3A315F";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#4B5563";
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </nav>
 
-      {/* Mobile hamburger */}
       <button
         className="mobile-menu-btn"
-        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+        onClick={() => setMobileMenuOpen((prev) => !prev)}
         aria-label="Toggle menu"
         style={{
           display: "none",
@@ -166,15 +236,10 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         }}
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          {mobileMenuOpen ? (
-            <path d="M6 6l12 12M6 18L18 6" />
-          ) : (
-            <path d="M3 12h18M3 6h18M3 18h18" />
-          )}
+          {mobileMenuOpen ? <path d="M6 6l12 12M6 18L18 6" /> : <path d="M3 12h18M3 6h18M3 18h18" />}
         </svg>
       </button>
 
-      {/* Mobile dropdown */}
       {mobileMenuOpen && (
         <div
           style={{
@@ -182,7 +247,8 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             top: 60,
             left: 0,
             right: 0,
-            background: "linear-gradient(140deg, rgba(255, 248, 252, 0.97), rgba(246, 238, 255, 0.95) 58%, rgba(255, 241, 238, 0.95))",
+            background:
+              "linear-gradient(140deg, rgba(255, 248, 252, 0.97), rgba(246, 238, 255, 0.95) 58%, rgba(255, 241, 238, 0.95))",
             backdropFilter: "blur(20px)",
             WebkitBackdropFilter: "blur(20px)",
             borderBottom: "1px solid rgba(214, 195, 255, 0.55)",
@@ -192,29 +258,71 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             gap: 2,
           }}
         >
-          {navItems.map((item) => (
-            <button
-              key={item}
-              onClick={() => {
-                onNavChange(item);
-                setMobileMenuOpen(false);
-              }}
+          {primaryNav.map((item) => (
+            <Link
+              key={item.label}
+              href={item.href}
               className="font-body"
+              onClick={() => setMobileMenuOpen(false)}
               style={{
+                ...navButtonStyle(isActive(item.href)),
+                justifyContent: "flex-start",
+                textDecoration: "none",
                 padding: "10px 14px",
-                borderRadius: 10,
-                fontSize: 14,
-                fontWeight: 500,
-                border: "none",
-                cursor: "pointer",
-                textAlign: "left",
-                background: activeNav === item ? "rgba(214,195,255,0.45)" : "transparent",
-                color: activeNav === item ? "#7446CB" : "#5B6274",
               }}
             >
-              {item}
-            </button>
+              {item.label}
+            </Link>
           ))}
+
+          <button
+            onClick={() => setMobileMoreOpen((prev) => !prev)}
+            className="font-body"
+            style={{
+              ...navButtonStyle(mobileMoreOpen),
+              justifyContent: "space-between",
+              padding: "10px 14px",
+            }}
+          >
+            <span>More</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d={mobileMoreOpen ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"} />
+            </svg>
+          </button>
+
+          {mobileMoreOpen && (
+            <div
+              style={{
+                marginTop: 4,
+                marginLeft: 8,
+                paddingLeft: 10,
+                borderLeft: "1px solid rgba(214, 195, 255, 0.65)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+            >
+              {moreItems.map((item) => (
+                <button
+                  key={item}
+                  onClick={() => handleMoreItemClick(item)}
+                  className="font-body"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: "#5B6274",
+                    padding: "10px 10px",
+                    textAlign: "left",
+                    borderRadius: 8,
+                    fontSize: 14,
+                    cursor: "pointer",
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </header>
