@@ -10,6 +10,7 @@ const topicPills = [
   "What happens after death?",
   "What is the purpose of life?",
   "How to be free from suffering?",
+  "What is pure devotional service?",
 ];
 
 interface HeroSearchProps {
@@ -67,7 +68,6 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
         overflow: "hidden",
       }}
     >
-      {/* Soft lavender glow behind content */}
       {heroVisible && (
         <div
           style={{
@@ -97,7 +97,6 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           maxWidth: heroVisible ? 700 : 620,
         }}
       >
-        {/* Badge */}
         {heroVisible && (
           <div
             className="font-body"
@@ -131,12 +130,11 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
                 color: "#7C3AED",
               }}
             >
-              Scripture-grounded answers
+              27 books · 59,000+ searchable entries
             </span>
           </div>
         )}
 
-        {/* Hero Headline — Cormorant Garamond */}
         {heroVisible && (
           <h1
             className="font-display"
@@ -155,7 +153,6 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </h1>
         )}
 
-        {/* Subtitle */}
         {heroVisible && (
           <p
             className="font-body"
@@ -170,12 +167,12 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               marginBottom: 28,
             }}
           >
-            Search across Bhagavad Gītā, Śrīmad Bhāgavatam, and Caitanya Caritāmṛta.
-            Every response traced to exact verses.
+            Search across all 27 books of Śrīla Prabhupāda — Bhagavad Gītā, Śrīmad Bhāgavatam,
+            Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more.
+            Every response traced to his actual words.
           </p>
         )}
 
-        {/* Search Input — glassmorphism */}
         <form
           onSubmit={handleSubmit}
           style={{
@@ -268,7 +265,6 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </button>
         </form>
 
-        {/* Topic Pills */}
         {heroVisible && (
           <div
             style={{

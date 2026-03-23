@@ -3,9 +3,9 @@
 import { useEffect, useRef } from "react";
 
 const stats = [
-  { value: "25,020", label: "Verses Indexed", color: "#8B5CF6" },
-  { value: "3", label: "Scriptures", color: "#7C3AED" },
-  { value: "100%", label: "Open Source", color: "#6366F1" },
+  { value: "25,112", label: "Verses Indexed", color: "#8B5CF6" },
+  { value: "34,145", label: "Prose Paragraphs", color: "#7C3AED" },
+  { value: "27", label: "Books", color: "#6366F1" },
   { value: "\u221E", label: "Queries Per Day", color: "#818CF8" },
 ];
 
