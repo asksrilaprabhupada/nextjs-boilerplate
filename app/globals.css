@@ -1,53 +1,69 @@
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Noto+Serif+Devanagari:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Noto+Serif+Devanagari:wght@400;500;600;700&display=swap');
+@import url('https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700,900&display=swap');
 
 @import "tailwindcss";
 
 /* ============================================================
-   ASK ŚRĪLA PRABHUPĀDA — Global Styles (Light Aurora Theme)
+   ASK ŚRĪLA PRABHUPĀDA — Polar Glass Theme
+   Cool whites · Lavender mist · Indigo primaries · Frosted glass
    ============================================================ */
 
 :root {
-  /* === BACKGROUNDS === */
-  --bg-deepest: #F8F6FF;
+  /* === BACKGROUNDS — cool whites to lavender === */
+  --bg-deepest: #F8FAFF;
   --bg-primary: #FFFFFF;
-  --bg-elevated: #F3F0FA;
-  --bg-hover: #EDE8F5;
-  --bg-section-alt: #FBF9FF;
-  --bg-section-deep: #F5F2FC;
+  --bg-elevated: #F1F0FB;
+  --bg-hover: #EBE9F7;
+  --bg-section-alt: #F5F3FF;
+  --bg-lavender: #EDE9FE;
+  --bg-lavender-soft: #F5F3FF;
 
-  /* === ACCENT COLORS === */
-  --saffron: #D47A0A;
-  --saffron-light: #E8920E;
-  --saffron-glow: #F5A623;
-  --gold: #C4942A;
-  --gold-muted: #B8943F;
-  --rose-gold: #B87D5A;
+  /* === PRIMARY — indigo spectrum === */
+  --indigo: #4F46E5;
+  --indigo-light: #6366F1;
+  --indigo-dark: #3730A3;
+  --indigo-soft: rgba(79, 70, 229, 0.08);
+  --indigo-glow: rgba(79, 70, 229, 0.15);
+
+  /* === SPIRITUAL ACCENTS (subtle, secondary) === */
+  --saffron: #D97706;
+  --saffron-soft: rgba(217, 119, 6, 0.08);
+  --gold: #B8862D;
+  --rose-gold: #B07850;
   --temple-red: #9B3B2B;
   --lotus-pink: #D4837A;
-  --sage: #7A8B6F;
+  --sage: #6B8B60;
 
-  /* === TEXT COLORS === */
-  --text-primary: #1A1A2E;
-  --text-secondary: #4A4A68;
-  --text-muted: #7B7B9A;
-  --text-dim: #A0A0B8;
+  /* === TEXT COLORS — cool slate === */
+  --text-primary: #1E1B4B;
+  --text-secondary: #4338CA;
+  --text-body: #3B3566;
+  --text-muted: #6B6B94;
+  --text-dim: #9CA3B8;
 
   /* === BORDERS & DIVIDERS === */
-  --border-subtle: rgba(26, 26, 46, 0.06);
-  --border-medium: rgba(26, 26, 46, 0.1);
-  --border-saffron: rgba(212, 122, 10, 0.3);
+  --border-subtle: rgba(79, 70, 229, 0.06);
+  --border-medium: rgba(79, 70, 229, 0.10);
+  --border-frost: rgba(255, 255, 255, 0.6);
 
-  /* === SHADOWS === */
-  --shadow-subtle: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
-  --shadow-medium: 0 4px 16px rgba(0,0,0,0.06), 0 12px 40px rgba(0,0,0,0.04);
-  --shadow-elevated: 0 8px 30px rgba(0,0,0,0.08), 0 20px 60px rgba(0,0,0,0.05);
-  --shadow-saffron-glow: 0 0 30px rgba(212, 122, 10, 0.12), 0 0 60px rgba(212, 122, 10, 0.04);
+  /* === GLASS EFFECTS === */
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.5);
+  --glass-shadow: 0 4px 30px rgba(79, 70, 229, 0.06);
+  --glass-blur: blur(20px);
+
+  /* === SHADOWS — cool-tinted === */
+  --shadow-subtle: 0 1px 3px rgba(30, 27, 75, 0.04), 0 4px 14px rgba(30, 27, 75, 0.03);
+  --shadow-medium: 0 4px 20px rgba(30, 27, 75, 0.06), 0 14px 44px rgba(30, 27, 75, 0.04);
+  --shadow-elevated: 0 8px 40px rgba(30, 27, 75, 0.08), 0 24px 70px rgba(30, 27, 75, 0.05);
+  --shadow-indigo-glow: 0 4px 24px rgba(79, 70, 229, 0.18), 0 0 60px rgba(79, 70, 229, 0.06);
 
   /* === CARD === */
-  --card-bg: #FFFFFF;
-  --card-border: rgba(26, 26, 46, 0.06);
-  --card-radius: 18px;
-  --card-shadow: 0 2px 12px rgba(0,0,0,0.04), 0 8px 32px rgba(0,0,0,0.03);
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --card-bg-solid: #FFFFFF;
+  --card-border: rgba(79, 70, 229, 0.06);
+  --card-radius: 20px;
+  --card-shadow: 0 2px 16px rgba(30, 27, 75, 0.04), 0 8px 40px rgba(30, 27, 75, 0.03);
 
   /* === TRANSITIONS === */
   --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
@@ -66,7 +82,7 @@ html {
 }
 
 body {
-  font-family: 'DM Sans', sans-serif;
+  font-family: 'Satoshi', sans-serif;
   background: var(--bg-deepest);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
@@ -75,12 +91,12 @@ body {
 }
 
 /* Font families */
-.font-cormorant {
-  font-family: 'Cormorant Garamond', serif;
+.font-satoshi {
+  font-family: 'Satoshi', sans-serif;
 }
 
-.font-dm-sans {
-  font-family: 'DM Sans', sans-serif;
+.font-cormorant {
+  font-family: 'Cormorant Garamond', serif;
 }
 
 .font-devanagari {
@@ -89,7 +105,7 @@ body {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -97,33 +113,33 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(26, 26, 46, 0.1);
+  background: rgba(79, 70, 229, 0.12);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(26, 26, 46, 0.18);
+  background: rgba(79, 70, 229, 0.22);
 }
 
-/* Lock screen animations */
+/* Animations */
 @keyframes kenBurnsZoomIn {
   from { transform: scale(1); }
-  to { transform: scale(1.1); }
+  to { transform: scale(1.08); }
 }
 
 @keyframes kenBurnsPanLeft {
-  from { transform: scale(1.15) translateX(3%); }
-  to { transform: scale(1.15) translateX(-3%); }
+  from { transform: scale(1.12) translateX(2%); }
+  to { transform: scale(1.12) translateX(-2%); }
 }
 
 @keyframes kenBurnsPanRight {
-  from { transform: scale(1.15) translateX(-3%); }
-  to { transform: scale(1.15) translateX(3%); }
+  from { transform: scale(1.12) translateX(-2%); }
+  to { transform: scale(1.12) translateX(2%); }
 }
 
 @keyframes pulse-arrow {
-  0%, 100% { transform: translateY(0); opacity: 0.6; }
-  50% { transform: translateY(-8px); opacity: 1; }
+  0%, 100% { transform: translateY(0); opacity: 0.5; }
+  50% { transform: translateY(-6px); opacity: 1; }
 }
 
 @keyframes rotate-mandala {
@@ -131,20 +147,34 @@ body {
   to { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
+@keyframes float-orb {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(30px, -20px) scale(1.05); }
+  50% { transform: translate(-10px, 20px) scale(0.95); }
+  75% { transform: translate(-30px, -10px) scale(1.02); }
+}
+
+@keyframes float-orb-2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  25% { transform: translate(-25px, 15px) scale(1.03); }
+  50% { transform: translate(20px, -25px) scale(0.97); }
+  75% { transform: translate(15px, 10px) scale(1.04); }
+}
+
 @keyframes breathe {
-  0%, 100% { transform: scale(1); opacity: 0.5; }
-  50% { transform: scale(1.1); opacity: 1; }
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
 }
 
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0.3; }
 }
 
 @keyframes fadeInUp {
   from {
     opacity: 0;
-    transform: translateY(24px);
+    transform: translateY(20px);
   }
   to {
     opacity: 1;
@@ -152,26 +182,32 @@ body {
   }
 }
 
-.animate-fade-in-up {
-  animation: fadeInUp 0.8s var(--ease-smooth) both;
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
-/* Verse block styles — card-based */
+.animate-fade-in-up {
+  animation: fadeInUp 0.7s var(--ease-smooth) both;
+}
+
+/* Verse block styles — frosted glass */
 .verse-block {
   background: var(--card-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid var(--card-border);
-  border-left: 3px solid var(--saffron);
-  padding: 20px 24px;
+  border-left: 3px solid var(--indigo);
+  padding: 24px 28px;
   border-radius: var(--card-radius);
   margin: 16px 0;
   box-shadow: var(--card-shadow);
 }
 
 .purport-block {
-  background: var(--bg-elevated);
+  background: var(--bg-lavender-soft);
   border: 1px solid var(--card-border);
-  border-left: 3px solid var(--rose-gold);
-  padding: 20px 24px;
+  border-left: 3px solid var(--indigo-light);
+  padding: 24px 28px;
   border-radius: var(--card-radius);
   margin: 12px 0 16px 0;
   box-shadow: var(--shadow-subtle);
@@ -188,6 +224,6 @@ body {
 
 /* Selection color */
 ::selection {
-  background: rgba(212, 122, 10, 0.2);
+  background: rgba(79, 70, 229, 0.15);
   color: var(--text-primary);
 }

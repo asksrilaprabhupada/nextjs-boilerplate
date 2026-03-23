@@ -49,8 +49,8 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
             height: 40,
             borderRadius: "50%",
             border: "2px solid var(--border-medium)",
-            borderTopColor: "var(--saffron)",
-            animation: "rotate-mandala 1s linear infinite",
+            borderTopColor: "var(--indigo)",
+            animation: "spin 0.8s linear infinite",
           }}
         />
         <p
@@ -74,7 +74,7 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
 
   return (
     <div style={{ width: "100%" }}>
-      {/* Layer 1: Bhagavad Gītā */}
+      {/* Layer 1: Bhagavad Gita */}
       <ScriptureLayer
         scripture="BG"
         verses={results.bg.verses}
@@ -86,16 +86,16 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
       {/* Go Deeper to SB */}
       {hasSB && !showSB && (
         <div style={{ background: "var(--bg-deepest)" }}>
-          <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 clamp(20px, 4vw, 40px)" }}>
+          <div style={{ maxWidth: 700, margin: "0 auto", padding: "0 clamp(20px, 4vw, 40px)" }}>
             <GoDeeper
-              transitionText="Śrīmad Bhāgavatam expands further on this topic with greater depth and detail..."
+              transitionText="Srimad Bhagavatam expands further on this topic with greater depth and detail..."
               onClick={() => setShowSB(true)}
             />
           </div>
         </div>
       )}
 
-      {/* Layer 2: Śrīmad Bhāgavatam */}
+      {/* Layer 2: Srimad Bhagavatam */}
       <ScriptureLayer
         scripture="SB"
         verses={results.sb.verses}
@@ -107,16 +107,16 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
       {/* Go Deeper to CC */}
       {hasCC && showSB && !showCC && (
         <div style={{ background: "var(--bg-deepest)" }}>
-          <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 clamp(20px, 4vw, 40px)" }}>
+          <div style={{ maxWidth: 700, margin: "0 auto", padding: "0 clamp(20px, 4vw, 40px)" }}>
             <GoDeeper
-              transitionText="Caitanya Caritāmṛta reveals the highest understanding of this topic through the teachings of Lord Caitanya..."
+              transitionText="Caitanya Caritamrta reveals the highest understanding of this topic through the teachings of Lord Caitanya..."
               onClick={() => setShowCC(true)}
             />
           </div>
         </div>
       )}
 
-      {/* Layer 3: Caitanya Caritāmṛta */}
+      {/* Layer 3: Caitanya Caritamrta */}
       <ScriptureLayer
         scripture="CC"
         verses={results.cc.verses}

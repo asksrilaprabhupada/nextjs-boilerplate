@@ -39,30 +39,31 @@ export default function GoDeeper({ transitionText, onClick }: GoDeeperProps) {
       </p>
       <button
         onClick={onClick}
-        className="font-dm-sans"
+        className="font-satoshi"
         style={{
           padding: "10px 24px",
           borderRadius: 10,
-          border: "1.5px solid var(--saffron)",
-          background: "var(--card-bg)",
-          color: "var(--saffron)",
+          border: "1.5px solid var(--indigo)",
+          background: "rgba(255,255,255,0.6)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          color: "var(--indigo)",
           fontSize: "0.85rem",
-          fontWeight: 600,
+          fontWeight: 700,
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
           gap: 8,
           transition: "all 0.3s ease",
-          boxShadow: "var(--shadow-subtle)",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "rgba(212,122,10,0.06)";
-          e.currentTarget.style.boxShadow = "var(--shadow-saffron-glow)";
+          e.currentTarget.style.background = "var(--indigo-soft)";
+          e.currentTarget.style.boxShadow = "var(--shadow-indigo-glow)";
           e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.background = "var(--card-bg)";
-          e.currentTarget.style.boxShadow = "var(--shadow-subtle)";
+          e.currentTarget.style.background = "rgba(255,255,255,0.6)";
+          e.currentTarget.style.boxShadow = "none";
           e.currentTarget.style.transform = "translateY(0)";
         }}
       >

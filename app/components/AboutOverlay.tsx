@@ -4,46 +4,47 @@ export default function AboutOverlay() {
   return (
     <div>
       <h2
-        className="font-cormorant"
+        className="font-satoshi"
         style={{
-          fontSize: "1.6rem",
-          fontWeight: 500,
+          fontSize: "1.5rem",
+          fontWeight: 900,
           color: "var(--text-primary)",
           marginBottom: 20,
+          letterSpacing: "-0.02em",
         }}
       >
-        About Ask Śrīla Prabhupāda
+        About Ask Srila Prabhupada
       </h2>
       <div
         className="font-cormorant"
         style={{
           fontSize: "1rem",
           lineHeight: 1.8,
-          color: "var(--text-secondary)",
+          color: "var(--text-body)",
           display: "flex",
           flexDirection: "column",
           gap: 16,
         }}
       >
         <p>
-          Ask Śrīla Prabhupāda is a devotional knowledge engine that helps devotees find
+          Ask Srila Prabhupada is a devotional knowledge engine that helps devotees find
           scripture-grounded answers from the teachings of His Divine Grace A.C. Bhaktivedanta
-          Swami Prabhupāda.
+          Swami Prabhupada.
         </p>
         <p>
-          Every answer is traced directly to specific verses from the Bhagavad Gītā As It Is,
-          Śrīmad Bhāgavatam, and Śrī Caitanya Caritāmṛta — the three foundational scriptures
-          of Gauḍīya Vaiṣṇavism.
+          Every answer is traced directly to specific verses from the Bhagavad Gita As It Is,
+          Srimad Bhagavatam, and Sri Caitanya Caritamrta — the three foundational scriptures
+          of Gaudiya Vaishnavism.
         </p>
         <p>
           The AI in this platform never teaches independently. It only introduces, contextualizes,
-          and provides transitions between Kṛṣṇa&apos;s words and Śrīla Prabhupāda&apos;s purports.
+          and provides transitions between Krishna&apos;s words and Srila Prabhupada&apos;s purports.
           Every philosophical statement comes directly from the scriptures.
         </p>
         <p>
-          Our database contains <strong style={{ color: "var(--saffron)" }}>25,020 verses</strong> across
+          Our database contains <strong style={{ color: "var(--indigo)" }}>25,020 verses</strong> across
           415 chapters, each with original Sanskrit/Bengali, transliteration, word-for-word synonyms,
-          translation, and the complete purport by Śrīla Prabhupāda.
+          translation, and the complete purport by Srila Prabhupada.
         </p>
         <p
           style={{
@@ -59,7 +60,7 @@ export default function AboutOverlay() {
             href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "var(--saffron)", textDecoration: "none" }}
+            style={{ color: "var(--indigo)", textDecoration: "none", fontWeight: 500 }}
           >
             GitHub
           </a>

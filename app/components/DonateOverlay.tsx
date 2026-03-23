@@ -45,12 +45,13 @@ export default function DonateOverlay() {
   return (
     <div>
       <h2
-        className="font-cormorant"
+        className="font-satoshi"
         style={{
-          fontSize: "1.6rem",
-          fontWeight: 500,
+          fontSize: "1.5rem",
+          fontWeight: 900,
           color: "var(--text-primary)",
           marginBottom: 8,
+          letterSpacing: "-0.02em",
         }}
       >
         Support this project
@@ -67,10 +68,10 @@ export default function DonateOverlay() {
         Your donations help cover server costs and ongoing development to serve devotees worldwide.
       </p>
 
-      {/* Bank Details Card */}
+      {/* Bank Details Card — frosted glass */}
       <div
         style={{
-          background: "var(--bg-deepest)",
+          background: "var(--bg-lavender-soft)",
           borderRadius: "var(--card-radius)",
           border: "1px solid var(--card-border)",
           overflow: "hidden",
@@ -96,20 +97,20 @@ export default function DonateOverlay() {
               >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
-                    className="font-dm-sans"
+                    className="font-satoshi"
                     style={{
                       fontSize: "0.68rem",
-                      fontWeight: 600,
+                      fontWeight: 700,
                       textTransform: "uppercase",
                       letterSpacing: "0.06em",
-                      color: "var(--text-muted)",
+                      color: "var(--text-dim)",
                       marginBottom: 2,
                     }}
                   >
                     {field.label}
                   </div>
                   <div
-                    className="font-dm-sans"
+                    className="font-satoshi"
                     style={{
                       fontSize: "0.92rem",
                       fontWeight: 500,
@@ -130,7 +131,7 @@ export default function DonateOverlay() {
                     height: 34,
                     borderRadius: 8,
                     border: "1px solid var(--border-medium)",
-                    background: copiedField === field.key ? "var(--saffron)" : "var(--card-bg)",
+                    background: copiedField === field.key ? "var(--indigo)" : "var(--card-bg-solid)",
                     color: copiedField === field.key ? "#fff" : "var(--text-muted)",
                     cursor: "pointer",
                     display: "flex",
@@ -142,8 +143,8 @@ export default function DonateOverlay() {
                   }}
                   onMouseEnter={(e) => {
                     if (copiedField !== field.key) {
-                      e.currentTarget.style.borderColor = "var(--saffron)";
-                      e.currentTarget.style.color = "var(--saffron)";
+                      e.currentTarget.style.borderColor = "var(--indigo)";
+                      e.currentTarget.style.color = "var(--indigo)";
                     }
                   }}
                   onMouseLeave={(e) => {

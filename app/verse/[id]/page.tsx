@@ -22,9 +22,9 @@ interface VerseData {
 }
 
 const scriptureNames: Record<string, string> = {
-  BG: "BHAGAVAD GĪTĀ AS IT IS",
-  SB: "ŚRĪMAD BHĀGAVATAM",
-  CC: "ŚRĪ CAITANYA CARITĀMṚTA",
+  BG: "BHAGAVAD GITA AS IT IS",
+  SB: "SRIMAD BHAGAVATAM",
+  CC: "SRI CAITANYA CARITAMRTA",
 };
 
 export default function VerseDetailPage() {
@@ -55,7 +55,7 @@ export default function VerseDetailPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "var(--bg-deepest)",
+          background: "linear-gradient(170deg, #F8FAFF, #EDE9FE)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -67,8 +67,8 @@ export default function VerseDetailPage() {
             height: 40,
             borderRadius: "50%",
             border: "2px solid var(--border-medium)",
-            borderTopColor: "var(--saffron)",
-            animation: "rotate-mandala 1s linear infinite",
+            borderTopColor: "var(--indigo)",
+            animation: "spin 0.8s linear infinite",
           }}
         />
       </div>
@@ -80,7 +80,7 @@ export default function VerseDetailPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "var(--bg-deepest)",
+          background: "linear-gradient(170deg, #F8FAFF, #EDE9FE)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -93,11 +93,12 @@ export default function VerseDetailPage() {
         </p>
         <Link
           href="/"
-          className="font-dm-sans"
+          className="font-satoshi"
           style={{
             fontSize: "0.85rem",
-            color: "var(--saffron)",
+            color: "var(--indigo)",
             textDecoration: "none",
+            fontWeight: 500,
           }}
         >
           ← Back to search
@@ -112,7 +113,6 @@ export default function VerseDetailPage() {
   const chapterNum = chapterInfo?.chapter_number || "";
   const chapterTitle = chapterInfo?.chapter_title || "";
 
-  // Parse synonyms into structured data
   const synonymEntries = verse.synonyms
     ? verse.synonyms.split(";").map((entry) => {
         const parts = entry.trim().split("—");
@@ -128,21 +128,45 @@ export default function VerseDetailPage() {
     : [];
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--bg-deepest)" }}>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(170deg, #F8FAFF 0%, #F1F0FB 50%, #EDE9FE 100%)",
+        position: "relative",
+      }}
+    >
+      {/* Ambient orb */}
+      <div
+        style={{
+          position: "fixed",
+          top: "20%",
+          right: "5%",
+          width: 350,
+          height: 350,
+          borderRadius: "50%",
+          background: "radial-gradient(circle, rgba(79,70,229,0.06) 0%, transparent 65%)",
+          animation: "float-orb 20s ease-in-out infinite",
+          pointerEvents: "none",
+        }}
+      />
+
       <div
         style={{
           maxWidth: 680,
           margin: "0 auto",
           padding: "100px clamp(20px, 4vw, 40px) 80px",
+          position: "relative",
+          zIndex: 1,
         }}
       >
         {/* Back link */}
         <button
           onClick={() => router.back()}
-          className="font-dm-sans"
+          className="font-satoshi"
           style={{
             fontSize: "0.82rem",
-            color: "var(--saffron)",
+            fontWeight: 500,
+            color: "var(--indigo)",
             background: "none",
             border: "none",
             cursor: "pointer",
@@ -159,44 +183,47 @@ export default function VerseDetailPage() {
           ← Back to results
         </button>
 
-        {/* Verse detail card */}
+        {/* Verse detail card — frosted glass */}
         <div
           style={{
-            background: "var(--card-bg)",
+            background: "rgba(255, 255, 255, 0.72)",
+            backdropFilter: "blur(20px)",
+            WebkitBackdropFilter: "blur(20px)",
             borderRadius: "var(--card-radius)",
-            border: "1px solid var(--card-border)",
+            border: "1px solid var(--glass-border)",
             boxShadow: "var(--card-shadow)",
-            padding: "32px clamp(20px, 3vw, 36px)",
+            padding: "36px clamp(20px, 3vw, 36px)",
           }}
         >
           {/* Scripture name */}
           <div
-            className="font-dm-sans"
+            className="font-satoshi"
             style={{
-              fontSize: "0.72rem",
-              fontWeight: 600,
+              fontSize: "0.7rem",
+              fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.08em",
-              color: "var(--text-muted)",
+              color: "var(--text-dim)",
               marginBottom: 8,
               display: "flex",
               alignItems: "center",
               gap: 8,
             }}
           >
-            <span style={{ color: "var(--saffron)" }}>───</span>
+            <span style={{ color: "var(--indigo)", opacity: 0.4 }}>───</span>
             {scriptureName}
-            <span style={{ color: "var(--saffron)" }}>───</span>
+            <span style={{ color: "var(--indigo)", opacity: 0.4 }}>───</span>
           </div>
 
           {/* Chapter and verse number */}
           <h1
-            className="font-cormorant"
+            className="font-satoshi"
             style={{
-              fontSize: "clamp(1.5rem, 3vw, 1.8rem)",
-              fontWeight: 600,
+              fontSize: "clamp(1.4rem, 3vw, 1.7rem)",
+              fontWeight: 900,
               color: "var(--text-primary)",
               marginBottom: 4,
+              letterSpacing: "-0.02em",
             }}
           >
             Chapter {cantoPrefix}{chapterNum}, Verse {verse.verse_number}
@@ -220,10 +247,10 @@ export default function VerseDetailPage() {
           {verse.sanskrit_devanagari && (
             <div
               style={{
-                borderLeft: "3px solid var(--saffron)",
-                background: "var(--bg-elevated)",
+                borderLeft: "3px solid var(--indigo)",
+                background: "var(--bg-lavender-soft)",
                 padding: 20,
-                borderRadius: "0 12px 12px 0",
+                borderRadius: "0 14px 14px 0",
                 marginBottom: 24,
               }}
             >
@@ -325,7 +352,7 @@ export default function VerseDetailPage() {
                   fontSize: "0.98rem",
                   fontWeight: 400,
                   lineHeight: 1.8,
-                  color: "var(--text-secondary)",
+                  color: "var(--text-body)",
                   marginTop: 12,
                 }}
               >
@@ -349,19 +376,20 @@ function SectionLabel({ text }: { text: string }) {
       <span
         style={{
           width: 20,
-          height: 1.5,
-          background: "var(--saffron)",
+          height: 2,
+          background: "var(--indigo)",
           borderRadius: 1,
+          opacity: 0.5,
         }}
       />
       <span
-        className="font-dm-sans"
+        className="font-satoshi"
         style={{
-          fontSize: "0.72rem",
-          fontWeight: 600,
+          fontSize: "0.7rem",
+          fontWeight: 700,
           textTransform: "uppercase",
           letterSpacing: "0.08em",
-          color: "var(--text-muted)",
+          color: "var(--text-dim)",
         }}
       >
         {text}
