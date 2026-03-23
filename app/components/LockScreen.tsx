@@ -1,30 +1,18 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { slideshowImages, dailyVerses } from "../lib/lockscreen-data";
+import { slideshowImages, lockscreenVideo, dailyVerses } from "../lib/lockscreen-data";
 
 export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [nextImageIndex, setNextImageIndex] = useState(1);
   const [transitioning, setTransitioning] = useState(false);
-  const [time, setTime] = useState("");
   const [verse] = useState(() => dailyVerses[Math.floor(Math.random() * dailyVerses.length)]);
   const [visible, setVisible] = useState(true);
   const [entered, setEntered] = useState(false);
 
   useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setTime(
-        now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false })
-      );
-    };
-    updateTime();
-    const interval = setInterval(updateTime, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
+    if (lockscreenVideo) return; // skip slideshow if video is set
     const interval = setInterval(() => {
       setTransitioning(true);
       setTimeout(() => {
@@ -95,38 +83,59 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         overflow: "hidden",
       }}
     >
-      {/* Background images */}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: `url(${currentImage.url})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          animation: `${kenBurnsStyle(currentImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`,
-          opacity: transitioning ? 0 : 1,
-          transition: "opacity 1.5s ease",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          backgroundImage: `url(${nextImage.url})`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          animation: `${kenBurnsStyle(nextImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`,
-          opacity: transitioning ? 1 : 0,
-          transition: "opacity 1.5s ease",
-        }}
-      />
+      {/* Video background (if set) */}
+      {lockscreenVideo ? (
+        <video
+          autoPlay
+          muted
+          loop
+          playsInline
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }}
+        >
+          <source src={lockscreenVideo} type="video/mp4" />
+        </video>
+      ) : (
+        <>
+          {/* Photo slideshow background */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              backgroundImage: `url(${currentImage.url})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              animation: `${kenBurnsStyle(currentImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`,
+              opacity: transitioning ? 0 : 1,
+              transition: "opacity 1.5s ease",
+            }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              backgroundImage: `url(${nextImage.url})`,
+              backgroundSize: "cover",
+              backgroundPosition: "center",
+              animation: `${kenBurnsStyle(nextImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`,
+              opacity: transitioning ? 1 : 0,
+              transition: "opacity 1.5s ease",
+            }}
+          />
+        </>
+      )}
 
-      {/* Dark gradient overlay */}
+      {/* Gradient overlay — light tinted for readability */}
       <div
         style={{
           position: "absolute",
           inset: 0,
-          background: `linear-gradient(to top, rgba(8,14,26,0.95) 0%, rgba(8,14,26,0.6) 30%, rgba(8,14,26,0.2) 60%, transparent 100%)`,
+          background: `linear-gradient(to top, rgba(20,15,40,0.85) 0%, rgba(20,15,40,0.5) 30%, rgba(20,15,40,0.15) 60%, transparent 100%)`,
         }}
       />
 
@@ -139,9 +148,10 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           left: "50%",
           width: "min(80vw, 600px)",
           height: "min(80vw, 600px)",
-          opacity: 0.035,
+          opacity: 0.04,
           animation: "rotate-mandala 120s linear infinite",
           pointerEvents: "none",
+          color: "#fff",
         }}
       >
         {[...Array(12)].map((_, i) => (
@@ -172,20 +182,6 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           transition: "opacity 1.2s var(--ease-smooth), transform 1.2s var(--ease-smooth)",
         }}
       >
-        {/* Clock */}
-        <div
-          className="font-cormorant"
-          style={{
-            fontSize: "clamp(3rem, 8vw, 6rem)",
-            fontWeight: 300,
-            color: "var(--text-primary)",
-            letterSpacing: "-0.02em",
-            marginBottom: 32,
-          }}
-        >
-          {time}
-        </div>
-
         {/* Verse */}
         <div
           className="font-cormorant"
@@ -193,7 +189,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
             fontSize: "clamp(1rem, 2.2vw, 1.35rem)",
             fontWeight: 400,
             fontStyle: "italic",
-            color: "rgba(255,248,240,0.6)",
+            color: "rgba(255,248,240,0.7)",
             maxWidth: 520,
             textAlign: "center",
             lineHeight: 1.7,
@@ -209,7 +205,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
           style={{
             fontSize: "0.82rem",
             color: "var(--saffron-glow)",
-            opacity: 0.7,
+            opacity: 0.8,
             marginTop: 12,
           }}
         >
@@ -231,7 +227,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
               width: 40,
               height: 40,
               borderRadius: "50%",
-              border: "1px solid rgba(255,248,240,0.15)",
+              border: "1px solid rgba(255,248,240,0.2)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -239,7 +235,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ transform: "rotate(180deg)" }}>
-              <path d="M8 12V4M4 8l4-4 4 4" stroke="var(--text-primary)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M8 12V4M4 8l4-4 4 4" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
           <span
@@ -249,7 +245,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
               fontWeight: 500,
               textTransform: "uppercase",
               letterSpacing: "0.12em",
-              color: "rgba(255,248,240,0.4)",
+              color: "rgba(255,248,240,0.45)",
             }}
           >
             Click anywhere to enter

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface HeaderProps {
   activeNav: string;
@@ -11,11 +11,13 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
   const [scrolled, setScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  if (typeof window !== "undefined") {
-    window.addEventListener("scroll", () => {
+  useEffect(() => {
+    const handleScroll = () => {
       setScrolled(window.scrollY > 20);
-    });
-  }
+    };
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   const navItems = ["Search", "About", "Donate", "Contact"];
 
@@ -28,7 +30,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         right: 0,
         zIndex: 100,
         height: 64,
-        background: "rgba(11, 17, 32, 0.85)",
+        background: "rgba(255, 255, 255, 0.8)",
         backdropFilter: "blur(20px) saturate(1.2)",
         WebkitBackdropFilter: "blur(20px) saturate(1.2)",
         borderBottom: "1px solid var(--border-subtle)",
@@ -51,7 +53,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            boxShadow: "0 2px 8px rgba(232,130,12,0.25)",
+            boxShadow: "0 2px 8px rgba(212,122,10,0.2)",
             flexShrink: 0,
           }}
         >
@@ -95,11 +97,11 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
               cursor: "pointer",
               transition: "all 0.2s ease",
               background: activeNav === item ? "var(--saffron)" : "transparent",
-              color: activeNav === item ? "#080E1A" : "var(--text-secondary)",
+              color: activeNav === item ? "#fff" : "var(--text-secondary)",
             }}
             onMouseEnter={(e) => {
               if (activeNav !== item) {
-                e.currentTarget.style.background = "rgba(255,248,240,0.04)";
+                e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text-primary)";
               }
             }}
@@ -119,14 +121,14 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           style={{
             width: 1,
             height: 20,
-            background: "rgba(255,248,240,0.08)",
+            background: "var(--border-medium)",
             margin: "0 8px",
           }}
         />
 
         {/* GitHub icon */}
         <a
-          href="https://github.com"
+          href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
           target="_blank"
           rel="noopener noreferrer"
           aria-label="View on GitHub"
@@ -141,7 +143,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             transition: "all 0.2s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(255,248,240,0.04)";
+            e.currentTarget.style.background = "var(--bg-hover)";
             e.currentTarget.style.color = "var(--text-primary)";
           }}
           onMouseLeave={(e) => {
@@ -190,7 +192,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             top: 64,
             left: 0,
             right: 0,
-            background: "rgba(11, 17, 32, 0.95)",
+            background: "rgba(255, 255, 255, 0.95)",
             backdropFilter: "blur(20px)",
             borderBottom: "1px solid var(--border-subtle)",
             padding: "8px 16px",
@@ -216,7 +218,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
                 cursor: "pointer",
                 textAlign: "left",
                 background: activeNav === item ? "var(--saffron)" : "transparent",
-                color: activeNav === item ? "#080E1A" : "var(--text-secondary)",
+                color: activeNav === item ? "#fff" : "var(--text-secondary)",
               }}
             >
               {item}

@@ -85,7 +85,7 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
 
       {/* Go Deeper to SB */}
       {hasSB && !showSB && (
-        <div style={{ background: "var(--bg-primary)" }}>
+        <div style={{ background: "var(--bg-deepest)" }}>
           <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 clamp(20px, 4vw, 40px)" }}>
             <GoDeeper
               transitionText="Śrīmad Bhāgavatam expands further on this topic with greater depth and detail..."
@@ -106,7 +106,7 @@ export default function NarrativeResponse({ results, isLoading }: NarrativeRespo
 
       {/* Go Deeper to CC */}
       {hasCC && showSB && !showCC && (
-        <div style={{ background: "var(--bg-section-alt)" }}>
+        <div style={{ background: "var(--bg-deepest)" }}>
           <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 clamp(20px, 4vw, 40px)" }}>
             <GoDeeper
               transitionText="Caitanya Caritāmṛta reveals the highest understanding of this topic through the teachings of Lord Caitanya..."

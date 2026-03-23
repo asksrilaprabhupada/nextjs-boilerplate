@@ -9,7 +9,6 @@ import PageOverlay from "./components/PageOverlay";
 import AboutOverlay from "./components/AboutOverlay";
 import DonateOverlay from "./components/DonateOverlay";
 import ContactOverlay from "./components/ContactOverlay";
-import Footer from "./components/Footer";
 
 export default function Home() {
   const [lockScreenVisible, setLockScreenVisible] = useState(true);
@@ -75,8 +74,6 @@ export default function Home() {
             isLoading={isSearching}
           />
         </main>
-
-        <Footer onNavChange={handleNavChange} />
       </div>
 
       {/* Modal Overlays */}
