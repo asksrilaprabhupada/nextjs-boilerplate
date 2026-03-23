@@ -1,0 +1,183 @@
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=DM+Sans:wght@300;400;500;600;700&family=Noto+Serif+Devanagari:wght@400;500;600;700&display=swap');
+
+@import "tailwindcss";
+
+/* ============================================================
+   ASK ŚRĪLA PRABHUPĀDA — Global Styles
+   ============================================================ */
+
+:root {
+  /* === BACKGROUNDS === */
+  --bg-deepest: #080E1A;
+  --bg-primary: #0B1120;
+  --bg-elevated: #121B2E;
+  --bg-hover: #1C2A4A;
+  --bg-section-alt: #0E1628;
+  --bg-section-deep: #0A0F1E;
+
+  /* === ACCENT COLORS === */
+  --saffron: #E8820C;
+  --saffron-light: #F5A623;
+  --saffron-glow: #FFC46B;
+  --gold: #D4A853;
+  --gold-muted: #B8943F;
+  --rose-gold: #C8956C;
+  --temple-red: #9B3B2B;
+  --lotus-pink: #D4837A;
+  --sage: #7A8B6F;
+
+  /* === TEXT COLORS === */
+  --text-primary: #FFF8F0;
+  --text-secondary: #C4BEB5;
+  --text-muted: #8A8498;
+  --text-dim: #5C5670;
+
+  /* === BORDERS & DIVIDERS === */
+  --border-subtle: rgba(255, 248, 240, 0.06);
+  --border-medium: rgba(255, 248, 240, 0.1);
+  --border-saffron: rgba(232, 130, 12, 0.3);
+
+  /* === SHADOWS === */
+  --shadow-subtle: 0 1px 3px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.1);
+  --shadow-medium: 0 4px 16px rgba(0,0,0,0.25), 0 12px 40px rgba(0,0,0,0.15);
+  --shadow-elevated: 0 8px 30px rgba(0,0,0,0.3), 0 20px 60px rgba(0,0,0,0.2);
+  --shadow-saffron-glow: 0 0 30px rgba(232, 130, 12, 0.15), 0 0 60px rgba(232, 130, 12, 0.05);
+
+  /* === TRANSITIONS === */
+  --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg-deepest);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+/* Font families */
+.font-cormorant {
+  font-family: 'Cormorant Garamond', serif;
+}
+
+.font-dm-sans {
+  font-family: 'DM Sans', sans-serif;
+}
+
+.font-devanagari {
+  font-family: 'Noto Serif Devanagari', serif;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 248, 240, 0.1);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 248, 240, 0.18);
+}
+
+/* Lock screen animations */
+@keyframes kenBurnsZoomIn {
+  from { transform: scale(1); }
+  to { transform: scale(1.1); }
+}
+
+@keyframes kenBurnsPanLeft {
+  from { transform: scale(1.15) translateX(3%); }
+  to { transform: scale(1.15) translateX(-3%); }
+}
+
+@keyframes kenBurnsPanRight {
+  from { transform: scale(1.15) translateX(-3%); }
+  to { transform: scale(1.15) translateX(3%); }
+}
+
+@keyframes pulse-arrow {
+  0%, 100% { transform: translateY(0); opacity: 0.6; }
+  50% { transform: translateY(-8px); opacity: 1; }
+}
+
+@keyframes rotate-mandala {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.1); opacity: 1; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.8s var(--ease-smooth) both;
+}
+
+/* Verse block styles */
+.verse-block {
+  border-left: 3px solid var(--saffron);
+  background: rgba(232, 130, 12, 0.03);
+  padding: 16px 20px;
+  border-radius: 0 10px 10px 0;
+  margin: 16px 0;
+}
+
+.purport-block {
+  border-left: 3px solid var(--rose-gold);
+  background: rgba(200, 149, 108, 0.03);
+  padding: 16px 20px;
+  border-radius: 0 10px 10px 0;
+  margin: 16px 0;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Selection color */
+::selection {
+  background: rgba(232, 130, 12, 0.3);
+  color: var(--text-primary);
+}
