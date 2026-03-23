@@ -151,12 +151,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               color: "#1E1B4B",
             }}
           >
-            Every answer from
-            <br />
-            <span className="gradient-text">
-              Prabhupāda&apos;s
-            </span>{" "}
-            words
+            Ask anything to Śrīla Prabhupāda
           </h1>
         )}
 
@@ -172,7 +167,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               textAlign: "center",
               maxWidth: 540,
               lineHeight: 1.7,
-              marginBottom: 40,
+              marginBottom: 28,
             }}
           >
             Search across Bhagavad Gītā, Śrīmad Bhāgavatam, and Caitanya Caritāmṛta.
@@ -180,40 +175,11 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </p>
         )}
 
-        {/* Buttons */}
-        {heroVisible && (
-          <div
-            style={{
-              ...stagger(3),
-              display: "flex",
-              gap: 12,
-              marginBottom: 40,
-              flexWrap: "wrap",
-              justifyContent: "center",
-            }}
-          >
-            <button
-              className="btn-primary"
-              onClick={() => inputRef.current?.focus()}
-            >
-              <span>Start Searching</span>
-            </button>
-            <a
-              href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn-ghost"
-            >
-              View on GitHub
-            </a>
-          </div>
-        )}
-
         {/* Search Input — glassmorphism */}
         <form
           onSubmit={handleSubmit}
           style={{
-            ...stagger(4),
+            ...stagger(3),
             width: "100%",
             maxWidth: 620,
             position: "relative",
@@ -306,7 +272,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
         {heroVisible && (
           <div
             style={{
-              ...stagger(5),
+              ...stagger(4),
               display: "flex",
               flexWrap: "wrap",
               gap: 8,

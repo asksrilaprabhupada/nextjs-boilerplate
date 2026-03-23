@@ -82,23 +82,15 @@ export default function CTASection() {
             marginBottom: 36,
           }}
         >
-          25,020 verses from Bhagavad Gītā, Śrīmad Bhāgavatam, and Caitanya Caritāmṛta — all at your fingertips.
+          Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, and the other literatures of Śrīla Prabhupāda—both small and big—all at your fingertips.
         </p>
-        <div className="scroll-reveal" style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
+        <div className="scroll-reveal" style={{ display: "flex", justifyContent: "center" }}>
           <button
             className="btn-primary"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
           >
             <span>Start Exploring</span>
           </button>
-          <a
-            href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="btn-ghost"
-          >
-            View Source Code
-          </a>
         </div>
       </div>
     </section>

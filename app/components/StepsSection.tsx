@@ -110,10 +110,8 @@ export default function StepsSection() {
                 fontWeight: 600,
                 lineHeight: 1,
                 marginBottom: 20,
-                background: "linear-gradient(180deg, rgba(196,181,253,0.6) 0%, rgba(196,181,253,0.1) 100%)",
-                backgroundClip: "text",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
+                color: "#9D7AF8",
+                textShadow: "0 8px 22px rgba(157, 122, 248, 0.2)",
               }}
             >
               {step.number}
