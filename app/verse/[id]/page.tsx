@@ -22,9 +22,9 @@ interface VerseData {
 }
 
 const scriptureNames: Record<string, string> = {
-  BG: "BHAGAVAD GITA AS IT IS",
-  SB: "SRIMAD BHAGAVATAM",
-  CC: "SRI CAITANYA CARITAMRTA",
+  BG: "BHAGAVAD GĪTĀ AS IT IS",
+  SB: "ŚRĪMAD BHĀGAVATAM",
+  CC: "ŚRĪ CAITANYA CARITĀMṚTA",
 };
 
 export default function VerseDetailPage() {
@@ -55,7 +55,6 @@ export default function VerseDetailPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "linear-gradient(170deg, #F8FAFF, #EDE9FE)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -66,8 +65,8 @@ export default function VerseDetailPage() {
             width: 40,
             height: 40,
             borderRadius: "50%",
-            border: "2px solid var(--border-medium)",
-            borderTopColor: "var(--indigo)",
+            border: "2px solid var(--border-subtle)",
+            borderTopColor: "var(--aurora-violet)",
             animation: "spin 0.8s linear infinite",
           }}
         />
@@ -80,7 +79,6 @@ export default function VerseDetailPage() {
       <div
         style={{
           minHeight: "100vh",
-          background: "linear-gradient(170deg, #F8FAFF, #EDE9FE)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -88,20 +86,20 @@ export default function VerseDetailPage() {
           gap: 16,
         }}
       >
-        <p className="font-cormorant" style={{ fontSize: "1.2rem", color: "var(--text-muted)" }}>
+        <p className="font-display" style={{ fontSize: "1.2rem", color: "var(--text-muted)" }}>
           Verse not found
         </p>
         <Link
           href="/"
-          className="font-satoshi"
+          className="font-body"
           style={{
-            fontSize: "0.85rem",
-            color: "var(--indigo)",
+            fontSize: 14,
+            color: "var(--aurora-violet)",
             textDecoration: "none",
             fontWeight: 500,
           }}
         >
-          ← Back to search
+          &larr; Back to search
         </Link>
       </div>
     );
@@ -131,25 +129,9 @@ export default function VerseDetailPage() {
     <div
       style={{
         minHeight: "100vh",
-        background: "linear-gradient(170deg, #F8FAFF 0%, #F1F0FB 50%, #EDE9FE 100%)",
         position: "relative",
       }}
     >
-      {/* Ambient orb */}
-      <div
-        style={{
-          position: "fixed",
-          top: "20%",
-          right: "5%",
-          width: 350,
-          height: 350,
-          borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(79,70,229,0.06) 0%, transparent 65%)",
-          animation: "float-orb 20s ease-in-out infinite",
-          pointerEvents: "none",
-        }}
-      />
-
       <div
         style={{
           maxWidth: 680,
@@ -162,11 +144,11 @@ export default function VerseDetailPage() {
         {/* Back link */}
         <button
           onClick={() => router.back()}
-          className="font-satoshi"
+          className="font-body"
           style={{
-            fontSize: "0.82rem",
+            fontSize: 14,
             fontWeight: 500,
-            color: "var(--indigo)",
+            color: "var(--aurora-violet)",
             background: "none",
             border: "none",
             cursor: "pointer",
@@ -175,52 +157,42 @@ export default function VerseDetailPage() {
             display: "flex",
             alignItems: "center",
             gap: 6,
-            transition: "opacity 0.2s ease",
+            transition: "opacity 0.3s ease",
           }}
           onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.7"; }}
           onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
         >
-          ← Back to results
+          &larr; Back to results
         </button>
 
-        {/* Verse detail card — frosted glass */}
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.72)",
-            backdropFilter: "blur(20px)",
-            WebkitBackdropFilter: "blur(20px)",
-            borderRadius: "var(--card-radius)",
-            border: "1px solid var(--glass-border)",
-            boxShadow: "var(--card-shadow)",
-            padding: "36px clamp(20px, 3vw, 36px)",
-          }}
-        >
+        {/* Verse detail card */}
+        <div className="aurora-card" style={{ padding: "36px clamp(20px, 3vw, 36px)" }}>
           {/* Scripture name */}
           <div
-            className="font-satoshi"
+            className="font-body"
             style={{
-              fontSize: "0.7rem",
-              fontWeight: 700,
+              fontSize: 11,
+              fontWeight: 500,
               textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              color: "var(--text-dim)",
+              letterSpacing: "0.12em",
+              color: "var(--text-muted)",
               marginBottom: 8,
               display: "flex",
               alignItems: "center",
               gap: 8,
             }}
           >
-            <span style={{ color: "var(--indigo)", opacity: 0.4 }}>───</span>
+            <span style={{ color: "var(--aurora-violet)", opacity: 0.4 }}>───</span>
             {scriptureName}
-            <span style={{ color: "var(--indigo)", opacity: 0.4 }}>───</span>
+            <span style={{ color: "var(--aurora-violet)", opacity: 0.4 }}>───</span>
           </div>
 
           {/* Chapter and verse number */}
           <h1
-            className="font-satoshi"
+            className="font-display"
             style={{
               fontSize: "clamp(1.4rem, 3vw, 1.7rem)",
-              fontWeight: 900,
+              fontWeight: 400,
               color: "var(--text-primary)",
               marginBottom: 4,
               letterSpacing: "-0.02em",
@@ -231,7 +203,7 @@ export default function VerseDetailPage() {
 
           {chapterTitle && (
             <p
-              className="font-cormorant"
+              className="font-display"
               style={{
                 fontSize: "1rem",
                 fontStyle: "italic",
@@ -247,16 +219,16 @@ export default function VerseDetailPage() {
           {verse.sanskrit_devanagari && (
             <div
               style={{
-                borderLeft: "3px solid var(--indigo)",
-                background: "var(--bg-lavender-soft)",
+                borderLeft: "3px solid var(--aurora-violet)",
+                background: "rgba(139, 92, 246, 0.06)",
                 padding: 20,
                 borderRadius: "0 14px 14px 0",
                 marginBottom: 24,
               }}
             >
               <p
-                className="font-devanagari"
                 style={{
+                  fontFamily: "'Noto Serif Devanagari', serif",
                   fontSize: "1.15rem",
                   lineHeight: 1.9,
                   fontWeight: 500,
@@ -271,7 +243,7 @@ export default function VerseDetailPage() {
           {/* Transliteration */}
           {verse.transliteration && (
             <p
-              className="font-cormorant"
+              className="font-display"
               style={{
                 fontSize: "1rem",
                 fontStyle: "italic",
@@ -299,8 +271,8 @@ export default function VerseDetailPage() {
                 {synonymEntries.map((entry, i) => (
                   <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
                     <span
-                      className="font-devanagari"
                       style={{
+                        fontFamily: "'Noto Serif Devanagari', serif",
                         fontSize: "0.88rem",
                         fontWeight: 600,
                         color: "var(--text-primary)",
@@ -310,7 +282,7 @@ export default function VerseDetailPage() {
                     </span>
                     {entry.meaning && (
                       <span
-                        className="font-cormorant"
+                        className="font-body"
                         style={{ fontSize: "0.88rem", color: "var(--text-muted)" }}
                       >
                         — {entry.meaning}
@@ -327,7 +299,7 @@ export default function VerseDetailPage() {
             <div style={{ marginBottom: 32 }}>
               <SectionLabel text="Translation" />
               <p
-                className="font-cormorant"
+                className="font-display"
                 style={{
                   fontSize: "1.1rem",
                   fontWeight: 400,
@@ -347,12 +319,12 @@ export default function VerseDetailPage() {
             <div style={{ marginBottom: 32 }}>
               <SectionLabel text="Purport" />
               <div
-                className="font-cormorant"
+                className="font-body"
                 style={{
-                  fontSize: "0.98rem",
-                  fontWeight: 400,
+                  fontSize: 15,
+                  fontWeight: 300,
                   lineHeight: 1.8,
-                  color: "var(--text-body)",
+                  color: "var(--text-secondary)",
                   marginTop: 12,
                 }}
               >
@@ -377,19 +349,19 @@ function SectionLabel({ text }: { text: string }) {
         style={{
           width: 20,
           height: 2,
-          background: "var(--indigo)",
+          background: "var(--aurora-violet)",
           borderRadius: 1,
           opacity: 0.5,
         }}
       />
       <span
-        className="font-satoshi"
+        className="font-body"
         style={{
-          fontSize: "0.7rem",
-          fontWeight: 700,
+          fontSize: 11,
+          fontWeight: 500,
           textTransform: "uppercase",
-          letterSpacing: "0.08em",
-          color: "var(--text-dim)",
+          letterSpacing: "0.12em",
+          color: "var(--text-muted)",
         }}
       >
         {text}

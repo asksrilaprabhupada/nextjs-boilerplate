@@ -5,6 +5,12 @@ import LockScreen from "./components/LockScreen";
 import Header from "./components/Header";
 import HeroSearch from "./components/HeroSearch";
 import NarrativeResponse, { SearchResults } from "./components/NarrativeResponse";
+import FeaturesSection from "./components/FeaturesSection";
+import StatsSection from "./components/StatsSection";
+import StepsSection from "./components/StepsSection";
+import TestimonialsSection from "./components/TestimonialsSection";
+import CTASection from "./components/CTASection";
+import FooterSection from "./components/FooterSection";
 import PageOverlay from "./components/PageOverlay";
 import AboutOverlay from "./components/AboutOverlay";
 import DonateOverlay from "./components/DonateOverlay";
@@ -73,6 +79,18 @@ export default function Home() {
             results={searchResults}
             isLoading={isSearching}
           />
+
+          {/* Landing page sections — shown when no search results */}
+          {!searchResults && (
+            <>
+              <FeaturesSection />
+              <StatsSection />
+              <StepsSection />
+              <TestimonialsSection />
+              <CTASection />
+              <FooterSection />
+            </>
+          )}
         </main>
       </div>
 

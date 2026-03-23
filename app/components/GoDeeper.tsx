@@ -21,11 +21,11 @@ export default function GoDeeper({ transitionText, onClick }: GoDeeperProps) {
           width: "100%",
           maxWidth: 200,
           height: 1,
-          background: "var(--border-medium)",
+          background: "var(--border-subtle)",
         }}
       />
       <p
-        className="font-cormorant"
+        className="font-display"
         style={{
           fontSize: "1.02rem",
           fontStyle: "italic",
@@ -39,32 +39,11 @@ export default function GoDeeper({ transitionText, onClick }: GoDeeperProps) {
       </p>
       <button
         onClick={onClick}
-        className="font-satoshi"
+        className="btn-ghost"
         style={{
-          padding: "10px 24px",
-          borderRadius: 10,
-          border: "1.5px solid var(--indigo)",
-          background: "rgba(255,255,255,0.6)",
-          backdropFilter: "blur(12px)",
-          WebkitBackdropFilter: "blur(12px)",
-          color: "var(--indigo)",
-          fontSize: "0.85rem",
-          fontWeight: 700,
-          cursor: "pointer",
           display: "flex",
           alignItems: "center",
           gap: 8,
-          transition: "all 0.3s ease",
-        }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.background = "var(--indigo-soft)";
-          e.currentTarget.style.boxShadow = "var(--shadow-indigo-glow)";
-          e.currentTarget.style.transform = "translateY(-2px)";
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.background = "rgba(255,255,255,0.6)";
-          e.currentTarget.style.boxShadow = "none";
-          e.currentTarget.style.transform = "translateY(0)";
         }}
       >
         Go Deeper

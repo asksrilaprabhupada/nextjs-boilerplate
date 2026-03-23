@@ -22,12 +22,18 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
   const [query, setQuery] = useState("");
   const [heroVisible, setHeroVisible] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [animatedIn, setAnimatedIn] = useState(false);
 
   useEffect(() => {
     if (hasResults) {
       setHeroVisible(false);
     }
   }, [hasResults]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setAnimatedIn(true), 100);
+    return () => clearTimeout(t);
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,6 +47,12 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
     onSearch(topic);
   };
 
+  const stagger = (i: number) => ({
+    opacity: animatedIn ? 1 : 0,
+    transform: animatedIn ? "translateY(0)" : "translateY(32px)",
+    transition: `opacity 0.8s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms, transform 0.8s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms`,
+  });
+
   return (
     <section
       style={{
@@ -51,59 +63,27 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
         justifyContent: heroVisible ? "center" : "flex-start",
         padding: heroVisible ? "80px clamp(20px, 4vw, 80px) 60px" : "76px 20px 20px",
         position: "relative",
-        transition: "all 0.6s var(--ease-smooth)",
-        background: heroVisible
-          ? "linear-gradient(170deg, #F8FAFF 0%, #F1F0FB 40%, #EDE9FE 80%, #E8E4F8 100%)"
-          : "var(--bg-deepest)",
+        transition: "all 0.6s var(--ease-out-expo)",
         overflow: "hidden",
       }}
     >
-      {/* Ambient floating orbs */}
+      {/* Floating blurred orb behind content */}
       {heroVisible && (
-        <>
-          {/* Large indigo orb — top right */}
-          <div
-            style={{
-              position: "absolute",
-              top: "15%",
-              right: "10%",
-              width: 400,
-              height: 400,
-              borderRadius: "50%",
-              background: "radial-gradient(circle, rgba(79,70,229,0.08) 0%, rgba(79,70,229,0.02) 50%, transparent 70%)",
-              animation: "float-orb 20s ease-in-out infinite",
-              pointerEvents: "none",
-            }}
-          />
-          {/* Medium lavender orb — left */}
-          <div
-            style={{
-              position: "absolute",
-              top: "40%",
-              left: "5%",
-              width: 300,
-              height: 300,
-              borderRadius: "50%",
-              background: "radial-gradient(circle, rgba(139,92,246,0.07) 0%, rgba(139,92,246,0.02) 50%, transparent 70%)",
-              animation: "float-orb-2 18s ease-in-out infinite",
-              pointerEvents: "none",
-            }}
-          />
-          {/* Small accent orb — bottom center */}
-          <div
-            style={{
-              position: "absolute",
-              bottom: "10%",
-              left: "55%",
-              width: 250,
-              height: 250,
-              borderRadius: "50%",
-              background: "radial-gradient(circle, rgba(99,102,241,0.06) 0%, transparent 60%)",
-              animation: "float-orb 22s ease-in-out infinite reverse",
-              pointerEvents: "none",
-            }}
-          />
-        </>
+        <div
+          style={{
+            position: "absolute",
+            top: "30%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 500,
+            height: 500,
+            borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(139,92,246,0.2) 0%, rgba(217,70,239,0.1) 40%, rgba(45,212,191,0.05) 70%, transparent 100%)",
+            filter: "blur(60px)",
+            animation: "floatOrb 20s ease-in-out infinite",
+            pointerEvents: "none",
+          }}
+        />
       )}
 
       <div
@@ -114,41 +94,41 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           flexDirection: "column",
           alignItems: "center",
           width: "100%",
-          maxWidth: heroVisible ? 660 : 620,
+          maxWidth: heroVisible ? 700 : 620,
         }}
       >
         {/* Badge */}
         {heroVisible && (
           <div
-            className="font-satoshi animate-fade-in-up"
+            className="font-body"
             style={{
-              animationDelay: "0.15s",
+              ...stagger(0),
               display: "inline-flex",
               alignItems: "center",
-              gap: 7,
-              padding: "5px 14px 5px 9px",
+              gap: 8,
+              padding: "6px 16px 6px 10px",
               borderRadius: 100,
-              background: "var(--indigo-soft)",
-              border: "1px solid rgba(79,70,229,0.12)",
-              marginBottom: 28,
+              background: "rgba(139,92,246,0.1)",
+              border: "1px solid rgba(139,92,246,0.2)",
+              marginBottom: 32,
             }}
           >
             <span
               style={{
-                width: 6,
-                height: 6,
+                width: 7,
+                height: 7,
                 borderRadius: "50%",
-                background: "var(--indigo)",
-                animation: "pulse-dot 2.5s ease-in-out infinite",
+                background: "var(--aurora-teal)",
+                animation: "pulseDot 2.5s ease-in-out infinite",
               }}
             />
             <span
               style={{
-                fontSize: "0.7rem",
-                fontWeight: 700,
+                fontSize: 12,
+                fontWeight: 500,
                 textTransform: "uppercase",
-                letterSpacing: "0.06em",
-                color: "var(--indigo)",
+                letterSpacing: "0.15em",
+                color: "var(--aurora-teal)",
               }}
             >
               Scripture-grounded answers
@@ -156,63 +136,84 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </div>
         )}
 
-        {/* Title — Satoshi 900 */}
+        {/* Hero Headline — Instrument Serif */}
         {heroVisible && (
           <h1
-            className="font-satoshi animate-fade-in-up"
+            className="font-display"
             style={{
-              animationDelay: "0.3s",
-              fontSize: "clamp(2.2rem, 5vw, 3.8rem)",
-              fontWeight: 900,
+              ...stagger(1),
+              fontSize: "clamp(48px, 7vw, 88px)",
+              fontWeight: 400,
               textAlign: "center",
-              letterSpacing: "-0.04em",
-              lineHeight: 1.1,
-              marginBottom: 18,
+              letterSpacing: "-0.03em",
+              lineHeight: 1.05,
+              marginBottom: 24,
               color: "var(--text-primary)",
             }}
           >
             Every answer from
             <br />
-            <span
-              style={{
-                background: "linear-gradient(135deg, var(--indigo), #8B5CF6)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
-              Srila Prabhupada&apos;s
+            <span className="gradient-text">
+              Prabhupāda&apos;s
             </span>{" "}
             words
           </h1>
         )}
 
-        {/* Subtitle — Satoshi 400 */}
+        {/* Subtitle — DM Sans 300 */}
         {heroVisible && (
           <p
-            className="font-satoshi animate-fade-in-up"
+            className="font-body"
             style={{
-              animationDelay: "0.45s",
-              fontSize: "clamp(0.9rem, 1.8vw, 1.02rem)",
-              fontWeight: 400,
-              color: "var(--text-muted)",
+              ...stagger(2),
+              fontSize: "clamp(16px, 1.8vw, 17px)",
+              fontWeight: 300,
+              color: "var(--text-secondary)",
               textAlign: "center",
-              maxWidth: 460,
-              lineHeight: 1.65,
-              marginBottom: 36,
+              maxWidth: 540,
+              lineHeight: 1.7,
+              marginBottom: 40,
             }}
           >
-            Search across Bhagavad Gita, Srimad Bhagavatam, and Caitanya Caritamrta.
+            Search across Bhagavad Gītā, Śrīmad Bhāgavatam, and Caitanya Caritāmṛta.
             Every response traced to exact verses.
           </p>
         )}
 
-        {/* Search Input — frosted glass */}
+        {/* Buttons */}
+        {heroVisible && (
+          <div
+            style={{
+              ...stagger(3),
+              display: "flex",
+              gap: 12,
+              marginBottom: 40,
+              flexWrap: "wrap",
+              justifyContent: "center",
+            }}
+          >
+            <button
+              className="btn-primary"
+              onClick={() => inputRef.current?.focus()}
+            >
+              <span>Start Searching</span>
+            </button>
+            <a
+              href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-ghost"
+            >
+              View on GitHub
+            </a>
+          </div>
+        )}
+
+        {/* Search Input */}
         <form
           onSubmit={handleSubmit}
-          className="animate-fade-in-up"
           style={{
-            animationDelay: heroVisible ? "0.6s" : "0s",
+            ...stagger(4),
             width: "100%",
             maxWidth: 620,
             position: "relative",
@@ -232,30 +233,28 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Ask anything about the scriptures..."
             aria-label="Search the scriptures"
-            className="font-satoshi"
+            className="font-body"
             style={{
               width: "100%",
               padding: "16px 54px 16px 22px",
-              fontSize: "0.98rem",
+              fontSize: 16,
               fontWeight: 400,
-              border: "1.5px solid rgba(79,70,229,0.12)",
+              border: "1px solid var(--border-subtle)",
               borderRadius: 14,
-              background: "rgba(255,255,255,0.8)",
+              background: "var(--bg-input)",
               backdropFilter: "blur(20px)",
               WebkitBackdropFilter: "blur(20px)",
               color: "var(--text-primary)",
               outline: "none",
               transition: "border-color 0.3s ease, box-shadow 0.3s ease",
-              boxShadow: "var(--glass-shadow)",
             }}
             onFocus={(e) => {
-              e.currentTarget.style.borderColor = "var(--indigo)";
-              e.currentTarget.style.boxShadow =
-                "var(--shadow-medium), 0 0 0 3px rgba(79,70,229,0.08)";
+              e.currentTarget.style.borderColor = "var(--aurora-violet)";
+              e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.15)";
             }}
             onBlur={(e) => {
-              e.currentTarget.style.borderColor = "rgba(79,70,229,0.12)";
-              e.currentTarget.style.boxShadow = "var(--glass-shadow)";
+              e.currentTarget.style.borderColor = "var(--border-subtle)";
+              e.currentTarget.style.boxShadow = "none";
             }}
           />
           <button
@@ -270,7 +269,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               width: 38,
               height: 38,
               borderRadius: 10,
-              background: "linear-gradient(135deg, var(--indigo), var(--indigo-light))",
+              background: "linear-gradient(135deg, var(--aurora-violet), var(--aurora-fuchsia))",
               border: "none",
               cursor: query.trim() ? "pointer" : "default",
               display: "flex",
@@ -282,7 +281,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
             onMouseEnter={(e) => {
               if (query.trim()) {
                 e.currentTarget.style.transform = "translateY(-50%) scale(1.06)";
-                e.currentTarget.style.boxShadow = "var(--shadow-indigo-glow)";
+                e.currentTarget.style.boxShadow = "0 4px 24px rgba(139,92,246,0.3)";
               }
             }}
             onMouseLeave={(e) => {
@@ -302,17 +301,16 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
           </button>
         </form>
 
-        {/* Topic Pills — frosted glass chips */}
+        {/* Topic Pills */}
         {heroVisible && (
           <div
-            className="animate-fade-in-up"
             style={{
-              animationDelay: "0.75s",
+              ...stagger(5),
               display: "flex",
               flexWrap: "wrap",
               gap: 8,
               justifyContent: "center",
-              marginTop: 22,
+              marginTop: 24,
               maxWidth: 620,
             }}
           >
@@ -320,34 +318,30 @@ export default function HeroSearch({ onSearch, isSearching, hasResults }: HeroSe
               <button
                 key={pill}
                 onClick={() => handlePillClick(pill)}
-                className="font-satoshi"
+                className="font-body"
                 style={{
-                  padding: "7px 15px",
+                  padding: "7px 16px",
                   borderRadius: 100,
-                  border: "1px solid rgba(79,70,229,0.10)",
-                  background: "rgba(255,255,255,0.6)",
-                  backdropFilter: "blur(12px)",
-                  WebkitBackdropFilter: "blur(12px)",
-                  fontSize: "0.8rem",
-                  fontWeight: 500,
+                  border: "1px solid var(--border-subtle)",
+                  background: "transparent",
+                  fontSize: 13,
+                  fontWeight: 400,
                   color: "var(--text-muted)",
                   cursor: "pointer",
-                  transition: "all 0.25s ease",
+                  transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)",
                   whiteSpace: "nowrap",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = "var(--indigo)";
-                  e.currentTarget.style.color = "var(--indigo)";
-                  e.currentTarget.style.background = "rgba(79,70,229,0.06)";
-                  e.currentTarget.style.transform = "translateY(-1px)";
-                  e.currentTarget.style.boxShadow = "0 4px 14px rgba(79,70,229,0.12)";
+                  e.currentTarget.style.borderColor = "var(--aurora-violet)";
+                  e.currentTarget.style.color = "var(--text-primary)";
+                  e.currentTarget.style.background = "rgba(139,92,246,0.08)";
+                  e.currentTarget.style.transform = "translateY(-2px)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "rgba(79,70,229,0.10)";
+                  e.currentTarget.style.borderColor = "var(--border-subtle)";
                   e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.background = "rgba(255,255,255,0.6)";
+                  e.currentTarget.style.background = "transparent";
                   e.currentTarget.style.transform = "translateY(0)";
-                  e.currentTarget.style.boxShadow = "none";
                 }}
               >
                 {pill}
