@@ -4,7 +4,7 @@ export default function FooterSection() {
   return (
     <footer
       style={{
-        borderTop: "1px solid var(--border-subtle)",
+        borderTop: "1px solid rgba(196, 181, 253, 0.2)",
         padding: "40px clamp(20px, 5vw, 80px)",
         maxWidth: 1200,
         margin: "0 auto",
@@ -20,7 +20,8 @@ export default function FooterSection() {
           className="font-display"
           style={{
             fontSize: "1.1rem",
-            background: "linear-gradient(135deg, var(--aurora-violet), var(--aurora-teal))",
+            fontWeight: 600,
+            background: "linear-gradient(135deg, #7C3AED, #6366F1)",
             backgroundClip: "text",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
@@ -32,7 +33,7 @@ export default function FooterSection() {
           className="font-body"
           style={{
             fontSize: 13,
-            color: "var(--text-muted)",
+            color: "#9CA3AF",
           }}
         >
           &copy; {new Date().getFullYear()} All rights reserved
@@ -49,15 +50,15 @@ export default function FooterSection() {
             className="font-body"
             style={{
               fontSize: 14,
-              color: "var(--text-secondary)",
+              color: "#6B7280",
               textDecoration: "none",
               transition: "color 0.3s ease",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.color = "var(--text-primary)";
+              e.currentTarget.style.color = "#7C3AED";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = "var(--text-secondary)";
+              e.currentTarget.style.color = "#6B7280";
             }}
           >
             {link}

@@ -28,18 +28,18 @@ interface ScriptureLayerProps {
 const scriptureConfig = {
   BG: {
     label: "FROM BHAGAVAD GĪTĀ AS IT IS",
-    color: "var(--aurora-violet)",
-    iconGradient: "linear-gradient(135deg, var(--aurora-violet), var(--aurora-purple))",
+    color: "#8B5CF6",
+    iconGradient: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
   },
   SB: {
     label: "FROM ŚRĪMAD BHĀGAVATAM",
-    color: "var(--aurora-teal)",
-    iconGradient: "linear-gradient(135deg, var(--aurora-teal), var(--aurora-cyan))",
+    color: "#7C3AED",
+    iconGradient: "linear-gradient(135deg, #7C3AED, #6366F1)",
   },
   CC: {
     label: "FROM ŚRĪ CAITANYA CARITĀMṚTA",
-    color: "var(--aurora-fuchsia)",
-    iconGradient: "linear-gradient(135deg, var(--aurora-fuchsia), var(--aurora-pink))",
+    color: "#6366F1",
+    iconGradient: "linear-gradient(135deg, #6366F1, #818CF8)",
   },
 };
 
@@ -114,7 +114,7 @@ export default function ScriptureLayer({
                 fontWeight: 500,
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
-                color: "var(--text-muted)",
+                color: "#9CA3AF",
               }}
             >
               {config.label}
@@ -141,9 +141,9 @@ export default function ScriptureLayer({
             className="font-body"
             style={{
               fontSize: 16,
-              fontWeight: 300,
+              fontWeight: 400,
               lineHeight: 1.7,
-              color: "var(--text-secondary)",
+              color: "#4B5563",
               marginBottom: 24,
             }}
           >
@@ -174,9 +174,9 @@ export default function ScriptureLayer({
                   className="font-body"
                   style={{
                     fontSize: 16,
-                    fontWeight: 300,
+                    fontWeight: 400,
                     lineHeight: 1.7,
-                    color: "var(--text-secondary)",
+                    color: "#4B5563",
                     margin: "20px 0",
                   }}
                 >

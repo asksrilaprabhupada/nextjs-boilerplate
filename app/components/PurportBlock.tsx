@@ -10,8 +10,8 @@ export default function PurportBlock({ text }: PurportBlockProps) {
       style={{
         margin: "12px 0 16px 0",
         background: "rgba(139, 92, 246, 0.04)",
-        border: "1px solid var(--border-subtle)",
-        borderLeft: "3px solid var(--aurora-purple)",
+        border: "1px solid rgba(196, 181, 253, 0.20)",
+        borderLeft: "3px solid #7C3AED",
         padding: "24px 28px",
         borderRadius: 20,
       }}
@@ -20,9 +20,9 @@ export default function PurportBlock({ text }: PurportBlockProps) {
         className="font-body"
         style={{
           fontSize: 15,
-          fontWeight: 300,
+          fontWeight: 400,
           lineHeight: 1.8,
-          color: "var(--text-secondary)",
+          color: "#4B5563",
         }}
       >
         {text}

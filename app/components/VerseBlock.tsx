@@ -14,11 +14,13 @@ export default function VerseBlock({ sanskrit, translation, verseRef, verseId }:
     <div
       style={{
         margin: "20px 0",
-        background: "var(--bg-surface)",
-        border: "1px solid var(--border-subtle)",
-        borderLeft: "3px solid var(--aurora-violet)",
+        background: "rgba(245, 240, 255, 0.5)",
+        border: "1px solid rgba(196, 181, 253, 0.25)",
+        borderLeft: "3px solid #8B5CF6",
         padding: "24px 28px",
         borderRadius: 20,
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
       }}
     >
       {sanskrit && (
@@ -28,7 +30,7 @@ export default function VerseBlock({ sanskrit, translation, verseRef, verseId }:
             fontSize: "1.15rem",
             lineHeight: 1.9,
             fontWeight: 500,
-            color: "var(--text-primary)",
+            color: "#1E1B4B",
             marginBottom: 12,
           }}
         >
@@ -42,7 +44,7 @@ export default function VerseBlock({ sanskrit, translation, verseRef, verseId }:
           fontWeight: 400,
           fontStyle: "italic",
           lineHeight: 1.7,
-          color: "var(--text-primary)",
+          color: "#1E1B4B",
         }}
       >
         &ldquo;{translation}&rdquo;
@@ -53,16 +55,16 @@ export default function VerseBlock({ sanskrit, translation, verseRef, verseId }:
           className="font-body"
           style={{
             fontSize: 13,
-            color: "var(--aurora-violet)",
+            color: "#8B5CF6",
             textDecoration: "none",
             fontWeight: 500,
             transition: "color 0.3s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--aurora-teal)";
+            e.currentTarget.style.color = "#7C3AED";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--aurora-violet)";
+            e.currentTarget.style.color = "#8B5CF6";
           }}
         >
           — {verseRef}

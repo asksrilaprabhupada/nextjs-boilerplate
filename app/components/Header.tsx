@@ -30,27 +30,27 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         right: 0,
         zIndex: 100,
         height: 60,
-        background: "rgba(15, 14, 26, 0.6)",
-        backdropFilter: "blur(20px) saturate(1.4)",
-        WebkitBackdropFilter: "blur(20px) saturate(1.4)",
+        background: scrolled ? "rgba(253, 251, 255, 0.75)" : "rgba(253, 251, 255, 0.5)",
+        backdropFilter: "blur(20px) saturate(1.3)",
+        WebkitBackdropFilter: "blur(20px) saturate(1.3)",
         borderBottom: scrolled
-          ? "1px solid var(--border-subtle)"
+          ? "1px solid rgba(196, 181, 253, 0.2)"
           : "1px solid transparent",
         padding: "0 clamp(20px, 4vw, 48px)",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        transition: "border-color 0.4s ease",
+        transition: "border-color 0.4s ease, background 0.4s ease",
       }}
     >
-      {/* Logo — Instrument Serif with gradient text */}
+      {/* Logo */}
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span
           className="font-display"
           style={{
-            fontSize: "1.3rem",
-            fontWeight: 400,
-            background: "linear-gradient(135deg, var(--aurora-violet), var(--aurora-teal))",
+            fontSize: "1.4rem",
+            fontWeight: 600,
+            background: "linear-gradient(135deg, #7C3AED, #6366F1)",
             backgroundClip: "text",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
@@ -80,25 +80,27 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
               padding: "6px 16px",
               borderRadius: 8,
               fontSize: 14,
-              fontWeight: 400,
+              fontWeight: activeNav === item ? 500 : 400,
               border: "none",
               cursor: "pointer",
               transition: "all 0.3s ease",
               background:
                 activeNav === item
-                  ? "rgba(139, 92, 246, 0.12)"
+                  ? "rgba(139, 92, 246, 0.10)"
                   : "transparent",
               color:
-                activeNav === item ? "var(--text-primary)" : "var(--text-secondary)",
+                activeNav === item ? "#7C3AED" : "#4B5563",
             }}
             onMouseEnter={(e) => {
               if (activeNav !== item) {
-                e.currentTarget.style.color = "var(--text-primary)";
+                e.currentTarget.style.color = "#1E1B4B";
+                e.currentTarget.style.background = "rgba(139, 92, 246, 0.05)";
               }
             }}
             onMouseLeave={(e) => {
               if (activeNav !== item) {
-                e.currentTarget.style.color = "var(--text-secondary)";
+                e.currentTarget.style.color = "#4B5563";
+                e.currentTarget.style.background = "transparent";
               }
             }}
           >
@@ -111,7 +113,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           style={{
             width: 1,
             height: 18,
-            background: "var(--border-subtle)",
+            background: "rgba(196, 181, 253, 0.3)",
             margin: "0 8px",
           }}
         />
@@ -129,14 +131,14 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "var(--text-muted)",
+            color: "#9CA3AF",
             transition: "all 0.3s ease",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.color = "var(--text-primary)";
+            e.currentTarget.style.color = "#1E1B4B";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--text-muted)";
+            e.currentTarget.style.color = "#9CA3AF";
           }}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
@@ -157,7 +159,7 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           borderRadius: 8,
           border: "none",
           background: "transparent",
-          color: "var(--text-secondary)",
+          color: "#4B5563",
           cursor: "pointer",
           alignItems: "center",
           justifyContent: "center",
@@ -180,9 +182,10 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
             top: 60,
             left: 0,
             right: 0,
-            background: "rgba(15, 14, 26, 0.95)",
+            background: "rgba(253, 251, 255, 0.95)",
             backdropFilter: "blur(20px)",
-            borderBottom: "1px solid var(--border-subtle)",
+            WebkitBackdropFilter: "blur(20px)",
+            borderBottom: "1px solid rgba(196, 181, 253, 0.2)",
             padding: "8px 16px 12px",
             display: "flex",
             flexDirection: "column",
@@ -205,8 +208,8 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
                 border: "none",
                 cursor: "pointer",
                 textAlign: "left",
-                background: activeNav === item ? "rgba(139,92,246,0.12)" : "transparent",
-                color: activeNav === item ? "var(--text-primary)" : "var(--text-secondary)",
+                background: activeNav === item ? "rgba(139,92,246,0.10)" : "transparent",
+                color: activeNav === item ? "#7C3AED" : "#4B5563",
               }}
             >
               {item}

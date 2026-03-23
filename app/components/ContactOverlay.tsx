@@ -11,9 +11,9 @@ export default function ContactOverlay() {
     width: "100%",
     padding: "12px 16px",
     borderRadius: 12,
-    border: "1px solid var(--border-subtle)",
-    background: "var(--bg-input)",
-    color: "var(--text-primary)",
+    border: "1px solid rgba(196, 181, 253, 0.3)",
+    background: "rgba(255, 255, 255, 0.6)",
+    color: "#1E1B4B",
     fontSize: 15,
     fontFamily: "'DM Sans', sans-serif",
     fontWeight: 400,
@@ -22,12 +22,12 @@ export default function ContactOverlay() {
   };
 
   const handleFocus = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    e.currentTarget.style.borderColor = "var(--aurora-violet)";
-    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.15)";
+    e.currentTarget.style.borderColor = "#8B5CF6";
+    e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.12)";
   };
 
   const handleBlur = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    e.currentTarget.style.borderColor = "var(--border-subtle)";
+    e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.3)";
     e.currentTarget.style.boxShadow = "none";
   };
 
@@ -36,9 +36,9 @@ export default function ContactOverlay() {
       <h2
         className="font-display"
         style={{
-          fontSize: "1.5rem",
-          fontWeight: 400,
-          color: "var(--text-primary)",
+          fontSize: "1.6rem",
+          fontWeight: 600,
+          color: "#1E1B4B",
           marginBottom: 20,
           letterSpacing: "-0.02em",
         }}
@@ -55,7 +55,7 @@ export default function ContactOverlay() {
             style={{
               fontSize: 12,
               fontWeight: 500,
-              color: "var(--text-muted)",
+              color: "#9CA3AF",
               marginBottom: 6,
               display: "block",
               textTransform: "uppercase",
@@ -80,7 +80,7 @@ export default function ContactOverlay() {
             style={{
               fontSize: 12,
               fontWeight: 500,
-              color: "var(--text-muted)",
+              color: "#9CA3AF",
               marginBottom: 6,
               display: "block",
               textTransform: "uppercase",
@@ -105,7 +105,7 @@ export default function ContactOverlay() {
             style={{
               fontSize: 12,
               fontWeight: 500,
-              color: "var(--text-muted)",
+              color: "#9CA3AF",
               marginBottom: 6,
               display: "block",
               textTransform: "uppercase",

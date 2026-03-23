@@ -15,7 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        {/* Aurora Background Effect */}
+        {/* Garden Wash Background — Lavender Fields + Tulip Garden */}
         <div
           style={{
             position: "fixed",
@@ -25,31 +25,33 @@ export default function RootLayout({
             pointerEvents: "none",
           }}
         >
+          {/* Garden gradient washes — wide horizontal bands like flower fields */}
           <div
             style={{
               position: "absolute",
               inset: "-10%",
               background: `
-                radial-gradient(ellipse 600px 400px at 25% 20%, rgba(139,92,246,0.15), transparent),
-                radial-gradient(ellipse 500px 500px at 70% 15%, rgba(45,212,191,0.10), transparent),
-                radial-gradient(ellipse 700px 350px at 50% 60%, rgba(217,70,239,0.08), transparent),
-                radial-gradient(ellipse 400px 400px at 80% 70%, rgba(236,72,153,0.06), transparent),
-                radial-gradient(ellipse 500px 300px at 15% 80%, rgba(99,102,241,0.08), transparent)
+                radial-gradient(ellipse 1200px 400px at 15% 10%, rgba(196,181,253,0.18), transparent),
+                radial-gradient(ellipse 1000px 350px at 75% 8%, rgba(253,164,175,0.12), transparent),
+                radial-gradient(ellipse 900px 500px at 50% 45%, rgba(196,181,253,0.10), transparent),
+                radial-gradient(ellipse 800px 300px at 80% 60%, rgba(251,207,232,0.10), transparent),
+                radial-gradient(ellipse 1100px 400px at 20% 75%, rgba(187,247,208,0.06), transparent),
+                radial-gradient(ellipse 700px 350px at 60% 85%, rgba(253,230,138,0.06), transparent)
               `,
-              animation: "auroraShift 25s ease-in-out infinite",
+              animation: "gardenDrift 30s ease-in-out infinite",
             }}
           />
-          {/* Vignette overlay */}
+          {/* Soft warm vignette — barely there, just a gentle edge warmth */}
           <div
             style={{
               position: "absolute",
               inset: 0,
-              background: "radial-gradient(ellipse at 50% 0%, transparent 50%, #0F0E1A 100%)",
+              background: "radial-gradient(ellipse at 50% 30%, transparent 60%, rgba(245,240,255,0.4) 100%)",
             }}
           />
         </div>
 
-        {/* Grain Texture Overlay */}
+        {/* Very subtle grain — almost invisible, just adds texture */}
         <svg
           style={{
             position: "fixed",
@@ -57,7 +59,7 @@ export default function RootLayout({
             width: "100%",
             height: "100%",
             zIndex: 1,
-            opacity: 0.32,
+            opacity: 0.03,
             pointerEvents: "none",
           }}
         >

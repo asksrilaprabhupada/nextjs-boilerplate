@@ -6,9 +6,9 @@ export default function AboutOverlay() {
       <h2
         className="font-display"
         style={{
-          fontSize: "1.5rem",
-          fontWeight: 400,
-          color: "var(--text-primary)",
+          fontSize: "1.6rem",
+          fontWeight: 600,
+          color: "#1E1B4B",
           marginBottom: 20,
           letterSpacing: "-0.02em",
         }}
@@ -20,8 +20,8 @@ export default function AboutOverlay() {
         style={{
           fontSize: 16,
           lineHeight: 1.7,
-          fontWeight: 300,
-          color: "var(--text-secondary)",
+          fontWeight: 400,
+          color: "#4B5563",
           display: "flex",
           flexDirection: "column",
           gap: 16,
@@ -43,15 +43,15 @@ export default function AboutOverlay() {
           Every philosophical statement comes directly from the scriptures.
         </p>
         <p>
-          Our database contains <strong style={{ color: "var(--aurora-violet)" }}>25,020 verses</strong> across
+          Our database contains <strong style={{ color: "#8B5CF6" }}>25,020 verses</strong> across
           415 chapters, each with original Sanskrit/Bengali, transliteration, word-for-word synonyms,
           translation, and the complete purport by Śrīla Prabhupāda.
         </p>
         <p
           style={{
             fontSize: 14,
-            color: "var(--text-muted)",
-            borderTop: "1px solid var(--border-subtle)",
+            color: "#9CA3AF",
+            borderTop: "1px solid rgba(196, 181, 253, 0.2)",
             paddingTop: 16,
             marginTop: 8,
           }}
@@ -61,7 +61,7 @@ export default function AboutOverlay() {
             href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
             target="_blank"
             rel="noopener noreferrer"
-            style={{ color: "var(--aurora-violet)", textDecoration: "none", fontWeight: 500 }}
+            style={{ color: "#8B5CF6", textDecoration: "none", fontWeight: 500 }}
           >
             GitHub
           </a>

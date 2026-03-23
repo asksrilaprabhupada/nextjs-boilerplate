@@ -30,9 +30,10 @@ export default function CTASection() {
         padding: "120px clamp(20px, 5vw, 80px)",
         position: "relative",
         overflow: "hidden",
+        background: "linear-gradient(135deg, rgba(245,240,255,0.6) 0%, rgba(251,207,232,0.15) 50%, rgba(253,230,138,0.08) 100%)",
       }}
     >
-      {/* Large blurred glow */}
+      {/* Soft lavender glow */}
       <div
         style={{
           position: "absolute",
@@ -42,8 +43,8 @@ export default function CTASection() {
           width: 700,
           height: 400,
           borderRadius: "50%",
-          background: "radial-gradient(circle, rgba(139,92,246,0.15) 0%, rgba(217,70,239,0.08) 50%, transparent 80%)",
-          filter: "blur(40px)",
+          background: "radial-gradient(circle, rgba(196,181,253,0.15) 0%, rgba(253,164,175,0.08) 50%, transparent 80%)",
+          filter: "blur(60px)",
           pointerEvents: "none",
         }}
       />
@@ -62,10 +63,10 @@ export default function CTASection() {
           className="font-display scroll-reveal"
           style={{
             fontSize: "clamp(32px, 4vw, 52px)",
-            fontWeight: 400,
+            fontWeight: 600,
             lineHeight: 1.15,
             letterSpacing: "-0.02em",
-            color: "var(--text-primary)",
+            color: "#1E1B4B",
             marginBottom: 20,
           }}
         >
@@ -75,9 +76,9 @@ export default function CTASection() {
           className="font-body scroll-reveal"
           style={{
             fontSize: 17,
-            fontWeight: 300,
+            fontWeight: 400,
             lineHeight: 1.7,
-            color: "var(--text-secondary)",
+            color: "#4B5563",
             marginBottom: 36,
           }}
         >

@@ -3,10 +3,10 @@
 import { useEffect, useRef } from "react";
 
 const stats = [
-  { value: "25,020", label: "Verses Indexed", color: "var(--aurora-violet)" },
-  { value: "3", label: "Scriptures", color: "var(--aurora-teal)" },
-  { value: "100%", label: "Open Source", color: "var(--aurora-fuchsia)" },
-  { value: "∞", label: "Queries Per Day", color: "var(--aurora-cyan)" },
+  { value: "25,020", label: "Verses Indexed", color: "#8B5CF6" },
+  { value: "3", label: "Scriptures", color: "#7C3AED" },
+  { value: "100%", label: "Open Source", color: "#6366F1" },
+  { value: "\u221E", label: "Queries Per Day", color: "#818CF8" },
 ];
 
 export default function StatsSection() {
@@ -43,18 +43,14 @@ export default function StatsSection() {
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 1,
-          background: "var(--border-subtle)",
-          borderRadius: 20,
-          overflow: "hidden",
+          gap: 20,
         }}
       >
         {stats.map((stat) => (
           <div
             key={stat.label}
-            className="scroll-reveal"
+            className="aurora-card scroll-reveal"
             style={{
-              background: "var(--bg-surface)",
               padding: "40px 24px",
               textAlign: "center",
             }}
@@ -63,7 +59,7 @@ export default function StatsSection() {
               className="font-display"
               style={{
                 fontSize: "clamp(36px, 4vw, 48px)",
-                fontWeight: 400,
+                fontWeight: 600,
                 color: stat.color,
                 lineHeight: 1.1,
                 marginBottom: 8,
@@ -76,7 +72,7 @@ export default function StatsSection() {
               style={{
                 fontSize: 13,
                 fontWeight: 500,
-                color: "var(--text-muted)",
+                color: "#9CA3AF",
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
               }}
@@ -90,7 +86,7 @@ export default function StatsSection() {
       <style jsx>{`
         @media (max-width: 600px) {
           div[style*="grid-template-columns: repeat(4"] {
-            grid-template-columns: 1fr !important;
+            grid-template-columns: repeat(2, 1fr) !important;
           }
         }
       `}</style>

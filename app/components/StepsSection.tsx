@@ -48,6 +48,7 @@ export default function StepsSection() {
         padding: "100px clamp(20px, 5vw, 80px)",
         maxWidth: 1200,
         margin: "0 auto",
+        background: "rgba(245, 240, 255, 0.4)",
       }}
     >
       <div className="scroll-reveal" style={{ textAlign: "center", marginBottom: 60 }}>
@@ -56,10 +57,10 @@ export default function StepsSection() {
           className="font-display"
           style={{
             fontSize: "clamp(32px, 4vw, 52px)",
-            fontWeight: 400,
+            fontWeight: 600,
             lineHeight: 1.15,
             letterSpacing: "-0.02em",
-            color: "var(--text-primary)",
+            color: "#1E1B4B",
           }}
         >
           Three steps to <span className="gradient-text">spiritual clarity</span>
@@ -83,13 +84,13 @@ export default function StepsSection() {
             left: "18%",
             right: "18%",
             height: 2,
-            background: "linear-gradient(90deg, var(--aurora-violet), var(--aurora-teal))",
-            opacity: 0.4,
+            background: "linear-gradient(90deg, #C4B5FD, #818CF8)",
+            opacity: 0.3,
             zIndex: 0,
           }}
         />
 
-        {steps.map((step, i) => (
+        {steps.map((step) => (
           <div
             key={step.number}
             className="scroll-reveal"
@@ -103,10 +104,10 @@ export default function StepsSection() {
               className="font-display"
               style={{
                 fontSize: 64,
-                fontWeight: 400,
+                fontWeight: 600,
                 lineHeight: 1,
                 marginBottom: 20,
-                background: `linear-gradient(180deg, rgba(139,92,246,0.3) 0%, transparent 100%)`,
+                background: "linear-gradient(180deg, rgba(196,181,253,0.6) 0%, rgba(196,181,253,0.1) 100%)",
                 backgroundClip: "text",
                 WebkitBackgroundClip: "text",
                 WebkitTextFillColor: "transparent",
@@ -119,7 +120,7 @@ export default function StepsSection() {
               style={{
                 fontSize: 19,
                 fontWeight: 500,
-                color: "var(--text-primary)",
+                color: "#1E1B4B",
                 marginBottom: 12,
               }}
             >
@@ -129,9 +130,9 @@ export default function StepsSection() {
               className="font-body"
               style={{
                 fontSize: 16,
-                fontWeight: 300,
+                fontWeight: 400,
                 lineHeight: 1.7,
-                color: "var(--text-secondary)",
+                color: "#4B5563",
                 maxWidth: 320,
                 margin: "0 auto",
               }}
