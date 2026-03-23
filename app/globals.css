@@ -11,9 +11,9 @@
   /* === Backgrounds (warm whites + lavender tints) === */
   --bg-deep: #FFF8FC;
   --bg-surface: #F6EEFF;
-  --bg-card: rgba(255, 255, 255, 0.55);
-  --bg-card-hover: rgba(255, 255, 255, 0.75);
-  --bg-input: rgba(255, 255, 255, 0.65);
+  --bg-card: rgba(255, 255, 255, 0.72);
+  --bg-card-hover: rgba(255, 255, 255, 0.84);
+  --bg-input: rgba(255, 255, 255, 0.8);
 
   /* === Garden palette === */
   --garden-lavender: #D6C3FF;
@@ -34,13 +34,13 @@
   --aurora-indigo: #6366F1;
 
   /* === Text (dark on light) === */
-  --text-primary: #1E1B4B;
-  --text-secondary: #4B5563;
-  --text-muted: #9CA3AF;
+  --text-primary: #1F1A4D;
+  --text-secondary: #475569;
+  --text-muted: #64748B;
 
   /* === Borders === */
-  --border-subtle: rgba(196, 181, 253, 0.25);
-  --border-glow: rgba(139, 92, 246, 0.20);
+  --border-subtle: rgba(196, 181, 253, 0.42);
+  --border-glow: rgba(139, 92, 246, 0.28);
 
   /* === Semantic === */
   --success: #10B981;
@@ -49,10 +49,10 @@
   --info: #6366F1;
 
   /* === Glassmorphism === */
-  --glass-bg: rgba(255, 255, 255, 0.55);
-  --glass-border: rgba(255, 255, 255, 0.65);
-  --glass-blur: 20px;
-  --glass-shadow: 0 8px 32px rgba(139, 92, 246, 0.08);
+  --glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(247, 240, 255, 0.76) 55%, rgba(255, 247, 237, 0.76));
+  --glass-border: rgba(255, 255, 255, 0.82);
+  --glass-blur: 16px;
+  --glass-shadow: 0 16px 40px rgba(111, 74, 177, 0.12);
 
   /* === Transitions === */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
@@ -71,9 +71,10 @@ html {
 body {
   font-family: 'DM Sans', sans-serif;
   background:
-    radial-gradient(circle at 18% 15%, rgba(214, 195, 255, 0.45) 0%, rgba(214, 195, 255, 0) 36%),
-    radial-gradient(circle at 82% 10%, rgba(255, 181, 193, 0.35) 0%, rgba(255, 181, 193, 0) 34%),
-    linear-gradient(180deg, #fff8fc 0%, #f8f1ff 46%, #fff6f3 100%);
+    radial-gradient(circle at 16% 12%, rgba(196, 181, 253, 0.5) 0%, rgba(196, 181, 253, 0) 38%),
+    radial-gradient(circle at 84% 14%, rgba(253, 164, 175, 0.26) 0%, rgba(253, 164, 175, 0) 34%),
+    radial-gradient(circle at 50% 76%, rgba(226, 232, 255, 0.36) 0%, rgba(226, 232, 255, 0) 44%),
+    linear-gradient(180deg, #fbf6ff 0%, #f4ecff 44%, #fff7ee 100%);
   background-attachment: fixed;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
@@ -223,10 +224,10 @@ body {
 .aurora-card,
 .glass-card {
   background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: 24px;
   padding: 32px;
   position: relative;
   overflow: hidden;
@@ -251,7 +252,7 @@ body {
 .glass-card:hover {
   background: var(--bg-card-hover);
   border-color: var(--border-glow);
-  box-shadow: 0 12px 40px rgba(139, 92, 246, 0.12);
+  box-shadow: 0 18px 48px rgba(111, 74, 177, 0.16);
   transform: translateY(-3px);
 }
 

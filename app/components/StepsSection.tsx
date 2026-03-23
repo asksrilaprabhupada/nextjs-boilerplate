@@ -48,7 +48,10 @@ export default function StepsSection() {
         padding: "100px clamp(20px, 5vw, 80px)",
         maxWidth: 1200,
         margin: "0 auto",
-        background: "rgba(245, 240, 255, 0.4)",
+        background: "linear-gradient(145deg, rgba(255, 255, 255, 0.6), rgba(246, 238, 255, 0.55) 56%, rgba(255, 245, 235, 0.46))",
+        borderRadius: 28,
+        border: "1px solid rgba(255,255,255,0.62)",
+        boxShadow: "0 18px 44px rgba(109, 74, 176, 0.10)",
       }}
     >
       <div className="scroll-reveal" style={{ textAlign: "center", marginBottom: 60 }}>

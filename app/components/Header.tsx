@@ -31,10 +31,10 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
         zIndex: 100,
         height: 60,
         background: scrolled
-          ? "linear-gradient(120deg, rgba(255, 248, 252, 0.92), rgba(246, 238, 255, 0.88) 52%, rgba(255, 241, 238, 0.88))"
-          : "linear-gradient(120deg, rgba(255, 248, 252, 0.75), rgba(246, 238, 255, 0.70) 52%, rgba(255, 241, 238, 0.68))",
-        backdropFilter: "blur(20px) saturate(1.3)",
-        WebkitBackdropFilter: "blur(20px) saturate(1.3)",
+          ? "linear-gradient(120deg, rgba(255, 248, 252, 0.95), rgba(246, 238, 255, 0.92) 52%, rgba(255, 241, 238, 0.92))"
+          : "linear-gradient(120deg, rgba(255, 248, 252, 0.84), rgba(246, 238, 255, 0.8) 52%, rgba(255, 241, 238, 0.78))",
+        backdropFilter: "blur(16px) saturate(1.18)",
+        WebkitBackdropFilter: "blur(16px) saturate(1.18)",
         borderBottom: scrolled
           ? "1px solid rgba(214, 195, 255, 0.55)"
           : "1px solid rgba(255, 255, 255, 0)",
