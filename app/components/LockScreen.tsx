@@ -1,7 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { dailyVerses, lockscreenFallbackImage, lockscreenVideo, type SlideImage } from "../lib/lockscreen-data";
+
+const FULL_VIEW_MS = 4000;
+const TRANSITION_MS = 1200;
+
+function shuffleIndices(length: number): number[] {
+  const indices = Array.from({ length }, (_, i) => i);
+  for (let i = indices.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  return indices;
+}
 
 export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
   const [slideshowImages, setSlideshowImages] = useState<SlideImage[]>([lockscreenFallbackImage]);
@@ -11,6 +23,9 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
   const [verse] = useState(() => dailyVerses[Math.floor(Math.random() * dailyVerses.length)]);
   const [visible, setVisible] = useState(true);
   const [entered, setEntered] = useState(false);
+  const deckRef = useRef<number[]>([]);
+  const deckPointerRef = useRef(0);
+  const activeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -24,8 +39,6 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         if (!active || !data.images || data.images.length === 0) return;
 
         setSlideshowImages(data.images);
-        setCurrentImageIndex(0);
-        setNextImageIndex(data.images.length > 1 ? 1 : 0);
       } catch {
         // keep fallback image if discovery fails
       }
@@ -39,18 +52,76 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
   }, []);
 
   useEffect(() => {
-    if (lockscreenVideo || slideshowImages.length <= 1) return;
+    if (activeTimerRef.current) {
+      clearTimeout(activeTimerRef.current);
+      activeTimerRef.current = null;
+    }
 
-    const interval = setInterval(() => {
-      setTransitioning(true);
-      setTimeout(() => {
-        setCurrentImageIndex((prev) => (prev + 1) % slideshowImages.length);
-        setNextImageIndex((prev) => (prev + 1) % slideshowImages.length);
-        setTransitioning(false);
-      }, 1500);
-    }, 9000);
+    setTransitioning(false);
 
-    return () => clearInterval(interval);
+    if (lockscreenVideo || slideshowImages.length <= 1) {
+      setCurrentImageIndex(0);
+      setNextImageIndex(0);
+      deckRef.current = [];
+      deckPointerRef.current = 0;
+      return;
+    }
+
+    const refillDeck = (lastImageIndex: number) => {
+      const shuffled = shuffleIndices(slideshowImages.length);
+      if (shuffled.length > 1 && lastImageIndex >= 0 && shuffled[0] === lastImageIndex) {
+        const swapWith = shuffled.findIndex((index) => index !== lastImageIndex);
+        if (swapWith > 0) {
+          [shuffled[0], shuffled[swapWith]] = [shuffled[swapWith], shuffled[0]];
+        }
+      }
+      deckRef.current = shuffled;
+      deckPointerRef.current = 0;
+    };
+
+    const drawNextIndex = (lastImageIndex: number): number => {
+      if (deckPointerRef.current >= deckRef.current.length) {
+        refillDeck(lastImageIndex);
+      }
+      const nextIndex = deckRef.current[deckPointerRef.current];
+      deckPointerRef.current += 1;
+      return nextIndex;
+    };
+
+    refillDeck(-1);
+    const initialCurrent = drawNextIndex(-1);
+    const initialNext = drawNextIndex(initialCurrent);
+    setCurrentImageIndex(initialCurrent);
+    setNextImageIndex(initialNext);
+
+    let cancelled = false;
+
+    const runCycle = (currentIndex: number) => {
+      activeTimerRef.current = setTimeout(() => {
+        if (cancelled) return;
+
+        const upcomingIndex = drawNextIndex(currentIndex);
+        setNextImageIndex(upcomingIndex);
+        setTransitioning(true);
+
+        activeTimerRef.current = setTimeout(() => {
+          if (cancelled) return;
+          setCurrentImageIndex(upcomingIndex);
+          setTransitioning(false);
+          runCycle(upcomingIndex);
+        }, TRANSITION_MS);
+      }, FULL_VIEW_MS);
+    };
+
+    runCycle(initialCurrent);
+
+    return () => {
+      cancelled = true;
+      if (activeTimerRef.current) {
+        clearTimeout(activeTimerRef.current);
+        activeTimerRef.current = null;
+      }
+    };
   }, [slideshowImages]);
 
   useEffect(() => {
@@ -140,7 +211,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
               backgroundPosition: "center",
               animation: `${kenBurnsStyle(currentImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`,
               opacity: transitioning ? 0 : 1,
-              transition: "opacity 1.5s ease",
+              transition: `opacity ${TRANSITION_MS}ms ease`,
             }}
           />
           <div
@@ -152,7 +223,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
               backgroundPosition: "center",
               animation: `${kenBurnsStyle(nextImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`,
               opacity: transitioning ? 1 : 0,
-              transition: "opacity 1.5s ease",
+              transition: `opacity ${TRANSITION_MS}ms ease`,
             }}
           />
         </>
