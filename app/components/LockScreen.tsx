@@ -104,6 +104,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         position: "fixed",
         inset: 0,
         zIndex: 1000,
+        backgroundColor: "#0B1021",
         cursor: "pointer",
         transform: visible ? "translateY(0)" : "translateY(-100%)",
         opacity: visible ? 1 : 0,

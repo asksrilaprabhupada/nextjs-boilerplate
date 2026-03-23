@@ -16,6 +16,18 @@ import ContactOverlay from "./components/ContactOverlay";
 
 type OverlayItem = "About" | "Donate" | "Contact";
 
+const overlayParamToItem: Record<string, OverlayItem> = {
+  about: "About",
+  donate: "Donate",
+  contact: "Contact",
+};
+
+const overlayItemToParam: Record<OverlayItem, string> = {
+  About: "about",
+  Donate: "donate",
+  Contact: "contact",
+};
+
 export default function Home() {
   const [lockScreenVisible, setLockScreenVisible] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState<OverlayItem | null>(null);
@@ -23,14 +35,30 @@ export default function Home() {
   const [isSearching, setIsSearching] = useState(false);
 
   useEffect(() => {
-    const overlay = new URLSearchParams(window.location.search).get("overlay");
-    if (overlay === "about" || overlay === "donate" || overlay === "contact") {
-      const normalized = (overlay[0].toUpperCase() + overlay.slice(1)) as OverlayItem;
-      setOverlayOpen(normalized);
-      return;
+    if (lockScreenVisible) return;
+
+    const syncOverlayFromUrl = () => {
+      const overlay = new URLSearchParams(window.location.search).get("overlay");
+      setOverlayOpen(overlay ? overlayParamToItem[overlay] ?? null : null);
+    };
+
+    syncOverlayFromUrl();
+    window.addEventListener("popstate", syncOverlayFromUrl);
+
+    return () => window.removeEventListener("popstate", syncOverlayFromUrl);
+  }, [lockScreenVisible]);
+
+  const setOverlay = useCallback((overlay: OverlayItem | null) => {
+    setOverlayOpen(overlay);
+
+    const url = new URL(window.location.href);
+    if (overlay) {
+      url.searchParams.set("overlay", overlayItemToParam[overlay]);
+    } else {
+      url.searchParams.delete("overlay");
     }
 
-    setOverlayOpen(null);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
   const handleSearch = useCallback(async (query: string) => {
@@ -63,7 +91,7 @@ export default function Home() {
           flexDirection: "column",
         }}
       >
-        <Header onMoreItemSelect={setOverlayOpen} />
+        <Header onMoreItemSelect={setOverlay} />
 
         <main style={{ flex: 1 }}>
           <div id="search">
@@ -87,26 +115,30 @@ export default function Home() {
         </main>
       </div>
 
-      <PageOverlay
-        isOpen={overlayOpen === "About"}
-        onClose={() => setOverlayOpen(null)}
-      >
-        <AboutOverlay />
-      </PageOverlay>
+      {!lockScreenVisible && (
+        <>
+          <PageOverlay
+            isOpen={overlayOpen === "About"}
+            onClose={() => setOverlay(null)}
+          >
+            <AboutOverlay />
+          </PageOverlay>
 
-      <PageOverlay
-        isOpen={overlayOpen === "Donate"}
-        onClose={() => setOverlayOpen(null)}
-      >
-        <DonateOverlay />
-      </PageOverlay>
+          <PageOverlay
+            isOpen={overlayOpen === "Donate"}
+            onClose={() => setOverlay(null)}
+          >
+            <DonateOverlay />
+          </PageOverlay>
 
-      <PageOverlay
-        isOpen={overlayOpen === "Contact"}
-        onClose={() => setOverlayOpen(null)}
-      >
-        <ContactOverlay />
-      </PageOverlay>
+          <PageOverlay
+            isOpen={overlayOpen === "Contact"}
+            onClose={() => setOverlay(null)}
+          >
+            <ContactOverlay />
+          </PageOverlay>
+        </>
+      )}
     </>
   );
 }
