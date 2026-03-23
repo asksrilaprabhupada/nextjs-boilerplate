@@ -4,37 +4,20 @@ export interface SlideImage {
   kenBurnsDirection: "zoom-in" | "pan-left" | "pan-right";
 }
 
-/**
- * Local Śrīla Prabhupāda photos.
- * Admin: upload images to public/images/lockscreen/ and update filenames here.
- */
-export const slideshowImages: SlideImage[] = [
-  {
-    url: "/images/lockscreen/prabhupada-1.jpg",
-    alt: "Śrīla Prabhupāda",
-    kenBurnsDirection: "zoom-in",
-  },
-  {
-    url: "/images/lockscreen/prabhupada-2.jpg",
-    alt: "Śrīla Prabhupāda teaching",
-    kenBurnsDirection: "pan-left",
-  },
-  {
-    url: "/images/lockscreen/prabhupada-3.jpg",
-    alt: "Śrīla Prabhupāda with devotees",
-    kenBurnsDirection: "pan-right",
-  },
-  {
-    url: "/images/lockscreen/prabhupada-4.jpg",
-    alt: "Śrīla Prabhupāda in Vṛndāvana",
-    kenBurnsDirection: "zoom-in",
-  },
-  {
-    url: "/images/lockscreen/prabhupada-5.jpg",
-    alt: "Śrīla Prabhupāda chanting",
-    kenBurnsDirection: "pan-left",
-  },
+export const KEN_BURNS_DIRECTIONS: SlideImage["kenBurnsDirection"][] = [
+  "zoom-in",
+  "pan-left",
+  "pan-right",
 ];
+
+/**
+ * Fallback image used if no usable lock screen photos are discovered.
+ */
+export const lockscreenFallbackImage: SlideImage = {
+  url: "/images/lockscreen/Prabh14.jpg",
+  alt: "Śrīla Prabhupāda",
+  kenBurnsDirection: "zoom-in",
+};
 
 /**
  * Optional video background for the lock screen.
@@ -42,7 +25,6 @@ export const slideshowImages: SlideImage[] = [
  * Set to null to use the photo slideshow instead.
  */
 export const lockscreenVideo: string | null = null;
-// Example: export const lockscreenVideo = "/videos/lockscreen/prabhupada.mp4";
 
 export interface DailyVerse {
   text: string;

@@ -1,18 +1,46 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { slideshowImages, lockscreenVideo, dailyVerses } from "../lib/lockscreen-data";
+import { dailyVerses, lockscreenFallbackImage, lockscreenVideo, type SlideImage } from "../lib/lockscreen-data";
 
 export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
+  const [slideshowImages, setSlideshowImages] = useState<SlideImage[]>([lockscreenFallbackImage]);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [nextImageIndex, setNextImageIndex] = useState(1);
+  const [nextImageIndex, setNextImageIndex] = useState(0);
   const [transitioning, setTransitioning] = useState(false);
   const [verse] = useState(() => dailyVerses[Math.floor(Math.random() * dailyVerses.length)]);
   const [visible, setVisible] = useState(true);
   const [entered, setEntered] = useState(false);
 
   useEffect(() => {
-    if (lockscreenVideo) return;
+    let active = true;
+
+    async function loadLockscreenImages() {
+      try {
+        const response = await fetch("/api/lockscreen-images");
+        if (!response.ok) return;
+
+        const data: { images?: SlideImage[] } = await response.json();
+        if (!active || !data.images || data.images.length === 0) return;
+
+        setSlideshowImages(data.images);
+        setCurrentImageIndex(0);
+        setNextImageIndex(data.images.length > 1 ? 1 : 0);
+      } catch {
+        // keep fallback image if discovery fails
+      }
+    }
+
+    void loadLockscreenImages();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (lockscreenVideo || slideshowImages.length <= 1) return;
+
     const interval = setInterval(() => {
       setTransitioning(true);
       setTimeout(() => {
@@ -21,8 +49,9 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         setTransitioning(false);
       }, 1500);
     }, 9000);
+
     return () => clearInterval(interval);
-  }, []);
+  }, [slideshowImages]);
 
   useEffect(() => {
     const timer = setTimeout(() => setEntered(true), 100);
@@ -49,8 +78,8 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
 
-  const currentImage = slideshowImages[currentImageIndex];
-  const nextImage = slideshowImages[nextImageIndex];
+  const currentImage = slideshowImages[currentImageIndex] ?? lockscreenFallbackImage;
+  const nextImage = slideshowImages[nextImageIndex] ?? currentImage;
 
   const kenBurnsStyle = (direction: string) => {
     switch (direction) {
