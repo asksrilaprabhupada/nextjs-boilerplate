@@ -53,15 +53,12 @@ export default function Header({ activeNav, onNavChange }: HeaderProps) {
           style={{
             fontSize: "1.4rem",
             fontWeight: 600,
-            background: "linear-gradient(135deg, #9D7AF8 0%, #C786B3 48%, #F3958B 100%)",
-            backgroundClip: "text",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
+            color: "#5B3FA9",
             whiteSpace: "nowrap",
             letterSpacing: "-0.01em",
           }}
         >
-          Ask Prabhupāda
+          Ask Śrīla Prabhupāda
         </span>
       </div>
 

@@ -21,13 +21,10 @@ export default function FooterSection() {
           style={{
             fontSize: "1.1rem",
             fontWeight: 600,
-            background: "linear-gradient(135deg, #7C3AED, #6366F1)",
-            backgroundClip: "text",
-            WebkitBackgroundClip: "text",
-            WebkitTextFillColor: "transparent",
+            color: "#5B3FA9",
           }}
         >
-          Ask Prabhupāda
+          Ask Śrīla Prabhupāda
         </span>
         <span
           className="font-body"
@@ -41,29 +38,26 @@ export default function FooterSection() {
       </div>
 
       <nav style={{ display: "flex", gap: 24 }}>
-        {["About", "GitHub", "Contact"].map((link) => (
-          <a
-            key={link}
-            href={link === "GitHub" ? "https://github.com/asksrilaprabhupada/nextjs-boilerplate" : "#"}
-            target={link === "GitHub" ? "_blank" : undefined}
-            rel={link === "GitHub" ? "noopener noreferrer" : undefined}
-            className="font-body"
-            style={{
-              fontSize: 14,
-              color: "#6B7280",
-              textDecoration: "none",
-              transition: "color 0.3s ease",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = "#7C3AED";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = "#6B7280";
-            }}
-          >
-            {link}
-          </a>
-        ))}
+        <a
+          href="https://github.com/asksrilaprabhupada/nextjs-boilerplate"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-body"
+          style={{
+            fontSize: 14,
+            color: "#6B7280",
+            textDecoration: "none",
+            transition: "color 0.3s ease",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = "#7C3AED";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = "#6B7280";
+          }}
+        >
+          GitHub
+        </a>
       </nav>
     </footer>
   );
