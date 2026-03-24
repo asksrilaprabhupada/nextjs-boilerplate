@@ -3,7 +3,12 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
-const anthropicKey = process.env.ANTHROPIC_API_KEY || "";
+const geminiKey = process.env.GEMINI_API_KEY || "";
+
+// Model for keyword extraction (simple task — use cheapest)
+const GEMINI_MODEL_KEYWORDS = "gemini-2.5-flash-lite";
+// Model for synthesis (needs quality — use flash-lite for free, or "gemini-2.5-flash" for better quality)
+const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash-lite";
 
 function getSupabase() { return createClient(supabaseUrl, supabaseKey); }
 
@@ -32,29 +37,68 @@ function buildVedabaseUrl(scripture: string, canto: string, chapter: string, ver
   return `${base}/${s}/`;
 }
 
-// TOUCH 1: Extract keywords + synonyms
-async function extractKeywordsAndSynonyms(question: string) {
+// =====================================================
+// GEMINI API HELPER
+// =====================================================
+async function callGemini(prompt: string, model: string, maxTokens: number): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": geminiKey,
+      },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514", max_tokens: 300,
-        messages: [{ role: "user", content: `Extract search terms for Srila Prabhupada's scripture library.
-Question: "${question}"
-Return ONLY JSON: {"keywords":["6-10 direct terms"],"synonyms":["6-10 alternate terms Prabhupada uses"],"relatedConcepts":["4-6 broader concepts"]}
-No explanation. Only JSON.` }],
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          temperature: 0.3,
+        },
       }),
     });
-    if (!res.ok) return fallback(question);
+    if (!res.ok) {
+      console.error("Gemini API error:", res.status, await res.text());
+      return "";
+    }
     const data = await res.json();
-    const text = data.content?.[0]?.text || "{}";
-    const parsed = JSON.parse(text.replace(/```json\n?/g, "").replace(/```/g, "").trim());
-    return { keywords: parsed.keywords || [], synonyms: parsed.synonyms || [], relatedConcepts: parsed.relatedConcepts || [] };
-  } catch { return fallback(question); }
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  } catch (err) {
+    console.error("Gemini call failed:", err);
+    return "";
+  }
 }
+
+// =====================================================
+// TOUCH 1: Extract keywords + synonyms
+// =====================================================
+async function extractKeywordsAndSynonyms(question: string) {
+  const prompt = `Extract search terms for Srila Prabhupada's scripture library.
+Question: "${question}"
+Return ONLY JSON: {"keywords":["6-10 direct terms"],"synonyms":["6-10 alternate terms Prabhupada uses"],"relatedConcepts":["4-6 broader concepts"]}
+No explanation. Only JSON.`;
+
+  try {
+    const text = await callGemini(prompt, GEMINI_MODEL_KEYWORDS, 300);
+    if (!text) return fallback(question);
+    const cleaned = text.replace(/```json\n?/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned);
+    return {
+      keywords: parsed.keywords || [],
+      synonyms: parsed.synonyms || [],
+      relatedConcepts: parsed.relatedConcepts || [],
+    };
+  } catch {
+    return fallback(question);
+  }
+}
+
 function fallback(q: string) {
-  return { keywords: q.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3), synonyms: [], relatedConcepts: [] };
+  return {
+    keywords: q.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3),
+    synonyms: [],
+    relatedConcepts: [],
+  };
 }
 
 interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; }
@@ -101,7 +145,9 @@ async function enrich(verses: VerseHit[], prose: ProseHit[]) {
   return { verses: eV, prose: eP };
 }
 
-// TOUCH 2: Synthesize answer
+// =====================================================
+// TOUCH 2: Synthesize answer (Gemini)
+// =====================================================
 async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[]) {
   let ctx = "";
   const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
@@ -121,13 +167,7 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
 
   if (!ctx.trim()) return "<p>No relevant passages found.</p>";
 
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514", max_tokens: 3000,
-        messages: [{ role: "user", content: `You are the answer engine for asksrilaprabhupada.com. Devotee asked: "${question}"
+  const prompt = `You are the answer engine for asksrilaprabhupada.com. Devotee asked: "${question}"
 
 Use ONLY the data below. Never invent.
 
@@ -153,13 +193,15 @@ FORMAT: Clean HTML only.
 - <p> for narrative. No markdown.
 
 DATA:
-${ctx}` }],
-      }),
-    });
-    if (!res.ok) return buildFB(verses, prose);
-    const data = await res.json();
-    return data.content?.[0]?.text || buildFB(verses, prose);
-  } catch { return buildFB(verses, prose); }
+${ctx}`;
+
+  try {
+    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 3000);
+    if (!text) return buildFB(verses, prose);
+    return text;
+  } catch {
+    return buildFB(verses, prose);
+  }
 }
 
 function buildFB(v: VerseHit[], p: ProseHit[]) {
