@@ -80,7 +80,7 @@ export default function BookResultCard({ book, index }: BookResultCardProps) {
                 color: "#9CA3AF",
               }}
             >
-              FROM {book.book_name.toUpperCase()}
+              FROM {book.name.toUpperCase()}
             </span>
           </div>
 
