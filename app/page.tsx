@@ -5,7 +5,7 @@ import LockScreen from "./components/LockScreen";
 import Header from "./components/Header";
 import HeroSearch from "./components/HeroSearch";
 import NarrativeResponse, { SearchResults } from "./components/NarrativeResponse";
-import StatsSection from "./components/StatsSection";
+import WhyDifferent from "./components/WhyDifferent";
 import TestimonialsSection from "./components/TestimonialsSection";
 import CTASection from "./components/CTASection";
 import FooterSection from "./components/FooterSection";
@@ -69,7 +69,7 @@ export default function Home() {
           <NarrativeResponse results={searchResults} isLoading={isSearching} onSearch={handleSearch} />
           {!searchResults && !isSearching && (
             <>
-              <StatsSection />
+              <WhyDifferent />
               <TestimonialsSection />
               <CTASection />
               <FooterSection />
@@ -77,7 +77,6 @@ export default function Home() {
           )}
         </main>
 
-        {/* Floating feedback button — always visible after lock screen */}
         <FeedbackButton currentQuery={currentQuery} />
       </div>
 
