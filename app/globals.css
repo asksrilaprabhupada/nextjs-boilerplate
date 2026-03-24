@@ -395,3 +395,109 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ============================================================
+   RESPONSIVE — TABLET (769px - 1024px)
+   ============================================================ */
+
+@media (max-width: 1024px) {
+  .search-results-layout {
+    grid-template-columns: 1fr !important;
+    max-width: 700px !important;
+    gap: 16px !important;
+  }
+  .left-rail {
+    position: static !important;
+    max-height: none !important;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important;
+    gap: 12px !important;
+  }
+  .right-rail {
+    position: static !important;
+    max-height: none !important;
+    display: grid !important;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important;
+    gap: 12px !important;
+  }
+}
+
+/* ============================================================
+   RESPONSIVE — MOBILE (max-width: 768px)
+   ============================================================ */
+
+@media (max-width: 768px) {
+  .search-results-layout {
+    grid-template-columns: 1fr !important;
+    padding: 12px 16px !important;
+    gap: 12px !important;
+  }
+  .left-rail {
+    position: static !important;
+    max-height: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+  .right-rail {
+    position: static !important;
+    max-height: none !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+  }
+  .aurora-card, .glass-card {
+    padding: 20px 16px !important;
+    border-radius: 18px !important;
+  }
+  .btn-primary, .btn-ghost {
+    padding: 10px 20px !important;
+    font-size: 13px !important;
+  }
+  .section-label {
+    font-size: 11px !important;
+  }
+  .steps-grid {
+    grid-template-columns: 1fr !important;
+    gap: 32px !important;
+  }
+  .narrative-content h3 {
+    font-size: 1.1rem !important;
+    margin: 20px 0 10px !important;
+  }
+  .narrative-content .verse-quote,
+  .narrative-content .purport-quote,
+  .narrative-content .prose-quote {
+    padding: 12px 14px !important;
+    border-radius: 10px !important;
+    margin: 10px 0 !important;
+  }
+  .narrative-content .verse-quote {
+    font-size: 0.95rem !important;
+  }
+  .narrative-content .purport-quote,
+  .narrative-content .prose-quote {
+    font-size: 13px !important;
+  }
+  .step-connectors {
+    display: none !important;
+  }
+}
+
+/* ============================================================
+   RESPONSIVE — SMALL MOBILE (max-width: 480px)
+   ============================================================ */
+
+@media (max-width: 480px) {
+  .aurora-card, .glass-card {
+    padding: 16px 14px !important;
+    border-radius: 16px !important;
+  }
+  .narrative-content p {
+    font-size: 14px !important;
+    line-height: 1.7 !important;
+  }
+  .narrative-content .verse-quote {
+    font-size: 0.9rem !important;
+  }
+}
