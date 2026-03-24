@@ -5,411 +5,198 @@ const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const anthropicKey = process.env.ANTHROPIC_API_KEY || "";
 
-function getSupabase() {
-  return createClient(supabaseUrl, supabaseKey);
-}
+function getSupabase() { return createClient(supabaseUrl, supabaseKey); }
 
-// Book display names
 const BOOK_NAMES: Record<string, string> = {
-  bg: "Bhagavad Gītā As It Is",
-  sb: "Śrīmad Bhāgavatam",
-  cc: "Śrī Caitanya Caritāmṛta",
-  noi: "Nectar of Instruction",
-  iso: "Śrī Īśopaniṣad",
-  bs: "Śrī Brahma-saṁhitā",
-  lob: "Light of the Bhāgavata",
-  kb: "Kṛṣṇa, the Supreme Personality of Godhead",
-  nod: "The Nectar of Devotion",
-  ssr: "The Science of Self-Realization",
-  tlc: "Teachings of Lord Caitanya",
-  tlk: "Teachings of Lord Kapila",
-  tqk: "Teachings of Queen Kuntī",
-  sc: "A Second Chance",
-  bbd: "Beyond Birth and Death",
-  bhakti: "Bhakti: The Art of Eternal Love",
-  cat: "Civilization and Transcendence",
-  josd: "The Journey of Self-Discovery",
-  owk: "On the Way to Kṛṣṇa",
-  pop: "The Path of Perfection",
-  poy: "The Perfection of Yoga",
-  pqpa: "Perfect Questions, Perfect Answers",
-  rv: "Rāja-vidyā: The King of Knowledge",
-  cabh: "Chant and Be Happy",
-  spl: "Śrīla Prabhupāda-līlāmṛta",
-  rkd: "Rāmāyaṇa",
-  mbk: "Mahābhārata",
+  bg: "Bhagavad Gītā As It Is", sb: "Śrīmad Bhāgavatam", cc: "Śrī Caitanya Caritāmṛta",
+  noi: "Nectar of Instruction", iso: "Śrī Īśopaniṣad", bs: "Śrī Brahma-saṁhitā",
+  lob: "Light of the Bhāgavata", kb: "Kṛṣṇa Book", nod: "The Nectar of Devotion",
+  ssr: "The Science of Self-Realization", tlc: "Teachings of Lord Caitanya",
+  tlk: "Teachings of Lord Kapila", tqk: "Teachings of Queen Kuntī",
+  sc: "A Second Chance", bbd: "Beyond Birth and Death",
+  bhakti: "Bhakti: The Art of Eternal Love", cat: "Civilization and Transcendence",
+  josd: "The Journey of Self-Discovery", owk: "On the Way to Kṛṣṇa",
+  pop: "The Path of Perfection", poy: "The Perfection of Yoga",
+  pqpa: "Perfect Questions, Perfect Answers", rv: "Rāja-vidyā: The King of Knowledge",
+  cabh: "Chant and Be Happy", spl: "Śrīla Prabhupāda-līlāmṛta",
+  rkd: "Rāmāyaṇa", mbk: "Mahābhārata",
 };
+function getBookName(slug: string): string { return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown"; }
 
-function getBookName(slug: string): string {
-  return BOOK_NAMES[slug.toLowerCase()] || slug;
+function buildVedabaseUrl(scripture: string, canto: string, chapter: string, verse: string): string {
+  const base = "https://vedabase.io/en/library";
+  const s = scripture?.toLowerCase();
+  if (s === "bg") return `${base}/bg/${chapter}/${verse}/`;
+  if (s === "sb") return `${base}/sb/${canto}/${chapter}/${verse}/`;
+  if (s === "cc") return `${base}/cc/${canto}/${chapter}/${verse}/`;
+  return `${base}/${s}/`;
 }
 
-// ============================================================
-// TOUCH 1: Ask Claude to extract search keywords from question
-// Cost: ~50 tokens (~$0.0001)
-// ============================================================
-async function extractKeywords(question: string): Promise<string[]> {
+// TOUCH 1: Extract keywords + synonyms
+async function extractKeywordsAndSynonyms(question: string) {
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 150,
-        messages: [
-          {
-            role: "user",
-            content: `You are a keyword extractor for searching Srila Prabhupada's books (Bhagavad Gita, Srimad Bhagavatam, Caitanya Caritamrita, Nectar of Devotion, and other Vaishnava texts).
-
-Given this question from a devotee: "${question}"
-
-Extract 6-10 search keywords and phrases that would find relevant verses and paragraphs in Prabhupada's books. Include:
-- Sanskrit terms (like "bhakti", "karma", "dharma", "atma", "maya")
-- English equivalents used by Prabhupada
-- Key philosophical concepts
-- Names of personalities if relevant
-
-Return ONLY a JSON array of strings. Nothing else. No explanation.
-Example: ["surrender", "sharanagati", "devotional service", "Krishna", "Bg 18.66", "give up", "protection"]`,
-          },
-        ],
+        model: "claude-sonnet-4-20250514", max_tokens: 300,
+        messages: [{ role: "user", content: `Extract search terms for Srila Prabhupada's scripture library.
+Question: "${question}"
+Return ONLY JSON: {"keywords":["6-10 direct terms"],"synonyms":["6-10 alternate terms Prabhupada uses"],"relatedConcepts":["4-6 broader concepts"]}
+No explanation. Only JSON.` }],
       }),
     });
-
-    if (!response.ok) {
-      console.error("Touch 1 failed:", response.status);
-      // Fallback: simple keyword extraction
-      return question.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-    }
-
-    const data = await response.json();
-    const text = data.content?.[0]?.text || "[]";
-    // Parse the JSON array from Claude's response
-    const cleaned = text.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-    const keywords = JSON.parse(cleaned);
-    return Array.isArray(keywords) ? keywords : [question];
-  } catch (err) {
-    console.error("Touch 1 error:", err);
-    return question.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-  }
+    if (!res.ok) return fallback(question);
+    const data = await res.json();
+    const text = data.content?.[0]?.text || "{}";
+    const parsed = JSON.parse(text.replace(/```json\n?/g, "").replace(/```/g, "").trim());
+    return { keywords: parsed.keywords || [], synonyms: parsed.synonyms || [], relatedConcepts: parsed.relatedConcepts || [] };
+  } catch { return fallback(question); }
+}
+function fallback(q: string) {
+  return { keywords: q.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3), synonyms: [], relatedConcepts: [] };
 }
 
-// ============================================================
-// DATABASE SEARCH: Find relevant content using keywords
-// Cost: FREE (no AI)
-// ============================================================
-interface VerseHit {
-  id: string;
-  scripture: string;
-  verse_number: string;
-  sanskrit_devanagari: string;
-  transliteration: string;
-  translation: string;
-  purport: string;
-  chapter_id: string;
-  chapter_number?: string;
-  canto_or_division?: string;
-  chapter_title?: string;
-  book_slug?: string;
-}
+interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; }
 
-interface ProseHit {
-  id: string;
-  book_slug: string;
-  paragraph_number: number;
-  body_text: string;
-  chapter_id: string;
-  vedabase_url?: string;
-  chapter_title?: string;
-}
-
-async function searchDatabase(keywords: string[]): Promise<{
-  verses: VerseHit[];
-  prose: ProseHit[];
-}> {
+// Search all tables
+async function searchWithTerms(terms: string[], seenV: Set<string>, seenP: Set<string>) {
+  if (terms.length === 0) return { verses: [] as VerseHit[], prose: [] as ProseHit[] };
   const supabase = getSupabase();
+  const tf = terms.map(k => `translation.ilike.%${k}%`).join(",");
+  const pf = terms.map(k => `purport.ilike.%${k}%`).join(",");
+  const bf = terms.map(k => `body_text.ilike.%${k}%`).join(",");
 
-  // Search verses by translation
-  const verseTransFilter = keywords.map((k) => `translation.ilike.%${k}%`).join(",");
-  const { data: versesByTrans } = await supabase
-    .from("verses")
-    .select("id, scripture, verse_number, sanskrit_devanagari, transliteration, translation, purport, chapter_id")
-    .or(verseTransFilter)
-    .limit(20);
+  const [{ data: vT }, { data: vP }, { data: pr }] = await Promise.all([
+    supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id").or(tf).limit(15),
+    supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id").or(pf).limit(15),
+    supabase.from("prose_paragraphs").select("id,book_slug,paragraph_number,body_text,chapter_id,vedabase_url").or(bf).limit(15),
+  ]);
 
-  // Search verses by purport
-  const versePurpFilter = keywords.map((k) => `purport.ilike.%${k}%`).join(",");
-  const { data: versesByPurport } = await supabase
-    .from("verses")
-    .select("id, scripture, verse_number, sanskrit_devanagari, transliteration, translation, purport, chapter_id")
-    .or(versePurpFilter)
-    .limit(20);
-
-  // Search prose paragraphs
-  const proseFilter = keywords.map((k) => `body_text.ilike.%${k}%`).join(",");
-  const { data: proseHits } = await supabase
-    .from("prose_paragraphs")
-    .select("id, book_slug, paragraph_number, body_text, chapter_id, vedabase_url")
-    .or(proseFilter)
-    .limit(20);
-
-  // Combine and deduplicate verses
-  const allVerses = [...(versesByTrans || []), ...(versesByPurport || [])];
-  const seenIds = new Set<string>();
-  const uniqueVerses = allVerses.filter((v) => {
-    if (seenIds.has(v.id)) return false;
-    seenIds.add(v.id);
-    return true;
-  });
-
-  // Enrich with chapter info
-  const allChapterIds = [
-    ...new Set([
-      ...uniqueVerses.map((v) => v.chapter_id),
-      ...(proseHits || []).map((p) => p.chapter_id),
-    ]),
-  ];
-
-  let chapterMap = new Map();
-  if (allChapterIds.length > 0) {
-    const { data: chapters } = await supabase
-      .from("chapters")
-      .select("id, chapter_number, canto_or_division, chapter_title, book_slug")
-      .in("id", allChapterIds);
-    chapterMap = new Map(
-      (chapters || []).map((ch: Record<string, unknown>) => [ch.id, ch])
-    );
-  }
-
-  const enrichedVerses: VerseHit[] = uniqueVerses.map((v) => {
-    const ch = chapterMap.get(v.chapter_id) as Record<string, unknown> | undefined;
-    return {
-      ...v,
-      chapter_number: (ch?.chapter_number as string) || "",
-      canto_or_division: (ch?.canto_or_division as string) || "",
-      chapter_title: (ch?.chapter_title as string) || "",
-      book_slug: (ch?.book_slug as string) || v.scripture?.toLowerCase() || "",
-    };
-  });
-
-  const enrichedProse: ProseHit[] = (proseHits || []).map((p) => {
-    const ch = chapterMap.get(p.chapter_id) as Record<string, unknown> | undefined;
-    return {
-      ...p,
-      chapter_title: (ch?.chapter_title as string) || "",
-    };
-  });
-
-  return { verses: enrichedVerses, prose: enrichedProse };
+  const allV = [...(vT || []), ...(vP || [])];
+  const uV = allV.filter(v => { if (seenV.has(v.id)) return false; seenV.add(v.id); return true; });
+  const uP = (pr || []).filter(p => { if (seenP.has(p.id)) return false; seenP.add(p.id); return true; });
+  return { verses: uV, prose: uP };
 }
 
-// ============================================================
-// TOUCH 2: Ask Claude to synthesize a narrative answer
-// Cost: ~500 tokens (~$0.001)
-// ============================================================
-async function synthesizeAnswer(
-  question: string,
-  verses: VerseHit[],
-  prose: ProseHit[]
-): Promise<string> {
-  // Build context from search results
-  let context = "";
-
-  // Group verses by book
-  const versesByBook: Record<string, VerseHit[]> = {};
-  for (const v of verses) {
-    const slug = v.book_slug || v.scripture?.toLowerCase() || "unknown";
-    if (!versesByBook[slug]) versesByBook[slug] = [];
-    versesByBook[slug].push(v);
+// Enrich with chapter info
+async function enrich(verses: VerseHit[], prose: ProseHit[]) {
+  const supabase = getSupabase();
+  const ids = [...new Set([...verses.map(v => v.chapter_id), ...prose.map(p => p.chapter_id)])];
+  let cm = new Map();
+  if (ids.length > 0) {
+    const { data } = await supabase.from("chapters").select("id,chapter_number,canto_or_division,chapter_title,book_slug").in("id", ids);
+    cm = new Map((data || []).map((c: Record<string, unknown>) => [c.id, c]));
   }
+  const eV = verses.map(v => {
+    const c = cm.get(v.chapter_id) as Record<string, unknown> | undefined;
+    const cn = (c?.chapter_number as string) || ""; const cd = (c?.canto_or_division as string) || "";
+    return { ...v, chapter_number: cn, canto_or_division: cd, chapter_title: (c?.chapter_title as string) || "", book_slug: (c?.book_slug as string) || v.scripture?.toLowerCase(), vedabase_url: buildVedabaseUrl(v.scripture, cd, cn, v.verse_number) };
+  });
+  const eP = prose.map(p => {
+    const c = cm.get(p.chapter_id) as Record<string, unknown> | undefined;
+    return { ...p, chapter_title: (c?.chapter_title as string) || "", vedabase_url: p.vedabase_url || `https://vedabase.io/en/library/${p.book_slug}/` };
+  });
+  return { verses: eV, prose: eP };
+}
 
-  // Group prose by book
-  const proseByBook: Record<string, ProseHit[]> = {};
-  for (const p of prose) {
-    if (!proseByBook[p.book_slug]) proseByBook[p.book_slug] = [];
-    proseByBook[p.book_slug].push(p);
-  }
+// TOUCH 2: Synthesize answer
+async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[]) {
+  let ctx = "";
+  const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
+  for (const v of verses) { const s = v.book_slug || v.scripture?.toLowerCase() || "x"; if (!byBook[s]) byBook[s] = { v: [], p: [] }; byBook[s].v.push(v); }
+  for (const p of prose) { if (!byBook[p.book_slug]) byBook[p.book_slug] = { v: [], p: [] }; byBook[p.book_slug].p.push(p); }
 
-  // Build verse context
-  for (const [slug, bookVerses] of Object.entries(versesByBook)) {
-    const bookName = getBookName(slug);
-    context += `\n\n=== FROM ${bookName.toUpperCase()} ===\n`;
-    for (const v of bookVerses.slice(0, 8)) {
+  for (const [slug, d] of Object.entries(byBook)) {
+    ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
+    for (const v of d.v.slice(0, 10)) {
       const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
-      context += `\n[${ref}]\n`;
-      if (v.translation) context += `Translation: "${v.translation}"\n`;
-      if (v.purport) context += `Purport (excerpt): "${v.purport.substring(0, 600)}"\n`;
+      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 500)}"\n\n`;
+    }
+    for (const p of d.p.slice(0, 5)) {
+      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\n"${p.body_text.substring(0, 400)}"\n\n`;
     }
   }
 
-  // Build prose context
-  for (const [slug, bookProse] of Object.entries(proseByBook)) {
-    const bookName = getBookName(slug);
-    context += `\n\n=== FROM ${bookName.toUpperCase()} ===\n`;
-    for (const p of bookProse.slice(0, 5)) {
-      if (p.chapter_title) context += `[${p.chapter_title}]\n`;
-      context += `"${p.body_text.substring(0, 500)}"\n\n`;
-    }
-  }
-
-  if (!context.trim()) {
-    return "I could not find specific references for this question in Śrīla Prabhupāda's books. Please try rephrasing your question with different terms.";
-  }
+  if (!ctx.trim()) return "<p>No relevant passages found.</p>";
 
   try {
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": anthropicKey,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: { "Content-Type": "application/json", "x-api-key": anthropicKey, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
-        messages: [
-          {
-            role: "user",
-            content: `You are a devotional assistant for asksrilaprabhupada.com. A devotee asked this question:
+        model: "claude-sonnet-4-20250514", max_tokens: 3000,
+        messages: [{ role: "user", content: `You are the answer engine for asksrilaprabhupada.com. Devotee asked: "${question}"
 
-"${question}"
-
-Below are the relevant verses and passages found from Śrīla Prabhupāda's books. Use ONLY this content to answer. Do NOT add your own philosophical interpretations. Your job is to weave Prabhupāda's actual words into a beautiful, clear narrative.
+Use ONLY the data below. Never invent.
 
 RULES:
-1. For Bhagavad Gītā translations, say "Lord Kṛṣṇa says in Bhagavad Gītā [verse ref]: ..." and quote the translation.
-2. For Bhagavad Gītā purports, say "Śrīla Prabhupāda explains in the purport: ..." and quote key sentences.
-3. For Śrīmad Bhāgavatam, mention which character is speaking if known (e.g., "Śukadeva Gosvāmī tells King Parīkṣit...").
-4. For Caitanya Caritāmṛta, mention Lord Caitanya or the relevant devotee.
-5. For prose books, say "In [book name], Śrīla Prabhupāda writes: ..." and quote.
-6. Keep verse references in brackets like [BG 18.66] or [SB 1.2.6].
-7. Present the most directly relevant points FIRST.
-8. Use maximum 25 key points across all sources.
-9. Organize by scripture: Bhagavad Gītā first, then Śrīmad Bhāgavatam, then Caitanya Caritāmṛta, then other books.
-10. Use Prabhupāda's actual words as much as possible. Put his direct quotes in quotation marks.
-11. Write in a warm, devotional tone. You are serving the devotees.
-12. Use proper diacritical marks for Sanskrit terms (Kṛṣṇa, not Krishna).
+1. BG translations: "Lord Kṛṣṇa says in <a href="URL" class="verse-link" target="_blank"><span class="verse-ref">[BG X.Y]</span></a>:" then quote.
+2. BG purports: "Śrīla Prabhupāda explains in the purport:" then key sentences.
+3. SB: mention speaker if identifiable (Śukadeva, Nārada, etc.).
+4. CC: mention Lord Caitanya or relevant devotee.
+5. Prose: "In [Book], Śrīla Prabhupāda writes:" then quote.
+6. EVERY reference MUST be a link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
+7. Use 10-15+ distinct references minimum.
+8. Order: BG → SB → CC → other books. Each gets <h3>.
+9. Smooth connecting paragraphs. Read like a flowing report, not a list.
+10. Direct quotes in quotation marks. Diacritical marks always.
+11. Warm devotional tone. Serve the devotees.
 
-FORMAT your response as clean HTML with these rules:
-- Use <h3> for scripture section headers (e.g., "From Bhagavad Gītā As It Is")
-- Use <div class="verse-quote"> for verse translations
-- Use <div class="purport-quote"> for purport excerpts
-- Use <div class="prose-quote"> for prose book excerpts
-- Use <span class="verse-ref"> for verse references like [BG 18.66]
-- Use <p> for your connecting narrative text
-- Do NOT use markdown. Use only HTML.
+FORMAT: Clean HTML only.
+- <h3> for section headers
+- <div class="verse-quote"> for translations
+- <div class="purport-quote"> for purports
+- <div class="prose-quote"> for prose excerpts
+- <a href class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a> for references
+- <p> for narrative. No markdown.
 
-SCRIPTURE DATA:
-${context}`,
-          },
-        ],
+DATA:
+${ctx}` }],
       }),
     });
-
-    if (!response.ok) {
-      console.error("Touch 2 failed:", response.status);
-      return buildFallbackResponse(verses, prose);
-    }
-
-    const data = await response.json();
-    return data.content?.[0]?.text || buildFallbackResponse(verses, prose);
-  } catch (err) {
-    console.error("Touch 2 error:", err);
-    return buildFallbackResponse(verses, prose);
-  }
+    if (!res.ok) return buildFB(verses, prose);
+    const data = await res.json();
+    return data.content?.[0]?.text || buildFB(verses, prose);
+  } catch { return buildFB(verses, prose); }
 }
 
-// If AI fails, build a basic response from raw data
-function buildFallbackResponse(verses: VerseHit[], prose: ProseHit[]): string {
-  let html = "";
-
-  if (verses.length > 0) {
-    html += "<h3>From the Scriptures</h3>";
-    for (const v of verses.slice(0, 10)) {
-      const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
-      if (v.translation) {
-        html += `<div class="verse-quote"><span class="verse-ref">[${ref}]</span> "${v.translation}"</div>`;
-      }
-    }
+function buildFB(v: VerseHit[], p: ProseHit[]) {
+  let h = "<h3>Scripture References</h3>";
+  for (const x of v.slice(0, 15)) {
+    const ref = `${x.scripture} ${x.canto_or_division ? x.canto_or_division + "." : ""}${x.chapter_number}.${x.verse_number}`;
+    h += `<div class="verse-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a> "${x.translation}"</div>`;
   }
-
-  if (prose.length > 0) {
-    html += "<h3>From Śrīla Prabhupāda's Books</h3>";
-    for (const p of prose.slice(0, 5)) {
-      const bookName = getBookName(p.book_slug);
-      html += `<div class="prose-quote"><p><strong>From ${bookName}:</strong> "${p.body_text.substring(0, 400)}..."</p></div>`;
-    }
-  }
-
-  return html || "<p>No relevant passages found. Please try a different question.</p>";
+  for (const x of p.slice(0, 10)) h += `<div class="prose-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank">${getBookName(x.book_slug)}</a>: "${x.body_text.substring(0, 300)}..."</div>`;
+  return h;
 }
 
-// ============================================================
-// MAIN API HANDLER
-// ============================================================
 export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const query = searchParams.get("q");
-
-  if (!query) {
-    return NextResponse.json({ error: "Query parameter 'q' is required" }, { status: 400 });
-  }
+  const query = new URL(request.url).searchParams.get("q");
+  if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
 
   try {
-    // TOUCH 1: Extract keywords using AI
-    console.log("[Touch 1] Extracting keywords for:", query);
-    const keywords = await extractKeywords(query);
-    console.log("[Touch 1] Keywords:", keywords);
+    const { keywords, synonyms, relatedConcepts } = await extractKeywordsAndSynonyms(query);
+    const seenV = new Set<string>(), seenP = new Set<string>();
+    const r1 = await searchWithTerms(keywords, seenV, seenP);
+    const r2 = await searchWithTerms(synonyms, seenV, seenP);
+    const allV = [...r1.verses, ...r2.verses], allP = [...r1.prose, ...r2.prose];
+    const { verses, prose } = await enrich(allV, allP);
+    const narrative = await synthesize(query, verses, prose);
 
-    // DATABASE SEARCH: Find relevant content (FREE)
-    console.log("[Search] Searching database...");
-    const { verses, prose } = await searchDatabase(keywords);
-    console.log(`[Search] Found ${verses.length} verses, ${prose.length} prose paragraphs`);
+    const citations = [
+      ...verses.map(v => ({ ref: `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`, book: getBookName(v.book_slug || ""), url: v.vedabase_url || "", type: "verse" as const, title: v.chapter_title || "" })),
+      ...prose.map(p => ({ ref: `${getBookName(p.book_slug)}`, book: getBookName(p.book_slug), url: p.vedabase_url || "", type: "prose" as const, title: p.chapter_title || "" })),
+    ];
 
-    // TOUCH 2: Synthesize narrative answer using AI
-    console.log("[Touch 2] Synthesizing answer...");
-    const narrativeHtml = await synthesizeAnswer(query, verses, prose);
+    const books: Record<string, { slug: string; name: string; verses: typeof verses; prose: typeof prose }> = {};
+    for (const v of verses) { const s = (v.book_slug || "").toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].verses.push(v); }
+    for (const p of prose) { const s = p.book_slug.toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].prose.push(p); }
 
-    // Group raw results by book for reference section
-    const bookGroups: Record<string, {
-      book_slug: string;
-      book_name: string;
-      verses: (VerseHit & { content_type: "verse" })[];
-      prose: (ProseHit & { content_type: "prose" })[];
-    }> = {};
-
-    for (const v of verses) {
-      const slug = (v.book_slug || v.scripture || "").toLowerCase();
-      if (!bookGroups[slug]) {
-        bookGroups[slug] = { book_slug: slug, book_name: getBookName(slug), verses: [], prose: [] };
-      }
-      bookGroups[slug].verses.push({ ...v, content_type: "verse" });
-    }
-
-    for (const p of prose) {
-      const slug = p.book_slug.toLowerCase();
-      if (!bookGroups[slug]) {
-        bookGroups[slug] = { book_slug: slug, book_name: getBookName(slug), verses: [], prose: [] };
-      }
-      bookGroups[slug].prose.push({ ...p, content_type: "prose" });
-    }
-
-    return NextResponse.json({
-      query,
-      keywords,
-      narrative: narrativeHtml,
-      total_results: verses.length + prose.length,
-      books: Object.values(bookGroups),
-    });
+    return NextResponse.json({ query, keywords, synonyms, relatedConcepts, narrative, totalResults: verses.length + prose.length, citations, books: Object.values(books) });
   } catch (err) {
     console.error("Search error:", err);
-    return NextResponse.json(
-      { error: "An error occurred while searching. Please try again." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "An error occurred." }, { status: 500 });
   }
 }
