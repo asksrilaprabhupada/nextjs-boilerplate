@@ -13,11 +13,13 @@ import PageOverlay from "./components/PageOverlay";
 import AboutOverlay from "./components/AboutOverlay";
 import DonateOverlay from "./components/DonateOverlay";
 import ContactOverlay from "./components/ContactOverlay";
+import FeatureRequestOverlay from "./components/FeatureRequestOverlay";
+import FeedbackButton from "./components/FeedbackButton";
 
-type OverlayItem = "About" | "Donate" | "Contact";
+type OverlayItem = "About" | "Donate" | "Contact" | "Feature Request";
 
-const overlayParamToItem: Record<string, OverlayItem> = { about: "About", donate: "Donate", contact: "Contact" };
-const overlayItemToParam: Record<OverlayItem, string> = { About: "about", Donate: "donate", Contact: "contact" };
+const overlayParamToItem: Record<string, OverlayItem> = { about: "About", donate: "Donate", contact: "Contact", feature: "Feature Request" };
+const overlayItemToParam: Record<OverlayItem, string> = { About: "about", Donate: "donate", Contact: "contact", "Feature Request": "feature" };
 
 export default function Home() {
   const [lockScreenVisible, setLockScreenVisible] = useState(true);
@@ -46,22 +48,13 @@ export default function Home() {
   }, []);
 
   const handleSearch = useCallback(async (query: string) => {
-    setIsSearching(true);
-    setSearchResults(null);
-    setCurrentQuery(query);
+    setIsSearching(true); setSearchResults(null); setCurrentQuery(query);
     window.scrollTo({ top: 0, behavior: "smooth" });
-
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setSearchResults(data);
-      }
-    } catch (err) {
-      console.error("Search failed:", err);
-    } finally {
-      setIsSearching(false);
-    }
+      if (res.ok) setSearchResults(await res.json());
+    } catch (err) { console.error("Search failed:", err); }
+    finally { setIsSearching(false); }
   }, []);
 
   return (
@@ -83,12 +76,17 @@ export default function Home() {
             </>
           )}
         </main>
+
+        {/* Floating feedback button — always visible after lock screen */}
+        <FeedbackButton currentQuery={currentQuery} />
       </div>
+
       {!lockScreenVisible && (
         <>
           <PageOverlay isOpen={overlayOpen === "About"} onClose={() => setOverlay(null)}><AboutOverlay /></PageOverlay>
           <PageOverlay isOpen={overlayOpen === "Donate"} onClose={() => setOverlay(null)}><DonateOverlay /></PageOverlay>
           <PageOverlay isOpen={overlayOpen === "Contact"} onClose={() => setOverlay(null)}><ContactOverlay /></PageOverlay>
+          <PageOverlay isOpen={overlayOpen === "Feature Request"} onClose={() => setOverlay(null)}><FeatureRequestOverlay /></PageOverlay>
         </>
       )}
     </>
