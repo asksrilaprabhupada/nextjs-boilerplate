@@ -2,9 +2,49 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Ask Śrīla Prabhupāda — Scripture Search",
+  title: "Ask Śrīla Prabhupāda — Search 27 Books of Vedic Wisdom",
   description:
-    "A devotional knowledge engine grounded in Bhagavad Gītā, Śrīmad Bhāgavatam, and Caitanya Caritāmṛta. Every answer from Śrīla Prabhupāda's words.",
+    "AI-powered scripture search across all 27 books of Śrīla Prabhupāda — Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more. 25,112 verses and 34,145 paragraphs. Every answer from Prabhupāda's actual words.",
+  keywords: [
+    "Srila Prabhupada", "Bhagavad Gita", "Srimad Bhagavatam", "Caitanya Caritamrita",
+    "ISKCON", "Krishna", "Vedic", "scripture search", "purport", "devotional service",
+    "Hare Krishna", "Vaishnava", "bhakti", "spiritual", "Nectar of Devotion",
+  ],
+  authors: [{ name: "Ask Śrīla Prabhupāda" }],
+  creator: "Ask Śrīla Prabhupāda",
+  metadataBase: new URL("https://asksrilaprabhupada.com"),
+  openGraph: {
+    type: "website",
+    locale: "en_US",
+    url: "https://asksrilaprabhupada.com",
+    siteName: "Ask Śrīla Prabhupāda",
+    title: "Ask Śrīla Prabhupāda — Search 27 Books of Vedic Wisdom",
+    description:
+      "AI-powered scripture search engine. Ask any question and get answers directly from Śrīla Prabhupāda's books — 25,112 verses and 34,145 paragraphs across 27 books.",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "Ask Śrīla Prabhupāda — Scripture Search Engine",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Ask Śrīla Prabhupāda — Search 27 Books of Vedic Wisdom",
+    description:
+      "AI-powered scripture search. Every answer from Prabhupāda's actual words across 27 books.",
+    images: ["/og-image.png"],
+  },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+    },
+  },
 };
 
 export default function RootLayout({
@@ -14,8 +54,12 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+      </head>
       <body>
-        {/* Garden Wash Background — Lavender Fields + Tulip Garden */}
+        {/* Garden Wash Background */}
         <div
           style={{
             position: "fixed",
@@ -25,7 +69,6 @@ export default function RootLayout({
             pointerEvents: "none",
           }}
         >
-          {/* Garden gradient washes — wide horizontal bands like flower fields */}
           <div
             style={{
               position: "absolute",
@@ -41,17 +84,16 @@ export default function RootLayout({
               animation: "gardenDrift 30s ease-in-out infinite",
             }}
           />
-          {/* Soft warm vignette — barely there, just a gentle edge warmth */}
           <div
             style={{
               position: "absolute",
               inset: 0,
-              background: "radial-gradient(ellipse at 50% 30%, transparent 60%, rgba(245,240,255,0.4) 100%)",
+              background:
+                "radial-gradient(ellipse at 50% 30%, transparent 60%, rgba(245,240,255,0.4) 100%)",
             }}
           />
         </div>
 
-        {/* Very subtle grain — almost invisible, just adds texture */}
         <svg
           style={{
             position: "fixed",
@@ -74,7 +116,6 @@ export default function RootLayout({
           <rect width="100%" height="100%" filter="url(#grain)" />
         </svg>
 
-        {/* Content */}
         <div style={{ position: "relative", zIndex: 2 }}>{children}</div>
       </body>
     </html>
