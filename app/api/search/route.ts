@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { embedQuery } from "@/app/lib/embed";
+import { getCached, setCached } from "@/app/lib/search-cache";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const geminiKey = process.env.GEMINI_API_KEY || "";
 
-// Model for keyword extraction (simple task — use cheapest)
-const GEMINI_MODEL_KEYWORDS = "gemini-2.5-flash-lite";
-// Model for synthesis (needs quality — use flash-lite for free, or "gemini-2.5-flash" for better quality)
-const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash-lite";
+const GEMINI_MODEL_SYNTHESIS = "gemini-2.0-flash";
 
 function getSupabase() { return createClient(supabaseUrl, supabaseKey); }
 
@@ -70,44 +69,118 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 }
 
 // =====================================================
-// TOUCH 1: Extract keywords + synonyms
+// TYPES
 // =====================================================
-async function extractKeywordsAndSynonyms(question: string) {
-  const prompt = `Extract search terms for Srila Prabhupada's scripture library.
-Question: "${question}"
-Return ONLY JSON: {"keywords":["6-10 direct terms"],"synonyms":["6-10 alternate terms Prabhupada uses"],"relatedConcepts":["4-6 broader concepts"]}
-No explanation. Only JSON.`;
+interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; score?: number; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; score?: number; }
+
+// =====================================================
+// HYBRID SEARCH: Semantic + Full-text with fallback
+// =====================================================
+async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+  const supabase = getSupabase();
+
+  // Step 1: Embed the query
+  const embedding = await embedQuery(query);
+  const hasEmbedding = embedding.length === 1536;
+
+  if (hasEmbedding) {
+    // Convert to string format for Supabase RPC
+    const vectorStr = `[${embedding.join(",")}]`;
+
+    try {
+      // Step 2: Run 4 search queries in parallel
+      const [semanticVerses, semanticProse, ftsVerses, ftsProse] = await Promise.all([
+        supabase.rpc("search_verses_semantic", { query_embedding: vectorStr, match_count: 20 }),
+        supabase.rpc("search_prose_semantic", { query_embedding: vectorStr, match_count: 15 }),
+        supabase.rpc("search_verses_fulltext", { search_query: query, match_count: 15 }),
+        supabase.rpc("search_prose_fulltext", { search_query: query, match_count: 10 }),
+      ]);
+
+      // Step 3: Merge and deduplicate verses
+      const verseMap = new Map<string, VerseHit & { score: number }>();
+
+      for (const v of (semanticVerses.data || [])) {
+        verseMap.set(v.id, { ...v, score: v.similarity || 0 });
+      }
+      for (const v of (ftsVerses.data || [])) {
+        if (verseMap.has(v.id)) {
+          // Found by BOTH — boost score
+          const existing = verseMap.get(v.id)!;
+          existing.score += 0.3;
+        } else {
+          // Normalize FTS rank to ~0-1 range (ts_rank is usually small)
+          verseMap.set(v.id, { ...v, score: Math.min((v.rank || 0) * 10, 1) * 0.5 });
+        }
+      }
+
+      // Step 3b: Merge and deduplicate prose
+      const proseMap = new Map<string, ProseHit & { score: number }>();
+
+      for (const p of (semanticProse.data || [])) {
+        proseMap.set(p.id, { ...p, score: p.similarity || 0 });
+      }
+      for (const p of (ftsProse.data || [])) {
+        if (proseMap.has(p.id)) {
+          const existing = proseMap.get(p.id)!;
+          existing.score += 0.3;
+        } else {
+          proseMap.set(p.id, { ...p, score: Math.min((p.rank || 0) * 10, 1) * 0.5 });
+        }
+      }
+
+      // Step 4: Sort by combined relevance, take top 25 total
+      const allVerses = [...verseMap.values()].sort((a, b) => b.score - a.score);
+      const allProse = [...proseMap.values()].sort((a, b) => b.score - a.score);
+
+      // Distribute: up to 18 verses, up to 7 prose, total 25
+      const topVerses = allVerses.slice(0, 18);
+      const topProse = allProse.slice(0, 7);
+      const remaining = 25 - topVerses.length - topProse.length;
+      if (remaining > 0 && allVerses.length > 18) {
+        topVerses.push(...allVerses.slice(18, 18 + remaining));
+      }
+
+      return { verses: topVerses, prose: topProse };
+    } catch (err) {
+      console.error("Hybrid search failed, falling back to full-text:", err);
+      return fullTextSearch(query);
+    }
+  }
+
+  // Embedding failed — fall back to full-text search
+  console.warn("Embedding failed, using full-text search fallback");
+  return fullTextSearch(query);
+}
+
+async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+  const supabase = getSupabase();
 
   try {
-    const text = await callGemini(prompt, GEMINI_MODEL_KEYWORDS, 300);
-    if (!text) return fallback(question);
-    const cleaned = text.replace(/```json\n?/g, "").replace(/```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    return {
-      keywords: parsed.keywords || [],
-      synonyms: parsed.synonyms || [],
-      relatedConcepts: parsed.relatedConcepts || [],
-    };
-  } catch {
-    return fallback(question);
+    const [ftsVerses, ftsProse] = await Promise.all([
+      supabase.rpc("search_verses_fulltext", { search_query: query, match_count: 20 }),
+      supabase.rpc("search_prose_fulltext", { search_query: query, match_count: 10 }),
+    ]);
+
+    if ((ftsVerses.data?.length || 0) > 0 || (ftsProse.data?.length || 0) > 0) {
+      return {
+        verses: (ftsVerses.data || []).map((v: VerseHit & { rank?: number }) => ({ ...v, score: v.rank || 0 })),
+        prose: (ftsProse.data || []).map((p: ProseHit & { rank?: number }) => ({ ...p, score: p.rank || 0 })),
+      };
+    }
+  } catch (err) {
+    console.error("Full-text search failed, falling back to ilike:", err);
   }
+
+  // Final fallback: ilike search
+  return ilikeSearch(query);
 }
 
-function fallback(q: string) {
-  return {
-    keywords: q.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3),
-    synonyms: [],
-    relatedConcepts: [],
-  };
-}
-
-interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; }
-
-// Search all tables
-async function searchWithTerms(terms: string[], seenV: Set<string>, seenP: Set<string>) {
-  if (terms.length === 0) return { verses: [] as VerseHit[], prose: [] as ProseHit[] };
+async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
   const supabase = getSupabase();
+  const terms = query.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3);
+  if (terms.length === 0) return { verses: [], prose: [] };
+
   const tf = terms.map(k => `translation.ilike.%${k}%`).join(",");
   const pf = terms.map(k => `purport.ilike.%${k}%`).join(",");
   const bf = terms.map(k => `body_text.ilike.%${k}%`).join(",");
@@ -118,35 +191,54 @@ async function searchWithTerms(terms: string[], seenV: Set<string>, seenP: Set<s
     supabase.from("prose_paragraphs").select("id,book_slug,paragraph_number,body_text,chapter_id,vedabase_url").or(bf).limit(15),
   ]);
 
+  const seenV = new Set<string>();
   const allV = [...(vT || []), ...(vP || [])];
   const uV = allV.filter(v => { if (seenV.has(v.id)) return false; seenV.add(v.id); return true; });
-  const uP = (pr || []).filter(p => { if (seenP.has(p.id)) return false; seenP.add(p.id); return true; });
+  const uP = (pr || []);
   return { verses: uV, prose: uP };
 }
 
-// Enrich with chapter info
+// =====================================================
+// ENRICH: Single query with IN clause for chapter info
+// =====================================================
 async function enrich(verses: VerseHit[], prose: ProseHit[]) {
   const supabase = getSupabase();
-  const ids = [...new Set([...verses.map(v => v.chapter_id), ...prose.map(p => p.chapter_id)])];
-  let cm = new Map();
+  const ids = [...new Set([...verses.map(v => v.chapter_id), ...prose.map(p => p.chapter_id)].filter(Boolean))];
+
+  let cm = new Map<string, Record<string, unknown>>();
   if (ids.length > 0) {
     const { data } = await supabase.from("chapters").select("id,chapter_number,canto_or_division,chapter_title,book_slug").in("id", ids);
-    cm = new Map((data || []).map((c: Record<string, unknown>) => [c.id, c]));
+    cm = new Map((data || []).map((c: Record<string, unknown>) => [c.id as string, c]));
   }
+
   const eV = verses.map(v => {
-    const c = cm.get(v.chapter_id) as Record<string, unknown> | undefined;
-    const cn = (c?.chapter_number as string) || ""; const cd = (c?.canto_or_division as string) || "";
-    return { ...v, chapter_number: cn, canto_or_division: cd, chapter_title: (c?.chapter_title as string) || "", book_slug: (c?.book_slug as string) || v.scripture?.toLowerCase(), vedabase_url: buildVedabaseUrl(v.scripture, cd, cn, v.verse_number) };
+    const c = cm.get(v.chapter_id);
+    const cn = (c?.chapter_number as string) || "";
+    const cd = (c?.canto_or_division as string) || "";
+    return {
+      ...v,
+      chapter_number: cn,
+      canto_or_division: cd,
+      chapter_title: (c?.chapter_title as string) || "",
+      book_slug: (c?.book_slug as string) || v.scripture?.toLowerCase(),
+      vedabase_url: buildVedabaseUrl(v.scripture, cd, cn, v.verse_number),
+    };
   });
+
   const eP = prose.map(p => {
-    const c = cm.get(p.chapter_id) as Record<string, unknown> | undefined;
-    return { ...p, chapter_title: (c?.chapter_title as string) || "", vedabase_url: p.vedabase_url || `https://vedabase.io/en/library/${p.book_slug}/` };
+    const c = cm.get(p.chapter_id);
+    return {
+      ...p,
+      chapter_title: (c?.chapter_title as string) || "",
+      vedabase_url: p.vedabase_url || `https://vedabase.io/en/library/${p.book_slug}/`,
+    };
   });
+
   return { verses: eV, prose: eP };
 }
 
 // =====================================================
-// TOUCH 2: Synthesize answer (Gemini)
+// SYNTHESIS (Gemini)
 // =====================================================
 async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[]) {
   let ctx = "";
@@ -214,17 +306,25 @@ function buildFB(v: VerseHit[], p: ProseHit[]) {
   return h;
 }
 
+// =====================================================
+// API HANDLER
+// =====================================================
 export async function GET(request: NextRequest) {
   const query = new URL(request.url).searchParams.get("q");
   if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
 
+  // Check cache first
+  const cached = getCached<Record<string, unknown>>(query);
+  if (cached) return NextResponse.json(cached);
+
   try {
-    const { keywords, synonyms, relatedConcepts } = await extractKeywordsAndSynonyms(query);
-    const seenV = new Set<string>(), seenP = new Set<string>();
-    const r1 = await searchWithTerms(keywords, seenV, seenP);
-    const r2 = await searchWithTerms(synonyms, seenV, seenP);
-    const allV = [...r1.verses, ...r2.verses], allP = [...r1.prose, ...r2.prose];
-    const { verses, prose } = await enrich(allV, allP);
+    // Hybrid search: semantic + full-text + ilike fallback chain
+    const { verses: rawVerses, prose: rawProse } = await hybridSearch(query);
+
+    // Enrich with chapter info (single IN query)
+    const { verses, prose } = await enrich(rawVerses, rawProse);
+
+    // Synthesize narrative
     const narrative = await synthesize(query, verses, prose);
 
     const citations = [
@@ -236,7 +336,12 @@ export async function GET(request: NextRequest) {
     for (const v of verses) { const s = (v.book_slug || "").toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].verses.push(v); }
     for (const p of prose) { const s = p.book_slug.toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].prose.push(p); }
 
-    return NextResponse.json({ query, keywords, synonyms, relatedConcepts, narrative, totalResults: verses.length + prose.length, citations, books: Object.values(books) });
+    const result = { query, narrative, totalResults: verses.length + prose.length, citations, books: Object.values(books) };
+
+    // Cache successful results
+    setCached(query, result);
+
+    return NextResponse.json(result);
   } catch (err) {
     console.error("Search error:", err);
     return NextResponse.json({ error: "An error occurred." }, { status: 500 });
