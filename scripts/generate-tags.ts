@@ -1,10 +1,11 @@
 /**
- * Tag Generation Script
+ * Tag Generation Script (FIXED)
  *
  * Reads verses and prose_paragraphs with empty tags from Supabase,
- * uses Gemini 2.0 Flash to generate rich search tags, and stores them.
+ * uses Gemini 2.5 Flash to generate rich search tags, and stores them.
  *
  * Usage: npx tsx scripts/generate-tags.ts
+ * Test:  npx tsx scripts/generate-tags.ts --test
  * Requires GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY in .env.local
  */
 
@@ -36,7 +37,7 @@ function loadEnv() {
 loadEnv();
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
 if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
@@ -46,14 +47,20 @@ if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-const GEMINI_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+// Using gemini-2.5-flash
+const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-const BATCH_SIZE = 15;
-const BATCH_DELAY_MS = 1500;
+const BATCH_SIZE = 10;
+const BATCH_DELAY_MS = 2000;
+const TEST_MODE = process.argv.includes("--test");
+
+if (TEST_MODE) {
+  console.log("🧪 TEST MODE — processing only 5 rows\n");
+}
 
 // ---------------------------------------------------------------------------
-// Gemini helper
+// Gemini helper — with responseMimeType: application/json
 // ---------------------------------------------------------------------------
 async function callGemini(prompt: string): Promise<string> {
   const res = await fetch(`${GEMINI_URL}?key=${GEMINI_API_KEY}`, {
@@ -62,7 +69,7 @@ async function callGemini(prompt: string): Promise<string> {
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
-        temperature: 0.3,
+        temperature: 0.2,
         maxOutputTokens: 1024,
         responseMimeType: "application/json",
       },
@@ -71,38 +78,56 @@ async function callGemini(prompt: string): Promise<string> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Gemini API error ${res.status}: ${text}`);
+    throw new Error(`Gemini API error ${res.status}: ${text.substring(0, 200)}`);
   }
 
   const data = await res.json();
-  const text =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   return text;
 }
 
 // ---------------------------------------------------------------------------
-// Parse JSON from Gemini response (handles markdown code blocks)
+// Aggressive JSON extraction — handles every edge case
 // ---------------------------------------------------------------------------
-function parseGeminiJson(raw: string): {
+function extractJSON(raw: string): {
   topics?: string[];
   sanskrit_terms?: string[];
   questions?: string[];
   summary?: string;
 } | null {
-  // Strip markdown code fences (```json ... ```) that Gemini sometimes wraps around JSON
-  let cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+  if (!raw || raw.trim().length === 0) return null;
 
-  // Extract everything between the first { and last } as a safety net
+  let cleaned = raw.trim();
+
+  // Step 1: Remove markdown code block wrappers
+  cleaned = cleaned.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim();
+
+  // Step 2: Extract everything between first { and last }
   const firstBrace = cleaned.indexOf("{");
   const lastBrace = cleaned.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+
+  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+    return null;
   }
 
+  cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+
+  // Step 3: Fix common JSON issues
+  // Remove trailing commas before } or ]
+  cleaned = cleaned.replace(/,\s*([}\]])/g, "$1");
+
+  // Step 4: Try parsing
   try {
     return JSON.parse(cleaned);
   } catch {
-    return null;
+    // Step 5: Last resort — try to fix escaped quotes and other issues
+    try {
+      // Replace single quotes with double quotes (risky but sometimes needed)
+      const fixed = cleaned.replace(/'/g, '"');
+      return JSON.parse(fixed);
+    } catch {
+      return null;
+    }
   }
 }
 
@@ -116,11 +141,76 @@ function buildTags(parsed: {
   summary?: string;
 }): string[] {
   const tags: string[] = [];
-  if (Array.isArray(parsed.topics)) tags.push(...parsed.topics);
-  if (Array.isArray(parsed.sanskrit_terms)) tags.push(...parsed.sanskrit_terms);
-  if (Array.isArray(parsed.questions)) tags.push(...parsed.questions);
-  if (parsed.summary) tags.push(`SUMMARY: ${parsed.summary}`);
+  if (Array.isArray(parsed.topics)) tags.push(...parsed.topics.filter((t) => typeof t === "string"));
+  if (Array.isArray(parsed.sanskrit_terms))
+    tags.push(...parsed.sanskrit_terms.filter((t) => typeof t === "string"));
+  if (Array.isArray(parsed.questions))
+    tags.push(...parsed.questions.filter((t) => typeof t === "string"));
+  if (parsed.summary && typeof parsed.summary === "string") tags.push(`SUMMARY: ${parsed.summary}`);
   return tags;
+}
+
+// ---------------------------------------------------------------------------
+// Process a single verse
+// ---------------------------------------------------------------------------
+async function processVerse(
+  verse: {
+    id: string;
+    scripture: string;
+    verse_number: string;
+    translation: string | null;
+    purport: string | null;
+    chapter_id: string;
+  },
+  chapterMap: Record<string, { canto_or_division: string; chapter_number: number }>
+): Promise<boolean> {
+  const ch = chapterMap[verse.chapter_id] || { canto_or_division: "", chapter_number: "" };
+  const purportExcerpt = (verse.purport || "").slice(0, 800);
+
+  const prompt = `You are an expert on Śrīla Prabhupāda's teachings and ISKCON devotee culture.
+
+Read this verse and purport from ${verse.scripture} ${ch.canto_or_division || ""}.${ch.chapter_number || ""}.${verse.verse_number}.
+
+Translation: "${verse.translation || "No translation available"}"
+Purport (excerpt): "${purportExcerpt || "No purport available"}"
+
+Return a JSON object with these fields:
+{
+  "topics": ["10-15 English search terms a devotee might type to find this verse"],
+  "sanskrit_terms": ["5-8 relevant Sanskrit terms"],
+  "questions": ["3-5 questions a devotee might ask that this verse answers"],
+  "summary": "1-2 sentence summary of the key teaching"
+}`;
+
+  const raw = await callGemini(prompt);
+
+  if (TEST_MODE) {
+    console.log(`  RAW (first 300 chars): ${raw.substring(0, 300)}`);
+  }
+
+  const parsed = extractJSON(raw);
+  if (!parsed) {
+    console.error(`  ❌ Failed to parse JSON for verse ${verse.id}`);
+    if (!TEST_MODE) {
+      console.error(`     Raw response (first 150): ${raw.substring(0, 150)}`);
+    }
+    return false;
+  }
+
+  const tags = buildTags(parsed);
+  if (tags.length === 0) {
+    console.error(`  ❌ Empty tags for verse ${verse.id}`);
+    return false;
+  }
+
+  const { error: updateError } = await supabase.from("verses").update({ tags }).eq("id", verse.id);
+
+  if (updateError) {
+    console.error(`  ❌ Update error for verse ${verse.id}: ${updateError.message}`);
+    return false;
+  }
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -151,8 +241,13 @@ async function processVerses() {
     from += PAGE;
   }
 
+  // In test mode, only process 5
+  if (TEST_MODE) {
+    allIds = allIds.slice(0, 5);
+  }
+
   const total = allIds.length;
-  console.log(`Found ${total} verses needing tags`);
+  console.log(`Found ${total} verses needing tags${TEST_MODE ? " (test mode: 5 only)" : ""}`);
   if (total === 0) return;
 
   let processed = 0;
@@ -173,7 +268,7 @@ async function processVerses() {
       continue;
     }
 
-    // Get chapter info for canto/chapter numbers
+    // Get chapter info
     const chapterIds = [...new Set(verses.map((v) => v.chapter_id).filter(Boolean))];
     let chapterMap: Record<string, { canto_or_division: string; chapter_number: number }> = {};
     if (chapterIds.length > 0) {
@@ -183,71 +278,37 @@ async function processVerses() {
         .in("id", chapterIds);
       if (chapters) {
         for (const c of chapters) {
-          chapterMap[c.id] = { canto_or_division: c.canto_or_division, chapter_number: c.chapter_number };
+          chapterMap[c.id] = {
+            canto_or_division: c.canto_or_division,
+            chapter_number: c.chapter_number,
+          };
         }
       }
     }
 
-    // Process each verse in the batch
-    const promises = verses.map(async (verse) => {
+    // Process each verse SEQUENTIALLY within batch to avoid rate limits
+    for (const verse of verses) {
       try {
-        const ch = chapterMap[verse.chapter_id] || { canto_or_division: "?", chapter_number: "?" };
-        const purportExcerpt = (verse.purport || "").slice(0, 800);
-        const prompt = `You are an expert on Śrīla Prabhupāda's teachings and ISKCON devotee culture.
-
-Read this verse and purport from ${verse.scripture} ${ch.canto_or_division}.${ch.chapter_number}.${verse.verse_number}.
-
-Translation: "${verse.translation || ""}"
-Purport (excerpt): "${purportExcerpt}"
-
-Return ONLY a JSON object with these fields:
-{
-  "topics": ["10-15 English search terms a devotee might type to find this verse — include practical life topics, philosophical concepts, emotional states, daily practices"],
-  "sanskrit_terms": ["5-8 relevant Sanskrit terms with and without diacritics, e.g. both 'karma' and 'brahma-muhurta' and 'brahma-muhūrta'"],
-  "questions": ["3-5 questions a devotee might ask that this verse answers, e.g. 'How to control the mind?', 'What happens after death?'"],
-  "summary": "1-2 sentence summary of the key teaching in this verse and purport"
-}
-
-No explanation. Only valid JSON.`;
-
-        const raw = await callGemini(prompt);
-        const parsed = parseGeminiJson(raw);
-        if (!parsed) {
-          console.error(`  Failed to parse JSON for verse ${verse.id}`);
+        const success = await processVerse(verse, chapterMap);
+        if (success) {
+          processed++;
+        } else {
           errors++;
-          return;
         }
-
-        const tags = buildTags(parsed);
-        if (tags.length === 0) {
-          console.error(`  Empty tags for verse ${verse.id}`);
-          errors++;
-          return;
-        }
-
-        const { error: updateError } = await supabase
-          .from("verses")
-          .update({ tags })
-          .eq("id", verse.id);
-
-        if (updateError) {
-          console.error(`  Update error for verse ${verse.id}:`, updateError.message);
-          errors++;
-          return;
-        }
-
-        processed++;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`  Error processing verse ${verse.id}: ${msg}`);
+        console.error(`  ❌ Error processing verse ${verse.id}: ${msg}`);
         errors++;
       }
-    });
+    }
 
-    await Promise.all(promises);
-
-    if ((processed + errors) % 50 < BATCH_SIZE || i + BATCH_SIZE >= allIds.length) {
-      console.log(`  Generated tags for ${processed} / ${total} verses (${errors} errors)`);
+    // Progress log
+    const totalDone = processed + errors;
+    if (totalDone % 50 < BATCH_SIZE || i + BATCH_SIZE >= allIds.length) {
+      const pct = ((processed / total) * 100).toFixed(1);
+      console.log(
+        `  ✅ ${processed} / ${total} verses tagged (${pct}%) | ${errors} errors`
+      );
     }
 
     // Delay between batches
@@ -256,7 +317,7 @@ No explanation. Only valid JSON.`;
     }
   }
 
-  console.log(`\nVerses complete: ${processed} tagged, ${errors} errors out of ${total}`);
+  console.log(`\n=== Verses complete: ${processed} tagged, ${errors} errors out of ${total} ===`);
 }
 
 // ---------------------------------------------------------------------------
@@ -286,8 +347,12 @@ async function processProse() {
     from += PAGE;
   }
 
+  if (TEST_MODE) {
+    allIds = allIds.slice(0, 5);
+  }
+
   const total = allIds.length;
-  console.log(`Found ${total} prose paragraphs needing tags`);
+  console.log(`Found ${total} prose paragraphs needing tags${TEST_MODE ? " (test mode: 5 only)" : ""}`);
   if (total === 0) return;
 
   let processed = 0;
@@ -307,7 +372,7 @@ async function processProse() {
       continue;
     }
 
-    const promises = rows.map(async (row) => {
+    for (const row of rows) {
       try {
         const textExcerpt = (row.body_text || "").slice(0, 800);
         const prompt = `You are an expert on Śrīla Prabhupāda's teachings and ISKCON devotee culture.
@@ -316,29 +381,35 @@ Read this paragraph from "${row.book_slug}", paragraph ${row.paragraph_number}.
 
 Text (excerpt): "${textExcerpt}"
 
-Return ONLY a JSON object with these fields:
+Return a JSON object with these fields:
 {
-  "topics": ["10-15 English search terms a devotee might type to find this passage — include practical life topics, philosophical concepts, emotional states, daily practices"],
-  "sanskrit_terms": ["5-8 relevant Sanskrit terms with and without diacritics"],
+  "topics": ["10-15 English search terms a devotee might type to find this passage"],
+  "sanskrit_terms": ["5-8 relevant Sanskrit terms"],
   "questions": ["3-5 questions a devotee might ask that this passage answers"],
-  "summary": "1-2 sentence summary of the key teaching in this passage"
-}
-
-No explanation. Only valid JSON.`;
+  "summary": "1-2 sentence summary of the key teaching"
+}`;
 
         const raw = await callGemini(prompt);
-        const parsed = parseGeminiJson(raw);
+
+        if (TEST_MODE) {
+          console.log(`  RAW (first 300 chars): ${raw.substring(0, 300)}`);
+        }
+
+        const parsed = extractJSON(raw);
         if (!parsed) {
-          console.error(`  Failed to parse JSON for prose ${row.id}`);
+          console.error(`  ❌ Failed to parse JSON for prose ${row.id}`);
+          if (!TEST_MODE) {
+            console.error(`     Raw (first 150): ${raw.substring(0, 150)}`);
+          }
           errors++;
-          return;
+          continue;
         }
 
         const tags = buildTags(parsed);
         if (tags.length === 0) {
-          console.error(`  Empty tags for prose ${row.id}`);
+          console.error(`  ❌ Empty tags for prose ${row.id}`);
           errors++;
-          return;
+          continue;
         }
 
         const { error: updateError } = await supabase
@@ -347,23 +418,25 @@ No explanation. Only valid JSON.`;
           .eq("id", row.id);
 
         if (updateError) {
-          console.error(`  Update error for prose ${row.id}:`, updateError.message);
+          console.error(`  ❌ Update error for prose ${row.id}: ${updateError.message}`);
           errors++;
-          return;
+          continue;
         }
 
         processed++;
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`  Error processing prose ${row.id}: ${msg}`);
+        console.error(`  ❌ Error processing prose ${row.id}: ${msg}`);
         errors++;
       }
-    });
+    }
 
-    await Promise.all(promises);
-
-    if ((processed + errors) % 50 < BATCH_SIZE || i + BATCH_SIZE >= allIds.length) {
-      console.log(`  Generated tags for ${processed} / ${total} prose paragraphs (${errors} errors)`);
+    const totalDone = processed + errors;
+    if (totalDone % 50 < BATCH_SIZE || i + BATCH_SIZE >= allIds.length) {
+      const pct = ((processed / total) * 100).toFixed(1);
+      console.log(
+        `  ✅ ${processed} / ${total} prose tagged (${pct}%) | ${errors} errors`
+      );
     }
 
     if (i + BATCH_SIZE < allIds.length) {
@@ -371,18 +444,23 @@ No explanation. Only valid JSON.`;
     }
   }
 
-  console.log(`\nProse complete: ${processed} tagged, ${errors} errors out of ${total}`);
+  console.log(`\n=== Prose complete: ${processed} tagged, ${errors} errors out of ${total} ===`);
 }
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
-  console.log("=== Tag Generation Script ===");
-  console.log(`Batch size: ${BATCH_SIZE}, Delay: ${BATCH_DELAY_MS}ms\n`);
+  console.log("=== Tag Generation Script (FIXED) ===");
+  console.log(`Model: ${GEMINI_MODEL}`);
+  console.log(`Batch size: ${BATCH_SIZE}, Delay: ${BATCH_DELAY_MS}ms`);
+  console.log(`responseMimeType: application/json (forces clean JSON output)\n`);
 
   await processVerses();
-  await processProse();
+
+  if (!TEST_MODE) {
+    await processProse();
+  }
 
   console.log("\n=== Done ===");
 }
