@@ -15,6 +15,8 @@ import DonateOverlay from "./components/DonateOverlay";
 import ContactOverlay from "./components/ContactOverlay";
 import FeatureRequestOverlay from "./components/FeatureRequestOverlay";
 import FeedbackButton from "./components/FeedbackButton";
+import { logSearch, logBehavior } from "./lib/analytics";
+import { useSearchBehaviorTracker } from "./hooks/useSearchBehaviorTracker";
 
 type OverlayItem = "About" | "Donate" | "Contact" | "Feature Request";
 
@@ -30,6 +32,10 @@ export default function Home() {
   const [streamingNarrative, setStreamingNarrative] = useState("");
   const [currentQuery, setCurrentQuery] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const [searchLogId, setSearchLogId] = useState<string | null>(null);
+  const searchLogIdRef = useRef<string | null>(null);
+  const searchStartTimeRef = useRef<number>(0);
+  useSearchBehaviorTracker(searchLogId);
 
   useEffect(() => {
     if (lockScreenVisible) return;
@@ -56,10 +62,18 @@ export default function Home() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    // Log follow-up if there was a previous search
+    if (searchLogIdRef.current) {
+      logBehavior({ searchLogId: searchLogIdRef.current, followedUpQuery: query });
+    }
+
+    searchStartTimeRef.current = Date.now();
     setIsSearching(true);
     setIsStreaming(false);
     setStreamingNarrative("");
     setSearchResults(null);
+    setSearchLogId(null);
+    searchLogIdRef.current = null;
     setCurrentQuery(query);
     window.scrollTo({ top: 0, behavior: "smooth" });
 
@@ -73,8 +87,22 @@ export default function Home() {
 
       // Non-streaming response (cached results return as JSON)
       if (contentType.includes("application/json")) {
-        setSearchResults(await res.json());
+        const jsonResults = await res.json();
+        setSearchResults(jsonResults);
         setIsSearching(false);
+
+        // Log the search asynchronously (fire and forget)
+        logSearch({
+          query,
+          totalResults: jsonResults.totalResults || 0,
+          verseIds: (jsonResults.books || []).flatMap((b: any) => (b.verses || []).map((v: any) => v.id)),
+          proseIds: (jsonResults.books || []).flatMap((b: any) => (b.prose || []).map((p: any) => p.id)),
+          booksReturned: (jsonResults.books || []).map((b: any) => b.slug),
+          searchMethod: "hybrid",
+          totalDurationMs: Date.now() - searchStartTimeRef.current,
+          narrativeLength: (jsonResults.narrative || "").length,
+        }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
+
         return;
       }
 
@@ -124,7 +152,20 @@ export default function Home() {
             } else if (event.type === "done") {
               // Finalize: set the complete narrative into results
               if (partialResults) {
-                setSearchResults({ ...partialResults, narrative: narrativeAccum });
+                const finalResults = { ...partialResults, narrative: narrativeAccum };
+                setSearchResults(finalResults);
+
+                // Log the search asynchronously (fire and forget)
+                logSearch({
+                  query,
+                  totalResults: finalResults.totalResults || 0,
+                  verseIds: (finalResults.books || []).flatMap((b: any) => (b.verses || []).map((v: any) => v.id)),
+                  proseIds: (finalResults.books || []).flatMap((b: any) => (b.prose || []).map((p: any) => p.id)),
+                  booksReturned: (finalResults.books || []).map((b: any) => b.slug),
+                  searchMethod: "hybrid",
+                  totalDurationMs: Date.now() - searchStartTimeRef.current,
+                  narrativeLength: narrativeAccum.length,
+                }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
               }
               setIsStreaming(false);
               setStreamingNarrative("");
@@ -153,7 +194,7 @@ export default function Home() {
           <div id="search">
             <HeroSearch onSearch={handleSearch} isSearching={isSearching} hasResults={searchResults !== null} currentQuery={currentQuery} />
           </div>
-          <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} />
+          <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} searchLogId={searchLogId} />
           {!searchResults && !isSearching && (
             <>
               <WhyDifferent />

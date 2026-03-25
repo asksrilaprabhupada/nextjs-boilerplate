@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import LeftRail from "./LeftRail";
 import RightRail from "./RightRail";
 import WantMoreModal from "./WantMoreModal";
+import SearchFeedback from "./SearchFeedback";
 
 export interface Citation {
   ref: string;
@@ -47,9 +48,10 @@ interface Props {
   isStreaming?: boolean;
   streamingNarrative?: string;
   onSearch: (q: string) => void;
+  searchLogId?: string | null;
 }
 
-export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch }: Props) {
+export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId }: Props) {
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
 
   if (isLoading) {
@@ -135,6 +137,11 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
               </div>
             )}
           </div>
+
+          {/* Feedback widget — only show after streaming completes */}
+          {!isStreaming && results && results.totalResults > 0 && (
+            <SearchFeedback searchLogId={searchLogId || null} />
+          )}
 
           {/* Follow-up questions — hidden while streaming */}
           {!isStreaming && followUps.length > 0 && (
