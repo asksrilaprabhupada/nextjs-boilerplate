@@ -403,19 +403,37 @@ export async function GET(request: NextRequest) {
 
   try {
     const { verses, prose } = await hybridSearch(query);
-    const verseUrlMap = buildVerseUrlMap(verses);
-    const metadata = buildMetadataAndCitations(query, verses, prose);
+
+    // Top results for AI narrative (the AI only sees these)
+    const narrativeVerses = verses.slice(0, 20);
+    const narrativeProse = prose.slice(0, 5);
+
+    // Overflow for "dig deeper" modal (everything else)
+    const overflowVerses = verses.slice(20);
+    const overflowProse = prose.slice(5);
+
+    const verseUrlMap = buildVerseUrlMap(narrativeVerses);
+    const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse);
+
+    // Add overflow data to metadata
+    const fullMetadata = {
+      ...metadata,
+      overflowVerses,
+      overflowProse,
+      totalVerses: verses.length,
+      totalProse: prose.length,
+    };
 
     if (!wantStream) {
-      const narrative = await synthesize(query, verses, prose, verseUrlMap);
-      const result = { ...metadata, narrative };
+      const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap);
+      const result = { ...fullMetadata, narrative };
       setCached(query, result);
       return NextResponse.json(result);
     }
 
-    const prompt = buildSynthesisPrompt(query, verses, prose);
+    const prompt = buildSynthesisPrompt(query, narrativeVerses, narrativeProse);
     if (!prompt) {
-      const result = { ...metadata, narrative: "<p>No relevant passages found.</p>" };
+      const result = { ...fullMetadata, narrative: "<p>No relevant passages found.</p>" };
       return NextResponse.json(result);
     }
 
@@ -426,7 +444,7 @@ export async function GET(request: NextRequest) {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
         };
 
-        send({ type: "metadata", ...metadata });
+        send({ type: "metadata", ...fullMetadata });
 
         try {
           const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_SYNTHESIS}:streamGenerateContent?alt=sse`;
@@ -482,15 +500,15 @@ export async function GET(request: NextRequest) {
             }
           }
 
-          const result = { ...metadata, narrative: fullNarrative };
+          const result = { ...fullMetadata, narrative: fullNarrative };
           setCached(query, result);
           send({ type: "done" });
         } catch (streamErr) {
           console.error("Streaming synthesis failed, falling back:", streamErr);
-          const narrative = await synthesize(query, verses, prose, verseUrlMap);
+          const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap);
           send({ type: "narrative_chunk", html: narrative });
 
-          const result = { ...metadata, narrative };
+          const result = { ...fullMetadata, narrative };
           setCached(query, result);
           send({ type: "done" });
         }
