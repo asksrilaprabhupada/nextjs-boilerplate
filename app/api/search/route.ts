@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { embedQuery } from "@/app/lib/embed";
 import { getCached, setCached } from "@/app/lib/search-cache";
+import { ensureVerseLinks } from "@/app/lib/link-postprocessor";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -37,7 +38,7 @@ function buildVedabaseUrl(scripture: string, canto: string, chapter: string, ver
 }
 
 // =====================================================
-// GEMINI API HELPER
+// GEMINI API HELPERS
 // =====================================================
 async function callGemini(prompt: string, model: string, maxTokens: number): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
@@ -105,11 +106,9 @@ async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose:
       }
       for (const v of (ftsVerses.data || [])) {
         if (verseMap.has(v.id)) {
-          // Found by BOTH — boost score
           const existing = verseMap.get(v.id)!;
           existing.score += 0.3;
         } else {
-          // Normalize FTS rank to ~0-1 range (ts_rank is usually small)
           verseMap.set(v.id, { ...v, score: Math.min((v.rank || 0) * 10, 1) * 0.5 });
         }
       }
@@ -133,7 +132,6 @@ async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose:
       const allVerses = [...verseMap.values()].sort((a, b) => b.score - a.score);
       const allProse = [...proseMap.values()].sort((a, b) => b.score - a.score);
 
-      // Distribute: up to 18 verses, up to 7 prose, total 25
       const topVerses = allVerses.slice(0, 18);
       const topProse = allProse.slice(0, 7);
       const remaining = 25 - topVerses.length - topProse.length;
@@ -148,7 +146,6 @@ async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose:
     }
   }
 
-  // Embedding failed — fall back to full-text search
   console.warn("Embedding failed, using full-text search fallback");
   return fullTextSearch(query);
 }
@@ -172,7 +169,6 @@ async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; pros
     console.error("Full-text search failed, falling back to ilike:", err);
   }
 
-  // Final fallback: ilike search
   return ilikeSearch(query);
 }
 
@@ -238,9 +234,23 @@ async function enrich(verses: VerseHit[], prose: ProseHit[]) {
 }
 
 // =====================================================
-// SYNTHESIS (Gemini)
+// BUILD VERSE URL MAP for link post-processing
 // =====================================================
-async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[]) {
+function buildVerseUrlMap(verses: VerseHit[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const v of verses) {
+    if (!v.vedabase_url) continue;
+    const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
+    map.set(ref, v.vedabase_url);
+    map.set(`[${ref}]`, v.vedabase_url);
+  }
+  return map;
+}
+
+// =====================================================
+// SYNTHESIS PROMPT BUILDER
+// =====================================================
+function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[]): string {
   let ctx = "";
   const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
   for (const v of verses) { const s = v.book_slug || v.scripture?.toLowerCase() || "x"; if (!byBook[s]) byBook[s] = { v: [], p: [] }; byBook[s].v.push(v); }
@@ -257,9 +267,9 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
     }
   }
 
-  if (!ctx.trim()) return "<p>No relevant passages found.</p>";
+  if (!ctx.trim()) return "";
 
-  const prompt = `You are the answer engine for asksrilaprabhupada.com. Devotee asked: "${question}"
+  return `You are the answer engine for asksrilaprabhupada.com. Devotee asked: "${question}"
 
 Use ONLY the data below. Never invent.
 
@@ -286,11 +296,19 @@ FORMAT: Clean HTML only.
 
 DATA:
 ${ctx}`;
+}
+
+// =====================================================
+// NON-STREAMING SYNTHESIS (fallback)
+// =====================================================
+async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[], verseUrlMap: Map<string, string>) {
+  const prompt = buildSynthesisPrompt(question, verses, prose);
+  if (!prompt) return "<p>No relevant passages found.</p>";
 
   try {
     const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 3000);
     if (!text) return buildFB(verses, prose);
-    return text;
+    return ensureVerseLinks(text, verseUrlMap);
   } catch {
     return buildFB(verses, prose);
   }
@@ -307,41 +325,159 @@ function buildFB(v: VerseHit[], p: ProseHit[]) {
 }
 
 // =====================================================
-// API HANDLER
+// METADATA + CITATIONS BUILDER
+// =====================================================
+function buildMetadataAndCitations(query: string, verses: VerseHit[], prose: ProseHit[]) {
+  const citations = [
+    ...verses.map(v => ({ ref: `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`, book: getBookName(v.book_slug || ""), url: v.vedabase_url || "", type: "verse" as const, title: v.chapter_title || "" })),
+    ...prose.map(p => ({ ref: `${getBookName(p.book_slug)}`, book: getBookName(p.book_slug), url: p.vedabase_url || "", type: "prose" as const, title: p.chapter_title || "" })),
+  ];
+
+  const books: Record<string, { slug: string; name: string; verses: typeof verses; prose: typeof prose }> = {};
+  for (const v of verses) { const s = (v.book_slug || "").toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].verses.push(v); }
+  for (const p of prose) { const s = p.book_slug.toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].prose.push(p); }
+
+  return {
+    query,
+    totalResults: verses.length + prose.length,
+    citations,
+    books: Object.values(books),
+  };
+}
+
+// =====================================================
+// STREAMING HANDLER
 // =====================================================
 export async function GET(request: NextRequest) {
-  const query = new URL(request.url).searchParams.get("q");
+  const url = new URL(request.url);
+  const query = url.searchParams.get("q");
+  const wantStream = url.searchParams.get("stream") !== "false";
+
   if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
 
-  // Check cache first
+  // Check cache first — return non-streaming JSON for cached results
   const cached = getCached<Record<string, unknown>>(query);
   if (cached) return NextResponse.json(cached);
 
   try {
     // Hybrid search: semantic + full-text + ilike fallback chain
     const { verses: rawVerses, prose: rawProse } = await hybridSearch(query);
-
-    // Enrich with chapter info (single IN query)
     const { verses, prose } = await enrich(rawVerses, rawProse);
+    const verseUrlMap = buildVerseUrlMap(verses);
+    const metadata = buildMetadataAndCitations(query, verses, prose);
 
-    // Synthesize narrative
-    const narrative = await synthesize(query, verses, prose);
+    // If client doesn't want streaming, use the old path
+    if (!wantStream) {
+      const narrative = await synthesize(query, verses, prose, verseUrlMap);
+      const result = { ...metadata, narrative };
+      setCached(query, result);
+      return NextResponse.json(result);
+    }
 
-    const citations = [
-      ...verses.map(v => ({ ref: `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`, book: getBookName(v.book_slug || ""), url: v.vedabase_url || "", type: "verse" as const, title: v.chapter_title || "" })),
-      ...prose.map(p => ({ ref: `${getBookName(p.book_slug)}`, book: getBookName(p.book_slug), url: p.vedabase_url || "", type: "prose" as const, title: p.chapter_title || "" })),
-    ];
+    // Build synthesis prompt
+    const prompt = buildSynthesisPrompt(query, verses, prose);
+    if (!prompt) {
+      const result = { ...metadata, narrative: "<p>No relevant passages found.</p>" };
+      return NextResponse.json(result);
+    }
 
-    const books: Record<string, { slug: string; name: string; verses: typeof verses; prose: typeof prose }> = {};
-    for (const v of verses) { const s = (v.book_slug || "").toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].verses.push(v); }
-    for (const p of prose) { const s = p.book_slug.toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].prose.push(p); }
+    // Return a streaming SSE response
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        const send = (data: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+        };
 
-    const result = { query, narrative, totalResults: verses.length + prose.length, citations, books: Object.values(books) };
+        // Send metadata immediately
+        send({ type: "metadata", ...metadata });
 
-    // Cache successful results
-    setCached(query, result);
+        // Attempt streaming Gemini synthesis
+        try {
+          const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_SYNTHESIS}:streamGenerateContent?alt=sse`;
+          const geminiRes = await fetch(streamUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-goog-api-key": geminiKey,
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                maxOutputTokens: 3000,
+                temperature: 0.3,
+              },
+            }),
+          });
 
-    return NextResponse.json(result);
+          if (!geminiRes.ok || !geminiRes.body) {
+            throw new Error(`Gemini streaming failed: ${geminiRes.status}`);
+          }
+
+          // Read the SSE stream from Gemini and forward chunks
+          const reader = geminiRes.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let fullNarrative = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete SSE events from buffer
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const jsonStr = line.slice(6).trim();
+              if (!jsonStr || jsonStr === "[DONE]") continue;
+
+              try {
+                const chunk = JSON.parse(jsonStr);
+                const text = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (text) {
+                  // Apply link post-processing to each chunk
+                  const processed = ensureVerseLinks(text, verseUrlMap);
+                  fullNarrative += processed;
+                  send({ type: "narrative_chunk", html: processed });
+                }
+              } catch {
+                // Skip malformed JSON chunks
+              }
+            }
+          }
+
+          // Cache the complete result
+          const result = { ...metadata, narrative: fullNarrative };
+          setCached(query, result);
+
+          send({ type: "done" });
+        } catch (streamErr) {
+          // Streaming failed — fall back to non-streaming synthesis
+          console.error("Streaming synthesis failed, falling back:", streamErr);
+          const narrative = await synthesize(query, verses, prose, verseUrlMap);
+          send({ type: "narrative_chunk", html: narrative });
+
+          const result = { ...metadata, narrative };
+          setCached(query, result);
+
+          send({ type: "done" });
+        }
+
+        controller.close();
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   } catch (err) {
     console.error("Search error:", err);
     return NextResponse.json({ error: "An error occurred." }, { status: 500 });

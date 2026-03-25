@@ -44,10 +44,12 @@ export interface SearchResults {
 interface Props {
   results: SearchResults | null;
   isLoading: boolean;
+  isStreaming?: boolean;
+  streamingNarrative?: string;
   onSearch: (q: string) => void;
 }
 
-export default function NarrativeResponse({ results, isLoading, onSearch }: Props) {
+export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch }: Props) {
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
 
   if (isLoading) {
@@ -129,14 +131,22 @@ export default function NarrativeResponse({ results, isLoading, onSearch }: Prop
 
             <div
               className="narrative-content font-body"
-              dangerouslySetInnerHTML={{ __html: results.narrative }}
+              dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
               onClick={handleNarrativeClick}
               style={{ fontSize: 15, lineHeight: 1.8, color: "#4B5563" }}
             />
+            {isStreaming && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
+                <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
+                <span className="font-body" style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic" }}>
+                  Composing from Prabhupāda&apos;s words...
+                </span>
+              </div>
+            )}
           </div>
 
-          {/* Follow-up questions */}
-          {followUps.length > 0 && (
+          {/* Follow-up questions — hidden while streaming */}
+          {!isStreaming && followUps.length > 0 && (
             <div style={{ marginTop: 24, padding: "20px 24px", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
               <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9CA3AF", marginBottom: 12 }}>
                 People also explore
@@ -213,6 +223,10 @@ export default function NarrativeResponse({ results, isLoading, onSearch }: Prop
         }
         .narrative-content .want-more-trigger:hover {
           background: rgba(139,92,246,0.1); border-color: #8B5CF6;
+        }
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.3); }
         }
       `}</style>
     </>
