@@ -67,7 +67,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
         )}
 
         {/* Title */}
-        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 24, color: "#1E1B4B" }}>Ask{" "}<span style={{ background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
+        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 24, color: "#1E1B4B" }}>Ask<br /><span style={{ whiteSpace: "nowrap", background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
 
         {/* Subtitle */}
         {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(16px, 1.8vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.7, marginBottom: 28 }}>Search across all 27 books — Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more. AI-powered answers from Prabhupāda&apos;s actual words.</p>}
@@ -100,18 +100,17 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                 padding: "20px 160px 20px 24px",
                 fontSize: 17,
                 fontWeight: 400,
-                border: "1.5px solid rgba(196,181,253,0.5)",
+                border: "none",
                 borderRadius: 18,
                 background: "rgba(255,255,255,0.85)",
                 backdropFilter: "blur(24px)",
                 WebkitBackdropFilter: "blur(24px)",
                 color: "#1E1B4B",
                 outline: "none",
-                transition: "border-color 0.3s, box-shadow 0.3s",
+                transition: "box-shadow 0.3s",
                 boxShadow: isFocused
                   ? "0 0 0 3px rgba(139,92,246,0.12), 0 4px 24px rgba(139,92,246,0.08)"
                   : "0 8px 32px rgba(111,74,177,0.14), 0 0 60px rgba(139,92,246,0.04)",
-                borderColor: isFocused ? "#8B5CF6" : "rgba(196,181,253,0.5)",
               }}
             />
 
