@@ -35,6 +35,8 @@ export default function Home() {
   const [searchLogId, setSearchLogId] = useState<string | null>(null);
   const searchLogIdRef = useRef<string | null>(null);
   const searchStartTimeRef = useRef<number>(0);
+  const progressRef = useRef<HTMLDivElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   useSearchBehaviorTracker(searchLogId);
 
   useEffect(() => {
@@ -54,6 +56,18 @@ export default function Home() {
     if (overlay) url.searchParams.set("overlay", overlayItemToParam[overlay]);
     else url.searchParams.delete("overlay");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  const scrollToProgress = useCallback(() => {
+    setTimeout(() => {
+      progressRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 100);
+  }, []);
+
+  const scrollToResults = useCallback(() => {
+    setTimeout(() => {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
   }, []);
 
   const handleClear = useCallback(() => {
@@ -87,7 +101,9 @@ export default function Home() {
     setSearchLogId(null);
     searchLogIdRef.current = null;
     setCurrentQuery(query);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+
+    // Scroll to progress indicator
+    scrollToProgress();
 
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
@@ -102,6 +118,9 @@ export default function Home() {
         const jsonResults = await res.json();
         setSearchResults(jsonResults);
         setIsSearching(false);
+
+        // Scroll to results
+        scrollToResults();
 
         // Log the search asynchronously (fire and forget)
         logSearch({
@@ -158,6 +177,9 @@ export default function Home() {
               setSearchResults(partialResults);
               setIsSearching(false);
               setIsStreaming(true);
+
+              // Scroll to results when metadata arrives
+              scrollToResults();
             } else if (event.type === "narrative_chunk") {
               narrativeAccum += event.html;
               setStreamingNarrative(narrativeAccum);
@@ -195,7 +217,7 @@ export default function Home() {
       setIsSearching(false);
       setIsStreaming(false);
     }
-  }, []);
+  }, [scrollToProgress, scrollToResults]);
 
   return (
     <>
@@ -210,9 +232,12 @@ export default function Home() {
               isSearching={isSearching}
               hasResults={searchResults !== null}
               currentQuery={currentQuery}
+              progressRef={progressRef}
             />
           </div>
-          <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} searchLogId={searchLogId} />
+          <div ref={resultsRef}>
+            <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} searchLogId={searchLogId} />
+          </div>
           {!searchResults && !isSearching && (
             <>
               <WhyDifferent />

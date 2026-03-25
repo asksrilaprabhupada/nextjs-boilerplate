@@ -60,7 +60,7 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
       <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span className="font-display" style={{ fontSize: "1.4rem", fontWeight: 600, color: "#5B3FA9", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>Ask Śrīla Prabhupāda</span>
       </span>
-      <nav style={{ display: "flex", alignItems: "center", gap: 6 }} className="desktop-nav">
+      <nav style={{ display: "flex", alignItems: "center", gap: 8 }} className="desktop-nav">
         {primaryNav.map(item => (
           <Link key={item.label} href={item.href} className="font-body" style={navStyle(isActive(item.href))}>{item.label}</Link>
         ))}
