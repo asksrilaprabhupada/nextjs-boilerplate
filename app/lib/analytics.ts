@@ -43,7 +43,7 @@ export function getVisitorId(): string {
 // API helpers (fire-and-forget — never block the UI)
 // ---------------------------------------------------------------------------
 
-async function post(path: string, body: Record<string, unknown>): Promise<Record<string, unknown> | null> {
+async function post(path: string, body: Record<string, unknown> | object): Promise<Record<string, unknown> | null> {
   try {
     const res = await fetch(path, {
       method: "POST",
