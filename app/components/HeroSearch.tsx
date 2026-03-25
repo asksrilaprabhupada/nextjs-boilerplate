@@ -4,17 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import TypewriterPlaceholder from "./TypewriterPlaceholder";
 import SearchProgress from "./SearchProgress";
 import VoiceInput from "./VoiceInput";
-
-const topicPills = [
-  { emoji: "🕉️", text: "What is sadhu sanga?" },
-  { emoji: "🧘", text: "How to control the mind?" },
-  { emoji: "☸️", text: "What is karma?" },
-  { emoji: "✨", text: "The nature of the soul" },
-  { emoji: "🪷", text: "What happens after death?" },
-  { emoji: "💛", text: "What is pure devotional service?" },
-  { emoji: "🙏", text: "How to be free from suffering?" },
-  { emoji: "🌸", text: "What is the purpose of life?" },
-];
+import ExamplesPopover from "./ExamplesPopover";
 
 interface HeroSearchProps {
   onSearch: (query: string) => void;
@@ -35,10 +25,16 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
   useEffect(() => { if (currentQuery) setQuery(currentQuery); }, [currentQuery]);
 
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (query.trim()) onSearch(query.trim()); };
-  const handlePillClick = (topic: string) => { setQuery(topic); onSearch(topic); };
   const handleClear = () => { setQuery(""); setIsFocused(false); };
   const handleVoiceTranscript = useCallback((text: string) => { setQuery(text); setIsFocused(true); }, []);
   const handleVoiceFinal = useCallback((text: string) => { setQuery(text); setIsFocused(true); inputRef.current?.focus(); }, []);
+
+  // Example popover: fill input but don't search — let user edit first
+  const handleExampleSelect = useCallback((text: string) => {
+    setQuery(text);
+    setIsFocused(true);
+    inputRef.current?.focus();
+  }, []);
 
   const stagger = (i: number) => ({
     opacity: animatedIn ? 1 : 0,
@@ -97,7 +93,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
               className="font-body hero-search-input"
               style={{
                 width: "100%",
-                padding: "20px 160px 20px 24px",
+                padding: "20px 130px 20px 24px",
                 fontSize: 17,
                 fontWeight: 400,
                 border: "none",
@@ -145,7 +141,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                 className="hero-clear-btn"
                 style={{
                   position: "absolute",
-                  right: 104,
+                  right: 100,
                   top: "50%",
                   transform: "translateY(-50%)",
                   width: 32,
@@ -231,65 +227,15 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
           )}
         </form>
 
-        {/* Topic pills */}
+        {/* Examples popover — replaces topic pills */}
         {heroVisible && (
-          <div
-            className="topic-pills-container"
-            style={{
-              ...stagger(4),
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 8,
-              justifyContent: "center",
-              marginTop: 28,
-              maxWidth: 680,
-            }}
-          >
-            {topicPills.map(pill => (
-              <button
-                key={pill.text}
-                onClick={() => handlePillClick(pill.text)}
-                className="font-body topic-pill"
-                style={{
-                  padding: "8px 18px",
-                  borderRadius: 100,
-                  border: "1px solid rgba(196,181,253,0.3)",
-                  background: "rgba(255,255,255,0.76)",
-                  fontSize: 13,
-                  fontWeight: 400,
-                  color: "#6B7280",
-                  cursor: "pointer",
-                  transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)",
-                  whiteSpace: "nowrap",
-                  backdropFilter: "blur(10px)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.borderColor = "#C4B5FD";
-                  e.currentTarget.style.color = "#7C3AED";
-                  e.currentTarget.style.background = "rgba(139,92,246,0.1)";
-                  e.currentTarget.style.transform = "translateY(-3px) scale(1.02)";
-                  e.currentTarget.style.boxShadow = "0 6px 20px rgba(139,92,246,0.12)";
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)";
-                  e.currentTarget.style.color = "#6B7280";
-                  e.currentTarget.style.background = "rgba(255,255,255,0.76)";
-                  e.currentTarget.style.transform = "translateY(0) scale(1)";
-                  e.currentTarget.style.boxShadow = "none";
-                }}
-              >
-                <span style={{ fontSize: 14 }}>{pill.emoji}</span>
-                {pill.text}
-              </button>
-            ))}
+          <div style={{ ...stagger(4), marginTop: 20 }}>
+            <ExamplesPopover onSelect={handleExampleSelect} />
           </div>
         )}
       </div>
 
-      {/* Search Progress (replaces spinner during search) */}
+      {/* Search Progress */}
       {isSearching && <SearchProgress isSearching={isSearching} />}
     </section>
   );
