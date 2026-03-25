@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import TypewriterPlaceholder from "./TypewriterPlaceholder";
 import SearchProgress from "./SearchProgress";
+import VoiceInput from "./VoiceInput";
 
 const topicPills = [
   { emoji: "🕉️", text: "What is sadhu sanga?" },
@@ -36,6 +37,8 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (query.trim()) onSearch(query.trim()); };
   const handlePillClick = (topic: string) => { setQuery(topic); onSearch(topic); };
   const handleClear = () => { setQuery(""); setIsFocused(false); };
+  const handleVoiceTranscript = useCallback((text: string) => { setQuery(text); setIsFocused(true); }, []);
+  const handleVoiceFinal = useCallback((text: string) => { setQuery(text); setIsFocused(true); inputRef.current?.focus(); }, []);
 
   const stagger = (i: number) => ({
     opacity: animatedIn ? 1 : 0,
@@ -94,7 +97,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
               className="font-body hero-search-input"
               style={{
                 width: "100%",
-                padding: "20px 110px 20px 24px",
+                padding: "20px 160px 20px 24px",
                 fontSize: 17,
                 fontWeight: 400,
                 border: "1.5px solid rgba(196,181,253,0.35)",
@@ -143,7 +146,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                 className="hero-clear-btn"
                 style={{
                   position: "absolute",
-                  right: 56,
+                  right: 104,
                   top: "50%",
                   transform: "translateY(-50%)",
                   width: 32,
@@ -166,6 +169,15 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                 </svg>
               </button>
             )}
+
+            {/* Voice input button */}
+            <div style={{ position: "absolute", right: 54, top: "50%", transform: "translateY(-50%)" }}>
+              <VoiceInput
+                onTranscript={handleVoiceTranscript}
+                onFinalTranscript={handleVoiceFinal}
+                disabled={isSearching}
+              />
+            </div>
 
             {/* Submit button */}
             <button
