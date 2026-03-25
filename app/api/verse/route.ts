@@ -1,3 +1,9 @@
+/**
+ * route.ts — Verse API Route
+ *
+ * Fetches a single verse by ID from Supabase with all its fields.
+ * Provides verse data for the detail page and internal lookups.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 

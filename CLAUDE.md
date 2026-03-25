@@ -33,35 +33,84 @@ Light theme only. Light aurora gradients, soft lavender, whites, gentle pastels.
 
 ### File Structure
 
+Every file has a doc comment at the top explaining its purpose. Files are numbered (01-, 02-) within each folder for clear ordering.
+
 ```
 /
 ├── app/
-│   ├── api/search/route.ts
-│   ├── api/verse/route.ts
+│   ├── api/
+│   │   ├── analytics/
+│   │   │   ├── behavior/route.ts      (user behavior tracking)
+│   │   │   ├── feedback/route.ts      (thumbs up/down votes)
+│   │   │   └── log/route.ts           (search query logging)
+│   │   ├── feedback/route.ts          (contact/feature request forms)
+│   │   ├── lockscreen-images/
+│   │   │   ├── route.ts               (image list endpoint)
+│   │   │   └── heic/route.ts          (HEIC-to-JPEG conversion)
+│   │   ├── search/route.ts            (hybrid search + AI narrative)
+│   │   └── verse/route.ts             (single verse lookup)
 │   ├── components/
-│   │   ├── AboutOverlay.tsx
-│   │   ├── ContactOverlay.tsx
-│   │   ├── DonateOverlay.tsx      (bank details with copy buttons)
-│   │   ├── GoDeeper.tsx
-│   │   ├── Header.tsx             (light theme, frosted glass)
-│   │   ├── HeroSearch.tsx         (light theme)
-│   │   ├── LockScreen.tsx         (local images/video, no clock)
-│   │   ├── NarrativeResponse.tsx
-│   │   ├── PageOverlay.tsx
-│   │   ├── PurportBlock.tsx       (card-based, light theme)
-│   │   ├── ScriptureLayer.tsx     (card-based, light theme)
-│   │   └── VerseBlock.tsx         (card-based, light theme)
+│   │   ├── layout/                    # App shell
+│   │   │   ├── 01-header.tsx          (sticky frosted-glass nav)
+│   │   │   └── 02-footer.tsx          (site footer)
+│   │   ├── search/                    # Search input and progress
+│   │   │   ├── 01-hero-search.tsx     (main search bar)
+│   │   │   ├── 02-typewriter-placeholder.tsx
+│   │   │   ├── 03-voice-input.tsx     (microphone button)
+│   │   │   ├── 04-examples-popover.tsx
+│   │   │   ├── 05-search-progress.tsx (multi-step loader)
+│   │   │   └── 06-search-feedback.tsx (thumbs voting)
+│   │   ├── results/                   # Search results display
+│   │   │   ├── 01-narrative-response.tsx (3-column layout)
+│   │   │   ├── 02-left-rail.tsx       (keywords sidebar)
+│   │   │   ├── 03-right-rail.tsx      (citations sidebar)
+│   │   │   ├── 04-verse-block.tsx     (verse card)
+│   │   │   ├── 05-purport-block.tsx   (purport card)
+│   │   │   └── 06-want-more-modal.tsx (expanded book results)
+│   │   ├── overlays/                  # Modal dialogs
+│   │   │   ├── 01-page-overlay.tsx    (reusable modal wrapper)
+│   │   │   ├── 02-about-overlay.tsx
+│   │   │   ├── 03-donate-overlay.tsx  (bank details + copy)
+│   │   │   ├── 04-contact-overlay.tsx
+│   │   │   └── 05-feature-request-overlay.tsx
+│   │   ├── landing/                   # Landing page sections
+│   │   │   ├── 01-why-different.tsx
+│   │   │   ├── 02-features-section.tsx
+│   │   │   ├── 03-steps-section.tsx
+│   │   │   ├── 04-testimonials-section.tsx
+│   │   │   └── 05-cta-section.tsx
+│   │   ├── feedback/
+│   │   │   └── 01-feedback-button.tsx (floating widget)
+│   │   └── lockscreen/
+│   │       └── 01-lock-screen.tsx     (intro slideshow)
+│   ├── hooks/
+│   │   └── 01-use-search-behavior-tracker.ts
 │   ├── lib/
-│   │   ├── lockscreen-data.ts     (local image paths, no Unsplash)
-│   │   └── supabase.ts
-│   ├── verse/[id]/page.tsx        (light theme)
-│   ├── globals.css                (complete light theme)
-│   ├── layout.tsx
-│   └── page.tsx
+│   │   ├── 01-supabase.ts            (database client)
+│   │   ├── 02-analytics.ts           (tracking helpers)
+│   │   ├── 03-embed.ts               (vector embeddings)
+│   │   ├── 04-search-cache.ts        (result caching)
+│   │   ├── 05-link-postprocessor.ts   (citation linking)
+│   │   ├── 06-lockscreen-data.ts      (slideshow config)
+│   │   └── server/
+│   │       └── 01-lockscreen-images.ts (filesystem image reader)
+│   ├── types/
+│   │   └── 01-speech.d.ts            (Web Speech API types)
+│   ├── verse/[id]/page.tsx            (verse detail page)
+│   ├── features/page.tsx
+│   ├── how-it-works/page.tsx
+│   ├── globals.css                    (complete light theme)
+│   ├── layout.tsx                     (root layout + fonts)
+│   ├── page.tsx                       (home page)
+│   ├── robots.ts
+│   └── sitemap.ts
+├── scripts/
+│   ├── 01-generate-embeddings.ts      (batch embedding generation)
+│   └── 02-generate-tags.ts            (batch tag generation)
 ├── public/
-│   ├── images/lockscreen/         (admin uploads Prabhupada photos here)
-│   ├── videos/lockscreen/         (admin uploads videos here, optional)
-│   └── data/donate.json           (admin fills in bank details here)
+│   ├── images/lockscreen/             (admin uploads photos here)
+│   ├── videos/lockscreen/             (optional video uploads)
+│   └── data/donate.json               (admin fills bank details)
 ├── package.json
 ├── next.config.ts
 ├── tsconfig.json
@@ -79,6 +128,6 @@ Light theme only. Light aurora gradients, soft lavender, whites, gentle pastels.
 
 ### Admin Actions Required
 
-- Upload Śrīla Prabhupāda photos to `public/images/lockscreen/` and update filenames in `app/lib/lockscreen-data.ts`.
-- Optionally upload videos to `public/videos/lockscreen/` and set the path in `lockscreen-data.ts`.
+- Upload Śrīla Prabhupāda photos to `public/images/lockscreen/` and update filenames in `app/lib/06-lockscreen-data.ts`.
+- Optionally upload videos to `public/videos/lockscreen/` and set the path in `06-lockscreen-data.ts`.
 - Edit `public/data/donate.json` with actual bank details.

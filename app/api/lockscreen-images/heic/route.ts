@@ -1,6 +1,12 @@
+/**
+ * route.ts — HEIC Image Conversion Route
+ *
+ * Converts HEIC/HEIF images to JPEG format on-the-fly for browser compatibility.
+ * Ensures Apple-format photos work as lockscreen slideshow images.
+ */
 import { promises as fs } from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
-import { getLockscreenImagePath } from "@/app/lib/server/lockscreen-images";
+import { getLockscreenImagePath } from "@/app/lib/server/01-lockscreen-images";
 
 export async function GET(request: NextRequest) {
   const fileName = request.nextUrl.searchParams.get("file");

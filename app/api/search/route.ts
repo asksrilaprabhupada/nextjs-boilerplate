@@ -1,8 +1,14 @@
+/**
+ * route.ts — Search API Route
+ *
+ * Handles search queries with hybrid semantic + full-text search, Gemini AI narrative generation, and SSE streaming.
+ * The core backend that powers the entire search experience.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { embedQuery } from "@/app/lib/embed";
-import { getCached, setCached } from "@/app/lib/search-cache";
-import { ensureVerseLinks } from "@/app/lib/link-postprocessor";
+import { embedQuery } from "@/app/lib/03-embed";
+import { getCached, setCached } from "@/app/lib/04-search-cache";
+import { ensureVerseLinks } from "@/app/lib/05-link-postprocessor";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";

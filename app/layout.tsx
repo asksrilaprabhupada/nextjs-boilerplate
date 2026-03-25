@@ -1,3 +1,9 @@
+/**
+ * layout.tsx — Root Layout
+ *
+ * Defines the HTML shell, fonts (Cormorant Garamond, DM Sans, Noto Serif Devanagari), metadata, and background gradients.
+ * Wraps every page with consistent styling and SEO configuration.
+ */
 import type { Metadata } from "next";
 import "./globals.css";
 

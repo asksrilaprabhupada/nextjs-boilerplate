@@ -1,3 +1,9 @@
+/**
+ * sitemap.ts — Sitemap Generator
+ *
+ * Generates the XML sitemap for search engines.
+ * Helps search engines discover and index all pages on the site.
+ */
 import { MetadataRoute } from "next";
 
 export default function sitemap(): MetadataRoute.Sitemap {
