@@ -11,7 +11,7 @@ interface HeaderProps {
 type MoreItem = "About" | "Donate" | "Contact" | "Feature Request";
 
 const primaryNav = [
-  { label: "Search", href: "/#search" },
+  { label: "Search", href: "/" },
   { label: "Features", href: "/features" },
   { label: "How it works", href: "/how-it-works" },
 ];
@@ -31,7 +31,7 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
   useEffect(() => { setMobileMenuOpen(false); setMoreOpen(false); setMobileMoreOpen(false); }, [pathname]);
   useEffect(() => { const h = (e: MouseEvent) => { if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) setMoreOpen(false); }; document.addEventListener("mousedown", h); return () => document.removeEventListener("mousedown", h); }, []);
 
-  const isActive = (href: string) => href === "/#search" ? pathname === "/" : pathname === href;
+  const isActive = (href: string) => href === "/" ? pathname === "/" : pathname === href;
 
   const handleMoreItemClick = (item: MoreItem) => {
     setMoreOpen(false); setMobileMenuOpen(false);
@@ -57,9 +57,9 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
       padding: "0 clamp(20px,4vw,48px)", display: "flex", alignItems: "center", justifyContent: "space-between",
       boxShadow: scrolled ? "0 10px 34px rgba(145,121,190,0.14)" : "none", transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s",
     }}>
-      <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10, textDecoration: "none" }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span className="font-display" style={{ fontSize: "1.4rem", fontWeight: 600, color: "#5B3FA9", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>Ask Śrīla Prabhupāda</span>
-      </Link>
+      </span>
       <nav style={{ display: "flex", alignItems: "center", gap: 6 }} className="desktop-nav">
         {primaryNav.map(item => (
           <Link key={item.label} href={item.href} className="font-body" style={navStyle(isActive(item.href))}>{item.label}</Link>

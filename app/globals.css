@@ -237,6 +237,49 @@ body {
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
+@keyframes borderRotate {
+  0% { --border-angle: 0deg; }
+  100% { --border-angle: 360deg; }
+}
+
+/* Animated gradient border for search bar */
+.hero-search-wrapper {
+  position: relative;
+  border-radius: 20px;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--border-angle, 0deg),
+    rgba(196,181,253,0.5),
+    rgba(244,114,182,0.3),
+    rgba(251,191,36,0.3),
+    rgba(139,92,246,0.5),
+    rgba(196,181,253,0.5)
+  );
+  animation: borderRotate 5s linear infinite;
+}
+
+@property --border-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.hero-search-wrapper .hero-search-input {
+  border: none !important;
+  border-radius: 18px !important;
+}
+
+.hero-search-wrapper:focus-within {
+  background: conic-gradient(
+    from var(--border-angle, 0deg),
+    rgba(196,181,253,0.7),
+    rgba(244,114,182,0.5),
+    rgba(251,191,36,0.5),
+    rgba(139,92,246,0.7),
+    rgba(196,181,253,0.7)
+  );
+}
+
 /* ============================================================
    GLASSMORPHISM CARD SYSTEM
    ============================================================ */
