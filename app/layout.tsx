@@ -29,7 +29,7 @@ export const metadata: Metadata = {
       "AI-powered scripture search engine. Ask any question and get answers directly from Śrīla Prabhupāda's books — 25,112 verses and 34,145 paragraphs across 27 books.",
     images: [
       {
-        url: "/og-image.png",
+        url: "/images/og-image.png",
         width: 1200,
         height: 630,
         alt: "Ask Śrīla Prabhupāda — Scripture Search Engine",
@@ -41,7 +41,7 @@ export const metadata: Metadata = {
     title: "Ask Śrīla Prabhupāda — Search 27 Books of Vedic Wisdom",
     description:
       "AI-powered scripture search. Every answer from Prabhupāda's actual words across 27 books.",
-    images: ["/og-image.png"],
+    images: ["/images/og-image.png"],
   },
   robots: {
     index: true,
