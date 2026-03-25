@@ -1,20 +1,18 @@
 /**
- * Embedding Generation Script — Balanced Speed
+ * Embedding Generation v4 — BATCH EVERYTHING
  *
- * Fast Gemini calls (20 parallel) + gentle Supabase writes.
- * Retries transient 502/503/429 errors and statement timeouts.
+ * Gemini batchEmbedContents: 40 texts → 1 API call → 40 embeddings
+ * Supabase batch_set_embeddings RPC: 40 embeddings → 1 DB call → 40 updates
+ *
+ * Total: 2 HTTP round-trips per 40 rows. Zero connection pool contention.
  *
  * Usage: npx tsx scripts/generate-embeddings.ts
- * Requires GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY in .env.local
  */
 
 import { createClient } from "@supabase/supabase-js";
 import { readFileSync } from "fs";
 import { resolve } from "path";
 
-// ---------------------------------------------------------------------------
-// Load .env.local
-// ---------------------------------------------------------------------------
 function loadEnv() {
   try {
     const envPath = resolve(__dirname, "..", ".env.local");
@@ -33,213 +31,165 @@ function loadEnv() {
 
 loadEnv();
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY!;
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
 
 if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
-  console.error("Missing required env vars: GEMINI_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY");
+  console.error("Missing env vars");
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-const EMBEDDING_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:embedContent";
+// Gemini batch endpoint — sends N texts, gets N embeddings in ONE call
+const BATCH_EMBED_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:batchEmbedContents";
 const EXPECTED_DIMS = 1536;
-
-// BALANCED SETTINGS — fast on Gemini, gentle on Supabase
-const BATCH_SIZE = 50;         // rows per batch from Supabase
-const CONCURRENCY = 20;        // parallel Gemini+Supabase operations
-const BATCH_DELAY_MS = 500;    // pause between batches (let Supabase breathe)
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3000;
-const ID_PAGE_SIZE = 500;      // smaller pages for ID fetching (avoids timeout)
+const BATCH_SIZE = 40; // texts per Gemini batch call
+const BATCH_DELAY_MS = 300;
 
 const startTime = Date.now();
-
-function elapsed(): string {
-  return ((Date.now() - startTime) / 60000).toFixed(1) + "m";
-}
+const elapsed = () => ((Date.now() - startTime) / 60000).toFixed(1) + "m";
 
 // ---------------------------------------------------------------------------
-// Embedding helper with retry (handles Gemini 429/503)
+// Gemini BATCH embed — 40 texts in, 40 embeddings out, ONE API call
 // ---------------------------------------------------------------------------
-async function getEmbedding(text: string): Promise<number[]> {
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+async function batchEmbed(texts: string[]): Promise<number[][]> {
+  const requests = texts.map((text) => ({
+    model: "models/gemini-embedding-2-preview",
+    content: { parts: [{ text }] },
+    outputDimensionality: EXPECTED_DIMS,
+    taskType: "RETRIEVAL_DOCUMENT",
+  }));
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const res = await fetch(`${EMBEDDING_URL}?key=${GEMINI_API_KEY}`, {
+      const res = await fetch(`${BATCH_EMBED_URL}?key=${GEMINI_API_KEY}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: { parts: [{ text }] },
-          outputDimensionality: EXPECTED_DIMS,
-          taskType: "RETRIEVAL_DOCUMENT",
-        }),
+        body: JSON.stringify({ requests }),
       });
 
-      if (res.status === 429 || res.status === 503) {
-        if (attempt < MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
-          continue;
-        }
+      if ((res.status === 429 || res.status === 503) && attempt < 3) {
+        console.log(`  Gemini ${res.status}, retrying in ${3 * attempt}s...`);
+        await new Promise((r) => setTimeout(r, 3000 * attempt));
+        continue;
       }
 
       if (!res.ok) {
         const body = await res.text();
-        throw new Error(`Gemini ${res.status}: ${body.substring(0, 150)}`);
+        throw new Error(`Gemini batch ${res.status}: ${body.substring(0, 200)}`);
       }
 
       const data = await res.json();
-      const values: number[] = data?.embedding?.values ?? [];
+      const embeddings: number[][] = (data.embeddings || []).map(
+        (e: { values: number[] }) => e.values
+      );
 
-      if (values.length !== EXPECTED_DIMS) {
-        throw new Error(`Expected ${EXPECTED_DIMS} dims, got ${values.length}`);
+      if (embeddings.length !== texts.length) {
+        throw new Error(`Expected ${texts.length} embeddings, got ${embeddings.length}`);
       }
 
-      return values;
+      // Validate dimensions
+      for (let i = 0; i < embeddings.length; i++) {
+        if (embeddings[i].length !== EXPECTED_DIMS) {
+          throw new Error(`Embedding ${i}: expected ${EXPECTED_DIMS} dims, got ${embeddings[i].length}`);
+        }
+      }
+
+      return embeddings;
     } catch (err) {
-      if (attempt === MAX_RETRIES) throw err;
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+      if (attempt === 3) throw err;
+      await new Promise((r) => setTimeout(r, 3000 * attempt));
     }
   }
-  throw new Error("Unreachable");
+  throw new Error("unreachable");
 }
 
 // ---------------------------------------------------------------------------
-// Supabase update with retry (handles 502/timeouts)
+// Supabase BATCH write — 40 embeddings in ONE database call
 // ---------------------------------------------------------------------------
-async function updateEmbedding(
+async function batchWrite(
   table: "verses" | "prose_paragraphs",
-  id: string,
-  embedding: number[]
-): Promise<boolean> {
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+  ids: string[],
+  embeddings: number[][]
+): Promise<number> {
+  // Convert embeddings to vector string format: "[0.1,0.2,...]"
+  const embStrings = embeddings.map((emb) => `[${emb.join(",")}]`);
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const { error } = await supabase
-        .from(table)
-        .update({ embedding: JSON.stringify(embedding) })
-        .eq("id", id);
+      const { data, error } = await supabase.rpc("batch_set_embeddings", {
+        p_table: table,
+        p_ids: ids,
+        p_embeddings: embStrings,
+      });
 
       if (error) {
-        const msg = typeof error === "string" ? error : error.message || JSON.stringify(error);
-        if ((msg.includes("timeout") || msg.includes("502") || msg.includes("Bad gateway")) && attempt < MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+        const msg = error.message || "";
+        if ((msg.includes("timeout") || msg.includes("502")) && attempt < 3) {
+          console.log(`  DB write retry ${attempt}...`);
+          await new Promise((r) => setTimeout(r, 5000 * attempt));
           continue;
         }
-        throw new Error(msg.substring(0, 100));
+        throw new Error(`DB batch write: ${msg.substring(0, 100)}`);
       }
-      return true;
+
+      return data as number;
     } catch (err) {
-      if (attempt === MAX_RETRIES) throw err;
-      await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+      if (attempt === 3) throw err;
+      await new Promise((r) => setTimeout(r, 5000 * attempt));
     }
   }
-  return false;
+  return 0;
 }
 
 // ---------------------------------------------------------------------------
-// Build rich text
+// Fetch IDs via RPC (uses partial index, 5min timeout)
 // ---------------------------------------------------------------------------
-function buildVerseText(verse: {
-  scripture: string;
-  verse_number: string;
-  translation: string | null;
-  purport: string | null;
-  tags: string[] | null;
-  canto: string;
-  chapter: number | string;
-}): string {
-  const parts: string[] = [];
-  parts.push(`[${verse.scripture} ${verse.canto}.${verse.chapter}.${verse.verse_number}]`);
-  if (verse.tags && verse.tags.length > 0) parts.push(`Topics: ${verse.tags.join(", ")}.`);
-  if (verse.translation) parts.push(`Translation: ${verse.translation}.`);
-  if (verse.purport) parts.push(`Purport excerpt: ${verse.purport.slice(0, 800)}`);
-  return parts.join(" ");
-}
-
-function buildProseText(row: {
-  book_slug: string;
-  paragraph_number: number;
-  body_text: string | null;
-  tags: string[] | null;
-}): string {
-  const parts: string[] = [];
-  parts.push(`[${row.book_slug} - paragraph ${row.paragraph_number}]`);
-  if (row.tags && row.tags.length > 0) parts.push(`Topics: ${row.tags.join(", ")}.`);
-  if (row.body_text) parts.push(`Text: ${row.body_text.slice(0, 1200)}`);
-  return parts.join(" ");
-}
-
-// ---------------------------------------------------------------------------
-// Worker pool with concurrency limit
-// ---------------------------------------------------------------------------
-async function processInParallel<T>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<boolean>
-): Promise<{ success: number; errors: number }> {
-  let success = 0;
-  let errors = 0;
-  let index = 0;
-
-  async function worker() {
-    while (index < items.length) {
-      const i = index++;
-      try {
-        const ok = await fn(items[i]);
-        if (ok) success++;
-        else errors++;
-      } catch {
-        errors++;
-      }
-    }
-  }
-
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () => worker());
-  await Promise.all(workers);
-  return { success, errors };
-}
-
-// ---------------------------------------------------------------------------
-// Fetch all IDs with NULL embedding (paginated to avoid timeout)
-// ---------------------------------------------------------------------------
-async function fetchNullIds(table: "verses" | "prose_paragraphs"): Promise<string[]> {
+async function fetchAllNullIds(table: "verses" | "prose_paragraphs"): Promise<string[]> {
   const allIds: string[] = [];
-  let from = 0;
+  let offset = 0;
 
   while (true) {
-    const { data, error } = await supabase
-      .from(table)
-      .select("id")
-      .is("embedding", null)
-      .range(from, from + ID_PAGE_SIZE - 1);
+    const { data, error } = await supabase.rpc("fetch_null_embedding_ids", {
+      p_table: table,
+      p_limit: 1000,
+      p_offset: offset,
+    });
 
     if (error) {
-      console.error(`  Error fetching ${table} IDs (offset ${from}):`, error.message);
-      await new Promise((r) => setTimeout(r, 3000));
-      const retry = await supabase
-        .from(table)
-        .select("id")
-        .is("embedding", null)
-        .range(from, from + ID_PAGE_SIZE - 1);
-      if (retry.error || !retry.data) {
-        console.error(`  Retry failed at offset ${from}, continuing with ${allIds.length} IDs`);
-        break;
-      }
-      allIds.push(...retry.data.map((r: { id: string }) => r.id));
-      if (retry.data.length < ID_PAGE_SIZE) break;
-      from += ID_PAGE_SIZE;
-      continue;
+      console.error(`  ID fetch error at offset ${offset}:`, error.message);
+      break;
     }
-
     if (!data || data.length === 0) break;
     allIds.push(...data.map((r: { id: string }) => r.id));
-    if (data.length < ID_PAGE_SIZE) break;
-    from += ID_PAGE_SIZE;
+    if (data.length < 1000) break;
+    offset += 1000;
   }
 
   return allIds;
+}
+
+// ---------------------------------------------------------------------------
+// Build text helpers
+// ---------------------------------------------------------------------------
+function buildVerseText(v: any, ch: any): string {
+  const parts: string[] = [];
+  parts.push(`[${v.scripture} ${ch.canto_or_division || "?"}.${ch.chapter_number || "?"}.${v.verse_number}]`);
+  if (v.tags?.length) parts.push(`Topics: ${v.tags.join(", ")}.`);
+  if (v.translation) parts.push(`Translation: ${v.translation}.`);
+  if (v.purport) parts.push(`Purport excerpt: ${v.purport.slice(0, 800)}`);
+  return parts.join(" ");
+}
+
+function buildProseText(r: any): string {
+  const parts: string[] = [];
+  parts.push(`[${r.book_slug} - paragraph ${r.paragraph_number}]`);
+  if (r.tags?.length) parts.push(`Topics: ${r.tags.join(", ")}.`);
+  if (r.body_text) parts.push(`Text: ${r.body_text.slice(0, 1200)}`);
+  return parts.join(" ");
 }
 
 // ---------------------------------------------------------------------------
@@ -248,80 +198,73 @@ async function fetchNullIds(table: "verses" | "prose_paragraphs"): Promise<strin
 async function processVerses() {
   console.log("\n=== Processing verses ===\n");
 
-  const allIds = await fetchNullIds("verses");
+  const allIds = await fetchAllNullIds("verses");
   const total = allIds.length;
   console.log(`Found ${total} verses needing embeddings`);
   if (total === 0) return;
 
-  let totalProcessed = 0;
-  let totalErrors = 0;
+  let done = 0;
+  let errors = 0;
 
   for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
     const batchIds = allIds.slice(i, i + BATCH_SIZE);
 
-    const { data: verses, error } = await supabase
-      .from("verses")
-      .select("id, scripture, verse_number, translation, purport, tags, chapter_id")
-      .in("id", batchIds);
+    try {
+      // Step 1: Fetch verse data (1 query)
+      const { data: verses, error } = await supabase
+        .from("verses")
+        .select("id, scripture, verse_number, translation, purport, tags, chapter_id")
+        .in("id", batchIds);
 
-    if (error || !verses) {
-      console.error(`  Error fetching verse batch:`, error?.message);
-      totalErrors += batchIds.length;
-      await new Promise((r) => setTimeout(r, 3000));
-      continue;
-    }
-
-    const chapterIds = [...new Set(verses.map((v) => v.chapter_id).filter(Boolean))];
-    let chapterMap: Record<string, { canto_or_division: string; chapter_number: number }> = {};
-    if (chapterIds.length > 0) {
-      const { data: chapters } = await supabase
-        .from("chapters")
-        .select("id, canto_or_division, chapter_number")
-        .in("id", chapterIds);
-      if (chapters) {
-        for (const c of chapters) {
-          chapterMap[c.id] = { canto_or_division: c.canto_or_division, chapter_number: c.chapter_number };
-        }
+      if (error || !verses || verses.length === 0) {
+        console.error(`  Fetch error:`, error?.message);
+        errors += batchIds.length;
+        continue;
       }
+
+      // Step 2: Fetch chapter info (1 query)
+      const chIds = [...new Set(verses.map((v) => v.chapter_id).filter(Boolean))];
+      const chapterMap: Record<string, any> = {};
+      if (chIds.length > 0) {
+        const { data: chapters } = await supabase
+          .from("chapters")
+          .select("id, canto_or_division, chapter_number")
+          .in("id", chIds);
+        if (chapters) for (const c of chapters) chapterMap[c.id] = c;
+      }
+
+      // Step 3: Build texts
+      const orderedIds: string[] = [];
+      const texts: string[] = [];
+      for (const v of verses) {
+        const ch = chapterMap[v.chapter_id] || { canto_or_division: "?", chapter_number: "?" };
+        orderedIds.push(v.id);
+        texts.push(buildVerseText(v, ch));
+      }
+
+      // Step 4: Batch embed — 1 API call for all texts
+      const embeddings = await batchEmbed(texts);
+
+      // Step 5: Batch write — 1 DB call for all embeddings
+      const written = await batchWrite("verses", orderedIds, embeddings);
+      done += written;
+    } catch (err: any) {
+      console.error(`  Batch error: ${(err.message || "").substring(0, 120)}`);
+      errors += batchIds.length;
     }
 
-    const { success, errors } = await processInParallel(verses, CONCURRENCY, async (verse) => {
-      const ch = chapterMap[verse.chapter_id] || { canto_or_division: "?", chapter_number: "?" };
-      const richText = buildVerseText({
-        scripture: verse.scripture,
-        verse_number: verse.verse_number,
-        translation: verse.translation,
-        purport: verse.purport,
-        tags: verse.tags,
-        canto: ch.canto_or_division,
-        chapter: ch.chapter_number,
-      });
-
-      const embedding = await getEmbedding(richText);
-      await updateEmbedding("verses", verse.id, embedding);
-      return true;
-    });
-
-    totalProcessed += success;
-    totalErrors += errors;
-
+    // Progress
     const mins = (Date.now() - startTime) / 60000;
-    const rate = mins > 0.1 ? (totalProcessed / mins).toFixed(0) : "...";
-    const remaining = mins > 0.1 && totalProcessed > 0
-      ? Math.ceil((total - totalProcessed) / (totalProcessed / mins))
-      : "...";
-
+    const rate = mins > 0.1 ? (done / mins).toFixed(0) : "...";
+    const eta = mins > 0.1 && done > 0 ? Math.ceil((total - done) / (done / mins)) : "...";
     console.log(
-      `  ${totalProcessed} / ${total} (${((totalProcessed / total) * 100).toFixed(1)}%) ` +
-      `| ${totalErrors} err | ${rate}/min | ~${remaining} min left | ${elapsed()}`
+      `  ${done}/${total} (${((done / total) * 100).toFixed(1)}%) | ${errors} err | ${rate}/min | ~${eta}min | ${elapsed()}`
     );
 
-    if (i + BATCH_SIZE < allIds.length) {
-      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
-    }
+    await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
   }
 
-  console.log(`\nVerses: ${totalProcessed} embedded, ${totalErrors} errors | ${elapsed()}`);
+  console.log(`\nVerses: ${done} done, ${errors} errors | ${elapsed()}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -330,79 +273,77 @@ async function processVerses() {
 async function processProse() {
   console.log("\n=== Processing prose_paragraphs ===\n");
 
-  const allIds = await fetchNullIds("prose_paragraphs");
+  const allIds = await fetchAllNullIds("prose_paragraphs");
   const total = allIds.length;
   console.log(`Found ${total} prose paragraphs needing embeddings`);
   if (total === 0) return;
 
-  let totalProcessed = 0;
-  let totalErrors = 0;
+  let done = 0;
+  let errors = 0;
 
   for (let i = 0; i < allIds.length; i += BATCH_SIZE) {
     const batchIds = allIds.slice(i, i + BATCH_SIZE);
 
-    const { data: rows, error } = await supabase
-      .from("prose_paragraphs")
-      .select("id, book_slug, paragraph_number, body_text, tags")
-      .in("id", batchIds);
+    try {
+      // Step 1: Fetch prose data
+      const { data: rows, error } = await supabase
+        .from("prose_paragraphs")
+        .select("id, book_slug, paragraph_number, body_text, tags")
+        .in("id", batchIds);
 
-    if (error || !rows) {
-      console.error(`  Error fetching prose batch:`, error?.message);
-      totalErrors += batchIds.length;
-      await new Promise((r) => setTimeout(r, 3000));
-      continue;
+      if (error || !rows || rows.length === 0) {
+        console.error(`  Fetch error:`, error?.message);
+        errors += batchIds.length;
+        continue;
+      }
+
+      // Step 2: Build texts
+      const orderedIds: string[] = [];
+      const texts: string[] = [];
+      for (const r of rows) {
+        orderedIds.push(r.id);
+        texts.push(buildProseText(r));
+      }
+
+      // Step 3: Batch embed
+      const embeddings = await batchEmbed(texts);
+
+      // Step 4: Batch write
+      const written = await batchWrite("prose_paragraphs", orderedIds, embeddings);
+      done += written;
+    } catch (err: any) {
+      console.error(`  Batch error: ${(err.message || "").substring(0, 120)}`);
+      errors += batchIds.length;
     }
-
-    const { success, errors } = await processInParallel(rows, CONCURRENCY, async (row) => {
-      const richText = buildProseText({
-        book_slug: row.book_slug,
-        paragraph_number: row.paragraph_number,
-        body_text: row.body_text,
-        tags: row.tags,
-      });
-
-      const embedding = await getEmbedding(richText);
-      await updateEmbedding("prose_paragraphs", row.id, embedding);
-      return true;
-    });
-
-    totalProcessed += success;
-    totalErrors += errors;
 
     const mins = (Date.now() - startTime) / 60000;
-    const rate = mins > 0.1 ? (totalProcessed / mins).toFixed(0) : "...";
-    const remaining = mins > 0.1 && totalProcessed > 0
-      ? Math.ceil((total - totalProcessed) / (totalProcessed / mins))
-      : "...";
-
+    const rate = mins > 0.1 ? (done / mins).toFixed(0) : "...";
+    const eta = mins > 0.1 && done > 0 ? Math.ceil((total - done) / (done / mins)) : "...";
     console.log(
-      `  ${totalProcessed} / ${total} (${((totalProcessed / total) * 100).toFixed(1)}%) ` +
-      `| ${totalErrors} err | ${rate}/min | ~${remaining} min left | ${elapsed()}`
+      `  ${done}/${total} (${((done / total) * 100).toFixed(1)}%) | ${errors} err | ${rate}/min | ~${eta}min | ${elapsed()}`
     );
 
-    if (i + BATCH_SIZE < allIds.length) {
-      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
-    }
+    await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
   }
 
-  console.log(`\nProse: ${totalProcessed} embedded, ${totalErrors} errors | ${elapsed()}`);
+  console.log(`\nProse: ${done} done, ${errors} errors | ${elapsed()}`);
 }
 
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 async function main() {
-  console.log("=== Embedding Generation (Balanced) ===");
-  console.log(`Model: gemini-embedding-2-preview | Dims: ${EXPECTED_DIMS}`);
-  console.log(`Batch: ${BATCH_SIZE} | Concurrency: ${CONCURRENCY} | Retries: ${MAX_RETRIES}\n`);
+  console.log("=== Embedding Generation v4 — BATCH MODE ===");
+  console.log(`gemini-embedding-2-preview | ${EXPECTED_DIMS}d`);
+  console.log(`${BATCH_SIZE} texts per Gemini call | batch DB writes\n`);
 
   await processVerses();
   await processProse();
 
-  console.log(`\n=== Done === | Total: ${elapsed()}`);
+  console.log(`\n=== ALL DONE === | ${elapsed()}`);
 }
 
 main().catch((err) => {
-  console.error("Fatal error:", err);
+  console.error("Fatal:", err);
   process.exit(1);
 });
