@@ -116,10 +116,10 @@ export default function VoiceInput({ onTranscript, onFinalTranscript, disabled }
         minWidth: 38,
         minHeight: 38,
         borderRadius: recording ? "50%" : 11,
-        border: recording ? "2px solid rgba(232,137,28,0.4)" : "1.5px solid rgba(196,181,253,0.3)",
+        border: recording ? "2px solid rgba(232,137,28,0.4)" : "1.5px solid rgba(139,92,246,0.5)",
         background: recording
           ? "linear-gradient(135deg, rgba(232,137,28,0.15), rgba(245,166,35,0.15))"
-          : "rgba(139,92,246,0.05)",
+          : "rgba(139,92,246,0.12)",
         cursor: disabled ? "default" : "pointer",
         display: "flex",
         alignItems: "center",
@@ -132,14 +132,14 @@ export default function VoiceInput({ onTranscript, onFinalTranscript, disabled }
       }}
       onMouseEnter={e => {
         if (!disabled && !recording) {
-          e.currentTarget.style.background = "rgba(139,92,246,0.12)";
-          e.currentTarget.style.borderColor = "#C4B5FD";
+          e.currentTarget.style.background = "rgba(139,92,246,0.2)";
+          e.currentTarget.style.borderColor = "#8B5CF6";
         }
       }}
       onMouseLeave={e => {
         if (!disabled && !recording) {
-          e.currentTarget.style.background = "rgba(139,92,246,0.05)";
-          e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)";
+          e.currentTarget.style.background = "rgba(139,92,246,0.12)";
+          e.currentTarget.style.borderColor = "rgba(139,92,246,0.5)";
         }
       }}
     >
@@ -148,7 +148,7 @@ export default function VoiceInput({ onTranscript, onFinalTranscript, disabled }
         height="18"
         viewBox="0 0 24 24"
         fill="none"
-        style={{ color: recording ? "#E8891C" : "#6B7280", transition: "color 0.3s" }}
+        style={{ color: recording ? "#E8891C" : "#7C3AED", transition: "color 0.3s" }}
       >
         <path
           d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"

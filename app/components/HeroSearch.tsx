@@ -12,13 +12,14 @@ interface HeroSearchProps {
   isSearching: boolean;
   hasResults: boolean;
   currentQuery?: string;
+  progressRef?: React.RefObject<HTMLDivElement | null>;
 }
 
-export default function HeroSearch({ onSearch, onClear, isSearching, hasResults, currentQuery }: HeroSearchProps) {
+export default function HeroSearch({ onSearch, onClear, isSearching, hasResults, currentQuery, progressRef }: HeroSearchProps) {
   const [query, setQuery] = useState("");
   const [heroVisible, setHeroVisible] = useState(true);
   const [isFocused, setIsFocused] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [animatedIn, setAnimatedIn] = useState(false);
 
   useEffect(() => { if (hasResults) setHeroVisible(false); }, [hasResults]);
@@ -27,7 +28,23 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
   useEffect(() => { const t = setTimeout(() => setAnimatedIn(true), 100); return () => clearTimeout(t); }, []);
   useEffect(() => { if (currentQuery) setQuery(currentQuery); }, [currentQuery]);
 
+  const autoResize = useCallback(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.min(el.scrollHeight, 150) + "px";
+  }, []);
+
+  useEffect(() => { autoResize(); }, [query, autoResize]);
+
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (query.trim()) onSearch(query.trim()); };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      if (query.trim()) onSearch(query.trim());
+    }
+  };
 
   const handleClear = () => {
     setQuery("");
@@ -37,12 +54,12 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
   };
 
   const handleVoiceTranscript = useCallback((text: string) => { setQuery(text); setIsFocused(true); }, []);
-  const handleVoiceFinal = useCallback((text: string) => { setQuery(text); setIsFocused(true); inputRef.current?.focus(); }, []);
+  const handleVoiceFinal = useCallback((text: string) => { setQuery(text); setIsFocused(true); textareaRef.current?.focus(); }, []);
 
   const handleExampleSelect = useCallback((text: string) => {
     setQuery(text);
     setIsFocused(true);
-    inputRef.current?.focus();
+    textareaRef.current?.focus();
   }, []);
 
   const stagger = (i: number) => ({
@@ -79,7 +96,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
         {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 16, color: "#1E1B4B" }}>Ask<br /><span style={{ whiteSpace: "nowrap", background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
 
         {/* Subtitle */}
-        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.65, marginBottom: 22 }}>Search across all 27 books — Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more. AI-powered answers from Prabhupāda&apos;s actual words.</p>}
+        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.65, marginBottom: 22 }}>Explore 27 books of Śrīla Prabhupāda — every answer drawn directly from his translations, purports, and teachings. Nothing added, nothing invented.</p>}
 
         {/* Search form */}
         <form
@@ -94,16 +111,17 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
           }}
         >
           <div className="hero-search-wrapper" style={{ position: "relative" }}>
-            <input
-              ref={inputRef}
-              type="text"
+            <textarea
+              ref={textareaRef}
               value={query}
-              onChange={e => setQuery(e.target.value)}
+              onChange={e => { setQuery(e.target.value); }}
+              onKeyDown={handleKeyDown}
               onFocus={() => setIsFocused(true)}
               onBlur={() => { if (!query) setIsFocused(false); }}
               placeholder=""
               aria-label="Search Prabhupāda's books"
               className="font-body hero-search-input"
+              rows={1}
               style={{
                 width: "100%",
                 padding: `20px ${inputRightPadding}px 20px 24px`,
@@ -120,6 +138,10 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                 boxShadow: isFocused
                   ? "0 0 0 3px rgba(139,92,246,0.12), 0 4px 24px rgba(139,92,246,0.08)"
                   : "0 8px 32px rgba(111,74,177,0.14), 0 0 60px rgba(139,92,246,0.04)",
+                resize: "none",
+                overflow: "hidden",
+                lineHeight: "1.5",
+                fontFamily: "inherit",
               }}
             />
 
@@ -134,11 +156,11 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                 style={{
                   position: "absolute",
                   left: 24,
-                  top: "50%",
-                  transform: "translateY(-50%)",
+                  top: 20,
                   fontSize: 17,
                   color: "#C4B5FD",
                   pointerEvents: "none",
+                  lineHeight: "1.5",
                 }}
               >
                 Ask anything about the scriptures...
@@ -155,8 +177,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                 style={{
                   position: "absolute",
                   right: 96,
-                  top: "50%",
-                  transform: "translateY(-50%)",
+                  top: 14,
                   width: 32,
                   height: 32,
                   borderRadius: 8,
@@ -179,7 +200,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
             )}
 
             {/* Voice input button */}
-            <div style={{ position: "absolute", right: 54, top: "50%", transform: "translateY(-50%)" }}>
+            <div style={{ position: "absolute", right: 54, top: 12 }}>
               <VoiceInput
                 onTranscript={handleVoiceTranscript}
                 onFinalTranscript={handleVoiceFinal}
@@ -196,8 +217,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
               style={{
                 position: "absolute",
                 right: 8,
-                top: "50%",
-                transform: "translateY(-50%)",
+                top: 10,
                 width: 42,
                 height: 42,
                 borderRadius: 12,
@@ -211,8 +231,8 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                 transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
                 boxShadow: query.trim() ? "0 4px 14px rgba(139,92,246,0.3)" : "none",
               }}
-              onMouseEnter={e => { if (query.trim()) { e.currentTarget.style.transform = "translateY(-50%) scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 20px rgba(139,92,246,0.4)"; } }}
-              onMouseLeave={e => { e.currentTarget.style.transform = "translateY(-50%) scale(1)"; e.currentTarget.style.boxShadow = query.trim() ? "0 4px 14px rgba(139,92,246,0.3)" : "none"; }}
+              onMouseEnter={e => { if (query.trim()) { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 20px rgba(139,92,246,0.4)"; } }}
+              onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = query.trim() ? "0 4px 14px rgba(139,92,246,0.3)" : "none"; }}
             >
               {isSearching ? (
                 <svg width="18" height="18" viewBox="0 0 24 24" style={{ animation: "spin 0.8s linear infinite" }}>
@@ -249,7 +269,11 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
       </div>
 
       {/* Search Progress */}
-      {isSearching && <SearchProgress isSearching={isSearching} />}
+      {isSearching && (
+        <div ref={progressRef}>
+          <SearchProgress isSearching={isSearching} />
+        </div>
+      )}
     </section>
   );
 }
