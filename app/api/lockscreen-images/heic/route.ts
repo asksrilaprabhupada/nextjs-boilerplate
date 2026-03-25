@@ -1,6 +1,5 @@
 import { promises as fs } from "node:fs";
 import { NextRequest, NextResponse } from "next/server";
-import sharp from "sharp";
 import { getLockscreenImagePath } from "@/app/lib/server/lockscreen-images";
 
 export async function GET(request: NextRequest) {
@@ -15,6 +14,11 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // Dynamic import — prevents Turbopack from crashing if the
+    // sharp native binary is missing (it's an optional dep of next,
+    // NOT a direct project dependency).
+    const sharp = (await import("sharp")).default;
+
     const inputBuffer = await fs.readFile(sourcePath);
     const outputBuffer = await sharp(inputBuffer).jpeg({ quality: 90 }).toBuffer();
 
