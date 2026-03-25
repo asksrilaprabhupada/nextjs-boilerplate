@@ -60,7 +60,7 @@ export default function StepsSection() {
 
       <style jsx>{`
         @media (max-width: 768px) {
-          .steps-grid { grid-template-columns: 1fr !important; gap: 36px !important; }
+          .steps-grid { grid-template-columns: 1fr !important; gap: 24px !important; max-width: 400px !important; }
         }
       `}</style>
     </section>

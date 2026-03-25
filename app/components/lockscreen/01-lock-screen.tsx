@@ -162,7 +162,7 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
         <div className="font-display" style={{ fontSize: "clamp(0.95rem,2vw,1.28rem)", fontWeight: 400, fontStyle: "italic", color: "rgba(255,255,255,0.8)", maxWidth: 500, textAlign: "center", lineHeight: 1.75, padding: "0 24px" }}>
           &ldquo;{verse.text}&rdquo;
         </div>
-        <div className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "rgba(196,181,253,0.8)", marginTop: 14, letterSpacing: "0.04em" }}>— {verse.citation}</div>
+        <div className="font-body" style={{ fontSize: "clamp(11px, 2vw, 13px)", fontWeight: 500, color: "rgba(196,181,253,0.8)", marginTop: 14, letterSpacing: "0.04em" }}>— {verse.citation}</div>
         <div style={{ marginTop: 44, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
           <div style={{ width: 36, height: 36, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", animation: "pulse-arrow 3s ease-in-out infinite" }}>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: "rotate(180deg)" }}><path d="M8 12V4M4 8l4-4 4 4" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>

@@ -69,7 +69,7 @@ export default function FeaturesSection() {
   }, []);
 
   return (
-    <section ref={ref} style={{ padding: "100px clamp(20px,5vw,80px)", maxWidth: 1200, margin: "0 auto", background: "linear-gradient(145deg, rgba(255,255,255,0.62), rgba(246,238,255,0.56) 55%, rgba(255,245,235,0.5))", borderRadius: 28, border: "1px solid rgba(255,255,255,0.65)", boxShadow: "0 18px 44px rgba(109,74,176,0.10)" }}>
+    <section ref={ref} style={{ padding: "clamp(48px, 8vw, 100px) clamp(16px,5vw,80px)", maxWidth: 1200, margin: "0 auto", background: "linear-gradient(145deg, rgba(255,255,255,0.62), rgba(246,238,255,0.56) 55%, rgba(255,245,235,0.5))", borderRadius: "clamp(18px, 3vw, 28px)", border: "1px solid rgba(255,255,255,0.65)", boxShadow: "0 18px 44px rgba(109,74,176,0.10)" }}>
       <div className="scroll-reveal" style={{ textAlign: "center", marginBottom: 60 }}>
         <p className="section-label">Features</p>
         <h2 className="font-display" style={{ fontSize: "clamp(32px,4vw,52px)", fontWeight: 600, lineHeight: 1.15, letterSpacing: "-0.02em", color: "#1E1B4B" }}>
@@ -85,7 +85,16 @@ export default function FeaturesSection() {
           </div>
         ))}
       </div>
-      <style jsx>{`@media (max-width: 900px) { div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; } div[style*="span 2"] { grid-column: span 1 !important; } }`}</style>
+      <style jsx>{`
+        @media (max-width: 900px) {
+          div[style*="grid-template-columns"] { grid-template-columns: 1fr 1fr !important; }
+          div[style*="span 2"] { grid-column: span 2 !important; }
+        }
+        @media (max-width: 640px) {
+          div[style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+          div[style*="span 2"] { grid-column: span 1 !important; }
+        }
+      `}</style>
     </section>
   );
 }

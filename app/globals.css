@@ -474,6 +474,7 @@ body {
   .search-results-layout {
     grid-template-columns: 1fr !important;
     max-width: 700px !important;
+    margin: 0 auto !important;
     gap: 16px !important;
   }
   .left-rail {
@@ -489,6 +490,10 @@ body {
     display: grid !important;
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)) !important;
     gap: 12px !important;
+  }
+  .why-different-grid,
+  .testimonials-grid {
+    grid-template-columns: 1fr 1fr !important;
   }
 }
 
@@ -529,21 +534,25 @@ body {
   }
   .steps-grid {
     grid-template-columns: 1fr !important;
-    gap: 32px !important;
+    gap: 24px !important;
+  }
+  .why-different-grid,
+  .testimonials-grid {
+    grid-template-columns: 1fr !important;
   }
   .narrative-content h3 {
-    font-size: 1.1rem !important;
-    margin: 20px 0 10px !important;
+    font-size: 1.05rem !important;
+    margin: 16px 0 8px !important;
   }
   .narrative-content .verse-quote,
   .narrative-content .purport-quote,
   .narrative-content .prose-quote {
-    padding: 12px 14px !important;
+    padding: 10px 12px !important;
     border-radius: 10px !important;
-    margin: 10px 0 !important;
+    margin: 8px 0 !important;
   }
   .narrative-content .verse-quote {
-    font-size: 0.95rem !important;
+    font-size: 0.92rem !important;
   }
   .narrative-content .purport-quote,
   .narrative-content .prose-quote {
@@ -553,9 +562,19 @@ body {
     display: none !important;
   }
   .hero-search-input {
-    padding: 16px 100px 16px 20px !important;
+    padding: 14px 90px 14px 16px !important;
     font-size: 16px !important;
     border-radius: 14px !important;
+  }
+  .hero-submit-btn {
+    width: 38px !important;
+    height: 38px !important;
+    right: 6px !important;
+    top: 8px !important;
+  }
+  .hero-clear-btn {
+    right: 82px !important;
+    top: 12px !important;
   }
   .topic-pills-container {
     overflow-x: auto !important;
@@ -587,6 +606,16 @@ body {
     line-height: 1.7 !important;
   }
   .narrative-content .verse-quote {
-    font-size: 0.9rem !important;
+    font-size: 0.88rem !important;
+  }
+  .hero-search-input {
+    padding: 12px 82px 12px 14px !important;
+    font-size: 16px !important;
+  }
+  .hero-submit-btn {
+    width: 36px !important;
+    height: 36px !important;
+    right: 5px !important;
+    top: 7px !important;
   }
 }

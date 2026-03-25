@@ -59,8 +59,8 @@ export default function FeedbackButton({ currentQuery }: Props) {
       <button
         onClick={() => setOpen(true)}
         style={{
-          position: "fixed", bottom: 24, right: 24, zIndex: 90,
-          width: 48, height: 48, borderRadius: 14,
+          position: "fixed", bottom: 16, right: 16, zIndex: 90,
+          width: 44, height: 44, borderRadius: 14,
           background: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
           border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
           boxShadow: "0 8px 24px rgba(139,92,246,0.3)", transition: "transform 0.3s ease, box-shadow 0.3s ease",
@@ -88,9 +88,9 @@ export default function FeedbackButton({ currentQuery }: Props) {
               transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
               style={{
-                position: "fixed", bottom: 24, right: 24, width: 380, maxWidth: "calc(100vw - 48px)",
+                position: "fixed", bottom: 16, right: 16, width: 380, maxWidth: "calc(100vw - 32px)",
                 background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)", borderRadius: 20,
-                padding: "24px 20px", boxShadow: "0 20px 60px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)",
+                padding: "clamp(16px, 4vw, 24px) clamp(14px, 3.5vw, 20px)", boxShadow: "0 20px 60px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)",
               }}
             >
               {submitted ? (

@@ -76,14 +76,15 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
 
   // When clear button is visible we need more right padding to avoid text collision
   const showClearBtn = hasResults && query;
-  const inputRightPadding = showClearBtn ? 160 : 120;
+  // Use CSS clamp for responsive right padding — smaller on mobile
+  const inputRightPadding = showClearBtn ? "clamp(110px, 20vw, 160px)" : "clamp(80px, 16vw, 120px)";
 
   return (
     <section style={{
       minHeight: heroVisible ? "100vh" : "auto",
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: heroVisible ? "center" : "flex-start",
-      padding: heroVisible ? "60px clamp(20px, 4vw, 80px) 40px" : "76px 20px 20px",
+      padding: heroVisible ? "60px clamp(16px, 4vw, 80px) 40px" : "68px clamp(12px, 3vw, 20px) 16px",
       position: "relative", transition: "all 0.6s var(--ease-out-expo)", overflow: "hidden",
     }}>
       {/* Background orb */}
@@ -94,7 +95,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
         {heroVisible && (
           <div className="font-body" style={{ ...stagger(0), display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 16px 6px 10px", borderRadius: 100, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(196,181,253,0.3)", marginBottom: 24 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8B5CF6", animation: "pulseDot 2.5s ease-in-out infinite" }} />
-            <span style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.10em", color: "#7C3AED" }}>27 books · 59,000+ searchable entries</span>
+            <span style={{ fontSize: "clamp(10px, 2.5vw, 12px)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.10em", color: "#7C3AED" }}>27 books · 59,000+ searchable entries</span>
           </div>
         )}
 
@@ -130,8 +131,8 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
               rows={1}
               style={{
                 width: "100%",
-                padding: `20px ${inputRightPadding}px 20px 24px`,
-                fontSize: 17,
+                padding: `18px ${inputRightPadding} 18px clamp(16px, 3vw, 24px)`,
+                fontSize: "clamp(15px, 2.8vw, 17px)",
                 fontWeight: 400,
                 border: "none",
                 borderRadius: 18,
@@ -163,7 +164,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                   position: "absolute",
                   left: 24,
                   top: 20,
-                  fontSize: 17,
+                  fontSize: "clamp(15px, 2.8vw, 17px)",
                   color: "#C4B5FD",
                   pointerEvents: "none",
                   lineHeight: "1.5",

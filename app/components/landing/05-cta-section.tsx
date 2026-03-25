@@ -26,7 +26,7 @@ export default function CTASection() {
   return (
     <section ref={ref} style={{ padding: "60px clamp(20px, 5vw, 80px)", maxWidth: 800, margin: "0 auto" }}>
       <div className="scroll-reveal" style={{
-        textAlign: "center", padding: "48px 40px",
+        textAlign: "center", padding: "clamp(28px, 6vw, 48px) clamp(20px, 5vw, 40px)",
         borderRadius: 24,
         background: "linear-gradient(135deg, rgba(245,240,255,0.6) 0%, rgba(251,207,232,0.15) 50%, rgba(253,230,138,0.08) 100%)",
         border: "1px solid rgba(196,181,253,0.2)",
