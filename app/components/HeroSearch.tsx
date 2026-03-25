@@ -8,12 +8,13 @@ import ExamplesPopover from "./ExamplesPopover";
 
 interface HeroSearchProps {
   onSearch: (query: string) => void;
+  onClear?: () => void;
   isSearching: boolean;
   hasResults: boolean;
   currentQuery?: string;
 }
 
-export default function HeroSearch({ onSearch, isSearching, hasResults, currentQuery }: HeroSearchProps) {
+export default function HeroSearch({ onSearch, onClear, isSearching, hasResults, currentQuery }: HeroSearchProps) {
   const [query, setQuery] = useState("");
   const [heroVisible, setHeroVisible] = useState(true);
   const [isFocused, setIsFocused] = useState(false);
@@ -21,11 +22,20 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
   const [animatedIn, setAnimatedIn] = useState(false);
 
   useEffect(() => { if (hasResults) setHeroVisible(false); }, [hasResults]);
+  // Reset hero when results are cleared
+  useEffect(() => { if (!hasResults && !isSearching) setHeroVisible(true); }, [hasResults, isSearching]);
   useEffect(() => { const t = setTimeout(() => setAnimatedIn(true), 100); return () => clearTimeout(t); }, []);
   useEffect(() => { if (currentQuery) setQuery(currentQuery); }, [currentQuery]);
 
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (query.trim()) onSearch(query.trim()); };
-  const handleClear = () => { setQuery(""); setIsFocused(false); };
+
+  const handleClear = () => {
+    setQuery("");
+    setIsFocused(false);
+    // Tell parent to reset search results → brings back the hero
+    if (onClear) onClear();
+  };
+
   const handleVoiceTranscript = useCallback((text: string) => { setQuery(text); setIsFocused(true); }, []);
   const handleVoiceFinal = useCallback((text: string) => { setQuery(text); setIsFocused(true); inputRef.current?.focus(); }, []);
 
@@ -40,6 +50,10 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
     transform: animatedIn ? "translateY(0)" : "translateY(32px)",
     transition: `opacity 0.8s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms, transform 0.8s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms`,
   });
+
+  // When clear button is visible we need more right padding to avoid text collision
+  const showClearBtn = hasResults && query;
+  const inputRightPadding = showClearBtn ? 160 : 120;
 
   return (
     <section style={{
@@ -92,7 +106,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
               className="font-body hero-search-input"
               style={{
                 width: "100%",
-                padding: "20px 130px 20px 24px",
+                padding: `20px ${inputRightPadding}px 20px 24px`,
                 fontSize: 17,
                 fontWeight: 400,
                 border: "none",
@@ -131,16 +145,16 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
               </span>
             )}
 
-            {/* Clear button (post-search) */}
-            {hasResults && query && (
+            {/* Clear button — only when results exist and there's a query */}
+            {showClearBtn && (
               <button
                 type="button"
                 onClick={handleClear}
-                aria-label="Clear search"
+                aria-label="Clear search and go home"
                 className="hero-clear-btn"
                 style={{
                   position: "absolute",
-                  right: 100,
+                  right: 96,
                   top: "50%",
                   transform: "translateY(-50%)",
                   width: 32,

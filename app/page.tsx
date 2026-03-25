@@ -50,6 +50,18 @@ export default function Home() {
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
+  const handleClear = useCallback(() => {
+    // Abort any ongoing stream
+    if (abortRef.current) abortRef.current.abort();
+    // Reset all search state → hero will reappear
+    setSearchResults(null);
+    setIsSearching(false);
+    setIsStreaming(false);
+    setStreamingNarrative("");
+    setCurrentQuery("");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
   const handleSearch = useCallback(async (query: string) => {
     // Abort any ongoing stream
     if (abortRef.current) abortRef.current.abort();
@@ -151,7 +163,13 @@ export default function Home() {
         <Header onMoreItemSelect={setOverlay} />
         <main style={{ flex: 1 }}>
           <div id="search">
-            <HeroSearch onSearch={handleSearch} isSearching={isSearching} hasResults={searchResults !== null} currentQuery={currentQuery} />
+            <HeroSearch
+              onSearch={handleSearch}
+              onClear={handleClear}
+              isSearching={isSearching}
+              hasResults={searchResults !== null}
+              currentQuery={currentQuery}
+            />
           </div>
           <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} />
           {!searchResults && !isSearching && (
