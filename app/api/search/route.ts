@@ -3,6 +3,8 @@
  *
  * Handles search queries with hybrid semantic + full-text search, Gemini AI narrative generation, and SSE streaming.
  * The core backend that powers the entire search experience.
+ * 
+ * UPDATED: Now uses vedabase_url_precise for prose paragraph deep links.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -76,10 +78,10 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 }
 
 // =====================================================
-// TYPES
+// TYPES — UPDATED: ProseHit now includes vedabase_url_precise
 // =====================================================
 interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; score?: number; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; score?: number; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; vedabase_url_precise?: string; chapter_title?: string; score?: number; }
 
 // =====================================================
 // HYBRID SEARCH: Semantic + Full-text with fallback
@@ -178,6 +180,7 @@ async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; pros
   return ilikeSearch(query);
 }
 
+// UPDATED: ilikeSearch now selects vedabase_url_precise for prose
 async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
   const supabase = getSupabase();
   const terms = query.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3);
@@ -190,7 +193,7 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
   const [{ data: vT }, { data: vP }, { data: pr }] = await Promise.all([
     supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id").or(tf).limit(15),
     supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id").or(pf).limit(15),
-    supabase.from("prose_paragraphs").select("id,book_slug,paragraph_number,body_text,chapter_id,vedabase_url").or(bf).limit(15),
+    supabase.from("prose_paragraphs").select("id,book_slug,paragraph_number,body_text,chapter_id,vedabase_url,vedabase_url_precise").or(bf).limit(15),
   ]);
 
   const seenV = new Set<string>();
@@ -202,6 +205,7 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
 
 // =====================================================
 // ENRICH: Single query with IN clause for chapter info
+// UPDATED: Prose now prefers vedabase_url_precise
 // =====================================================
 async function enrich(verses: VerseHit[], prose: ProseHit[]) {
   const supabase = getSupabase();
@@ -227,12 +231,13 @@ async function enrich(verses: VerseHit[], prose: ProseHit[]) {
     };
   });
 
+  // UPDATED: Prefer vedabase_url_precise for prose (paragraph-level deep links)
   const eP = prose.map(p => {
     const c = cm.get(p.chapter_id);
     return {
       ...p,
       chapter_title: (c?.chapter_title as string) || "",
-      vedabase_url: p.vedabase_url || `https://vedabase.io/en/library/${p.book_slug}/`,
+      vedabase_url: p.vedabase_url_precise || p.vedabase_url || `https://vedabase.io/en/library/${p.book_slug}/`,
     };
   });
 
