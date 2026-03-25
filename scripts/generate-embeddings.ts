@@ -48,7 +48,7 @@ if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 const EMBEDDING_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:embedContent";
 const EXPECTED_DIMS = 1536;
 const BATCH_SIZE = 30;
 const BATCH_DELAY_MS = 1000;
@@ -63,6 +63,7 @@ async function getEmbedding(text: string): Promise<number[]> {
     body: JSON.stringify({
       content: { parts: [{ text }] },
       outputDimensionality: EXPECTED_DIMS,
+      taskType: "RETRIEVAL_DOCUMENT",
     }),
   });
 

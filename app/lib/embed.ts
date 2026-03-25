@@ -4,7 +4,7 @@
  */
 
 const EMBEDDING_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:embedContent";
 const EXPECTED_DIMS = 1536;
 
 export async function embedQuery(text: string): Promise<number[]> {
@@ -20,6 +20,7 @@ export async function embedQuery(text: string): Promise<number[]> {
     body: JSON.stringify({
       content: { parts: [{ text }] },
       outputDimensionality: EXPECTED_DIMS,
+      taskType: "RETRIEVAL_QUERY",
     }),
   });
 
