@@ -86,7 +86,7 @@ export default function VerseDetailPage() {
           gap: 16,
         }}
       >
-        <p className="font-display" style={{ fontSize: "1.2rem", color: "#9CA3AF" }}>
+        <p className="font-display" style={{ fontSize: "1.2rem", color: "#6B7280" }}>
           Verse not found
         </p>
         <Link
@@ -175,7 +175,7 @@ export default function VerseDetailPage() {
               fontWeight: 500,
               textTransform: "uppercase",
               letterSpacing: "0.12em",
-              color: "#9CA3AF",
+              color: "#6B7280",
               marginBottom: 8,
               display: "flex",
               alignItems: "center",
@@ -207,7 +207,7 @@ export default function VerseDetailPage() {
               style={{
                 fontSize: "1rem",
                 fontStyle: "italic",
-                color: "#9CA3AF",
+                color: "#6B7280",
                 marginBottom: 32,
               }}
             >
@@ -247,7 +247,7 @@ export default function VerseDetailPage() {
               style={{
                 fontSize: "1rem",
                 fontStyle: "italic",
-                color: "#9CA3AF",
+                color: "#6B7280",
                 lineHeight: 1.8,
                 marginBottom: 32,
               }}
@@ -283,7 +283,7 @@ export default function VerseDetailPage() {
                     {entry.meaning && (
                       <span
                         className="font-body"
-                        style={{ fontSize: "0.88rem", color: "#9CA3AF" }}
+                        style={{ fontSize: "0.88rem", color: "#6B7280" }}
                       >
                         — {entry.meaning}
                       </span>
@@ -324,7 +324,7 @@ export default function VerseDetailPage() {
                   fontSize: 15,
                   fontWeight: 400,
                   lineHeight: 1.8,
-                  color: "#4B5563",
+                  color: "#374151",
                   marginTop: 12,
                 }}
               >
@@ -361,7 +361,7 @@ function SectionLabel({ text }: { text: string }) {
           fontWeight: 500,
           textTransform: "uppercase",
           letterSpacing: "0.12em",
-          color: "#9CA3AF",
+          color: "#6B7280",
         }}
       >
         {text}

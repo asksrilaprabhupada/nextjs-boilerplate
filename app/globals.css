@@ -361,7 +361,7 @@ body {
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.15em;
+  letter-spacing: 0.10em;
   color: var(--garden-violet);
   margin-bottom: 16px;
 }

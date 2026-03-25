@@ -22,7 +22,7 @@ export default function PurportBlock({ text }: PurportBlockProps) {
           fontSize: 15,
           fontWeight: 400,
           lineHeight: 1.8,
-          color: "#4B5563",
+          color: "#374151",
         }}
       >
         {text}

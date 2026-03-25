@@ -30,7 +30,7 @@ export default function FooterSection() {
           className="font-body"
           style={{
             fontSize: 13,
-            color: "#9CA3AF",
+            color: "#6B7280",
           }}
         >
           &copy; {new Date().getFullYear()} All rights reserved

@@ -33,7 +33,7 @@ export default function CTASection() {
           <h2 className="font-display" style={{ fontSize: "clamp(26px, 3.5vw, 40px)", fontWeight: 600, lineHeight: 1.2, letterSpacing: "-0.02em", color: "#1E1B4B", marginBottom: 12 }}>
             Ask your first question
           </h2>
-          <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "#4B5563", marginBottom: 28, maxWidth: 480, margin: "0 auto 28px" }}>
+          <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "#374151", marginBottom: 28, maxWidth: 480, margin: "0 auto 28px" }}>
             27 books. 25,000+ verses. Every answer grounded in Śrīla Prabhupāda&apos;s actual words.
           </p>
           <button className="btn-primary" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>

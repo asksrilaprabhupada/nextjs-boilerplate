@@ -23,7 +23,7 @@ export default function RightRail({ citations, books, onWantMore }: Props) {
         <p className="font-body" style={{ fontSize: 24, fontWeight: 700, color: "#7C3AED", lineHeight: 1 }}>
           {citations.length}
         </p>
-        <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9CA3AF", marginTop: 4 }}>
+        <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginTop: 4 }}>
           Sources Found
         </p>
       </div>
@@ -40,7 +40,7 @@ export default function RightRail({ citations, books, onWantMore }: Props) {
               <p className="font-body" style={{ fontSize: 12, fontWeight: 600, color: "#1E1B4B" }}>
                 {book.name}
               </p>
-              <span className="font-body" style={{ fontSize: 11, color: "#9CA3AF", fontWeight: 500 }}>
+              <span className="font-body" style={{ fontSize: 11, color: "#6B7280", fontWeight: 500 }}>
                 {total}
               </span>
             </div>
@@ -62,7 +62,7 @@ export default function RightRail({ citations, books, onWantMore }: Props) {
                 </a>
               ))}
               {bookCitations.length > 5 && (
-                <span className="font-body" style={{ fontSize: 11, color: "#9CA3AF" }}>
+                <span className="font-body" style={{ fontSize: 11, color: "#6B7280" }}>
                   +{bookCitations.length - 5} more
                 </span>
               )}

@@ -72,9 +72,9 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
             <div role="menu" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, minWidth: 180, borderRadius: 14, background: "linear-gradient(145deg, rgba(255,248,252,0.98), rgba(246,238,255,0.96) 58%, rgba(255,241,238,0.96))", border: "1px solid rgba(214,195,255,0.55)", boxShadow: "0 16px 30px rgba(109,74,176,0.16)", padding: 6 }}>
               {moreItems.map(item => (
                 <button key={item} role="menuitem" onClick={() => handleMoreItemClick(item)} className="font-body"
-                  style={{ width: "100%", border: "none", background: "transparent", color: "#4B5563", padding: "10px 12px", borderRadius: 10, textAlign: "left", cursor: "pointer", fontSize: 14, fontWeight: 500 }}
+                  style={{ width: "100%", border: "none", background: "transparent", color: "#374151", padding: "10px 12px", borderRadius: 10, textAlign: "left", cursor: "pointer", fontSize: 14, fontWeight: 500 }}
                   onMouseEnter={e => { e.currentTarget.style.background = "rgba(214,195,255,0.32)"; e.currentTarget.style.color = "#3A315F"; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#4B5563"; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#374151"; }}
                 >{item}</button>
               ))}
             </div>

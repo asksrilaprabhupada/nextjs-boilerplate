@@ -77,7 +77,7 @@ export default function BookResultCard({ book, index }: BookResultCardProps) {
                 fontWeight: 500,
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
-                color: "#9CA3AF",
+                color: "#6B7280",
               }}
             >
               FROM {book.name.toUpperCase()}
@@ -196,7 +196,7 @@ export default function BookResultCard({ book, index }: BookResultCardProps) {
                       fontSize: 14,
                       fontWeight: 400,
                       lineHeight: 1.8,
-                      color: "#4B5563",
+                      color: "#374151",
                     }}
                   >
                     {truncate(verse.purport, 1200)}
@@ -227,7 +227,7 @@ export default function BookResultCard({ book, index }: BookResultCardProps) {
                     fontWeight: 600,
                     textTransform: "uppercase",
                     letterSpacing: "0.08em",
-                    color: "#9CA3AF",
+                    color: "#6B7280",
                     marginBottom: 8,
                   }}
                 >
@@ -240,7 +240,7 @@ export default function BookResultCard({ book, index }: BookResultCardProps) {
                   fontSize: 15,
                   fontWeight: 400,
                   lineHeight: 1.8,
-                  color: "#4B5563",
+                  color: "#374151",
                 }}
               >
                 {truncate(para.body_text, 800)}

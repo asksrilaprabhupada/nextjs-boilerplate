@@ -30,7 +30,7 @@ export default function StatsSection() {
         {stats.map(stat => (
           <div key={stat.label} className="aurora-card scroll-reveal" style={{ padding: "40px 24px", textAlign: "center" }}>
             <div className="font-display" style={{ fontSize: "clamp(36px, 4vw, 48px)", fontWeight: 600, color: stat.color, lineHeight: 1.1, marginBottom: 8 }}>{stat.value}</div>
-            <div className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#9CA3AF", textTransform: "uppercase", letterSpacing: "0.08em" }}>{stat.label}</div>
+            <div className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#6B7280", textTransform: "uppercase", letterSpacing: "0.08em" }}>{stat.label}</div>
           </div>
         ))}
       </div>

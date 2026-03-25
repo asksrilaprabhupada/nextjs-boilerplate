@@ -75,7 +75,7 @@ export default function FeaturesSection() {
           <div key={f.title} className="aurora-card scroll-reveal" style={{ gridColumn: f.span ? "span 2" : "span 1", transitionDelay: `${i * 80}ms` }}>
             <div style={{ width: 48, height: 48, borderRadius: 14, background: f.bgTint, display: "flex", alignItems: "center", justifyContent: "center", color: f.color, marginBottom: 20 }}>{f.icon}</div>
             <h3 className="font-body" style={{ fontSize: 19, fontWeight: 500, color: "#1E1B4B", marginBottom: 10 }}>{f.title}</h3>
-            <p className="font-body" style={{ fontSize: 16, fontWeight: 400, lineHeight: 1.7, color: "#4B5563" }}>{f.description}</p>
+            <p className="font-body" style={{ fontSize: 16, fontWeight: 400, lineHeight: 1.7, color: "#374151" }}>{f.description}</p>
           </div>
         ))}
       </div>

@@ -84,7 +84,7 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
                 borderRadius: 10,
                 border: "1px solid rgba(196, 181, 253, 0.25)",
                 background: "rgba(255, 255, 255, 0.6)",
-                color: "#9CA3AF",
+                color: "#6B7280",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
@@ -99,7 +99,7 @@ export default function PageOverlay({ isOpen, onClose, children }: PageOverlayPr
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = "rgba(255, 255, 255, 0.6)";
-                e.currentTarget.style.color = "#9CA3AF";
+                e.currentTarget.style.color = "#6B7280";
                 e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.25)";
               }}
             >

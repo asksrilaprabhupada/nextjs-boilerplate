@@ -39,7 +39,7 @@ export default function ContactOverlay() {
       <div style={{ textAlign: "center", padding: "40px 0" }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>🙏</div>
         <h2 className="font-display" style={{ fontSize: "1.4rem", fontWeight: 600, color: "#1E1B4B", marginBottom: 8 }}>Message sent!</h2>
-        <p className="font-body" style={{ fontSize: 15, color: "#9CA3AF" }}>We&apos;ll get back to you soon. Hare Kṛṣṇa!</p>
+        <p className="font-body" style={{ fontSize: 15, color: "#6B7280" }}>We&apos;ll get back to you soon. Hare Kṛṣṇa!</p>
         <button onClick={() => setSent(false)} className="font-body" style={{ marginTop: 20, padding: "8px 20px", borderRadius: 10, border: "1px solid rgba(196,181,253,0.3)", background: "transparent", color: "#7C3AED", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
           Send another message
         </button>
@@ -50,24 +50,24 @@ export default function ContactOverlay() {
   return (
     <div>
       <h2 className="font-display" style={{ fontSize: "1.6rem", fontWeight: 600, color: "#1E1B4B", marginBottom: 8, letterSpacing: "-0.02em" }}>Get in touch</h2>
-      <p className="font-body" style={{ fontSize: 14, color: "#9CA3AF", marginBottom: 20 }}>Your message will be sent directly to the team. We read every message.</p>
+      <p className="font-body" style={{ fontSize: 14, color: "#6B7280", marginBottom: 20 }}>Your message will be sent directly to the team. We read every message.</p>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <div>
-          <label className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#9CA3AF", marginBottom: 6, display: "block", textTransform: "uppercase", letterSpacing: "0.1em" }}>Name</label>
+          <label className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#6B7280", marginBottom: 6, display: "block", textTransform: "uppercase", letterSpacing: "0.1em" }}>Name</label>
           <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" style={inputStyle}
             onFocus={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.12)"; }}
             onBlur={e => { e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.3)"; e.currentTarget.style.boxShadow = "none"; }}
           />
         </div>
         <div>
-          <label className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#9CA3AF", marginBottom: 6, display: "block", textTransform: "uppercase", letterSpacing: "0.1em" }}>Email</label>
+          <label className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#6B7280", marginBottom: 6, display: "block", textTransform: "uppercase", letterSpacing: "0.1em" }}>Email</label>
           <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="your@email.com (so we can reply)" style={inputStyle}
             onFocus={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.12)"; }}
             onBlur={e => { e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.3)"; e.currentTarget.style.boxShadow = "none"; }}
           />
         </div>
         <div>
-          <label className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#9CA3AF", marginBottom: 6, display: "block", textTransform: "uppercase", letterSpacing: "0.1em" }}>Message</label>
+          <label className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#6B7280", marginBottom: 6, display: "block", textTransform: "uppercase", letterSpacing: "0.1em" }}>Message</label>
           <textarea value={message} onChange={e => setMessage(e.target.value)} placeholder="Your message..." rows={5}
             style={{ ...inputStyle, resize: "vertical", minHeight: 100 }}
             onFocus={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.boxShadow = "0 0 0 3px rgba(139,92,246,0.12)"; }}
