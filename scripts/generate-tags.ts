@@ -10,8 +10,10 @@
  */
 
 import { createClient } from "@supabase/supabase-js";
-import { readFileSync } from "fs";
+import { readFileSync, appendFileSync } from "fs";
 import { resolve } from "path";
+
+const FAILED_LOG = resolve(__dirname, "..", "failed-verses.log");
 
 // ---------------------------------------------------------------------------
 // Load .env.local
@@ -70,7 +72,7 @@ async function callGemini(prompt: string): Promise<string> {
       contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.2,
-        maxOutputTokens: 2048,
+        maxOutputTokens: 4096,
         responseMimeType: "application/json",
       },
     }),
@@ -182,24 +184,43 @@ Return a JSON object with these fields:
   "summary": "1-2 sentence summary of the key teaching"
 }`;
 
-  const raw = await callGemini(prompt);
+  let parsed: ReturnType<typeof extractJSON> = null;
 
-  if (TEST_MODE) {
-    console.log(`  RAW (first 300 chars): ${raw.substring(0, 300)}`);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const raw = await callGemini(prompt);
+
+    if (TEST_MODE) {
+      console.log(`  RAW attempt ${attempt} (first 300 chars): ${raw.substring(0, 300)}`);
+    }
+
+    parsed = extractJSON(raw);
+    if (parsed) break;
+
+    if (attempt === 1) {
+      console.warn(`  ⚠️ Parse failed for verse ${verse.id}, retrying in 2s...`);
+      if (!TEST_MODE) {
+        console.error(`     Raw response (first 150): ${raw.substring(0, 150)}`);
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    } else {
+      console.error(`  ❌ Both attempts failed for verse ${verse.id} — logging to failed-verses.log`);
+      if (!TEST_MODE) {
+        console.error(`     Raw response (first 150): ${raw.substring(0, 150)}`);
+      }
+      appendFileSync(FAILED_LOG, `verse:${verse.id}\n`);
+      return false;
+    }
   }
 
-  const parsed = extractJSON(raw);
   if (!parsed) {
-    console.error(`  ❌ Failed to parse JSON for verse ${verse.id}`);
-    if (!TEST_MODE) {
-      console.error(`     Raw response (first 150): ${raw.substring(0, 150)}`);
-    }
+    appendFileSync(FAILED_LOG, `verse:${verse.id}\n`);
     return false;
   }
 
   const tags = buildTags(parsed);
   if (tags.length === 0) {
     console.error(`  ❌ Empty tags for verse ${verse.id}`);
+    appendFileSync(FAILED_LOG, `verse:${verse.id}:empty_tags\n`);
     return false;
   }
 
@@ -389,18 +410,36 @@ Return a JSON object with these fields:
   "summary": "1-2 sentence summary of the key teaching"
 }`;
 
-        const raw = await callGemini(prompt);
+        let parsed: ReturnType<typeof extractJSON> = null;
 
-        if (TEST_MODE) {
-          console.log(`  RAW (first 300 chars): ${raw.substring(0, 300)}`);
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          const raw = await callGemini(prompt);
+
+          if (TEST_MODE) {
+            console.log(`  RAW attempt ${attempt} (first 300 chars): ${raw.substring(0, 300)}`);
+          }
+
+          parsed = extractJSON(raw);
+          if (parsed) break;
+
+          if (attempt === 1) {
+            console.warn(`  ⚠️ Parse failed for prose ${row.id}, retrying in 2s...`);
+            if (!TEST_MODE) {
+              console.error(`     Raw (first 150): ${raw.substring(0, 150)}`);
+            }
+            await new Promise((r) => setTimeout(r, 2000));
+          } else {
+            console.error(`  ❌ Both attempts failed for prose ${row.id} — logging to failed-verses.log`);
+            if (!TEST_MODE) {
+              console.error(`     Raw (first 150): ${raw.substring(0, 150)}`);
+            }
+            appendFileSync(FAILED_LOG, `prose:${row.id}\n`);
+            errors++;
+            continue;
+          }
         }
 
-        const parsed = extractJSON(raw);
         if (!parsed) {
-          console.error(`  ❌ Failed to parse JSON for prose ${row.id}`);
-          if (!TEST_MODE) {
-            console.error(`     Raw (first 150): ${raw.substring(0, 150)}`);
-          }
           errors++;
           continue;
         }
@@ -408,6 +447,7 @@ Return a JSON object with these fields:
         const tags = buildTags(parsed);
         if (tags.length === 0) {
           console.error(`  ❌ Empty tags for prose ${row.id}`);
+          appendFileSync(FAILED_LOG, `prose:${row.id}:empty_tags\n`);
           errors++;
           continue;
         }
