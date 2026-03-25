@@ -1,3 +1,10 @@
+/*
+ * globals.css — Global Styles
+ *
+ * Defines the complete light theme: CSS variables, aurora gradients, glassmorphism cards,
+ * animations (Ken Burns, typewriter, pulse, float), responsive breakpoints, and typography.
+ * Establishes the spiritual, warm, and modern visual identity of the app.
+ */
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=DM+Sans:wght@300;400;500;600&family=Noto+Serif+Devanagari:wght@400;500;600&display=swap');
 
 @import "tailwindcss";

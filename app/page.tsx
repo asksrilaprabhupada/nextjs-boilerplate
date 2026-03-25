@@ -1,22 +1,28 @@
+/**
+ * page.tsx — Home Page
+ *
+ * Main entry point of the app that orchestrates the lock screen, search bar, narrative results, landing sections, and modal overlays.
+ * Ties together all major features into a single-page search experience.
+ */
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import LockScreen from "./components/LockScreen";
-import Header from "./components/Header";
-import HeroSearch from "./components/HeroSearch";
-import NarrativeResponse, { SearchResults } from "./components/NarrativeResponse";
-import WhyDifferent from "./components/WhyDifferent";
-import TestimonialsSection from "./components/TestimonialsSection";
-import CTASection from "./components/CTASection";
-import FooterSection from "./components/FooterSection";
-import PageOverlay from "./components/PageOverlay";
-import AboutOverlay from "./components/AboutOverlay";
-import DonateOverlay from "./components/DonateOverlay";
-import ContactOverlay from "./components/ContactOverlay";
-import FeatureRequestOverlay from "./components/FeatureRequestOverlay";
-import FeedbackButton from "./components/FeedbackButton";
-import { logSearch, logBehavior } from "./lib/analytics";
-import { useSearchBehaviorTracker } from "./hooks/useSearchBehaviorTracker";
+import LockScreen from "./components/lockscreen/01-lock-screen";
+import Header from "./components/layout/01-header";
+import HeroSearch from "./components/search/01-hero-search";
+import NarrativeResponse, { SearchResults } from "./components/results/01-narrative-response";
+import WhyDifferent from "./components/landing/01-why-different";
+import TestimonialsSection from "./components/landing/04-testimonials-section";
+import CTASection from "./components/landing/05-cta-section";
+import FooterSection from "./components/layout/02-footer";
+import PageOverlay from "./components/overlays/01-page-overlay";
+import AboutOverlay from "./components/overlays/02-about-overlay";
+import DonateOverlay from "./components/overlays/03-donate-overlay";
+import ContactOverlay from "./components/overlays/04-contact-overlay";
+import FeatureRequestOverlay from "./components/overlays/05-feature-request-overlay";
+import FeedbackButton from "./components/feedback/01-feedback-button";
+import { logSearch, logBehavior } from "./lib/02-analytics";
+import { useSearchBehaviorTracker } from "./hooks/01-use-search-behavior-tracker";
 
 type OverlayItem = "About" | "Donate" | "Contact" | "Feature Request";
 

@@ -1,3 +1,9 @@
+/**
+ * route.ts — Analytics Behavior Route
+ *
+ * Logs user behavior events (clicks, scroll depth, follow-up searches) to Supabase.
+ * Captures interaction patterns to understand how users engage with results.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 

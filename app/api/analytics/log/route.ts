@@ -1,3 +1,9 @@
+/**
+ * route.ts — Analytics Log Route
+ *
+ * Logs search queries, result counts, and response times to Supabase.
+ * Captures search analytics data for monitoring and improvement.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 

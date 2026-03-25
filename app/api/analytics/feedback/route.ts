@@ -1,3 +1,9 @@
+/**
+ * route.ts — Analytics Feedback Route
+ *
+ * Records thumbs-up/thumbs-down votes on search results to Supabase.
+ * Captures quality signals that help evaluate search relevance.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 

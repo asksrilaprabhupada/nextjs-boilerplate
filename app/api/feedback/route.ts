@@ -1,3 +1,9 @@
+/**
+ * route.ts — Feedback API Route
+ *
+ * Handles contact form, bug report, and feature request submissions by saving them to Supabase.
+ * Collects user feedback from the contact and feature request overlays.
+ */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 

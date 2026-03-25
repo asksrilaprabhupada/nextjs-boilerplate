@@ -1,3 +1,9 @@
+/**
+ * page.tsx — Verse Detail Page
+ *
+ * Displays a single verse with full Sanskrit, transliteration, translation, synonyms, and Srila Prabhupada's purport.
+ * Provides a dedicated deep-read page for any verse linked from search results.
+ */
 "use client";
 
 import { useEffect, useState } from "react";
