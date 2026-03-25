@@ -64,6 +64,7 @@ async function callGemini(prompt: string): Promise<string> {
       generationConfig: {
         temperature: 0.3,
         maxOutputTokens: 1024,
+        responseMimeType: "application/json",
       },
     }),
   });
@@ -88,23 +89,19 @@ function parseGeminiJson(raw: string): {
   questions?: string[];
   summary?: string;
 } | null {
-  let cleaned = raw.trim();
-  // Strip markdown code fences
-  if (cleaned.startsWith("```")) {
-    cleaned = cleaned.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
+  // Strip markdown code fences (```json ... ```) that Gemini sometimes wraps around JSON
+  let cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+
+  // Extract everything between the first { and last } as a safety net
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    cleaned = cleaned.substring(firstBrace, lastBrace + 1);
   }
+
   try {
     return JSON.parse(cleaned);
   } catch {
-    // Try to extract JSON object from the text
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (match) {
-      try {
-        return JSON.parse(match[0]);
-      } catch {
-        return null;
-      }
-    }
     return null;
   }
 }
