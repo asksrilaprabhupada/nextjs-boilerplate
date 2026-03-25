@@ -179,6 +179,10 @@ export default function Home() {
                 totalResults: event.totalResults,
                 citations: event.citations,
                 books: event.books,
+                overflowVerses: event.overflowVerses || [],
+                overflowProse: event.overflowProse || [],
+                totalVerses: event.totalVerses || 0,
+                totalProse: event.totalProse || 0,
               };
               setSearchResults(partialResults);
               setIsSearching(false);
