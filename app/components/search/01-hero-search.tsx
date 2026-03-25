@@ -100,7 +100,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
         )}
 
         {/* Title */}
-        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 16, color: "#1E1B4B" }}>Ask<br /><span style={{ whiteSpace: "nowrap", background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
+        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(38px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 16, color: "#1E1B4B", overflowWrap: "break-word" }}>Ask<br /><span style={{ background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
 
         {/* Subtitle */}
         {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.65, marginBottom: 22 }}>Explore 27 books of Śrīla Prabhupāda — every answer drawn directly from his translations, purports, and teachings. Nothing added, nothing invented.</p>}
@@ -207,7 +207,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
             )}
 
             {/* Voice input button */}
-            <div style={{ position: "absolute", right: 54, top: 12 }}>
+            <div className="hero-voice-btn" style={{ position: "absolute", right: 54, top: 12 }}>
               <VoiceInput
                 onTranscript={handleVoiceTranscript}
                 onFinalTranscript={handleVoiceFinal}
