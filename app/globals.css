@@ -212,6 +212,16 @@ body {
   50% { transform: translateY(-6px); opacity: 1; }
 }
 
+@keyframes typewriterBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes searchStepPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(139, 92, 246, 0); }
+}
+
 @keyframes rotate-mandala {
   from { transform: translate(-50%, -50%) rotate(0deg); }
   to { transform: translate(-50%, -50%) rotate(360deg); }
@@ -481,6 +491,25 @@ body {
   }
   .step-connectors {
     display: none !important;
+  }
+  .hero-search-input {
+    padding: 16px 100px 16px 20px !important;
+    font-size: 16px !important;
+    border-radius: 14px !important;
+  }
+  .topic-pills-container {
+    overflow-x: auto !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    padding-bottom: 4px !important;
+  }
+  .topic-pills-container::-webkit-scrollbar {
+    display: none;
+  }
+  .search-progress {
+    padding: 40px 16px 30px !important;
   }
 }
 
