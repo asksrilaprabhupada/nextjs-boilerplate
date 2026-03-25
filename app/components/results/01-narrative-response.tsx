@@ -6,12 +6,13 @@
  */
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import LeftRail from "./02-left-rail";
 import RightRail from "./03-right-rail";
 import WantMoreModal from "./06-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
+import DigDeeperModal from "./07-dig-deeper-modal";
 
 export interface Citation {
   ref: string;
@@ -63,6 +64,12 @@ interface Props {
 
 export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId }: Props) {
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
+  const [digDeeperOpen, setDigDeeperOpen] = useState(false);
+
+  // Reset dig deeper modal when results change
+  useEffect(() => {
+    setDigDeeperOpen(false);
+  }, [results?.query]);
 
   if (isLoading) {
     // SearchProgress component in HeroSearch handles the loading state now
@@ -153,6 +160,38 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
             <SearchFeedback searchLogId={searchLogId || null} />
           )}
 
+          {/* Dig Deeper — only show when there are results beyond the top 25 */}
+          {!isStreaming && results && ((results.totalVerses || 0) + (results.totalProse || 0)) > 25 && (
+            <button
+              onClick={() => setDigDeeperOpen(true)}
+              className="font-body"
+              style={{
+                width: "100%",
+                marginTop: 16,
+                padding: "14px 20px",
+                borderRadius: 16,
+                border: "1px dashed rgba(196,181,253,0.4)",
+                background: "rgba(139,92,246,0.04)",
+                fontSize: 14,
+                fontWeight: 600,
+                color: "#7C3AED",
+                cursor: "pointer",
+                textAlign: "center",
+                transition: "all 0.3s ease",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = "rgba(139,92,246,0.1)";
+                e.currentTarget.style.borderColor = "#8B5CF6";
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = "rgba(139,92,246,0.04)";
+                e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)";
+              }}
+            >
+              Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources →
+            </button>
+          )}
+
           {/* Follow-up questions — hidden while streaming */}
           {!isStreaming && followUps.length > 0 && (
             <div style={{ marginTop: 20, padding: "clamp(14px, 3vw, 20px) clamp(16px, 3vw, 24px)", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
@@ -183,6 +222,17 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
       {/* Want More Modal */}
       {modalBook && <WantMoreModal book={modalBook} onClose={() => setModalBook(null)} />}
+
+      {/* Dig Deeper Modal */}
+      {digDeeperOpen && results && (
+        <DigDeeperModal
+          overflowVerses={results.overflowVerses || []}
+          overflowProse={results.overflowProse || []}
+          totalVerses={results.totalVerses || 0}
+          totalProse={results.totalProse || 0}
+          onClose={() => setDigDeeperOpen(false)}
+        />
+      )}
 
       {/* Responsive + Narrative styles */}
       <style jsx global>{`
