@@ -53,17 +53,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
 
   if (isLoading) {
-    return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px 20px", gap: 16 }}>
-        <div style={{ width: 40, height: 40, borderRadius: "50%", border: "2px solid rgba(196,181,253,0.3)", borderTopColor: "#8B5CF6", animation: "spin 0.8s linear infinite" }} />
-        <p className="font-display" style={{ fontSize: "1.05rem", fontStyle: "italic", color: "#9CA3AF" }}>
-          Searching across 27 books of Śrīla Prabhupāda...
-        </p>
-        <p className="font-body" style={{ fontSize: 13, color: "#C4B5FD" }}>
-          Extracting keywords · Finding synonyms · Searching scripture · Synthesizing answer...
-        </p>
-      </div>
-    );
+    // SearchProgress component in HeroSearch handles the loading state now
+    return null;
   }
 
   if (!results) return null;
