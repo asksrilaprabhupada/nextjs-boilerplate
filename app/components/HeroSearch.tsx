@@ -62,15 +62,15 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
         {heroVisible && (
           <div className="font-body" style={{ ...stagger(0), display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 16px 6px 10px", borderRadius: 100, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(196,181,253,0.3)", marginBottom: 32 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8B5CF6", animation: "pulseDot 2.5s ease-in-out infinite" }} />
-            <span style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.15em", color: "#7C3AED" }}>27 books · 59,000+ searchable entries</span>
+            <span style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.10em", color: "#7C3AED" }}>27 books · 59,000+ searchable entries</span>
           </div>
         )}
 
         {/* Title */}
-        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 24, color: "#1E1B4B" }}>Ask anything to Śrīla Prabhupāda</h1>}
+        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 24, color: "#1E1B4B" }}>Ask{" "}<span style={{ background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
 
         {/* Subtitle */}
-        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(16px, 1.8vw, 17px)", fontWeight: 400, color: "#4B5563", textAlign: "center", maxWidth: 540, lineHeight: 1.7, marginBottom: 28 }}>Search across all 27 books — Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more. AI-powered answers from Prabhupāda&apos;s actual words.</p>}
+        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(16px, 1.8vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.7, marginBottom: 28 }}>Search across all 27 books — Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more. AI-powered answers from Prabhupāda&apos;s actual words.</p>}
 
         {/* Search form */}
         <form
@@ -100,7 +100,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                 padding: "20px 160px 20px 24px",
                 fontSize: 17,
                 fontWeight: 400,
-                border: "1.5px solid rgba(196,181,253,0.35)",
+                border: "1.5px solid rgba(196,181,253,0.5)",
                 borderRadius: 18,
                 background: "rgba(255,255,255,0.85)",
                 backdropFilter: "blur(24px)",
@@ -109,9 +109,9 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                 outline: "none",
                 transition: "border-color 0.3s, box-shadow 0.3s",
                 boxShadow: isFocused
-                  ? "0 0 0 3px rgba(139,92,246,0.15), 0 8px 32px rgba(111,74,177,0.18), 0 0 60px rgba(139,92,246,0.06)"
+                  ? "0 0 0 3px rgba(139,92,246,0.12), 0 4px 24px rgba(139,92,246,0.08)"
                   : "0 8px 32px rgba(111,74,177,0.14), 0 0 60px rgba(139,92,246,0.04)",
-                borderColor: isFocused ? "#8B5CF6" : "rgba(196,181,253,0.35)",
+                borderColor: isFocused ? "#8B5CF6" : "rgba(196,181,253,0.5)",
               }}
             />
 
@@ -159,10 +159,10 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                   alignItems: "center",
                   justifyContent: "center",
                   transition: "all 0.2s ease",
-                  color: "#9CA3AF",
+                  color: "#6B7280",
                 }}
                 onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.15)"; e.currentTarget.style.color = "#7C3AED"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.08)"; e.currentTarget.style.color = "#9CA3AF"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.08)"; e.currentTarget.style.color = "#6B7280"; }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                   <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -193,7 +193,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
                 width: 42,
                 height: 42,
                 borderRadius: 12,
-                background: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
+                background: "linear-gradient(135deg, #7C3AED, #6D28D9)",
                 border: "none",
                 cursor: query.trim() ? "pointer" : "default",
                 display: "flex",

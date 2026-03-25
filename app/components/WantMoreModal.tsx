@@ -39,7 +39,7 @@ export default function WantMoreModal({ book, onClose }: Props) {
           style={{ width: "100%", maxWidth: 720, maxHeight: "85vh", overflowY: "auto", background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)", borderRadius: 22, padding: "32px 28px", boxShadow: "0 24px 80px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)", position: "relative" }}
         >
           {/* Close */}
-          <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", color: "#9CA3AF", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✕</button>
+          <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✕</button>
 
           {/* Header */}
           <div style={{ marginBottom: 24 }}>
@@ -49,7 +49,7 @@ export default function WantMoreModal({ book, onClose }: Props) {
             <h2 className="font-display" style={{ fontSize: "1.4rem", fontWeight: 600, color: "#1E1B4B" }}>
               {book.name}
             </h2>
-            <p className="font-body" style={{ fontSize: 13, color: "#9CA3AF", marginTop: 4 }}>
+            <p className="font-body" style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
               {book.verses.length} verses · {book.prose.length} prose passages
             </p>
           </div>
@@ -74,7 +74,7 @@ export default function WantMoreModal({ book, onClose }: Props) {
                 </div>
                 {v.purport && (
                   <div style={{ marginTop: 6, background: "rgba(139,92,246,0.03)", border: "1px solid rgba(196,181,253,0.15)", borderLeft: "3px solid #7C3AED", padding: "14px 18px", borderRadius: 14 }}>
-                    <p className="font-body" style={{ fontSize: 13, lineHeight: 1.8, color: "#4B5563" }}>{truncate(v.purport, 600)}</p>
+                    <p className="font-body" style={{ fontSize: 13, lineHeight: 1.8, color: "#374151" }}>{truncate(v.purport, 600)}</p>
                   </div>
                 )}
               </div>
@@ -85,9 +85,9 @@ export default function WantMoreModal({ book, onClose }: Props) {
           {book.prose.map(p => (
             <div key={p.id} style={{ marginBottom: 14, background: "rgba(245,240,255,0.3)", border: "1px solid rgba(196,181,253,0.15)", borderLeft: "3px solid #6366F1", padding: "14px 18px", borderRadius: 14 }}>
               {p.chapter_title && (
-                <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#9CA3AF", marginBottom: 6 }}>{p.chapter_title}</p>
+                <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#6B7280", marginBottom: 6 }}>{p.chapter_title}</p>
               )}
-              <p className="font-body" style={{ fontSize: 14, lineHeight: 1.8, color: "#4B5563" }}>{truncate(p.body_text, 500)}</p>
+              <p className="font-body" style={{ fontSize: 14, lineHeight: 1.8, color: "#374151" }}>{truncate(p.body_text, 500)}</p>
               {p.vedabase_url && (
                 <div style={{ textAlign: "right", marginTop: 6 }}>
                   <a href={p.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#6366F1", textDecoration: "none", fontWeight: 500 }}>

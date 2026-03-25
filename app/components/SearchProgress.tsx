@@ -118,7 +118,7 @@ export default function SearchProgress({ isSearching }: SearchProgressProps) {
                 style={{
                   fontSize: 14,
                   fontWeight: isActive ? 600 : isDone ? 500 : 400,
-                  color: isActive ? "#7C3AED" : isDone ? "#059669" : "#9CA3AF",
+                  color: isActive ? "#7C3AED" : isDone ? "#059669" : "#6B7280",
                   transition: "all 0.3s ease",
                 }}
               >

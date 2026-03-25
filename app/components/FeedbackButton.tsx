@@ -91,14 +91,14 @@ export default function FeedbackButton({ currentQuery }: Props) {
                 <div style={{ textAlign: "center", padding: "20px 0" }}>
                   <div style={{ fontSize: 32, marginBottom: 8 }}>🙏</div>
                   <p className="font-display" style={{ fontSize: "1.1rem", color: "#1E1B4B", fontWeight: 600 }}>Thank you!</p>
-                  <p className="font-body" style={{ fontSize: 13, color: "#9CA3AF", marginTop: 4 }}>Your {typeLabels[type].label.toLowerCase()} has been recorded.</p>
+                  <p className="font-body" style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>Your {typeLabels[type].label.toLowerCase()} has been recorded.</p>
                 </div>
               ) : (
                 <>
                   {/* Header */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
                     <p className="font-body" style={{ fontSize: 14, fontWeight: 600, color: "#1E1B4B" }}>Share your thoughts</p>
-                    <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid rgba(196,181,253,0.25)", background: "transparent", color: "#9CA3AF", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>✕</button>
+                    <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid rgba(196,181,253,0.25)", background: "transparent", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>✕</button>
                   </div>
 
                   {/* Type selector */}
@@ -160,7 +160,7 @@ export default function FeedbackButton({ currentQuery }: Props) {
                     style={{
                       width: "100%", marginTop: 12, padding: "10px 16px", borderRadius: 10,
                       background: message.trim() ? "linear-gradient(135deg, #8B5CF6, #7C3AED)" : "rgba(196,181,253,0.2)",
-                      color: message.trim() ? "#fff" : "#9CA3AF",
+                      color: message.trim() ? "#fff" : "#6B7280",
                       border: "none", fontSize: 14, fontWeight: 500, cursor: message.trim() ? "pointer" : "default",
                       transition: "all 0.3s",
                     }}

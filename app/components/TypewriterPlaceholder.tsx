@@ -75,7 +75,7 @@ export default function TypewriterPlaceholder({ isFocused }: TypewriterPlacehold
         top: "50%",
         transform: "translateY(-50%)",
         fontSize: 17,
-        color: "#9CA3AF",
+        color: "#6B7280",
         pointerEvents: "none",
         display: "flex",
         alignItems: "center",

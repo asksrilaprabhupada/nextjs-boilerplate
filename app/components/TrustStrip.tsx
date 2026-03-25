@@ -36,7 +36,7 @@ export default function TrustStrip() {
         {trustPoints.map(tp => (
           <div key={tp.text} style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {tp.icon}
-            <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#4B5563" }}>{tp.text}</span>
+            <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#374151" }}>{tp.text}</span>
           </div>
         ))}
       </div>

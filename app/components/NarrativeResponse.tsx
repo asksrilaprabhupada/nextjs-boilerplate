@@ -62,8 +62,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
   if (results.totalResults === 0) {
     return (
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 20px", gap: 12 }}>
-        <p className="font-display" style={{ fontSize: "1.1rem", color: "#9CA3AF", fontStyle: "italic" }}>No results found.</p>
-        <p className="font-body" style={{ fontSize: 14, color: "#9CA3AF" }}>Try different words or a simpler question.</p>
+        <p className="font-display" style={{ fontSize: "1.1rem", color: "#6B7280", fontStyle: "italic" }}>No results found.</p>
+        <p className="font-body" style={{ fontSize: 14, color: "#6B7280" }}>Try different words or a simpler question.</p>
       </div>
     );
   }
@@ -100,7 +100,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
           {/* Keywords used */}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16, justifyContent: "center" }}>
-            <span className="font-body" style={{ fontSize: 12, color: "#9CA3AF" }}>Searched:</span>
+            <span className="font-body" style={{ fontSize: 12, color: "#6B7280" }}>Searched:</span>
             {results.keywords.slice(0, 6).map(k => (
               <span key={k} className="font-body" style={{ fontSize: 11, padding: "2px 10px", borderRadius: 100, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(196,181,253,0.3)", color: "#7C3AED", fontWeight: 500 }}>{k}</span>
             ))}
@@ -115,7 +115,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
               <span className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: "#7C3AED" }}>
                 From Śrīla Prabhupāda&apos;s Books
               </span>
-              <span className="font-body" style={{ fontSize: 11, color: "#9CA3AF", marginLeft: "auto" }}>
+              <span className="font-body" style={{ fontSize: 11, color: "#6B7280", marginLeft: "auto" }}>
                 {results.totalResults} sources found
               </span>
             </div>
@@ -124,12 +124,12 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
               className="narrative-content font-body"
               dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
               onClick={handleNarrativeClick}
-              style={{ fontSize: 15, lineHeight: 1.8, color: "#4B5563" }}
+              style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
             />
             {isStreaming && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
                 <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
-                <span className="font-body" style={{ fontSize: 12, color: "#9CA3AF", fontStyle: "italic" }}>
+                <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
                   Composing from Prabhupāda&apos;s words...
                 </span>
               </div>
@@ -139,7 +139,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           {/* Follow-up questions — hidden while streaming */}
           {!isStreaming && followUps.length > 0 && (
             <div style={{ marginTop: 24, padding: "20px 24px", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
-              <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9CA3AF", marginBottom: 12 }}>
+              <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 12 }}>
                 People also explore
               </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -148,9 +148,9 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     key={q}
                     onClick={() => onSearch(q)}
                     className="font-body"
-                    style={{ textAlign: "left", padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", fontSize: 14, color: "#4B5563", cursor: "pointer", transition: "all 0.3s ease" }}
+                    style={{ textAlign: "left", padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", fontSize: 14, color: "#374151", cursor: "pointer", transition: "all 0.3s ease" }}
                     onMouseEnter={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.color = "#7C3AED"; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.25)"; e.currentTarget.style.color = "#4B5563"; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.25)"; e.currentTarget.style.color = "#374151"; }}
                   >
                     {q} →
                   </button>
@@ -182,7 +182,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           border-bottom: 1px solid rgba(196,181,253,0.2);
         }
         .narrative-content h3:first-child { margin-top: 0; }
-        .narrative-content p { margin-bottom: 12px; font-size: 15px; line-height: 1.8; color: #4B5563; }
+        .narrative-content p { margin-bottom: 12px; font-size: 15px; line-height: 1.8; color: #374151; }
         .narrative-content .verse-quote {
           background: rgba(245,240,255,0.5); border: 1px solid rgba(196,181,253,0.25);
           border-left: 3px solid #8B5CF6; padding: 14px 18px; border-radius: 12px; margin: 12px 0;
@@ -191,12 +191,12 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         .narrative-content .purport-quote {
           background: rgba(139,92,246,0.04); border: 1px solid rgba(196,181,253,0.18);
           border-left: 3px solid #7C3AED; padding: 14px 18px; border-radius: 12px; margin: 12px 0;
-          font-size: 14px; line-height: 1.8; color: #4B5563;
+          font-size: 14px; line-height: 1.8; color: #374151;
         }
         .narrative-content .prose-quote {
           background: rgba(245,240,255,0.3); border: 1px solid rgba(196,181,253,0.15);
           border-left: 3px solid #6366F1; padding: 14px 18px; border-radius: 12px; margin: 12px 0;
-          font-size: 14px; line-height: 1.8; color: #4B5563;
+          font-size: 14px; line-height: 1.8; color: #374151;
         }
         .narrative-content .verse-ref {
           font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;

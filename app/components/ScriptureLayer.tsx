@@ -114,7 +114,7 @@ export default function ScriptureLayer({
                 fontWeight: 500,
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
-                color: "#9CA3AF",
+                color: "#6B7280",
               }}
             >
               {config.label}
@@ -143,7 +143,7 @@ export default function ScriptureLayer({
               fontSize: 16,
               fontWeight: 400,
               lineHeight: 1.7,
-              color: "#4B5563",
+              color: "#374151",
               marginBottom: 24,
             }}
           >
@@ -176,7 +176,7 @@ export default function ScriptureLayer({
                     fontSize: 16,
                     fontWeight: 400,
                     lineHeight: 1.7,
-                    color: "#4B5563",
+                    color: "#374151",
                     margin: "20px 0",
                   }}
                 >

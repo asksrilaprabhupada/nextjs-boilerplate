@@ -54,7 +54,7 @@ export default function WhyDifferent() {
               {card.icon}
             </div>
             <h3 className="font-body" style={{ fontSize: 18, fontWeight: 600, color: "#1E1B4B", marginBottom: 8 }}>{card.title}</h3>
-            <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "#4B5563" }}>{card.description}</p>
+            <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "#374151" }}>{card.description}</p>
           </div>
         ))}
       </div>

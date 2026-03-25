@@ -62,7 +62,7 @@ export default function DonateOverlay() {
           fontSize: 15,
           lineHeight: 1.7,
           fontWeight: 400,
-          color: "#9CA3AF",
+          color: "#6B7280",
           marginBottom: 24,
         }}
       >
@@ -102,7 +102,7 @@ export default function DonateOverlay() {
                       fontWeight: 500,
                       textTransform: "uppercase",
                       letterSpacing: "0.1em",
-                      color: "#9CA3AF",
+                      color: "#6B7280",
                       marginBottom: 2,
                     }}
                   >
@@ -131,7 +131,7 @@ export default function DonateOverlay() {
                     borderRadius: 8,
                     border: "1px solid rgba(196, 181, 253, 0.25)",
                     background: copiedField === field.key ? "#8B5CF6" : "rgba(255,255,255,0.6)",
-                    color: copiedField === field.key ? "#fff" : "#9CA3AF",
+                    color: copiedField === field.key ? "#fff" : "#6B7280",
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
@@ -148,7 +148,7 @@ export default function DonateOverlay() {
                   onMouseLeave={(e) => {
                     if (copiedField !== field.key) {
                       e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.25)";
-                      e.currentTarget.style.color = "#9CA3AF";
+                      e.currentTarget.style.color = "#6B7280";
                     }
                   }}
                 >
@@ -173,7 +173,7 @@ export default function DonateOverlay() {
             style={{
               padding: "32px 20px",
               textAlign: "center",
-              color: "#9CA3AF",
+              color: "#6B7280",
               fontStyle: "italic",
               fontWeight: 400,
             }}

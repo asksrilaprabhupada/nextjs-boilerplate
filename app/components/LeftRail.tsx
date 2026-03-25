@@ -13,7 +13,7 @@ export default function LeftRail({ keywords, synonyms, relatedConcepts, onSearch
       {/* Related Sanskrit Terms */}
       {synonyms.length > 0 && (
         <div style={{ marginBottom: 20, padding: "16px 18px", borderRadius: 16, background: "rgba(255,255,255,0.6)", border: "1px solid rgba(196,181,253,0.25)", backdropFilter: "blur(10px)" }}>
-          <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9CA3AF", marginBottom: 10 }}>
+          <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 10 }}>
             Related Terms
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -35,7 +35,7 @@ export default function LeftRail({ keywords, synonyms, relatedConcepts, onSearch
 
       {/* Search Keywords */}
       <div style={{ marginBottom: 20, padding: "16px 18px", borderRadius: 16, background: "rgba(255,255,255,0.6)", border: "1px solid rgba(196,181,253,0.25)", backdropFilter: "blur(10px)" }}>
-        <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9CA3AF", marginBottom: 10 }}>
+        <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 10 }}>
           Keywords Used
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
@@ -50,7 +50,7 @@ export default function LeftRail({ keywords, synonyms, relatedConcepts, onSearch
       {/* Broader Concepts */}
       {relatedConcepts.length > 0 && (
         <div style={{ padding: "16px 18px", borderRadius: 16, background: "rgba(255,255,255,0.6)", border: "1px solid rgba(196,181,253,0.25)", backdropFilter: "blur(10px)" }}>
-          <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#9CA3AF", marginBottom: 10 }}>
+          <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 10 }}>
             Explore Further
           </p>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -59,9 +59,9 @@ export default function LeftRail({ keywords, synonyms, relatedConcepts, onSearch
                 key={c}
                 onClick={() => onSearch(`What does Prabhupāda say about ${c}?`)}
                 className="font-body"
-                style={{ textAlign: "left", fontSize: 13, padding: "8px 12px", borderRadius: 10, border: "none", background: "transparent", color: "#4B5563", cursor: "pointer", transition: "all 0.3s ease", fontWeight: 400 }}
+                style={{ textAlign: "left", fontSize: 13, padding: "8px 12px", borderRadius: 10, border: "none", background: "transparent", color: "#374151", cursor: "pointer", transition: "all 0.3s ease", fontWeight: 400 }}
                 onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.06)"; e.currentTarget.style.color = "#7C3AED"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#4B5563"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#374151"; }}
               >
                 → {c}
               </button>
