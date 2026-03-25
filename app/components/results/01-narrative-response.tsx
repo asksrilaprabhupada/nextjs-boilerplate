@@ -46,6 +46,10 @@ export interface SearchResults {
   totalResults: number;
   citations: Citation[];
   books: BookGroup[];
+  overflowVerses?: VerseHit[];
+  overflowProse?: ProseHit[];
+  totalVerses?: number;
+  totalProse?: number;
 }
 
 interface Props {
