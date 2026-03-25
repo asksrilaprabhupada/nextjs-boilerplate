@@ -91,7 +91,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
 
   const pillBase: React.CSSProperties = {
     borderRadius: 100, padding: "7px 14px", fontSize: 12, fontWeight: 600,
-    border: "1px solid rgba(196,181,253,0.25)", cursor: "pointer",
+    borderWidth: 1, borderStyle: "solid", borderColor: "rgba(196,181,253,0.25)", cursor: "pointer",
     transition: "all 0.15s ease", whiteSpace: "nowrap",
   };
   const pillActive: React.CSSProperties = { ...pillBase, background: "#7C3AED", color: "#fff", borderColor: "#7C3AED" };
