@@ -3,8 +3,6 @@
  *
  * Handles search queries with hybrid semantic + full-text search, Gemini AI narrative generation, and SSE streaming.
  * The core backend that powers the entire search experience.
- * 
- * UPDATED: Now uses vedabase_url_precise for prose paragraph deep links.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -36,12 +34,14 @@ const BOOK_NAMES: Record<string, string> = {
 };
 function getBookName(slug: string): string { return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown"; }
 
+/** Fallback URL builder — strips "Text " prefix as safety net */
 function buildVedabaseUrl(scripture: string, canto: string, chapter: string, verse: string): string {
   const base = "https://vedabase.io/en/library";
   const s = scripture?.toLowerCase();
-  if (s === "bg") return `${base}/bg/${chapter}/${verse}/`;
-  if (s === "sb") return `${base}/sb/${canto}/${chapter}/${verse}/`;
-  if (s === "cc") return `${base}/cc/${canto}/${chapter}/${verse}/`;
+  const cleanVerse = verse?.replace(/^Text\s+/i, "") || "";
+  if (s === "bg") return `${base}/bg/${chapter}/${cleanVerse}/`;
+  if (s === "sb") return `${base}/sb/${canto}/${chapter}/${cleanVerse}/`;
+  if (s === "cc") return `${base}/cc/${canto}/${chapter}/${cleanVerse}/`;
   return `${base}/${s}/`;
 }
 
@@ -78,10 +78,10 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 }
 
 // =====================================================
-// TYPES — UPDATED: ProseHit now includes vedabase_url_precise
+// TYPES
 // =====================================================
 interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; score?: number; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; vedabase_url_precise?: string; chapter_title?: string; score?: number; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; score?: number; }
 
 // =====================================================
 // HYBRID SEARCH: Semantic + Full-text with fallback
@@ -89,16 +89,13 @@ interface ProseHit { id: string; book_slug: string; paragraph_number: number; bo
 async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
   const supabase = getSupabase();
 
-  // Step 1: Embed the query
   const embedding = await embedQuery(query);
   const hasEmbedding = embedding.length === 1536;
 
   if (hasEmbedding) {
-    // Convert to string format for Supabase RPC
     const vectorStr = `[${embedding.join(",")}]`;
 
     try {
-      // Step 2: Run 4 search queries in parallel
       const [semanticVerses, semanticProse, ftsVerses, ftsProse] = await Promise.all([
         supabase.rpc("search_verses_semantic", { query_embedding: vectorStr, match_count: 20 }),
         supabase.rpc("search_prose_semantic", { query_embedding: vectorStr, match_count: 15 }),
@@ -106,37 +103,30 @@ async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose:
         supabase.rpc("search_prose_fulltext", { search_query: query, match_count: 10 }),
       ]);
 
-      // Step 3: Merge and deduplicate verses
       const verseMap = new Map<string, VerseHit & { score: number }>();
-
       for (const v of (semanticVerses.data || [])) {
         verseMap.set(v.id, { ...v, score: v.similarity || 0 });
       }
       for (const v of (ftsVerses.data || [])) {
         if (verseMap.has(v.id)) {
-          const existing = verseMap.get(v.id)!;
-          existing.score += 0.3;
+          verseMap.get(v.id)!.score += 0.3;
         } else {
           verseMap.set(v.id, { ...v, score: Math.min((v.rank || 0) * 10, 1) * 0.5 });
         }
       }
 
-      // Step 3b: Merge and deduplicate prose
       const proseMap = new Map<string, ProseHit & { score: number }>();
-
       for (const p of (semanticProse.data || [])) {
         proseMap.set(p.id, { ...p, score: p.similarity || 0 });
       }
       for (const p of (ftsProse.data || [])) {
         if (proseMap.has(p.id)) {
-          const existing = proseMap.get(p.id)!;
-          existing.score += 0.3;
+          proseMap.get(p.id)!.score += 0.3;
         } else {
           proseMap.set(p.id, { ...p, score: Math.min((p.rank || 0) * 10, 1) * 0.5 });
         }
       }
 
-      // Step 4: Sort by combined relevance, take top 25 total
       const allVerses = [...verseMap.values()].sort((a, b) => b.score - a.score);
       const allProse = [...proseMap.values()].sort((a, b) => b.score - a.score);
 
@@ -180,7 +170,6 @@ async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; pros
   return ilikeSearch(query);
 }
 
-// UPDATED: ilikeSearch now selects vedabase_url_precise for prose
 async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
   const supabase = getSupabase();
   const terms = query.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3);
@@ -191,9 +180,9 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
   const bf = terms.map(k => `body_text.ilike.%${k}%`).join(",");
 
   const [{ data: vT }, { data: vP }, { data: pr }] = await Promise.all([
-    supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id").or(tf).limit(15),
-    supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id").or(pf).limit(15),
-    supabase.from("prose_paragraphs").select("id,book_slug,paragraph_number,body_text,chapter_id,vedabase_url,vedabase_url_precise").or(bf).limit(15),
+    supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id,vedabase_url").or(tf).limit(15),
+    supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id,vedabase_url").or(pf).limit(15),
+    supabase.from("prose_paragraphs").select("id,book_slug,paragraph_number,body_text,chapter_id,vedabase_url").or(bf).limit(15),
   ]);
 
   const seenV = new Set<string>();
@@ -204,8 +193,7 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
 }
 
 // =====================================================
-// ENRICH: Single query with IN clause for chapter info
-// UPDATED: Prose now prefers vedabase_url_precise
+// ENRICH: Uses clean DB URLs, fallback to builder
 // =====================================================
 async function enrich(verses: VerseHit[], prose: ProseHit[]) {
   const supabase = getSupabase();
@@ -227,17 +215,16 @@ async function enrich(verses: VerseHit[], prose: ProseHit[]) {
       canto_or_division: cd,
       chapter_title: (c?.chapter_title as string) || "",
       book_slug: (c?.book_slug as string) || v.scripture?.toLowerCase(),
-      vedabase_url: buildVedabaseUrl(v.scripture, cd, cn, v.verse_number),
+      vedabase_url: v.vedabase_url || buildVedabaseUrl(v.scripture, cd, cn, v.verse_number),
     };
   });
 
-  // UPDATED: Prefer vedabase_url_precise for prose (paragraph-level deep links)
   const eP = prose.map(p => {
     const c = cm.get(p.chapter_id);
     return {
       ...p,
       chapter_title: (c?.chapter_title as string) || "",
-      vedabase_url: p.vedabase_url_precise || p.vedabase_url || `https://vedabase.io/en/library/${p.book_slug}/`,
+      vedabase_url: p.vedabase_url || `https://vedabase.io/en/library/${p.book_slug}/`,
     };
   });
 
@@ -366,18 +353,15 @@ export async function GET(request: NextRequest) {
 
   if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
 
-  // Check cache first — return non-streaming JSON for cached results
   const cached = getCached<Record<string, unknown>>(query);
   if (cached) return NextResponse.json(cached);
 
   try {
-    // Hybrid search: semantic + full-text + ilike fallback chain
     const { verses: rawVerses, prose: rawProse } = await hybridSearch(query);
     const { verses, prose } = await enrich(rawVerses, rawProse);
     const verseUrlMap = buildVerseUrlMap(verses);
     const metadata = buildMetadataAndCitations(query, verses, prose);
 
-    // If client doesn't want streaming, use the old path
     if (!wantStream) {
       const narrative = await synthesize(query, verses, prose, verseUrlMap);
       const result = { ...metadata, narrative };
@@ -385,14 +369,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(result);
     }
 
-    // Build synthesis prompt
     const prompt = buildSynthesisPrompt(query, verses, prose);
     if (!prompt) {
       const result = { ...metadata, narrative: "<p>No relevant passages found.</p>" };
       return NextResponse.json(result);
     }
 
-    // Return a streaming SSE response
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
@@ -400,10 +382,8 @@ export async function GET(request: NextRequest) {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
         };
 
-        // Send metadata immediately
         send({ type: "metadata", ...metadata });
 
-        // Attempt streaming Gemini synthesis
         try {
           const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_SYNTHESIS}:streamGenerateContent?alt=sse`;
           const geminiRes = await fetch(streamUrl, {
@@ -425,7 +405,6 @@ export async function GET(request: NextRequest) {
             throw new Error(`Gemini streaming failed: ${geminiRes.status}`);
           }
 
-          // Read the SSE stream from Gemini and forward chunks
           const reader = geminiRes.body.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
@@ -437,9 +416,8 @@ export async function GET(request: NextRequest) {
 
             buffer += decoder.decode(value, { stream: true });
 
-            // Process complete SSE events from buffer
             const lines = buffer.split("\n");
-            buffer = lines.pop() || ""; // Keep incomplete line in buffer
+            buffer = lines.pop() || "";
 
             for (const line of lines) {
               if (!line.startsWith("data: ")) continue;
@@ -450,7 +428,6 @@ export async function GET(request: NextRequest) {
                 const chunk = JSON.parse(jsonStr);
                 const text = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
                 if (text) {
-                  // Apply link post-processing to each chunk
                   const processed = ensureVerseLinks(text, verseUrlMap);
                   fullNarrative += processed;
                   send({ type: "narrative_chunk", html: processed });
@@ -461,20 +438,16 @@ export async function GET(request: NextRequest) {
             }
           }
 
-          // Cache the complete result
           const result = { ...metadata, narrative: fullNarrative };
           setCached(query, result);
-
           send({ type: "done" });
         } catch (streamErr) {
-          // Streaming failed — fall back to non-streaming synthesis
           console.error("Streaming synthesis failed, falling back:", streamErr);
           const narrative = await synthesize(query, verses, prose, verseUrlMap);
           send({ type: "narrative_chunk", html: narrative });
 
           const result = { ...metadata, narrative };
           setCached(query, result);
-
           send({ type: "done" });
         }
 
