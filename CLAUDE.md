@@ -66,7 +66,8 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── 03-right-rail.tsx      (citations sidebar)
 │   │   │   ├── 04-verse-block.tsx     (verse card)
 │   │   │   ├── 05-purport-block.tsx   (purport card)
-│   │   │   └── 06-want-more-modal.tsx (expanded book results)
+│   │   │   ├── 06-want-more-modal.tsx (expanded book results)
+│   │   │   └── 07-dig-deeper-modal.tsx (full results modal)
 │   │   ├── overlays/                  # Modal dialogs
 │   │   │   ├── 01-page-overlay.tsx    (reusable modal wrapper)
 │   │   │   ├── 02-about-overlay.tsx
@@ -92,6 +93,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 04-search-cache.ts        (result caching)
 │   │   ├── 05-link-postprocessor.ts   (citation linking)
 │   │   ├── 06-lockscreen-data.ts      (slideshow config)
+│   │   ├── 07-query-preprocessor.ts   (search query extraction)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/
@@ -106,9 +108,12 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   └── sitemap.ts
 ├── scripts/
 │   ├── 01-generate-embeddings.ts      (batch embedding generation)
-│   └── 02-generate-tags.ts            (batch tag generation)
+│   ├── 02-generate-tags.ts            (batch tag generation)
+│   └── 03-verify-urls.ts             (URL verification utility)
 ├── public/
-│   ├── images/lockscreen/             (admin uploads photos here)
+│   ├── images/
+│   │   ├── lockscreen/                (admin uploads photos here)
+│   │   └── og-image.png               (Open Graph social preview)
 │   ├── videos/lockscreen/             (optional video uploads)
 │   └── data/donate.json               (admin fills bank details)
 ├── package.json

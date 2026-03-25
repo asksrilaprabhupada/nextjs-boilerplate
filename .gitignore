@@ -29,3 +29,6 @@
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# generated reports
+url-verification-report.json
