@@ -562,7 +562,7 @@ body {
     display: none !important;
   }
   .hero-search-input {
-    padding: 14px 90px 14px 16px !important;
+    padding: 14px 100px 14px 16px !important;
     font-size: 16px !important;
     border-radius: 14px !important;
   }
@@ -572,8 +572,12 @@ body {
     right: 6px !important;
     top: 8px !important;
   }
+  .hero-voice-btn {
+    right: 48px !important;
+    top: 9px !important;
+  }
   .hero-clear-btn {
-    right: 82px !important;
+    right: 88px !important;
     top: 12px !important;
   }
   .topic-pills-container {
@@ -609,13 +613,17 @@ body {
     font-size: 0.88rem !important;
   }
   .hero-search-input {
-    padding: 12px 82px 12px 14px !important;
+    padding: 12px 96px 12px 14px !important;
     font-size: 16px !important;
   }
   .hero-submit-btn {
     width: 36px !important;
     height: 36px !important;
     right: 5px !important;
+    top: 7px !important;
+  }
+  .hero-voice-btn {
+    right: 44px !important;
     top: 7px !important;
   }
 }
