@@ -29,7 +29,6 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
   const handleVoiceTranscript = useCallback((text: string) => { setQuery(text); setIsFocused(true); }, []);
   const handleVoiceFinal = useCallback((text: string) => { setQuery(text); setIsFocused(true); inputRef.current?.focus(); }, []);
 
-  // Example popover: fill input but don't search — let user edit first
   const handleExampleSelect = useCallback((text: string) => {
     setQuery(text);
     setIsFocused(true);
@@ -47,7 +46,7 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
       minHeight: heroVisible ? "100vh" : "auto",
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: heroVisible ? "center" : "flex-start",
-      padding: heroVisible ? "80px clamp(20px, 4vw, 80px) 60px" : "76px 20px 20px",
+      padding: heroVisible ? "60px clamp(20px, 4vw, 80px) 40px" : "76px 20px 20px",
       position: "relative", transition: "all 0.6s var(--ease-out-expo)", overflow: "hidden",
     }}>
       {/* Background orb */}
@@ -56,17 +55,17 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", width: "100%", maxWidth: 700 }}>
         {/* Badge */}
         {heroVisible && (
-          <div className="font-body" style={{ ...stagger(0), display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 16px 6px 10px", borderRadius: 100, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(196,181,253,0.3)", marginBottom: 32 }}>
+          <div className="font-body" style={{ ...stagger(0), display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 16px 6px 10px", borderRadius: 100, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(196,181,253,0.3)", marginBottom: 24 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8B5CF6", animation: "pulseDot 2.5s ease-in-out infinite" }} />
             <span style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.10em", color: "#7C3AED" }}>27 books · 59,000+ searchable entries</span>
           </div>
         )}
 
         {/* Title */}
-        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 24, color: "#1E1B4B" }}>Ask<br /><span style={{ whiteSpace: "nowrap", background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
+        {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 16, color: "#1E1B4B" }}>Ask<br /><span style={{ whiteSpace: "nowrap", background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
 
         {/* Subtitle */}
-        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(16px, 1.8vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.7, marginBottom: 28 }}>Search across all 27 books — Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more. AI-powered answers from Prabhupāda&apos;s actual words.</p>}
+        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.65, marginBottom: 22 }}>Search across all 27 books — Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and more. AI-powered answers from Prabhupāda&apos;s actual words.</p>}
 
         {/* Search form */}
         <form
@@ -227,9 +226,9 @@ export default function HeroSearch({ onSearch, isSearching, hasResults, currentQ
           )}
         </form>
 
-        {/* Examples popover — replaces topic pills */}
+        {/* Example pills — visible below search bar */}
         {heroVisible && (
-          <div style={{ ...stagger(4), marginTop: 20 }}>
+          <div style={{ ...stagger(4), marginTop: 16 }}>
             <ExamplesPopover onSelect={handleExampleSelect} />
           </div>
         )}

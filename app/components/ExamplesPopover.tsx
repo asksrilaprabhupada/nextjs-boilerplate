@@ -4,7 +4,13 @@ import { useEffect, useCallback, useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 
-const EXAMPLE_QUESTIONS = [
+/* Two carefully chosen examples — one philosophical, one practical */
+const VISIBLE_EXAMPLES = [
+  { emoji: "🪷", text: "What is the purpose of human life?" },
+  { emoji: "🧘", text: "How to control the mind?" },
+];
+
+const ALL_EXAMPLES = [
   { emoji: "🕉️", text: "What is sadhu sanga?" },
   { emoji: "🧘", text: "How to control the mind?" },
   { emoji: "☸️", text: "What is karma?" },
@@ -22,13 +28,20 @@ const EXAMPLE_QUESTIONS = [
   { emoji: "🎯", text: "What is the goal of human life?" },
 ];
 
-interface ExamplesPopupProps {
-  isOpen: boolean;
-  onClose: () => void;
+interface ExamplesPopoverProps {
   onSelect: (question: string) => void;
 }
 
-function ExamplesPopupOverlay({ isOpen, onClose, onSelect }: ExamplesPopupProps) {
+/* ──────────────────── Full-screen modal ──────────────────── */
+function ExamplesModal({
+  isOpen,
+  onClose,
+  onSelect,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (q: string) => void;
+}) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -158,7 +171,7 @@ function ExamplesPopupOverlay({ isOpen, onClose, onSelect }: ExamplesPopupProps)
 
             {/* Questions list */}
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {EXAMPLE_QUESTIONS.map((q, i) => (
+              {ALL_EXAMPLES.map((q, i) => (
                 <motion.button
                   key={q.text}
                   initial={{ opacity: 0, x: -8 }}
@@ -190,7 +203,8 @@ function ExamplesPopupOverlay({ isOpen, onClose, onSelect }: ExamplesPopupProps)
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "rgba(255,255,255,0.5)";
-                    e.currentTarget.style.borderColor = "rgba(196,181,253,0.15)";
+                    e.currentTarget.style.borderColor =
+                      "rgba(196,181,253,0.15)";
                     e.currentTarget.style.color = "#374151";
                     e.currentTarget.style.transform = "translateX(0)";
                   }}
@@ -207,18 +221,165 @@ function ExamplesPopupOverlay({ isOpen, onClose, onSelect }: ExamplesPopupProps)
   );
 }
 
-export default function ExamplesPopup(props: ExamplesPopupProps) {
+/* ──────────────────── Portal wrapper for modal ──────────────────── */
+function ModalPortal(props: {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelect: (q: string) => void;
+}) {
   const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  // Portal to document.body so it escapes any parent overflow/stacking context
+  useEffect(() => setMounted(true), []);
   if (!mounted) return null;
+  return createPortal(<ExamplesModal {...props} />, document.body);
+}
 
-  return createPortal(
-    <ExamplesPopupOverlay {...props} />,
-    document.body
+/* ──────────────────── Main export: 2 pills + "more" ──────────────────── */
+export default function ExamplesPopover({ onSelect }: ExamplesPopoverProps) {
+  const [modalOpen, setModalOpen] = useState(false);
+
+  return (
+    <>
+      {/* Inline pills — always visible, single row */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "nowrap",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        {VISIBLE_EXAMPLES.map((q, i) => (
+          <motion.button
+            key={q.text}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{
+              delay: 0.55 + i * 0.08,
+              duration: 0.5,
+              ease: [0.16, 1, 0.3, 1],
+            }}
+            onClick={() => onSelect(q.text)}
+            className="font-body"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "7px 14px",
+              borderRadius: 100,
+              border: "1px solid rgba(196, 181, 253, 0.3)",
+              background: "rgba(255, 255, 255, 0.55)",
+              backdropFilter: "blur(8px)",
+              WebkitBackdropFilter: "blur(8px)",
+              fontSize: 13,
+              fontWeight: 400,
+              color: "#374151",
+              cursor: "pointer",
+              transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = "rgba(139,92,246,0.1)";
+              e.currentTarget.style.borderColor = "rgba(139,92,246,0.35)";
+              e.currentTarget.style.color = "#7C3AED";
+              e.currentTarget.style.transform = "translateY(-2px)";
+              e.currentTarget.style.boxShadow =
+                "0 4px 16px rgba(139,92,246,0.12)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "rgba(255,255,255,0.55)";
+              e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)";
+              e.currentTarget.style.color = "#374151";
+              e.currentTarget.style.transform = "translateY(0)";
+              e.currentTarget.style.boxShadow = "none";
+            }}
+          >
+            <span style={{ fontSize: 14 }}>{q.emoji}</span>
+            <span>{q.text}</span>
+          </motion.button>
+        ))}
+
+        {/* Divider dot */}
+        <motion.span
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 0.3 }}
+          transition={{ delay: 0.75, duration: 0.4 }}
+          style={{
+            width: 3,
+            height: 3,
+            borderRadius: "50%",
+            background: "#C4B5FD",
+            flexShrink: 0,
+          }}
+        />
+
+        {/* "More" trigger */}
+        <motion.button
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{
+            delay: 0.55 + VISIBLE_EXAMPLES.length * 0.08,
+            duration: 0.5,
+            ease: [0.16, 1, 0.3, 1],
+          }}
+          onClick={() => setModalOpen(true)}
+          className="font-body"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "7px 14px",
+            borderRadius: 100,
+            border: "1px dashed rgba(139, 92, 246, 0.3)",
+            background: "rgba(139, 92, 246, 0.04)",
+            fontSize: 13,
+            fontWeight: 500,
+            color: "#7C3AED",
+            cursor: "pointer",
+            transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)",
+            whiteSpace: "nowrap",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(139,92,246,0.12)";
+            e.currentTarget.style.borderColor = "#8B5CF6";
+            e.currentTarget.style.transform = "translateY(-2px)";
+            e.currentTarget.style.boxShadow =
+              "0 4px 16px rgba(139,92,246,0.15)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "rgba(139,92,246,0.04)";
+            e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)";
+            e.currentTarget.style.transform = "translateY(0)";
+            e.currentTarget.style.boxShadow = "none";
+          }}
+        >
+          More examples
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <path
+              d="M5 12h14M12 5l7 7-7 7"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </motion.button>
+      </div>
+
+      {/* Full modal (portaled) */}
+      <ModalPortal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onSelect={(text) => {
+          onSelect(text);
+          setModalOpen(false);
+        }}
+      />
+    </>
   );
 }
