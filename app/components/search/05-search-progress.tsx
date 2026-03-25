@@ -55,7 +55,7 @@ export default function SearchProgress({ isSearching }: SearchProgressProps) {
           flexDirection: "column",
           gap: 12,
           width: "100%",
-          maxWidth: 380,
+          maxWidth: "min(380px, 100%)",
         }}
       >
         {STEPS.map((step, i) => {

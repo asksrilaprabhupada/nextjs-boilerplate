@@ -94,7 +94,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
   return (
     <>
-      <div className="search-results-layout" style={{ maxWidth: 1280, margin: "0 auto", padding: "20px clamp(16px, 3vw, 40px)", display: "grid", gridTemplateColumns: "260px 1fr 280px", gap: 24, alignItems: "start" }}>
+      <div className="search-results-layout" style={{ maxWidth: 1280, margin: "0 auto", padding: "20px clamp(12px, 3vw, 40px)", display: "grid", gridTemplateColumns: "260px 1fr 280px", gap: "clamp(14px, 2vw, 24px)", alignItems: "start" }}>
 
         {/* LEFT RAIL */}
         <LeftRail
@@ -151,7 +151,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
           {/* Follow-up questions — hidden while streaming */}
           {!isStreaming && followUps.length > 0 && (
-            <div style={{ marginTop: 24, padding: "20px 24px", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
+            <div style={{ marginTop: 20, padding: "clamp(14px, 3vw, 20px) clamp(16px, 3vw, 24px)", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
               <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 12 }}>
                 People also explore
               </p>

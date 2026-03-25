@@ -66,8 +66,11 @@ export default function WhyDifferent() {
       </div>
 
       <style jsx>{`
-        @media (max-width: 768px) {
-          .why-different-grid { grid-template-columns: 1fr !important; }
+        @media (max-width: 1024px) {
+          .why-different-grid { grid-template-columns: 1fr 1fr !important; }
+        }
+        @media (max-width: 640px) {
+          .why-different-grid { grid-template-columns: 1fr !important; gap: 14px !important; }
         }
       `}</style>
     </section>

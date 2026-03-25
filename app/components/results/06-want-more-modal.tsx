@@ -42,10 +42,10 @@ export default function WantMoreModal({ book, onClose }: Props) {
           initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20 }}
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
           onClick={e => e.stopPropagation()}
-          style={{ width: "100%", maxWidth: 720, maxHeight: "85vh", overflowY: "auto", background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)", borderRadius: 22, padding: "32px 28px", boxShadow: "0 24px 80px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)", position: "relative" }}
+          style={{ width: "100%", maxWidth: 720, maxHeight: "85vh", overflowY: "auto", background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)", borderRadius: "clamp(16px, 3vw, 22px)", padding: "clamp(20px, 4vw, 32px) clamp(16px, 3.5vw, 28px)", boxShadow: "0 24px 80px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)", position: "relative" }}
         >
           {/* Close */}
-          <button onClick={onClose} style={{ position: "absolute", top: 16, right: 16, width: 36, height: 36, borderRadius: 10, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✕</button>
+          <button onClick={onClose} style={{ position: "absolute", top: 12, right: 12, width: 40, height: 40, borderRadius: 10, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✕</button>
 
           {/* Header */}
           <div style={{ marginBottom: 24 }}>

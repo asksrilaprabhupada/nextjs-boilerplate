@@ -74,8 +74,11 @@ export default function TestimonialsSection() {
       </div>
 
       <style jsx>{`
-        @media (max-width: 768px) {
-          .testimonials-grid { grid-template-columns: 1fr !important; }
+        @media (max-width: 1024px) {
+          .testimonials-grid { grid-template-columns: 1fr 1fr !important; }
+        }
+        @media (max-width: 640px) {
+          .testimonials-grid { grid-template-columns: 1fr !important; gap: 14px !important; }
         }
       `}</style>
     </section>

@@ -64,7 +64,7 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
       boxShadow: scrolled ? "0 10px 34px rgba(145,121,190,0.14)" : "none", transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s",
     }}>
       <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span className="font-display" style={{ fontSize: "1.4rem", fontWeight: 600, color: "#5B3FA9", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>Ask Śrīla Prabhupāda</span>
+        <span className="font-display" style={{ fontSize: "clamp(1rem, 3.5vw, 1.4rem)", fontWeight: 600, color: "#5B3FA9", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>Ask Śrīla Prabhupāda</span>
       </span>
       <nav style={{ display: "flex", alignItems: "center", gap: 8 }} className="desktop-nav">
         {primaryNav.map(item => (
@@ -88,7 +88,7 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
         </div>
       </nav>
       <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(p => !p)} aria-label="Toggle menu"
-        style={{ display: "none", width: 34, height: 34, borderRadius: 8, border: "none", background: "transparent", color: "#5B6274", cursor: "pointer", alignItems: "center", justifyContent: "center" }}>
+        style={{ display: "none", width: 40, height: 40, borderRadius: 10, border: "none", background: "transparent", color: "#5B6274", cursor: "pointer", alignItems: "center", justifyContent: "center" }}>
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           {mobileMenuOpen ? <path d="M6 6l12 12M6 18L18 6" /> : <path d="M3 12h18M3 6h18M3 18h18" />}
         </svg>

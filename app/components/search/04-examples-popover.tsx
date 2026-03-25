@@ -249,7 +249,7 @@ export default function ExamplesPopover({ onSelect }: ExamplesPopoverProps) {
       <div
         style={{
           display: "flex",
-          flexWrap: "nowrap",
+          flexWrap: "wrap",
           justifyContent: "center",
           alignItems: "center",
           gap: 8,
