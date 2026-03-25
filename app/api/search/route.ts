@@ -1,7 +1,8 @@
 /**
  * route.ts — Search API Route
  *
- * Handles search queries with hybrid semantic + full-text search, Gemini AI narrative generation, and SSE streaming.
+ * Handles search queries with parallel hybrid semantic + full-text + tag search,
+ * RRF (Reciprocal Rank Fusion) scoring, Gemini AI narrative generation, and SSE streaming.
  * The core backend that powers the entire search experience.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -9,6 +10,7 @@ import { createClient } from "@supabase/supabase-js";
 import { embedQuery } from "@/app/lib/03-embed";
 import { getCached, setCached } from "@/app/lib/04-search-cache";
 import { ensureVerseLinks } from "@/app/lib/05-link-postprocessor";
+import { preprocessQuery } from "@/app/lib/07-query-preprocessor";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -80,72 +82,111 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 // TYPES
 // =====================================================
-interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; score?: number; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; score?: number; }
+interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; }
 
 // =====================================================
-// HYBRID SEARCH: Semantic + Full-text with fallback
+// RRF (Reciprocal Rank Fusion) SCORING
 // =====================================================
-async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+const RRF_K = 60;
+
+function rrfMerge<T extends { id: string }>(
+  semanticList: T[],
+  ftsList: T[],
+  tagList: T[],
+): Map<string, T & { score: number }> {
+  const map = new Map<string, T & { score: number }>();
+
+  semanticList.forEach((v, rank) => {
+    const existing = map.get(v.id) || { ...v, score: 0 };
+    existing.score += 1 / (RRF_K + rank);
+    if (!map.has(v.id)) map.set(v.id, existing);
+  });
+
+  ftsList.forEach((v, rank) => {
+    const existing = map.get(v.id) || { ...v, score: 0 };
+    existing.score += 1 / (RRF_K + rank);
+    if (!map.has(v.id)) map.set(v.id, existing);
+  });
+
+  tagList.forEach((v, rank) => {
+    const existing = map.get(v.id) || { ...v, score: 0 };
+    existing.score += 0.5 / (RRF_K + rank);
+    if (!map.has(v.id)) map.set(v.id, existing);
+  });
+
+  return map;
+}
+
+// =====================================================
+// V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
+// =====================================================
+async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
   const supabase = getSupabase();
+  const preprocessed = await preprocessQuery(query);
+  const mainPhrase = preprocessed.searchPhrases[0];
 
-  const embedding = await embedQuery(query);
-  const hasEmbedding = embedding.length === 1536;
+  // WAVE 1: Instant (no embedding needed)
+  const ftsVersesPromise = supabase.rpc("search_verses_fulltext_v2", { search_query: mainPhrase, match_count: 25 });
+  const ftsProsePromise = supabase.rpc("search_prose_fulltext_v2", { search_query: mainPhrase, match_count: 15 });
+  const tagVersesPromise = preprocessed.tagTerms.length > 0
+    ? supabase.rpc("search_verses_by_tags", { search_terms: preprocessed.tagTerms, match_count: 15 })
+    : Promise.resolve({ data: [] as VerseHit[] });
+  const tagProsePromise = preprocessed.tagTerms.length > 0
+    ? supabase.rpc("search_prose_by_tags", { search_terms: preprocessed.tagTerms, match_count: 10 })
+    : Promise.resolve({ data: [] as ProseHit[] });
 
-  if (hasEmbedding) {
+  // WAVE 2: Embedding (parallel with Wave 1)
+  const embeddingPromise = embedQuery(preprocessed.isLong ? mainPhrase : query);
+
+  // Wait for all Wave 1 + embedding in parallel
+  const [ftsVerses, ftsProse, tagVerses, tagProse, embedding] = await Promise.all([
+    ftsVersesPromise, ftsProsePromise, tagVersesPromise, tagProsePromise, embeddingPromise,
+  ]);
+
+  // When embedding is ready, fire semantic search
+  let semanticVersesData: VerseHit[] = [];
+  let semanticProseData: ProseHit[] = [];
+
+  if (embedding.length === 1536) {
     const vectorStr = `[${embedding.join(",")}]`;
-
-    try {
-      const [semanticVerses, semanticProse, ftsVerses, ftsProse] = await Promise.all([
-        supabase.rpc("search_verses_semantic", { query_embedding: vectorStr, match_count: 20 }),
-        supabase.rpc("search_prose_semantic", { query_embedding: vectorStr, match_count: 15 }),
-        supabase.rpc("search_verses_fulltext", { search_query: query, match_count: 15 }),
-        supabase.rpc("search_prose_fulltext", { search_query: query, match_count: 10 }),
-      ]);
-
-      const verseMap = new Map<string, VerseHit & { score: number }>();
-      for (const v of (semanticVerses.data || [])) {
-        verseMap.set(v.id, { ...v, score: v.similarity || 0 });
-      }
-      for (const v of (ftsVerses.data || [])) {
-        if (verseMap.has(v.id)) {
-          verseMap.get(v.id)!.score += 0.3;
-        } else {
-          verseMap.set(v.id, { ...v, score: Math.min((v.rank || 0) * 10, 1) * 0.5 });
-        }
-      }
-
-      const proseMap = new Map<string, ProseHit & { score: number }>();
-      for (const p of (semanticProse.data || [])) {
-        proseMap.set(p.id, { ...p, score: p.similarity || 0 });
-      }
-      for (const p of (ftsProse.data || [])) {
-        if (proseMap.has(p.id)) {
-          proseMap.get(p.id)!.score += 0.3;
-        } else {
-          proseMap.set(p.id, { ...p, score: Math.min((p.rank || 0) * 10, 1) * 0.5 });
-        }
-      }
-
-      const allVerses = [...verseMap.values()].sort((a, b) => b.score - a.score);
-      const allProse = [...proseMap.values()].sort((a, b) => b.score - a.score);
-
-      const topVerses = allVerses.slice(0, 18);
-      const topProse = allProse.slice(0, 7);
-      const remaining = 25 - topVerses.length - topProse.length;
-      if (remaining > 0 && allVerses.length > 18) {
-        topVerses.push(...allVerses.slice(18, 18 + remaining));
-      }
-
-      return { verses: topVerses, prose: topProse };
-    } catch (err) {
-      console.error("Hybrid search failed, falling back to full-text:", err);
-      return fullTextSearch(query);
-    }
+    const [semV, semP] = await Promise.all([
+      supabase.rpc("search_verses_semantic_v2", { query_embedding: vectorStr, match_count: 30 }),
+      supabase.rpc("search_prose_semantic_v2", { query_embedding: vectorStr, match_count: 20 }),
+    ]);
+    semanticVersesData = semV.data || [];
+    semanticProseData = semP.data || [];
   }
 
-  console.warn("Embedding failed, using full-text search fallback");
-  return fullTextSearch(query);
+  // MERGE with RRF
+  const verseMap = rrfMerge<VerseHit>(
+    semanticVersesData,
+    ftsVerses.data || [],
+    tagVerses.data || [],
+  );
+  const proseMap = rrfMerge<ProseHit>(
+    semanticProseData,
+    ftsProse.data || [],
+    tagProse.data || [],
+  );
+
+  const allVerses = [...verseMap.values()].sort((a, b) => b.score - a.score);
+  const allProse = [...proseMap.values()].sort((a, b) => b.score - a.score);
+
+  return { verses: allVerses, prose: allProse };
+}
+
+// =====================================================
+// HYBRID SEARCH: V2 with fallback to legacy V1
+// =====================================================
+async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+  try {
+    return await hybridSearchV2(query);
+  } catch (err) {
+    console.error("V2 search failed, falling back to v1:", err);
+    const raw = await fullTextSearch(query);
+    return await legacyEnrich(raw.verses, raw.prose);
+  }
 }
 
 async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
@@ -193,9 +234,9 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
 }
 
 // =====================================================
-// ENRICH: Uses clean DB URLs, fallback to builder
+// LEGACY ENRICH: Used by V1 fallback path only
 // =====================================================
-async function enrich(verses: VerseHit[], prose: ProseHit[]) {
+async function legacyEnrich(verses: VerseHit[], prose: ProseHit[]) {
   const supabase = getSupabase();
   const ids = [...new Set([...verses.map(v => v.chapter_id), ...prose.map(p => p.chapter_id)].filter(Boolean))];
 
@@ -249,10 +290,14 @@ function buildVerseUrlMap(verses: VerseHit[]): Map<string, string> {
 // SYNTHESIS PROMPT BUILDER
 // =====================================================
 function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[]): string {
+  // Only pass top 20 verses and top 5 prose to synthesis (overflow is for "dig deeper" modal)
+  const synthVerses = verses.slice(0, 20);
+  const synthProse = prose.slice(0, 5);
+
   let ctx = "";
   const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
-  for (const v of verses) { const s = v.book_slug || v.scripture?.toLowerCase() || "x"; if (!byBook[s]) byBook[s] = { v: [], p: [] }; byBook[s].v.push(v); }
-  for (const p of prose) { if (!byBook[p.book_slug]) byBook[p.book_slug] = { v: [], p: [] }; byBook[p.book_slug].p.push(p); }
+  for (const v of synthVerses) { const s = v.book_slug || v.scripture?.toLowerCase() || "x"; if (!byBook[s]) byBook[s] = { v: [], p: [] }; byBook[s].v.push(v); }
+  for (const p of synthProse) { if (!byBook[p.book_slug]) byBook[p.book_slug] = { v: [], p: [] }; byBook[p.book_slug].p.push(p); }
 
   for (const [slug, d] of Object.entries(byBook)) {
     ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
@@ -280,7 +325,7 @@ RULES:
 6. EVERY reference MUST be a link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
 7. Use 10-15+ distinct references minimum.
 8. Order: BG → SB → CC → other books. Each gets <h3>.
-9. Smooth connecting paragraphs. Read like a flowing report, not a list.
+9. You are a LIBRARIAN, not a guru. You introduce quotes and connect them with transitions like "Lord Kṛṣṇa says...", "Prabhupāda further explains...", "In another place...". You NEVER explain philosophy in your own words. Every philosophical statement must be a direct quote from the DATA below.
 10. Direct quotes in quotation marks. Diacritical marks always.
 11. Warm devotional tone. Serve the devotees.
 
@@ -357,8 +402,7 @@ export async function GET(request: NextRequest) {
   if (cached) return NextResponse.json(cached);
 
   try {
-    const { verses: rawVerses, prose: rawProse } = await hybridSearch(query);
-    const { verses, prose } = await enrich(rawVerses, rawProse);
+    const { verses, prose } = await hybridSearch(query);
     const verseUrlMap = buildVerseUrlMap(verses);
     const metadata = buildMetadataAndCitations(query, verses, prose);
 
