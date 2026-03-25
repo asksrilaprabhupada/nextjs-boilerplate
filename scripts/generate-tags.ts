@@ -1,5 +1,6 @@
 /**
- * FAST Tag Generation — 50 PARALLEL, no thinkingConfig
+ * FAST Tag Generation — Gemini 2.5 Flash Lite
+ * Separate daily quota from Flash. 50 parallel. No thinking.
  *
  * Usage: npx tsx scripts/generate-tags.ts
  * Test:  npx tsx scripts/generate-tags.ts --test
@@ -40,7 +41,7 @@ if (!GEMINI_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-const GEMINI_MODEL = "gemini-2.5-flash";
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 const GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/" + GEMINI_MODEL + ":generateContent";
 
 const BATCH_SIZE = 50;
@@ -101,12 +102,12 @@ function elapsed(): string {
 async function tagOneVerse(verse: any, chapterMap: any): Promise<boolean> {
   const ch = chapterMap[verse.chapter_id] || { canto_or_division: "", chapter_number: "" };
   const purportExcerpt = (verse.purport || "").slice(0, 800);
-  const prompt = "You are an expert on Srila Prabhupada's teachings and ISKCON devotee culture.\n\nRead this verse and purport from " + verse.scripture + " " + (ch.canto_or_division || "") + "." + (ch.chapter_number || "") + "." + verse.verse_number + ".\n\nTranslation: \"" + (verse.translation || "No translation") + "\"\nPurport (excerpt): \"" + (purportExcerpt || "No purport") + "\"\n\nReturn a JSON object with these fields:\n{\n  \"topics\": [\"10-15 English search terms a devotee might type to find this verse\"],\n  \"sanskrit_terms\": [\"5-8 relevant Sanskrit terms\"],\n  \"questions\": [\"3-5 questions a devotee might ask that this verse answers\"],\n  \"summary\": \"1-2 sentence summary of the key teaching\"\n}";
+  const prompt = "You are an expert on Srila Prabhupada's teachings and ISKCON devotee culture.\n\nRead this verse and purport from " + verse.scripture + " " + (ch.canto_or_division || "") + "." + (ch.chapter_number || "") + "." + verse.verse_number + ".\n\nTranslation: \"" + (verse.translation || "No translation") + "\"\nPurport (excerpt): \"" + (purportExcerpt || "No purport") + "\"\n\nReturn a JSON object with these fields:\n{\n  \"topics\": [\"10-15 English search terms a devotee might type to find this verse\"],\n  \"sanskrit_terms\": [\"5-8 relevant Sanskrit terms with and without diacritics\"],\n  \"questions\": [\"3-5 questions a devotee might ask that this verse answers\"],\n  \"summary\": \"1-2 sentence summary of the key teaching\"\n}";
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const raw = await callGemini(prompt);
-      if (TEST_MODE) console.log("  OK (" + verse.scripture + " " + verse.verse_number + "): " + raw.substring(0, 150) + "...");
+      if (TEST_MODE) console.log("  OK (" + verse.scripture + " " + verse.verse_number + "): " + raw.substring(0, 200) + "...");
       const parsed = extractJSON(raw);
       if (parsed) {
         const tags = buildTags(parsed);
@@ -127,12 +128,12 @@ async function tagOneVerse(verse: any, chapterMap: any): Promise<boolean> {
 
 async function tagOneProse(row: any): Promise<boolean> {
   const textExcerpt = (row.body_text || "").slice(0, 800);
-  const prompt = "You are an expert on Srila Prabhupada's teachings and ISKCON devotee culture.\n\nRead this paragraph from \"" + row.book_slug + "\", paragraph " + row.paragraph_number + ".\n\nText (excerpt): \"" + textExcerpt + "\"\n\nReturn a JSON object with these fields:\n{\n  \"topics\": [\"10-15 English search terms a devotee might type to find this passage\"],\n  \"sanskrit_terms\": [\"5-8 relevant Sanskrit terms\"],\n  \"questions\": [\"3-5 questions a devotee might ask that this passage answers\"],\n  \"summary\": \"1-2 sentence summary of the key teaching\"\n}";
+  const prompt = "You are an expert on Srila Prabhupada's teachings and ISKCON devotee culture.\n\nRead this paragraph from \"" + row.book_slug + "\", paragraph " + row.paragraph_number + ".\n\nText (excerpt): \"" + textExcerpt + "\"\n\nReturn a JSON object with these fields:\n{\n  \"topics\": [\"10-15 English search terms a devotee might type to find this passage\"],\n  \"sanskrit_terms\": [\"5-8 relevant Sanskrit terms with and without diacritics\"],\n  \"questions\": [\"3-5 questions a devotee might ask that this passage answers\"],\n  \"summary\": \"1-2 sentence summary of the key teaching\"\n}";
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const raw = await callGemini(prompt);
-      if (TEST_MODE) console.log("  OK (prose " + row.paragraph_number + "): " + raw.substring(0, 150) + "...");
+      if (TEST_MODE) console.log("  OK (prose " + row.paragraph_number + "): " + raw.substring(0, 200) + "...");
       const parsed = extractJSON(raw);
       if (parsed) {
         const tags = buildTags(parsed);
@@ -243,8 +244,8 @@ async function processProse() {
 }
 
 async function main() {
-  console.log("=== FAST Tag Generation (50 PARALLEL) ===");
-  console.log("Model: " + GEMINI_MODEL + " | responseMimeType: application/json\n");
+  console.log("=== FAST Tag Generation (Gemini 2.5 Flash Lite) ===");
+  console.log("50 parallel | Separate daily quota from Flash\n");
   await processVerses();
   if (!TEST_MODE) await processProse();
   console.log("\n=== ALL DONE === | Total time: " + elapsed());
