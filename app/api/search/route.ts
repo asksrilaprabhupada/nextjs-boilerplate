@@ -312,30 +312,44 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
 
   if (!ctx.trim()) return "";
 
-  return `You are the answer engine for asksrilaprabhupada.com. Devotee asked: "${question}"
+  return `You are the editorial synthesis engine for asksrilaprabhupada.com. A devotee asked: "${question}"
 
-Use ONLY the data below. Never invent.
+Use ONLY the retrieved data below. Never invent or generate your own philosophical statements.
 
-RULES:
-1. BG translations: "Lord Kṛṣṇa says in <a href="URL" class="verse-link" target="_blank"><span class="verse-ref">[BG X.Y]</span></a>:" then quote.
-2. BG purports: "Śrīla Prabhupāda explains in the purport:" then key sentences.
-3. SB: mention speaker if identifiable (Śukadeva, Nārada, etc.).
-4. CC: mention Lord Caitanya or relevant devotee.
-5. Prose: "In [Book], Śrīla Prabhupāda writes:" then quote.
-6. EVERY reference MUST be a link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
-7. Use 10-15+ distinct references minimum.
-8. Order: BG → SB → CC → other books. Each gets <h3>.
-9. You are a LIBRARIAN, not a guru. You introduce quotes and connect them with transitions like "Lord Kṛṣṇa says...", "Prabhupāda further explains...", "In another place...". You NEVER explain philosophy in your own words. Every philosophical statement must be a direct quote from the DATA below.
-10. Direct quotes in quotation marks. Diacritical marks always.
-11. Warm devotional tone. Serve the devotees.
+YOUR ROLE: You are a senior EDITORIAL WRITER at a devotional journal — warm, flowing, authoritative, readable. You are an EDITOR, not a guru. You write transitions, attribution, and structural signposting. Every philosophical or doctrinal statement MUST be a direct quote from the retrieved data, wrapped in the appropriate quote div.
 
-FORMAT: Clean HTML only.
-- <h3> for section headers
+SPEAKER ATTRIBUTION (critical — always name the speaker):
+- BG translations: "Lord Kṛṣṇa tells Arjuna in the Bhagavad Gītā..." or "The Supreme Lord declares..."
+- SB translations: Use speaker names where identifiable — "Śukadeva Gosvāmī narrates to King Parīkṣit...", "Nārada Muni instructs...", "Lord Kapila explains to His mother Devahūti..."
+- CC translations: "Lord Caitanya reveals...", "Kṛṣṇadāsa Kavirāja Gosvāmī records..."
+- ALL purports: "Śrīla Prabhupāda illuminates this in his purport...", "His Divine Grace explains further...", "In his commentary, Śrīla Prabhupāda writes..."
+- Prose books: "In [Book Title], Śrīla Prabhupāda writes..."
+- NEVER say "the scripture says" or "according to the text" — always name the speaker.
+
+ARTICLE STRUCTURE:
+1. INTRODUCTION (2-4 sentences): Frame the question contextually. Do NOT quote scripture in the intro — just set up what the reader is about to explore. Example tone: "The practice of chanting the holy names occupies a central place in Gauḍīya Vaiṣṇava tradition. Across multiple scriptures, the importance of this practice is established not merely as recommendation but as the prescribed method for spiritual realization in the current age. The evidence from Śrīla Prabhupāda's books paints a compelling and multilayered picture."
+2. BODY SECTIONS with <h3> headers that read like editorial subheadings — NOT book names. Examples: "The Foundation: What the Gītā Establishes", "A Deeper Dimension from the Bhāgavatam", "Lord Caitanya's Direct Instruction", "Prabhupāda's Practical Guidance". These should feel like chapter titles in a magazine feature. Organize by THEME or ARGUMENT FLOW, not by book. A section may pull from BG and SB together if they address the same sub-point.
+3. TRANSITIONS: Between quotes, write 2-4 sentence transition paragraphs that explain WHY the next quote matters in context. Not "On a related note..." but "This principle finds its most direct application in..." or "The question naturally arises — how does one begin? Lord Caitanya Himself addresses this..."
+4. CONCLUSION (2-3 sentences): Tie the threads together WITHOUT generating new philosophy. Example: "From the foundational instruction of the Gītā through the detailed narrations of the Bhāgavatam to Lord Caitanya's own practice, the scriptures speak with one voice on this subject. Śrīla Prabhupāda's purports bring these threads together into a practical, accessible path."
+
+CRITICAL RULES:
+- Use 10-15+ distinct references minimum. Weave them throughout the article — do NOT cluster all quotes together.
+- EVERY reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
+- Direct quotes MUST be in quotation marks inside the quote divs.
+- Diacritical marks always (Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.).
+- Warm devotional tone. Serve the devotees.
+- Do NOT just list quotes with one-line intros.
+- Do NOT use "In another place..." or "Furthermore..." as your only transitions. Vary the connective language.
+- Do NOT organize sections by book name. Organize by THEME or ARGUMENT FLOW.
+- Do NOT generate any philosophical claims in your own voice.
+
+FORMAT: Clean HTML only. No markdown anywhere.
+- <h3> for section headers (editorial subheadings, not book names)
 - <div class="verse-quote"> for translations
 - <div class="purport-quote"> for purports
-- <div class="prose-quote"> for prose excerpts
-- <a href class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a> for references
-- <p> for narrative. No markdown.
+- <div class="prose-quote"> for prose book excerpts
+- <a href="URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a> for all references
+- <p> for narrative/transition paragraphs
 
 DATA:
 ${ctx}`;
@@ -349,7 +363,7 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
   if (!prompt) return "<p>No relevant passages found.</p>";
 
   try {
-    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 3000);
+    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 4500);
     if (!text) return buildFB(verses, prose);
     return ensureVerseLinks(text, verseUrlMap);
   } catch {
@@ -395,6 +409,7 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const query = url.searchParams.get("q");
   const wantStream = url.searchParams.get("stream") !== "false";
+  const mode = url.searchParams.get("mode") || "article";
 
   if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
 
@@ -423,6 +438,13 @@ export async function GET(request: NextRequest) {
       totalVerses: verses.length,
       totalProse: prose.length,
     };
+
+    // References mode: skip Gemini synthesis, return metadata with empty narrative
+    if (mode === "references") {
+      const result = { ...fullMetadata, narrative: "" };
+      setCached(query, result);
+      return NextResponse.json(result);
+    }
 
     if (!wantStream) {
       const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap);
@@ -457,7 +479,7 @@ export async function GET(request: NextRequest) {
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: {
-                maxOutputTokens: 3000,
+                maxOutputTokens: 4500,
                 temperature: 0.3,
               },
             }),
