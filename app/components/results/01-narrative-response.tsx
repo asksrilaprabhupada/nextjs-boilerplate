@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
 import WantMoreModal from "./06-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
@@ -160,6 +160,28 @@ function SummaryPopup({
   );
 }
 
+/* ─── Expandable Reference Card ─── */
+function ExpandableReferenceCard({ children, preview, fullText }: {
+  children: React.ReactNode;
+  preview: string;
+  fullText: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div onClick={() => setExpanded(!expanded)} style={{ cursor: "pointer" }}>
+      {children}
+      <p className="reference-card__purport" style={{ marginTop: 8 }}>
+        {expanded ? fullText : preview}
+        {fullText.length > 200 && (
+          <span style={{ color: "#534AB7", fontWeight: 500, marginLeft: 4, fontSize: 12 }}>
+            {expanded ? " Show less" : " ...Read more"}
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
 /* ─── Main Component ─── */
 interface Props {
   results: SearchResults | null;
@@ -248,10 +270,17 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
     }
   };
 
-  // Follow-up suggestions
-  const followUps = results.relatedConcepts.slice(0, 4).map(c =>
-    `What does Prabhupāda say about ${c}?`
-  );
+  // Follow-up suggestions — extract themes from search results
+  const followUps = useMemo(() => {
+    if (!results || results.totalResults === 0) return [];
+    const themes = results.citations
+      .slice(0, 10)
+      .map(c => c.title)
+      .filter(t => t && t.length > 5)
+      .slice(0, 3);
+    if (themes.length === 0) return [];
+    return themes.map(t => `What does Prabhupāda teach about ${t}?`);
+  }, [results]);
 
   // Book breakdown for sidebar
   const bookGroups = results.books
@@ -261,67 +290,70 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
   return (
     <>
-      {/* 2-column grid layout — both columns start at the same top level */}
+      {/* Controls row — sits ABOVE the grid */}
+      <div className="results-controls-row">
+        {/* Mobile: View key answers button */}
+        {summaries.length > 0 && (
+          <div
+            className="mobile-only-btn"
+            onClick={() => setShowSummaryPopup(true)}
+            style={{
+              width: "100%", padding: "12px 16px", background: "#EEEDFE", border: "1px solid #CECBF6",
+              borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center",
+              justifyContent: "space-between", marginBottom: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <svg width="16" height="16" viewBox="0 0 16 16">
+                <path d="M8 1.5l2 4 4.5.7-3.2 3.1.8 4.4L8 11.5l-4.1 2.2.8-4.4L1.5 6.2l4.5-.7z" fill="#7F77DD" stroke="none" />
+              </svg>
+              <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#3C3489" }}>View key answers</span>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14">
+              <path d="M5 3l5 4-5 4" fill="none" stroke="#3C3489" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </div>
+        )}
+
+        {/* ─── Article / References Toggle ─── */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <span className="font-body" style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em" }}>View as</span>
+          <div className="view-mode-toggle">
+            <button
+              className={`font-body${viewMode === "article" ? " active" : ""}`}
+              onClick={() => onViewModeChange("article")}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                <line x1="4.5" y1="4" x2="9.5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                <line x1="4.5" y1="6.5" x2="9.5" y2="6.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                <line x1="4.5" y1="9" x2="7.5" y2="9" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+              </svg>
+              Article
+            </button>
+            <button
+              className={`font-body${viewMode === "references" ? " active" : ""}`}
+              onClick={() => onViewModeChange("references")}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="1.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
+                <rect x="1" y="7.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
+                <line x1="7" y1="2.5" x2="13" y2="2.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                <line x1="7" y1="4.5" x2="11" y2="4.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
+                <line x1="7" y1="8.5" x2="13" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                <line x1="7" y1="10.5" x2="11" y2="10.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
+              </svg>
+              References
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 2-column grid — both columns now start at the same level */}
       <div className="results-grid-container">
         {/* ─── Content Column ─── */}
         <div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-
-            {/* Mobile: View key answers button */}
-            {summaries.length > 0 && (
-              <div
-                className="mobile-only-btn"
-                onClick={() => setShowSummaryPopup(true)}
-                style={{
-                  width: "100%", padding: "12px 16px", background: "#EEEDFE", border: "1px solid #CECBF6",
-                  borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center",
-                  justifyContent: "space-between", marginBottom: 16,
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <svg width="16" height="16" viewBox="0 0 16 16">
-                    <path d="M8 1.5l2 4 4.5.7-3.2 3.1.8 4.4L8 11.5l-4.1 2.2.8-4.4L1.5 6.2l4.5-.7z" fill="#7F77DD" stroke="none" />
-                  </svg>
-                  <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#3C3489" }}>View key answers</span>
-                </div>
-                <svg width="14" height="14" viewBox="0 0 14 14">
-                  <path d="M5 3l5 4-5 4" fill="none" stroke="#3C3489" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-              </div>
-            )}
-
-            {/* ─── Article / References Toggle ─── */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-              <span className="font-body" style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em" }}>View as</span>
-              <div className="view-mode-toggle">
-                <button
-                  className={`font-body${viewMode === "article" ? " active" : ""}`}
-                  onClick={() => onViewModeChange("article")}
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                    <line x1="4.5" y1="4" x2="9.5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                    <line x1="4.5" y1="6.5" x2="9.5" y2="6.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                    <line x1="4.5" y1="9" x2="7.5" y2="9" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                  </svg>
-                  Article
-                </button>
-                <button
-                  className={`font-body${viewMode === "references" ? " active" : ""}`}
-                  onClick={() => onViewModeChange("references")}
-                >
-                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                    <rect x="1" y="1.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
-                    <rect x="1" y="7.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
-                    <line x1="7" y1="2.5" x2="13" y2="2.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                    <line x1="7" y1="4.5" x2="11" y2="4.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
-                    <line x1="7" y1="8.5" x2="13" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                    <line x1="7" y1="10.5" x2="11" y2="10.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
-                  </svg>
-                  References
-                </button>
-              </div>
-            </div>
 
             {/* ─── Article Mode ─── */}
             {viewMode === "article" && (
@@ -334,11 +366,25 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
                   />
                   {isStreaming && (
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
-                      <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
-                      <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
-                        Composing from Prabhupada&apos;s words...
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 10, marginTop: 16, padding: "12px 16px",
+                      borderRadius: 12, background: "rgba(139,92,246,0.04)", border: "1px solid rgba(196,181,253,0.2)",
+                    }}>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        {[0, 1, 2].map(i => (
+                          <div key={i} style={{
+                            width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6",
+                            animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
+                          }} />
+                        ))}
+                      </div>
+                      <span className="font-body" style={{ fontSize: 13, color: "#7C3AED", fontWeight: 500 }}>
+                        Weaving Prabhupāda&apos;s words into a narrative...
                       </span>
+                      <span style={{
+                        width: 2, height: 16, background: "#8B5CF6", borderRadius: 1, marginLeft: "auto",
+                        animation: "streamCursorBlink 0.8s step-end infinite",
+                      }} />
                     </div>
                   )}
                 </div>
@@ -362,7 +408,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
                   >
-                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.books?.reduce((s, b) => s + b.verses.length + b.prose.length, 0) || 0)} sources &rarr;
+                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0)} additional sources
+                    ({results.overflowVerses?.length || 0} verses · {results.overflowProse?.length || 0} passages) &rarr;
                   </button>
                 )}
 
@@ -420,9 +467,12 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                               <p className="reference-card__translation">{v.translation}</p>
                             )}
                             {v.purport && (
-                              <p className="reference-card__purport">
-                                {v.purport.length > 200 ? v.purport.slice(0, 200) + "…" : v.purport}
-                              </p>
+                              <ExpandableReferenceCard
+                                preview={v.purport.length > 200 ? v.purport.slice(0, 200) + "…" : v.purport}
+                                fullText={v.purport}
+                              >
+                                <span />
+                              </ExpandableReferenceCard>
                             )}
                             <div className="reference-card__links">
                               <a href={`/verse/${v.id}`} style={{ color: "#534AB7" }}>
@@ -448,9 +498,12 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                               {p.chapter_title}
                             </span>
                           )}
-                          <p className="reference-card__purport" style={{ marginTop: p.chapter_title ? 8 : 0 }}>
-                            {p.body_text.length > 250 ? p.body_text.slice(0, 250) + "…" : p.body_text}
-                          </p>
+                          <ExpandableReferenceCard
+                            preview={p.body_text.length > 250 ? p.body_text.slice(0, 250) + "…" : p.body_text}
+                            fullText={p.body_text}
+                          >
+                            <span />
+                          </ExpandableReferenceCard>
                           <div className="reference-card__links">
                             <span />
                             {p.vedabase_url && (
@@ -479,7 +532,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
                   >
-                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.books?.reduce((s, b) => s + b.verses.length + b.prose.length, 0) || 0)} sources &rarr;
+                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0)} additional sources
+                    ({results.overflowVerses?.length || 0} verses · {results.overflowProse?.length || 0} passages) &rarr;
                   </button>
                 )}
               </div>
@@ -488,7 +542,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         </div>
 
         {/* ─── Desktop Summary Sidebar ─── */}
-        <div className="desktop-sidebar" style={{ opacity: viewMode === "article" ? 0.7 : 1 }}>
+        <div className="desktop-sidebar" style={{ opacity: 1 }}>
           <div style={{
             background: "white", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12,
             padding: 16, position: "sticky", top: 80, alignSelf: "start",
@@ -506,11 +560,15 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                   <div
                     key={i}
                     onClick={() => scrollToSource(item.reference)}
-                    style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12 }}
+                    style={{
+                      display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12,
+                      animation: `sidebarItemIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.08}s both`,
+                    }}
                   >
                     <span style={{
                       fontSize: 11, fontWeight: 500, color: "#534AB7", background: "#EEEDFE",
                       padding: "1px 6px", borderRadius: 4, whiteSpace: "nowrap", marginTop: 2,
+                      animation: `badgePop 0.35s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.08 + 0.1}s both`,
                     }}>{i + 1}</span>
                     <div>
                       <p className="font-body" style={{ fontSize: 12, margin: "0 0 2px", lineHeight: 1.5 }}>{item.summary}</p>
@@ -573,6 +631,19 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
       {/* Styles */}
       <style jsx global>{`
+        /* Controls row above grid */
+        .results-controls-row {
+          max-width: 1100px;
+          margin: 0 auto;
+          padding: 0 20px;
+        }
+
+        @media (max-width: 768px) {
+          .results-controls-row {
+            padding: 0 16px;
+          }
+        }
+
         /* 2-column grid: content (1fr) + sidebar (220px) — aligned at top */
         .results-grid-container {
           display: grid;
@@ -635,6 +706,18 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
             font-size: 15px;
             line-height: 1.75;
           }
+        }
+
+        /* Verse and purport blocks animate in when they appear during streaming */
+        .narrative-content .verse-quote,
+        .narrative-content .purport-quote,
+        .narrative-content .prose-quote {
+          animation: verseBorderGrow 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+        }
+
+        /* Stagger h3 headings in the narrative */
+        .narrative-content h3 {
+          animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
 
         /* Narrative content styles */

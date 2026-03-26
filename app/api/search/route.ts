@@ -580,8 +580,8 @@ function buildVerseUrlMap(verses: VerseHit[]): Map<string, string> {
 // =====================================================
 function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[]): string {
   // Reduce context to avoid overwhelming the model
-  const synthVerses = verses.slice(0, 8);
-  const synthProse = prose.slice(0, 3);
+  const synthVerses = verses.slice(0, 30);
+  const synthProse = prose.slice(0, 8);
 
   let ctx = "";
   const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
@@ -655,8 +655,11 @@ FORMAT RULES:
 - Prose book quotes go in <div class="prose-quote">
 - Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
 - Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
-- Use 5-8 passages total. Do NOT use all of them.
-- Do NOT quote from the same book more than twice. If multiple passages come from the same book, pick the best one or two and skip the rest.
+- Use 25-30 passages. Organize them into 5-7 thematic sections.
+- Each section should have an <h3> heading and 2-3 sentences of context, then the passages.
+- Do NOT skip passages unless they are clearly duplicates or completely irrelevant to the question.
+- You may quote from the same book multiple times if the passages address different aspects of the question.
+- Group related passages together under thematic headings rather than listing them by book.
 - Output clean HTML only. No markdown. No preamble.
 
 PASSAGES:
@@ -671,7 +674,7 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
   if (!prompt) return "<p>No relevant passages found.</p>";
 
   try {
-    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 4500);
+    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 12000);
     console.log("[Synthesis] Gemini returned", text?.length || 0, "chars");
     if (!text) {
       console.error("[Synthesis] Gemini returned empty — using fallback");
@@ -711,7 +714,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
   }
 
   const parts: string[] = [];
-  const articleVerses = v.slice(0, 6);
+  const articleVerses = v.slice(0, 30);
   const bookNames = [...new Set(articleVerses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
 
   // Extract the core topic from the question for intro/conclusion
@@ -783,7 +786,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
 
   // If we have enough verses with tags, group them by theme
   const themes = groupByTheme(articleVerses);
-  if (themes.size >= 2 && themes.size <= 4) {
+  if (themes.size >= 2 && themes.size <= 8) {
     let verseIndex = 0;
     for (const [theme, themeVerses] of themes) {
       const heading = theme.charAt(0).toUpperCase() + theme.slice(1);
@@ -897,12 +900,12 @@ export async function GET(request: NextRequest) {
     const rankedProse = reRankResults(prose, query, 0.1, 2);
 
     // Top results for AI narrative (the AI only sees these)
-    const narrativeVerses = rankedVerses.slice(0, 20);
-    const narrativeProse = rankedProse.slice(0, 5);
+    const narrativeVerses = rankedVerses.slice(0, 40);
+    const narrativeProse = rankedProse.slice(0, 12);
 
     // Overflow for "dig deeper" modal — apply multi-signal relevance pipeline
-    const rawOverflowVerses = rankedVerses.slice(20);
-    const rawOverflowProse = rankedProse.slice(5);
+    const rawOverflowVerses = rankedVerses.slice(40);
+    const rawOverflowProse = rankedProse.slice(12);
     const rankedOverflow = rankAndFilterOverflow(query, rawOverflowVerses, rawOverflowProse);
 
     const overflowVerses = rankedOverflow.verses;
@@ -966,7 +969,7 @@ export async function GET(request: NextRequest) {
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: {
-                maxOutputTokens: 4500,
+                maxOutputTokens: 12000,
                 temperature: 0.3,
               },
               safetySettings: [

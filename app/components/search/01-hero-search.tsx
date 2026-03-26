@@ -85,7 +85,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
       display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: heroVisible ? "center" : "flex-start",
       padding: heroVisible ? "60px clamp(16px, 4vw, 80px) 40px" : "68px clamp(12px, 3vw, 20px) 16px",
-      position: "relative", transition: "all 0.6s var(--ease-out-expo)", overflow: "hidden",
+      position: "relative", transition: "min-height 0.7s var(--ease-out-expo), padding 0.5s var(--ease-out-expo) 0.1s", overflow: "hidden",
     }}>
       {/* Background orb */}
       {heroVisible && <div style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(167,139,250,0.26) 0%, rgba(244,114,182,0.12) 42%, rgba(251,191,36,0.09) 72%, transparent 100%)", filter: "blur(72px)", animation: "floatOrb 20s ease-in-out infinite", pointerEvents: "none" }} />}
