@@ -1,8 +1,8 @@
 /**
- * 01-narrative-response.tsx — Narrative Response Layout
+ * 01-narrative-response.tsx — Narrative Response with Summary Sidebar
  *
- * Two-column search results: 75% content + 25% sticky summary sidebar (220px).
- * Sidebar shows numbered key answers and sources-by-book counts.
+ * 2-column layout: 75% content + 25% sidebar (220px).
+ * Sidebar shows numbered key answers (AI-generated) and sources-by-book counts.
  * Mobile: sidebar hidden, replaced by "View key answers" button + bottom-sheet popup.
  */
 "use client";
@@ -52,7 +52,7 @@ export interface SearchResults {
   totalProse?: number;
 }
 
-/* ─── Per-book color system (tags + left borders only) ─── */
+/* ─── Per-book color system (ONLY for tags and left borders) ─── */
 const BOOK_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   SB:      { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
   CC:      { bg: "#FAECE7", text: "#993C1D", border: "#F0997B" },
@@ -62,156 +62,9 @@ const BOOK_COLORS: Record<string, { bg: string; text: string; border: string }> 
   default: { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
 };
 
-export function getBookColor(ref: string) {
-  const prefix = ref.split(" ")[0]?.toUpperCase() || "default";
+export function getBookColor(reference: string) {
+  const prefix = reference.split(" ")[0]?.toUpperCase() || "default";
   return BOOK_COLORS[prefix] || BOOK_COLORS["default"];
-}
-
-/* ─── Speaker attribution (mirrors API) ─── */
-const SPEAKERS: Record<string, string> = {
-  "BG": "Lord Krsna", "SB 1": "Suta Gosvami", "SB 2": "Sukadeva Gosvami",
-  "SB 3": "Maitreya Rsi", "SB 4": "Maitreya Rsi", "SB 5": "Sukadeva Gosvami",
-  "SB 6": "Sukadeva Gosvami", "SB 7": "Narada Muni", "SB 8": "Sukadeva Gosvami",
-  "SB 9": "Sukadeva Gosvami", "SB 10": "Sukadeva Gosvami",
-  "SB 11": "Lord Krsna to Uddhava", "SB 12": "Sukadeva Gosvami",
-  "CC": "Krsnadasa Kaviraja Gosvami", "NOI": "Srila Rupa Gosvami",
-  "ISO": "Sri Isopanisad", "BS": "Lord Brahma",
-};
-
-function getSpeaker(ref: string, type: string): string {
-  if (type === "purport") return "Srila Prabhupada";
-  const spaceKey = ref.split(".")[0];
-  if (SPEAKERS[spaceKey]) return SPEAKERS[spaceKey];
-  const firstWord = ref.split(" ")[0];
-  if (SPEAKERS[firstWord]) return SPEAKERS[firstWord];
-  return "the scripture";
-}
-
-/* ─── Article parser: splits AI article into filler + scripture segments ─── */
-interface ArticleSegment {
-  type: "filler" | "scripture";
-  text: string;
-  reference?: string;
-}
-
-function parseArticle(content: string): ArticleSegment[] {
-  const segments: ArticleSegment[] = [];
-  let filler = "";
-  let quote = "";
-
-  for (const line of content.split("\n")) {
-    if (line.startsWith("> ")) {
-      if (filler.trim()) { segments.push({ type: "filler", text: filler.trim() }); filler = ""; }
-      quote += (quote ? " " : "") + line.replace(/^>\s*/, "").replace(/^"|"$/g, "");
-    } else {
-      if (quote) {
-        const m = quote.match(/\u2014\s*\[([^\]]+)\]\s*$/);
-        segments.push({
-          type: "scripture",
-          text: m ? quote.replace(/\u2014\s*\[([^\]]+)\]\s*$/, "").trim() : quote.trim(),
-          reference: m ? m[1] : "Unknown",
-        });
-        quote = "";
-      }
-      if (line.trim()) filler += (filler ? " " : "") + line.trim();
-      else if (filler.trim()) { segments.push({ type: "filler", text: filler.trim() }); filler = ""; }
-    }
-  }
-  if (filler.trim()) segments.push({ type: "filler", text: filler.trim() });
-  if (quote) {
-    const m = quote.match(/\u2014\s*\[([^\]]+)\]\s*$/);
-    segments.push({
-      type: "scripture",
-      text: m ? quote.replace(m[0], "").trim() : quote.trim(),
-      reference: m?.[1] || "Unknown",
-    });
-  }
-  return segments;
-}
-
-/* ─── Build Vedabase URL from reference ─── */
-function buildVedabaseUrl(ref: string): string {
-  const base = "https://vedabase.io/en/library";
-  const clean = ref.replace(/\s+/g, "/").toLowerCase();
-  return `${base}/${clean}/`;
-}
-
-/* ─── Article View Renderer ─── */
-function ArticleView({ segments }: { segments: ArticleSegment[] }) {
-  return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: "24px 0" }}>
-      {segments.map((seg, i) => {
-        if (seg.type === "filler") {
-          return (
-            <p key={i} className="font-body" style={{
-              fontSize: 16, lineHeight: 1.8, color: "#333", margin: "0 0 20px",
-              fontFamily: "Georgia, 'Times New Roman', serif",
-            }}>{seg.text}</p>
-          );
-        }
-        const colors = getBookColor(seg.reference || "");
-        return (
-          <div key={i} style={{
-            padding: "20px 24px", margin: "24px 0",
-            borderLeft: `3px solid ${colors.border}`, background: "#FAFAFA", borderRadius: "0 8px 8px 0",
-          }}>
-            <p style={{
-              fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
-              fontFamily: "Georgia, 'Times New Roman', serif", color: "#1a1a1a", margin: "0 0 12px",
-            }}>&ldquo;{seg.text}&rdquo;</p>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
-              <span style={{
-                fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 8,
-                background: colors.bg, color: colors.text,
-              }}>{seg.reference}</span>
-              <a
-                href={buildVedabaseUrl(seg.reference || "")}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ fontSize: 12, color: "#534AB7", textDecoration: "none" }}
-              >
-                Open on Vedabase
-              </a>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ─── Article Skeleton Loader ─── */
-function ArticleSkeleton() {
-  return (
-    <div style={{ maxWidth: 720, margin: "0 auto", padding: "24px 0" }}>
-      <p className="font-body" style={{ fontSize: 14, color: "#888", marginBottom: 24 }}>
-        Composing article from Srila Prabhupada&apos;s teachings...
-      </p>
-      {[100, 90, 95, 60].map((w, i) => (
-        <div key={i} style={{
-          height: 14, background: "#F0F0F0", borderRadius: 4,
-          width: `${w}%`, marginBottom: 12, animation: "articlePulse 1.5s ease-in-out infinite",
-        }} />
-      ))}
-      <div style={{
-        padding: 20, margin: "24px 0", borderLeft: "3px solid #E0E0E0",
-        background: "#FAFAFA", borderRadius: "0 8px 8px 0",
-      }}>
-        {[100, 95, 50].map((w, i) => (
-          <div key={i} style={{
-            height: 14, background: "#F0F0F0", borderRadius: 4,
-            width: `${w}%`, marginBottom: 8, animation: "articlePulse 1.5s ease-in-out infinite",
-          }} />
-        ))}
-      </div>
-      {[85, 100, 70].map((w, i) => (
-        <div key={`b${i}`} style={{
-          height: 14, background: "#F0F0F0", borderRadius: 4,
-          width: `${w}%`, marginBottom: 12, animation: "articlePulse 1.5s ease-in-out infinite",
-        }} />
-      ))}
-    </div>
-  );
 }
 
 /* ─── Scroll helper ─── */
@@ -225,7 +78,7 @@ interface SummaryItem {
   reference: string;
 }
 
-/* ─── Mobile Bottom-Sheet Popup ─── */
+/* ─── Mobile Summary Bottom-Sheet Popup ─── */
 function SummaryPopup({
   isOpen,
   onClose,
@@ -243,8 +96,8 @@ function SummaryPopup({
       <div
         onClick={onClose}
         style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
-          zIndex: 100, animation: "summaryFadeIn 0.2s ease",
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100,
+          animation: "summaryFadeIn 0.2s ease",
         }}
       />
       <div style={{
@@ -268,7 +121,7 @@ function SummaryPopup({
               display: "flex", alignItems: "center", justifyContent: "center",
             }}
           >
-            ×
+            &times;
           </button>
         </div>
         <p className="font-body" style={{ fontSize: 12, color: "#888", margin: "0 20px 16px" }}>
@@ -278,7 +131,7 @@ function SummaryPopup({
           {summaries.map((item, i) => (
             <div
               key={i}
-              onClick={() => { onClose(); scrollToSource(item.reference); }}
+              onClick={() => { onClose(); setTimeout(() => scrollToSource(item.reference), 300); }}
               style={{
                 display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 0",
                 borderBottom: i < summaries.length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none",
@@ -289,9 +142,7 @@ function SummaryPopup({
                 fontSize: 12, fontWeight: 500, color: "white", background: "#7F77DD",
                 width: 22, height: 22, borderRadius: "50%",
                 display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              }}>
-                {i + 1}
-              </span>
+              }}>{i + 1}</span>
               <div>
                 <p className="font-body" style={{ fontSize: 14, fontWeight: 500, margin: "0 0 4px", lineHeight: 1.5 }}>{item.summary}</p>
                 <span className="font-body" style={{ fontSize: 11, color: "#534AB7", background: "#EEEDFE", padding: "1px 8px", borderRadius: 4 }}>
@@ -319,110 +170,54 @@ interface Props {
 export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId }: Props) {
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
   const [digDeeperOpen, setDigDeeperOpen] = useState(false);
-  const [showSummaryPopup, setShowSummaryPopup] = useState(false);
   const [summaries, setSummaries] = useState<SummaryItem[]>([]);
-  const [summariesLoading, setSummariesLoading] = useState(false);
-
-  // Article mode state
-  const [viewMode, setViewMode] = useState<"sources" | "article">("sources");
-  const [article, setArticle] = useState<ArticleSegment[] | null>(null);
-  const [isGeneratingArticle, setIsGeneratingArticle] = useState(false);
+  const [showSummaryPopup, setShowSummaryPopup] = useState(false);
 
   // Reset states when results change
   useEffect(() => {
     setDigDeeperOpen(false);
     setSummaries([]);
     setShowSummaryPopup(false);
-    setViewMode("sources");
-    setArticle(null);
-    setIsGeneratingArticle(false);
   }, [results?.query]);
 
-  // Fetch summaries when search results arrive and streaming is done
+  // Fetch AI-generated summaries when search results arrive
   useEffect(() => {
     if (!results || results.totalResults === 0) return;
-    if (isStreaming) return;
 
-    // Build passages from top citations/books
+    // Build passage list from citations and books
     const passages: { reference: string; text: string }[] = [];
     for (const book of results.books) {
       for (const v of book.verses) {
-        if (passages.length >= 10) break;
-        passages.push({ reference: `${v.scripture} ${v.verse_number}`, text: v.translation || v.purport || "" });
+        passages.push({ reference: v.verse_number || v.id, text: v.translation || v.purport || "" });
       }
       for (const p of book.prose) {
-        if (passages.length >= 10) break;
-        passages.push({ reference: `${p.book_slug} ${p.chapter_title || ""}`.trim(), text: p.body_text || "" });
+        passages.push({ reference: p.chapter_title || `${p.book_slug} #${p.paragraph_number}`, text: p.body_text || "" });
       }
-      if (passages.length >= 10) break;
     }
 
-    if (passages.length === 0) return;
+    const top10 = passages.slice(0, 10);
+    if (top10.length === 0) return;
 
-    setSummariesLoading(true);
     fetch("/api/generate-summary", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passages }),
+      body: JSON.stringify({ passages: top10 }),
     })
-      .then((r) => r.json())
-      .then((data) => {
+      .then(r => r.json())
+      .then(data => {
         if (data.summaries && Array.isArray(data.summaries)) {
           setSummaries(
             data.summaries.map((s: string, i: number) => ({
               summary: s,
-              reference: passages[i]?.reference || "",
+              reference: top10[i]?.reference || "",
             }))
           );
         }
       })
       .catch(() => {
-        // Silently fail — sidebar will just not show summaries
-      })
-      .finally(() => setSummariesLoading(false));
-  }, [results, isStreaming]);
-
-  // Generate article from passages
-  const generateArticle = async () => {
-    if (article || !results) return;
-    setIsGeneratingArticle(true);
-    try {
-      // Build passages from search results
-      const passages: { reference: string; type: string; speaker: string; text: string }[] = [];
-      for (const book of results.books) {
-        for (const v of book.verses) {
-          if (passages.length >= 15) break;
-          const ref = `${v.scripture} ${v.verse_number}`;
-          if (v.translation) {
-            passages.push({ reference: ref, type: "translation", speaker: getSpeaker(ref, "translation"), text: v.translation });
-          }
-          if (v.purport) {
-            passages.push({ reference: ref, type: "purport", speaker: getSpeaker(ref, "purport"), text: v.purport.substring(0, 500) });
-          }
-        }
-        for (const p of book.prose) {
-          if (passages.length >= 20) break;
-          const ref = `${p.book_slug} ${p.chapter_title || ""}`.trim();
-          passages.push({ reference: ref, type: "prose", speaker: "Srila Prabhupada", text: p.body_text.substring(0, 500) });
-        }
-      }
-
-      const questions = results.query.split("?").map(q => q.trim()).filter(q => q.length > 0).map(q => q + "?");
-      const res = await fetch("/api/generate-article", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questions, passages }),
+        // Silently fail — sidebar just won't show summaries
       });
-      const data = await res.json();
-      if (data.article) {
-        setArticle(parseArticle(data.article));
-      }
-    } catch (err) {
-      console.error("Article generation failed:", err);
-    } finally {
-      setIsGeneratingArticle(false);
-    }
-  };
+  }, [results]);
 
   if (isLoading) return null;
   if (!results) return null;
@@ -453,74 +248,42 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
   );
 
   // Book breakdown for sidebar
-  const bookBreakdown = results.books
+  const bookGroups = results.books
     .map(b => ({ name: b.name, slug: b.slug, count: b.verses.length + b.prose.length }))
     .filter(b => b.count > 0)
     .sort((a, b) => b.count - a.count);
 
   return (
     <>
-      {/* Two-column grid layout */}
+      {/* 2-column grid layout */}
       <div className="results-grid-container">
         {/* ─── Content Column ─── */}
         <div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-            {/* ─── Sources Header Bar ─── */}
+
+            {/* Sources Header Bar */}
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
               padding: "12px 20px", borderBottom: "1px solid rgba(0,0,0,0.08)", marginBottom: 16,
-              flexWrap: "wrap", gap: 8,
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#7F77DD" }} />
-                <span className="font-body" style={{ fontSize: 14, fontWeight: 500 }}>
-                  From Śrīla Prabhupāda&apos;s books
-                </span>
+                <span className="font-body" style={{ fontSize: 14, fontWeight: 500 }}>From Srila Prabhupada&apos;s books</span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span className="font-body" style={{ fontSize: 13, color: "#888" }}>
-                  {results.totalResults} sources
-                </span>
-                {/* Sources / Article toggle */}
-                {!isStreaming && (
-                  <div style={{
-                    display: "flex", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, overflow: "hidden",
-                  }}>
-                    <button
-                      onClick={() => setViewMode("sources")}
-                      className="font-body"
-                      style={{
-                        padding: "4px 10px", fontSize: 12, fontWeight: 500, border: "none",
-                        background: viewMode === "sources" ? "#534AB7" : "transparent",
-                        color: viewMode === "sources" ? "white" : "#888", cursor: "pointer",
-                        transition: "all 0.2s ease",
-                      }}
-                    >Sources</button>
-                    <button
-                      onClick={() => { setViewMode("article"); if (!article) generateArticle(); }}
-                      className="font-body"
-                      style={{
-                        padding: "4px 10px", fontSize: 12, fontWeight: 500, border: "none",
-                        borderLeft: "1px solid rgba(0,0,0,0.12)",
-                        background: viewMode === "article" ? "#534AB7" : "transparent",
-                        color: viewMode === "article" ? "white" : "#888", cursor: "pointer",
-                        transition: "all 0.2s ease",
-                      }}
-                    >Article</button>
-                  </div>
-                )}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span className="font-body" style={{ fontSize: 13, color: "#888" }}>{results.totalResults} sources</span>
               </div>
             </div>
 
-            {/* ─── Mobile: View Key Answers Button ─── */}
+            {/* Mobile: View key answers button */}
             {summaries.length > 0 && (
               <div
-                className="mobile-only-summary-btn"
+                className="mobile-only-btn"
                 onClick={() => setShowSummaryPopup(true)}
                 style={{
-                  width: "100%", padding: "12px 16px", background: "#EEEDFE",
-                  border: "1px solid #CECBF6", borderRadius: 8, cursor: "pointer",
-                  display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16,
+                  width: "100%", padding: "12px 16px", background: "#EEEDFE", border: "1px solid #CECBF6",
+                  borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center",
+                  justifyContent: "space-between", marginBottom: 16,
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -535,35 +298,23 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
               </div>
             )}
 
-            {/* ─── Content Area: Sources or Article ─── */}
-            {viewMode === "sources" ? (
-              <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
-                <div
-                  className="narrative-content font-body"
-                  dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
-                  onClick={handleNarrativeClick}
-                  style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
-                />
-                {isStreaming && (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
-                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
-                    <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
-                      Composing from Prabhupāda&apos;s words...
-                    </span>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
-                {isGeneratingArticle && <ArticleSkeleton />}
-                {article && !isGeneratingArticle && <ArticleView segments={article} />}
-                {!article && !isGeneratingArticle && (
-                  <p className="font-body" style={{ fontSize: 14, color: "#888", textAlign: "center", padding: 40 }}>
-                    Unable to generate article. Please try again.
-                  </p>
-                )}
-              </div>
-            )}
+            {/* ─── Narrative Card ─── */}
+            <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
+              <div
+                className="narrative-content font-body"
+                dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
+                onClick={handleNarrativeClick}
+                style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
+              />
+              {isStreaming && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
+                  <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
+                    Composing from Prabhupada&apos;s words...
+                  </span>
+                </div>
+              )}
+            </div>
 
             {/* Feedback widget */}
             {!isStreaming && results && results.totalResults > 0 && (
@@ -584,7 +335,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                 onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
               >
-                Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources →
+                Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources &rarr;
               </button>
             )}
 
@@ -604,7 +355,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                       onMouseEnter={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.color = "#7C3AED"; }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.25)"; e.currentTarget.style.color = "#374151"; }}
                     >
-                      {q} →
+                      {q} &rarr;
                     </button>
                   ))}
                 </div>
@@ -614,56 +365,63 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         </div>
 
         {/* ─── Desktop Summary Sidebar ─── */}
-        <div className="desktop-summary-sidebar" style={{
-          background: "white", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12,
-          padding: 16, position: "sticky", top: 20, alignSelf: "start",
-        }}>
-          {/* Key answers section */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z" fill="#7F77DD" stroke="none" />
-            </svg>
-            <span className="font-body" style={{ fontSize: 13, fontWeight: 500 }}>Key answers</span>
-          </div>
+        <div className="desktop-sidebar">
+          <div style={{
+            background: "white", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12,
+            padding: 16, position: "sticky", top: 20, alignSelf: "start",
+          }}>
+            {/* Key answers section */}
+            {summaries.length > 0 && (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                  <svg width="14" height="14" viewBox="0 0 14 14">
+                    <path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z" fill="#7F77DD" stroke="none" />
+                  </svg>
+                  <span className="font-body" style={{ fontSize: 13, fontWeight: 500 }}>Key answers</span>
+                </div>
+                {summaries.map((item, i) => (
+                  <div
+                    key={i}
+                    onClick={() => scrollToSource(item.reference)}
+                    style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12 }}
+                  >
+                    <span style={{
+                      fontSize: 11, fontWeight: 500, color: "#534AB7", background: "#EEEDFE",
+                      padding: "1px 6px", borderRadius: 4, whiteSpace: "nowrap", marginTop: 2,
+                    }}>{i + 1}</span>
+                    <div>
+                      <p className="font-body" style={{ fontSize: 12, margin: "0 0 2px", lineHeight: 1.5 }}>{item.summary}</p>
+                      <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{item.reference}</span>
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
 
-          {summariesLoading && (
-            <div style={{ padding: "8px 0" }}>
-              <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#7F77DD", animation: "pulse 1.2s ease-in-out infinite", margin: "0 auto" }} />
-            </div>
-          )}
-
-          {summaries.map((item, i) => (
-            <div
-              key={i}
-              onClick={() => scrollToSource(item.reference)}
-              style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12 }}
-            >
-              <span style={{
-                fontSize: 11, fontWeight: 500, color: "#534AB7", background: "#EEEDFE",
-                padding: "1px 6px", borderRadius: 4, whiteSpace: "nowrap", marginTop: 2,
-              }}>
-                {i + 1}
-              </span>
-              <div>
-                <p className="font-body" style={{ fontSize: 12, margin: "0 0 2px", lineHeight: 1.5 }}>{item.summary}</p>
-                <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{item.reference}</span>
+            {/* Loading state for summaries */}
+            {summaries.length === 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                <svg width="14" height="14" viewBox="0 0 14 14">
+                  <path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z" fill="#7F77DD" stroke="none" />
+                </svg>
+                <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#888" }}>Generating key answers...</span>
               </div>
-            </div>
-          ))}
+            )}
 
-          {/* Divider */}
-          <div style={{ borderTop: "1px solid rgba(0,0,0,0.06)", margin: "14px 0" }} />
+            {/* Divider */}
+            <div style={{ borderTop: "1px solid rgba(0,0,0,0.06)", margin: "14px 0" }} />
 
-          {/* Sources by book */}
-          <p className="font-body" style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: "0.3px", margin: "0 0 8px" }}>
-            Sources by book
-          </p>
-          {bookBreakdown.map((g) => (
-            <div key={g.name} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-              <span className="font-body" style={{ fontSize: 12 }}>{g.name}</span>
-              <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{g.count}</span>
-            </div>
-          ))}
+            {/* Sources by book */}
+            <p className="font-body" style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: "0.3px", margin: "0 0 8px" }}>
+              Sources by book
+            </p>
+            {bookGroups.map(g => (
+              <div key={g.name} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                <span className="font-body" style={{ fontSize: 12 }}>{g.name}</span>
+                <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{g.count}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -689,7 +447,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         />
       )}
 
-      {/* Layout + Responsive styles */}
+      {/* Styles */}
       <style jsx global>{`
         /* 2-column grid: content (1fr) + sidebar (220px) */
         .results-grid-container {
@@ -698,27 +456,30 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           gap: 20px;
           max-width: 1100px;
           margin: 0 auto;
-          padding: 20px 20px;
+          padding: 0 20px;
         }
 
         /* Mobile: single column */
         @media (max-width: 768px) {
           .results-grid-container {
             grid-template-columns: 1fr;
-            padding: 12px 16px;
+            padding: 0 16px;
           }
         }
 
-        /* Desktop sidebar visible, mobile button hidden */
-        .desktop-summary-sidebar { display: block; }
-        .mobile-only-summary-btn { display: none !important; }
+        /* Desktop sidebar visibility */
+        .desktop-sidebar { display: block; }
+        @media (max-width: 768px) { .desktop-sidebar { display: none; } }
 
-        @media (max-width: 768px) {
-          .desktop-summary-sidebar { display: none !important; }
-          .mobile-only-summary-btn { display: flex !important; }
-        }
+        /* Mobile button visibility */
+        .mobile-only-btn { display: none !important; }
+        @media (max-width: 768px) { .mobile-only-btn { display: flex !important; } }
 
-        /* Scripture card styling */
+        /* Bottom-sheet animations */
+        @keyframes summaryFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes summarySlideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+        /* Scripture card styles */
         .scripture-card {
           padding: 16px 20px;
           margin-bottom: 20px;
@@ -751,10 +512,6 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           }
         }
 
-        /* Summary popup animations */
-        @keyframes summaryFadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes summarySlideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-
         /* Narrative content styles */
         .narrative-content h3 {
           font-family: 'Cormorant Garamond', serif;
@@ -783,9 +540,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
           color: #8B5CF6; font-style: normal;
         }
-        .narrative-content .verse-link {
-          text-decoration: none; color: #8B5CF6;
-        }
+        .narrative-content .verse-link { text-decoration: none; color: #8B5CF6; }
         .narrative-content .verse-link:hover { text-decoration: underline; }
         .narrative-content .want-more-trigger {
           text-align: center; padding: 12px; margin: 16px 0 8px;

@@ -1,20 +1,20 @@
 /**
- * generate-summary/route.ts — AI Summary Generation
+ * generate-summary/route.ts — Key Answers Summary Generator
  *
- * Accepts an array of scripture passages and returns one-line summaries
- * for each passage using Claude. Used by the search results sidebar.
+ * Accepts an array of scripture passages and returns a one-line summary for each,
+ * powered by Claude. Used by the search results sidebar to show key answers.
  */
 import Anthropic from "@anthropic-ai/sdk";
-import { NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     const { passages } = await request.json();
 
     if (!passages || !Array.isArray(passages) || passages.length === 0) {
-      return NextResponse.json({ summaries: [] });
+      return Response.json({ summaries: [] });
     }
 
     const message = await anthropic.messages.create({
@@ -40,15 +40,15 @@ export async function POST(request: Request) {
       .join("");
 
     try {
-      return NextResponse.json({ summaries: JSON.parse(text.trim()) });
+      return Response.json({ summaries: JSON.parse(text.trim()) });
     } catch {
-      return NextResponse.json({
+      return Response.json({
         summaries: passages.map(() => "View this passage"),
       });
     }
-  } catch (error) {
-    console.error("Summary generation failed:", error);
-    return NextResponse.json({
+  } catch (err) {
+    console.error("Summary generation error:", err);
+    return Response.json({
       summaries: [],
       error: "Failed to generate summaries",
     });
