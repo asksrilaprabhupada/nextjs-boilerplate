@@ -576,6 +576,253 @@ function buildVerseUrlMap(verses: VerseHit[]): Map<string, string> {
 }
 
 // =====================================================
+// INSTRUCTIONAL LANGUAGE BOOST (Layer 2)
+// =====================================================
+
+/**
+ * Detects if a query is asking for practical instruction ("how to", "what should",
+ * "what is the way to", etc.) and boosts verses that contain instructional language
+ * in their purports.
+ */
+function applyInstructionalBoost(
+  query: string,
+  verses: VerseHit[],
+): VerseHit[] {
+  // Only apply for instructional/practical queries
+  const instructionalPatterns = [
+    /^how (to|can|should|do|does)/i,
+    /^what (should|can|is the way|is the method|is the process)/i,
+    /^why (should|do|does|is)/i,
+    /\b(overcome|control|conquer|avoid|stop|manage|deal with|free from|get rid of)\b/i,
+    /\b(practice|method|process|way to|path to|means of)\b/i,
+  ];
+
+  const isInstructional = instructionalPatterns.some(p => p.test(query));
+  if (!isInstructional) return verses;
+
+  // Instructional language patterns in purports
+  const instructionalPurportPatterns = [
+    /\b(one should|one must|we should|we must|it is recommended|the process is|the method is)\b/i,
+    /\b(by practicing|by chanting|by engaging|by serving|through devotional|the way to)\b/i,
+    /\b(therefore|thus|in this way|the solution|the remedy|the cure)\b/i,
+    /\b(is advised|is instructed|is recommended|is prescribed|should be controlled)\b/i,
+    /\b(kṛṣṇa consciousness|devotional service|bhakti-yoga|spiritual master)\b/i,
+  ];
+
+  // Scripture-type boost: BG, NOI, ISO are primarily instructional.
+  const instructionalScriptures = new Set(["BG", "NOI", "ISO", "BS"]);
+
+  return verses.map(v => {
+    let boost = 0;
+
+    // Check purport for instructional language
+    const purport = (v.purport || "").toLowerCase();
+    const matchCount = instructionalPurportPatterns.filter(p => p.test(purport)).length;
+    boost += matchCount * 0.02; // Small boost per pattern match
+
+    // Check translation for instructional language
+    const translation = (v.translation || "").toLowerCase();
+    if (instructionalPurportPatterns.some(p => p.test(translation))) {
+      boost += 0.03;
+    }
+
+    // Scripture type boost for instructional queries
+    const scripture = (v.scripture || "").toUpperCase();
+    if (instructionalScriptures.has(scripture)) {
+      boost += 0.04;
+    }
+
+    // Check if SUMMARY tag contains instructional intent
+    const summaryTag = (v.tags || []).find(t => t.startsWith("SUMMARY:"));
+    if (summaryTag) {
+      const summary = summaryTag.toLowerCase();
+      if (/\b(teaches|instructs|explains how|the way|method|process|should|must)\b/.test(summary)) {
+        boost += 0.03;
+      }
+    }
+
+    // Check if question tags match the query's intent (not just keywords)
+    const questionTags = (v.tags || []).filter(t => t.includes("?"));
+    for (const qt of questionTags) {
+      if (/\b(how to|overcome|control|what should)\b/i.test(qt)) {
+        boost += 0.04;
+        break;
+      }
+    }
+
+    return { ...v, score: (v.score || 0) + boost };
+  }).sort((a, b) => (b.score || 0) - (a.score || 0));
+}
+
+// =====================================================
+// PASTIME/NARRATIVE DETECTION (Layer 3)
+// =====================================================
+
+/**
+ * Detects if a verse is primarily a narrative/pastime description rather
+ * than a philosophical teaching. Narrative verses describe events:
+ * "He became angry", "She said to him", "They went to the forest"
+ *
+ * Used to demote these for instructional queries while keeping them
+ * for narrative queries like "What happened when Dakṣa cursed Śiva?"
+ */
+function isPastimeNarrative(v: VerseHit): boolean {
+  const translation = (v.translation || "").toLowerCase();
+
+  // Narrative action patterns — describing events, not teaching philosophy
+  const narrativePatterns = [
+    /^(he|she|they|lord|śrī|the lord|caitanya|mahāprabhu|kṛṣṇa|nityānanda)\s+(then|immediately|thereupon|thus|thereafter)?\s*(said|spoke|replied|told|asked|went|came|became|took|gave|saw|heard|left|stood|began|continued)/i,
+    /\b(became very angry|became angry|was angry|in anger he|in anger she|angrily said|angry mood)\b/i,
+    /^(hearing this|when .+ heard|upon hearing|after hearing)/i,
+    /^(at that time|in the meantime|meanwhile|thereafter|then|after this)/i,
+    /\b(slapped|kicked|chastised|cursed|struck|beat|hit)\b/i,
+  ];
+
+  const isNarrative = narrativePatterns.some(p => p.test(translation));
+
+  // Also check: if the scripture is CC and the translation describes an event
+  const isCC = (v.scripture || "").toUpperCase() === "CC";
+  const hasDialogueMarkers = /^[""\u201C]/.test((v.translation || "").trim());
+  const isShortDialogue = hasDialogueMarkers && (v.translation || "").length < 200;
+
+  // CC dialogue that's just someone speaking in a pastime (not philosophy)
+  if (isCC && isShortDialogue && !/(one should|the process|devotional service|kṛṣṇa consciousness|the supreme|absolute truth)/i.test(translation)) {
+    return true;
+  }
+
+  return isNarrative;
+}
+
+// =====================================================
+// LLM-BASED RE-RANKING (Layer 1 — Primary Fix)
+// =====================================================
+
+/**
+ * LLM-based re-ranking: asks Gemini Flash Lite to score each passage's
+ * relevance to the user's question on a 1-5 scale.
+ *
+ * This catches the critical distinction between verses that MENTION a topic
+ * (e.g., a pastime where someone gets angry) vs verses that TEACH about it
+ * (e.g., Kṛṣṇa explaining anger's root cause in BG 3.37).
+ *
+ * Cost: ~1-2 cents per query on Flash Lite. Latency: ~1-2 seconds.
+ */
+async function llmReRank(
+  query: string,
+  verses: VerseHit[],
+  prose: ProseHit[],
+): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+  if (verses.length === 0 && prose.length === 0) return { verses, prose };
+
+  // Build a compact list of candidates for scoring
+  const candidates: { idx: number; type: "verse" | "prose"; snippet: string }[] = [];
+
+  for (let i = 0; i < verses.length; i++) {
+    const v = verses[i];
+    const summaryTag = (v.tags || []).find(t => t.startsWith("SUMMARY:"));
+    const summary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+    const ref = cleanRef(v);
+    const snippet = summary
+      ? `[${ref}] ${summary}`
+      : `[${ref}] ${(v.translation || "").slice(0, 150)}`;
+    candidates.push({ idx: i, type: "verse", snippet });
+  }
+
+  for (let i = 0; i < prose.length; i++) {
+    const p = prose[i];
+    const summaryTag = (p.tags || []).find(t => t.startsWith("SUMMARY:"));
+    const summary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+    const bookName = getBookName(p.book_slug);
+    const snippet = summary
+      ? `[${bookName}] ${summary}`
+      : `[${bookName}] ${(p.body_text || "").slice(0, 150)}`;
+    candidates.push({ idx: i, type: "prose", snippet });
+  }
+
+  // Limit to top 55 candidates to keep the prompt manageable
+  const toScore = candidates.slice(0, 55);
+
+  const prompt = `You are scoring search results for a devotee's question about Śrīla Prabhupāda's teachings.
+
+QUESTION: "${query}"
+
+Score each passage below from 1 to 5:
+5 = Directly answers or teaches about the question (instructional verse, philosophical explanation, practical guidance)
+4 = Strongly relevant teaching that addresses the topic
+3 = Moderately relevant — related topic but doesn't directly answer the question
+2 = Tangentially related — mentions the topic in passing or in a different context
+1 = Not relevant — merely mentions a keyword from the question but doesn't teach about it (e.g., a pastime where someone happens to be angry when the question is about overcoming anger)
+
+CRITICAL DISTINCTION: A verse where someone IS angry in a story scores 1-2. A verse that TEACHES about anger (its cause, how to overcome it, its nature) scores 4-5.
+
+Return ONLY a JSON array of numbers (scores), same order as the passages. No explanation, no markdown.
+
+PASSAGES:
+${toScore.map((c, i) => `${i + 1}. ${c.snippet}`).join("\n")}`;
+
+  try {
+    const raw = await callGemini(prompt, "gemini-2.5-flash-lite", 500);
+    if (!raw) return { verses, prose };
+
+    // Parse the JSON array of scores
+    const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim();
+    let scores: number[];
+    try {
+      scores = JSON.parse(cleaned);
+    } catch {
+      // Try to extract numbers if JSON parse fails
+      const nums = cleaned.match(/\d/g);
+      if (nums) {
+        scores = nums.map(Number);
+      } else {
+        return { verses, prose };
+      }
+    }
+
+    if (!Array.isArray(scores) || scores.length === 0) return { verses, prose };
+
+    // Apply LLM scores to the candidates
+    const scoreMap = new Map<string, number>();
+    for (let i = 0; i < Math.min(scores.length, toScore.length); i++) {
+      const score = Math.min(5, Math.max(1, scores[i] || 3));
+      const key = `${toScore[i].type}-${toScore[i].idx}`;
+      scoreMap.set(key, score);
+    }
+
+    // Re-sort verses by combining existing RRF score with LLM relevance score
+    const rerankedVerses = verses.map((v, i) => {
+      const llmScore = scoreMap.get(`verse-${i}`) || 3;
+      const combinedScore = (v.score || 0) * 0.25 + (llmScore / 5) * 0.75;
+      return { ...v, score: combinedScore, _llmScore: llmScore };
+    });
+
+    // Filter out verses with LLM score of 1 (completely irrelevant)
+    const filteredVerses = rerankedVerses
+      .filter(v => (v as Record<string, unknown>)._llmScore as number >= 2)
+      .sort((a, b) => b.score - a.score);
+
+    // Re-sort prose similarly
+    const rerankedProse = prose.map((p, i) => {
+      const llmScore = scoreMap.get(`prose-${i}`) || 3;
+      const combinedScore = (p.score || 0) * 0.25 + (llmScore / 5) * 0.75;
+      return { ...p, score: combinedScore, _llmScore: llmScore };
+    });
+
+    const filteredProse = rerankedProse
+      .filter(p => (p as Record<string, unknown>)._llmScore as number >= 2)
+      .sort((a, b) => b.score - a.score);
+
+    console.log(`[LLM ReRank] ${verses.length} verses -> ${filteredVerses.length} after filtering (removed ${verses.length - filteredVerses.length} irrelevant)`);
+    console.log(`[LLM ReRank] ${prose.length} prose -> ${filteredProse.length} after filtering`);
+
+    return { verses: filteredVerses, prose: filteredProse };
+  } catch (err) {
+    console.error("[LLM ReRank] Failed, using original order:", err);
+    return { verses, prose };
+  }
+}
+
+// =====================================================
 // SYNTHESIS PROMPT BUILDER
 // =====================================================
 function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[]): string {
@@ -895,17 +1142,61 @@ export async function GET(request: NextRequest) {
   try {
     const { verses, prose } = await hybridSearch(query);
 
-    // ── Re-rank by tag relevance + semantic similarity ──
+    // Skip re-ranking layers for direct verse lookups (e.g., "BG 2.20")
+    const isDirectLookup = /^(BG|SB|CC|NOI|ISO|BS)\s+\d/i.test(query);
+
+    // ── Step 1: Re-rank by tag relevance + semantic similarity ──
     const rankedVerses = reRankResults(verses, query, 0.1, 3);
     const rankedProse = reRankResults(prose, query, 0.1, 2);
 
-    // Top results for AI narrative (the AI only sees these)
-    const narrativeVerses = rankedVerses.slice(0, 40);
-    const narrativeProse = rankedProse.slice(0, 12);
+    let narrativeVerses: VerseHit[];
+    let narrativeProse: ProseHit[];
+    let rawOverflowVerses: VerseHit[];
+    let rawOverflowProse: ProseHit[];
+
+    if (isDirectLookup) {
+      // Direct lookup: skip instructional boost, pastime demotion, and LLM re-ranking
+      narrativeVerses = rankedVerses.slice(0, 40);
+      narrativeProse = rankedProse.slice(0, 12);
+      rawOverflowVerses = rankedVerses.slice(40);
+      rawOverflowProse = rankedProse.slice(12);
+    } else {
+      // ── Step 2: Instructional language boost for "how to" queries ──
+      const boostedVerses = applyInstructionalBoost(query, rankedVerses);
+
+      // ── Step 3: Demote pure pastime/narrative verses for philosophical queries ──
+      const isPhilosophicalQuery = /^(how|what|why|explain|describe the nature|what is the|what are the)\b/i.test(query);
+      const demotedVerses = isPhilosophicalQuery
+        ? boostedVerses.map(v => {
+            if (isPastimeNarrative(v)) {
+              return { ...v, score: (v.score || 0) * 0.5 };
+            }
+            return v;
+          }).sort((a, b) => (b.score || 0) - (a.score || 0))
+        : boostedVerses;
+
+      // ── Step 4: LLM-based re-ranking (score each candidate's actual relevance) ──
+      const llmReRanked = await llmReRank(
+        query,
+        demotedVerses.slice(0, 50),
+        rankedProse.slice(0, 15),
+      );
+
+      // ── Step 5: Slice for narrative and overflow ──
+      narrativeVerses = llmReRanked.verses.slice(0, 40);
+      narrativeProse = llmReRanked.prose.slice(0, 12);
+
+      rawOverflowVerses = [
+        ...llmReRanked.verses.slice(40),
+        ...demotedVerses.slice(50),
+      ];
+      rawOverflowProse = [
+        ...llmReRanked.prose.slice(12),
+        ...rankedProse.slice(15),
+      ];
+    }
 
     // Overflow for "dig deeper" modal — apply multi-signal relevance pipeline
-    const rawOverflowVerses = rankedVerses.slice(40);
-    const rawOverflowProse = rankedProse.slice(12);
     const rankedOverflow = rankAndFilterOverflow(query, rawOverflowVerses, rawOverflowProse);
 
     const overflowVerses = rankedOverflow.verses;
