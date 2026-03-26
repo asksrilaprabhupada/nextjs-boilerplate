@@ -12,6 +12,7 @@ import { CSSProperties, useEffect, useRef, useState } from "react";
 
 interface HeaderProps {
   onMoreItemSelect?: (item: "About" | "Donate" | "Contact" | "Feature Request") => void;
+  onSearchClick?: () => void;
 }
 
 type MoreItem = "About" | "Donate" | "Contact" | "Feature Request";
@@ -24,7 +25,7 @@ const primaryNav = [
 
 const moreItems: MoreItem[] = ["About", "Donate", "Contact", "Feature Request"];
 
-export default function Header({ onMoreItemSelect }: HeaderProps) {
+export default function Header({ onMoreItemSelect, onSearchClick }: HeaderProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [scrolled, setScrolled] = useState(false);
@@ -68,7 +69,9 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
       </span>
       <nav style={{ display: "flex", alignItems: "center", gap: 8 }} className="desktop-nav">
         {primaryNav.map(item => (
-          <Link key={item.label} href={item.href} className="font-body" style={navStyle(isActive(item.href))}>{item.label}</Link>
+          <Link key={item.label} href={item.href} className="font-body" style={navStyle(isActive(item.href))}
+            onClick={item.label === "Search" && pathname === "/" && onSearchClick ? (e) => { e.preventDefault(); onSearchClick(); } : undefined}
+          >{item.label}</Link>
         ))}
         <div style={{ position: "relative" }} ref={moreMenuRef}>
           <button onClick={() => setMoreOpen(p => !p)} className="font-body" style={{ ...navStyle(moreOpen), gap: 6 }}>
@@ -95,7 +98,7 @@ export default function Header({ onMoreItemSelect }: HeaderProps) {
       </button>
       {mobileMenuOpen && (
         <div style={{ position: "absolute", top: 60, left: 0, right: 0, background: "linear-gradient(140deg, rgba(255,248,252,0.97), rgba(246,238,255,0.95) 58%, rgba(255,241,238,0.95))", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(214,195,255,0.55)", padding: "8px 16px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
-          {primaryNav.map(item => <Link key={item.label} href={item.href} className="font-body" onClick={() => setMobileMenuOpen(false)} style={{ ...navStyle(isActive(item.href)), justifyContent: "flex-start", textDecoration: "none", padding: "10px 14px" }}>{item.label}</Link>)}
+          {primaryNav.map(item => <Link key={item.label} href={item.href} className="font-body" onClick={(e) => { if (item.label === "Search" && pathname === "/" && onSearchClick) { e.preventDefault(); onSearchClick(); } setMobileMenuOpen(false); }} style={{ ...navStyle(isActive(item.href)), justifyContent: "flex-start", textDecoration: "none", padding: "10px 14px" }}>{item.label}</Link>)}
           <button onClick={() => setMobileMoreOpen(p => !p)} className="font-body" style={{ ...navStyle(mobileMoreOpen), justifyContent: "space-between", padding: "10px 14px" }}>
             <span>More</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d={mobileMoreOpen ? "m6 15 6-6 6 6" : "m6 9 6 6 6-6"} /></svg>
           </button>

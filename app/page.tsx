@@ -21,6 +21,7 @@ import DonateOverlay from "./components/overlays/03-donate-overlay";
 import ContactOverlay from "./components/overlays/04-contact-overlay";
 import FeatureRequestOverlay from "./components/overlays/05-feature-request-overlay";
 import FeedbackButton from "./components/feedback/01-feedback-button";
+import ScrollTopButton from "./components/feedback/02-scroll-top-button";
 import { logSearch, logBehavior } from "./lib/02-analytics";
 import { useSearchBehaviorTracker } from "./hooks/01-use-search-behavior-tracker";
 
@@ -331,7 +332,7 @@ export default function Home() {
     <>
       {lockScreenVisible && <LockScreen onDismiss={() => setLockScreenVisible(false)} />}
       <div style={{ opacity: lockScreenVisible ? 0 : 1, transition: "opacity 0.8s ease 0.4s", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-        <Header onMoreItemSelect={setOverlay} />
+        <Header onMoreItemSelect={setOverlay} onSearchClick={handleClear} />
         <main style={{ flex: 1 }}>
           <div id="search">
             <HeroSearch
@@ -356,6 +357,7 @@ export default function Home() {
           )}
         </main>
 
+        <ScrollTopButton />
         <FeedbackButton currentQuery={currentQuery} />
       </div>
 
