@@ -247,6 +247,18 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
       });
   }, [results]);
 
+  // Follow-up suggestions — extract themes from search results
+  const followUps = useMemo(() => {
+    if (!results || results.totalResults === 0) return [];
+    const themes = results.citations
+      .slice(0, 10)
+      .map(c => c.title)
+      .filter(t => t && t.length > 5)
+      .slice(0, 3);
+    if (themes.length === 0) return [];
+    return themes.map(t => `What does Prabhupāda teach about ${t}?`);
+  }, [results]);
+
   if (isLoading) return null;
   if (!results) return null;
 
@@ -269,18 +281,6 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
       if (book) setModalBook(book);
     }
   };
-
-  // Follow-up suggestions — extract themes from search results
-  const followUps = useMemo(() => {
-    if (!results || results.totalResults === 0) return [];
-    const themes = results.citations
-      .slice(0, 10)
-      .map(c => c.title)
-      .filter(t => t && t.length > 5)
-      .slice(0, 3);
-    if (themes.length === 0) return [];
-    return themes.map(t => `What does Prabhupāda teach about ${t}?`);
-  }, [results]);
 
   // Book breakdown for sidebar
   const bookGroups = results.books
