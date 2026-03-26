@@ -420,9 +420,9 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                       People also explore
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {followUps.map(q => (
+                      {followUps.map((q, i) => (
                         <button
-                          key={q}
+                          key={`${i}-${q}`}
                           onClick={() => onSearch(q)}
                           className="font-body"
                           style={{ textAlign: "left", padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", fontSize: 14, color: "#374151", cursor: "pointer", transition: "all 0.3s ease" }}
