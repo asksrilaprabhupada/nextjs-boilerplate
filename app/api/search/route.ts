@@ -11,6 +11,7 @@ import { embedQuery } from "@/app/lib/03-embed";
 import { getCached, setCached } from "@/app/lib/04-search-cache";
 import { ensureVerseLinks } from "@/app/lib/05-link-postprocessor";
 import { preprocessQuery } from "@/app/lib/07-query-preprocessor";
+import { getSpeaker } from "@/app/api/generate-article/route";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
@@ -51,6 +52,10 @@ function buildVedabaseUrl(scripture: string, canto: string, chapter: string, ver
 // GEMINI API HELPERS
 // =====================================================
 async function callGemini(prompt: string, model: string, maxTokens: number): Promise<string> {
+  if (!geminiKey) {
+    console.error("[callGemini] GEMINI_API_KEY is not set!");
+    return "";
+  }
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   try {
     const res = await fetch(url, {
@@ -61,20 +66,37 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
       },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          maxOutputTokens: maxTokens,
-          temperature: 0.3,
-        },
+        generationConfig: { maxOutputTokens: maxTokens, temperature: 0.3 },
+        safetySettings: [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+        ],
       }),
     });
     if (!res.ok) {
-      console.error("Gemini API error:", res.status, await res.text());
+      const errBody = await res.text().catch(() => "");
+      console.error(`[callGemini] HTTP ${res.status}: ${errBody.substring(0, 500)}`);
       return "";
     }
     const data = await res.json();
-    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    if (data?.promptFeedback?.blockReason) {
+      console.error("[callGemini] PROMPT BLOCKED:", data.promptFeedback.blockReason);
+      return "";
+    }
+    const candidate = data?.candidates?.[0];
+    if (!candidate) {
+      console.error("[callGemini] No candidates. Response:", JSON.stringify(data).substring(0, 300));
+      return "";
+    }
+    if (candidate.finishReason === "SAFETY") {
+      console.error("[callGemini] SAFETY BLOCKED. Ratings:", JSON.stringify(candidate.safetyRatings));
+      return "";
+    }
+    return candidate?.content?.parts?.[0]?.text || "";
   } catch (err) {
-    console.error("Gemini call failed:", err);
+    console.error("[callGemini] Exception:", err);
     return "";
   }
 }
@@ -303,10 +325,10 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
     ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
     for (const v of d.v.slice(0, 10)) {
       const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
-      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 400)}"\n\n`;
+      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 800)}"\n\n`;
     }
     for (const p of d.p.slice(0, 3)) {
-      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\n"${p.body_text.substring(0, 300)}"\n\n`;
+      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\nText: "${(p.body_text || "").substring(0, 600)}"\n\n`;
     }
   }
 
@@ -365,18 +387,74 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
 }
 
 function buildFB(v: VerseHit[], p: ProseHit[]) {
-  let h = '<p style="color:#6B7280;font-style:italic;margin-bottom:16px;">Here are the most relevant passages from Śrīla Prabhupāda\'s books on this topic:</p>';
-  for (const x of v.slice(0, 10)) {
+  if (v.length === 0 && p.length === 0) {
+    return "<p>No relevant passages found.</p>";
+  }
+
+  const parts: string[] = [];
+  const bookNames = [...new Set(v.slice(0, 6).map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
+
+  // Intro
+  parts.push(`<p>The scriptures offer clear guidance on this topic, drawing from ${bookNames.slice(0, 3).join(", ")}${bookNames.length > 3 ? " and other texts" : ""}. Here is what Śrīla Prabhupāda's books teach.</p>`);
+
+  // Varied transition templates
+  const transitions = [
+    (s: string, l: string) => `${s} states in ${l}:`,
+    (s: string, l: string) => `In ${l}, ${s} declares:`,
+    (s: string, l: string) => `This is further addressed in ${l}, where ${s} says:`,
+    (s: string, l: string) => `${s} instructs in ${l}:`,
+    (s: string, l: string) => `Another key teaching from ${l}:`,
+    (s: string, l: string) => `The instruction continues in ${l}:`,
+  ];
+
+  // Verses: show translation AND purport content
+  for (let i = 0; i < Math.min(v.length, 6); i++) {
+    const x = v[i];
     const ref = `${x.scripture} ${x.canto_or_division ? x.canto_or_division + "." : ""}${x.chapter_number}.${x.verse_number}`;
-    h += `<div class="verse-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a> "${x.translation}"</div>`;
-    if (x.purport) {
-      h += `<div class="purport-quote"><strong>Śrīla Prabhupāda:</strong> "${(x.purport).substring(0, 300)}..."</div>`;
+    const url = x.vedabase_url || "#";
+    const link = `<a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a>`;
+    const speaker = getSpeaker(ref, "translation");
+
+    // Transition with speaker attribution
+    parts.push(`<p>${transitions[i % transitions.length](speaker, link)}</p>`);
+
+    // ACTUAL translation text
+    if (x.translation) {
+      parts.push(`<div class="verse-quote">"${x.translation}"</div>`);
+    }
+
+    // ACTUAL purport text — this is the heart of the teaching
+    if (x.purport && x.purport.length > 10) {
+      let excerpt = x.purport.substring(0, 600);
+      const lastPeriod = excerpt.lastIndexOf(".");
+      if (lastPeriod > 120) excerpt = excerpt.substring(0, lastPeriod + 1);
+      else excerpt += "...";
+      parts.push(`<p>Śrīla Prabhupāda explains in his purport:</p>`);
+      parts.push(`<div class="purport-quote">"${excerpt}"</div>`);
     }
   }
-  for (const x of p.slice(0, 5)) {
-    h += `<div class="prose-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank">${getBookName(x.book_slug)}</a>: "${x.body_text.substring(0, 300)}..."</div>`;
+
+  // Prose: show ACTUAL body_text, not just the book/chapter name
+  for (const x of p.slice(0, 3)) {
+    const bookName = getBookName(x.book_slug);
+    const url = x.vedabase_url || "#";
+
+    // ACTUAL prose text content
+    if (x.body_text && x.body_text.length > 10) {
+      let excerpt = x.body_text.substring(0, 500);
+      const lp = excerpt.lastIndexOf(".");
+      if (lp > 100) excerpt = excerpt.substring(0, lp + 1);
+      else excerpt += "...";
+
+      parts.push(`<p>In <a href="${url}" class="verse-link" target="_blank">${bookName}</a>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
+      parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
+    }
   }
-  return h;
+
+  // Conclusion
+  parts.push(`<p>For complete purports and further study, click any reference above to read on Vedabase.io.</p>`);
+
+  return parts.join("\n");
 }
 
 // =====================================================
@@ -480,6 +558,12 @@ export async function GET(request: NextRequest) {
                 maxOutputTokens: 4500,
                 temperature: 0.3,
               },
+              safetySettings: [
+                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+              ],
             }),
           });
 
