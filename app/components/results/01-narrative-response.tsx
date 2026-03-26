@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import WantMoreModal from "./06-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
@@ -524,7 +524,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         .narrative-content .verse-quote {
           background: rgba(245,240,255,0.5); border: 1px solid rgba(196,181,253,0.25);
           border-left: 3px solid #8B5CF6; padding: 14px 18px; border-radius: 12px; margin: 12px 0;
-          font-family: 'Cormorant Garamond', serif; font-size: 1.02rem; font-style: italic; line-height: 1.7; color: #1E1B4B;
+          font-family: Georgia, 'Times New Roman', serif; font-size: 16px; font-style: italic; line-height: 1.8; color: #1E1B4B;
         }
         .narrative-content .purport-quote {
           background: rgba(139,92,246,0.04); border: 1px solid rgba(196,181,253,0.18);
@@ -554,6 +554,10 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         @keyframes pulse {
           0%, 100% { opacity: 0.4; transform: scale(1); }
           50% { opacity: 1; transform: scale(1.3); }
+        }
+        @keyframes articlePulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
         }
       `}</style>
     </>

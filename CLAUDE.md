@@ -61,9 +61,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── 05-search-progress.tsx (multi-step loader)
 │   │   │   └── 06-search-feedback.tsx (thumbs voting)
 │   │   ├── results/                   # Search results display
-│   │   │   ├── 01-narrative-response.tsx (3-column layout)
-│   │   │   ├── 02-left-rail.tsx       (keywords sidebar)
-│   │   │   ├── 03-right-rail.tsx      (citations sidebar)
+│   │   │   ├── 01-narrative-response.tsx (2-column layout: content + summary sidebar)
 │   │   │   ├── 04-verse-block.tsx     (verse card)
 │   │   │   ├── 05-purport-block.tsx   (purport card)
 │   │   │   ├── 06-want-more-modal.tsx (expanded book results)
