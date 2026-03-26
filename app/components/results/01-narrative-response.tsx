@@ -1,15 +1,13 @@
 /**
  * 01-narrative-response.tsx — Narrative Response Layout
  *
- * Renders the 3-column search results with left rail (keywords), center narrative (AI answer with citations), and right rail (book citations).
- * This is the core display component that presents Srila Prabhupada's teachings as a flowing narrative answer.
+ * Single-column search results with a compact sources header bar replacing the old 3-column layout.
+ * Left rail (keywords) removed. Right rail data collapsed into an expandable sources drawer.
  */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { motion } from "framer-motion";
-import LeftRail from "./02-left-rail";
-import RightRail from "./03-right-rail";
 import WantMoreModal from "./06-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
 import DigDeeperModal from "./07-dig-deeper-modal";
@@ -53,6 +51,21 @@ export interface SearchResults {
   totalProse?: number;
 }
 
+/* ─── Book color-coding system ─── */
+const BOOK_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  SB:      { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
+  NOI:     { bg: "#E1F5EE", text: "#0F6E56", border: "#9FE1CB" },
+  CC:      { bg: "#FAECE7", text: "#993C1D", border: "#F0997B" },
+  SPL:     { bg: "#FBEAF0", text: "#993556", border: "#ED93B1" },
+  BG:      { bg: "#FAEEDA", text: "#854F0B", border: "#FAC775" },
+  default: { bg: "#F1EFE8", text: "#5F5E5A", border: "#B4B2A9" },
+};
+
+function getBookColor(reference: string) {
+  const prefix = reference.split(" ")[0]?.toUpperCase() || "default";
+  return BOOK_COLORS[prefix] || BOOK_COLORS["default"];
+}
+
 interface Props {
   results: SearchResults | null;
   isLoading: boolean;
@@ -65,17 +78,15 @@ interface Props {
 export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId }: Props) {
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
   const [digDeeperOpen, setDigDeeperOpen] = useState(false);
+  const [isSourceDrawerOpen, setIsSourceDrawerOpen] = useState(false);
 
-  // Reset dig deeper modal when results change
+  // Reset states when results change
   useEffect(() => {
     setDigDeeperOpen(false);
+    setIsSourceDrawerOpen(false);
   }, [results?.query]);
 
-  if (isLoading) {
-    // SearchProgress component in HeroSearch handles the loading state now
-    return null;
-  }
-
+  if (isLoading) return null;
   if (!results) return null;
 
   if (results.totalResults === 0) {
@@ -103,42 +114,118 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
     `What does Prabhupāda say about ${c}?`
   );
 
+  // Book breakdown for the sources drawer
+  const bookBreakdown = results.books
+    .map(b => ({ name: b.name, slug: b.slug, count: b.verses.length + b.prose.length }))
+    .filter(b => b.count > 0)
+    .sort((a, b) => b.count - a.count);
+
+  // Group citations by book for the drawer
+  const citationsByBook: Record<string, Citation[]> = {};
+  for (const c of results.citations) {
+    if (!citationsByBook[c.book]) citationsByBook[c.book] = [];
+    citationsByBook[c.book].push(c);
+  }
+
   return (
     <>
-      <div className="search-results-layout" style={{ maxWidth: 1280, margin: "0 auto", padding: "20px clamp(12px, 3vw, 40px)", display: "grid", gridTemplateColumns: "260px 1fr 280px", gap: "clamp(14px, 2vw, 24px)", alignItems: "start" }}>
-
-        {/* LEFT RAIL */}
-        <LeftRail
-          keywords={results.keywords}
-          synonyms={results.synonyms}
-          relatedConcepts={results.relatedConcepts}
-          onSearch={onSearch}
-        />
-
-        {/* CENTER — Main Answer */}
+      {/* Single-column centered layout */}
+      <div className="results-container" style={{ maxWidth: 780, margin: "0 auto", padding: "20px clamp(16px, 3vw, 40px)" }}>
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          {/* Keywords used */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16, justifyContent: "center" }}>
-            <span className="font-body" style={{ fontSize: 12, color: "#6B7280" }}>Searched:</span>
-            {results.keywords.slice(0, 6).map(k => (
-              <span key={k} className="font-body" style={{ fontSize: 11, padding: "2px 10px", borderRadius: 100, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(196,181,253,0.3)", color: "#7C3AED", fontWeight: 500 }}>{k}</span>
-            ))}
-          </div>
 
-          {/* Narrative card */}
-          <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
-              <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, #8B5CF6, #7C3AED)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              </div>
-              <span className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: "#7C3AED" }}>
-                From Śrīla Prabhupāda&apos;s Books
-              </span>
-              <span className="font-body" style={{ fontSize: 11, color: "#6B7280", marginLeft: "auto" }}>
-                {results.totalResults} sources found
+          {/* ─── Sources Header Bar ─── */}
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "12px 20px", marginBottom: 0,
+            background: "rgba(255,255,255,0.6)", backdropFilter: "blur(10px)",
+            border: "1px solid rgba(196,181,253,0.25)", borderRadius: "16px 16px 0 0",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#7C3AED" }} />
+              <span className="font-body" style={{ fontSize: 14, fontWeight: 500, color: "#1a1a1a" }}>
+                From Śrīla Prabhupāda&apos;s books
               </span>
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span className="font-body" style={{ fontSize: 13, color: "#666" }}>
+                {results.totalResults} sources found
+              </span>
+              <button
+                onClick={() => setIsSourceDrawerOpen(prev => !prev)}
+                className="font-body"
+                style={{
+                  fontSize: 12, padding: "4px 12px", background: "#E6F1FB", color: "#185FA5",
+                  border: "none", borderRadius: 8, cursor: "pointer", transition: "background 0.15s ease",
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = "#B5D4F4"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "#E6F1FB"; }}
+              >
+                {isSourceDrawerOpen ? "Hide sources" : "View sources"}
+              </button>
+            </div>
+          </div>
 
+          {/* ─── Expandable Sources Drawer ─── */}
+          <div style={{
+            maxHeight: isSourceDrawerOpen ? 400 : 0, overflow: "hidden",
+            transition: "max-height 0.3s ease",
+            background: "rgba(255,255,255,0.5)", backdropFilter: "blur(10px)",
+            borderLeft: "1px solid rgba(196,181,253,0.25)", borderRight: "1px solid rgba(196,181,253,0.25)",
+          }}>
+            <div style={{ padding: "16px 20px" }}>
+              <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 12 }}>
+                Book breakdown
+              </p>
+              {bookBreakdown.map(book => {
+                const bookObj = results.books.find(b => b.slug === book.slug);
+                return (
+                  <div key={book.name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid rgba(0,0,0,0.04)" }}>
+                    <span className="font-body" style={{ fontSize: 13, color: "#1a1a1a" }}>{book.name}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span className="font-body" style={{ fontSize: 13, color: "#666" }}>{book.count}</span>
+                      {bookObj && (
+                        <button
+                          onClick={() => setModalBook(bookObj)}
+                          className="font-body"
+                          style={{ fontSize: 11, color: "#7C3AED", background: "none", border: "none", cursor: "pointer", fontWeight: 600, textDecoration: "none" }}
+                          onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
+                          onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
+                        >
+                          View all →
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Citation links preview */}
+              {results.citations.length > 0 && (
+                <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {results.citations.slice(0, 8).map((c, i) => (
+                    <a
+                      key={i}
+                      href={c.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-body"
+                      style={{ fontSize: 11, color: "#8B5CF6", textDecoration: "none", padding: "3px 8px", borderRadius: 6, background: "rgba(139,92,246,0.06)", transition: "all 0.2s" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.12)"; e.currentTarget.style.textDecoration = "underline"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.06)"; e.currentTarget.style.textDecoration = "none"; }}
+                    >
+                      {c.type === "verse" ? `📖 ${c.ref}` : `📄 ${c.title || c.ref}`}
+                    </a>
+                  ))}
+                  {results.citations.length > 8 && (
+                    <span className="font-body" style={{ fontSize: 11, color: "#6B7280", padding: "3px 0" }}>+{results.citations.length - 8} more</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ─── Narrative Card ─── */}
+          <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: isSourceDrawerOpen ? "0 0 24px 24px" : "0 0 24px 24px", borderTop: "none" }}>
             <div
               className="narrative-content font-body"
               dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
@@ -166,27 +253,13 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
               onClick={() => setDigDeeperOpen(true)}
               className="font-body"
               style={{
-                width: "100%",
-                marginTop: 16,
-                padding: "14px 20px",
-                borderRadius: 16,
-                border: "1px dashed rgba(196,181,253,0.4)",
-                background: "rgba(139,92,246,0.04)",
-                fontSize: 14,
-                fontWeight: 600,
-                color: "#7C3AED",
-                cursor: "pointer",
-                textAlign: "center",
-                transition: "all 0.3s ease",
+                width: "100%", marginTop: 16, padding: "14px 20px", borderRadius: 16,
+                border: "1px dashed rgba(196,181,253,0.4)", background: "rgba(139,92,246,0.04)",
+                fontSize: 14, fontWeight: 600, color: "#7C3AED", cursor: "pointer",
+                textAlign: "center", transition: "all 0.3s ease",
               }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = "rgba(139,92,246,0.1)";
-                e.currentTarget.style.borderColor = "#8B5CF6";
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = "rgba(139,92,246,0.04)";
-                e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)";
-              }}
+              onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
+              onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
             >
               Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources →
             </button>
@@ -215,9 +288,6 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
             </div>
           )}
         </motion.div>
-
-        {/* RIGHT RAIL */}
-        <RightRail citations={results.citations} books={results.books} onWantMore={setModalBook} />
       </div>
 
       {/* Want More Modal */}
@@ -234,11 +304,13 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         />
       )}
 
-      {/* Responsive + Narrative styles */}
+      {/* Narrative + Responsive styles */}
       <style jsx global>{`
-        @media (max-width: 1024px) {
-          .search-results-layout {
-            grid-template-columns: 1fr !important;
+        /* Single-column responsive */
+        @media (max-width: 768px) {
+          .results-container {
+            max-width: 100% !important;
+            padding: 12px 16px !important;
           }
         }
 
