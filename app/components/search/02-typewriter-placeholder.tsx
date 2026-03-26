@@ -8,12 +8,32 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 
-const QUESTIONS = [
+const DESKTOP_QUESTIONS = [
   "What is the purpose of human life?",
   "How to overcome anger?",
   "What happens to the soul after death?",
   "Why is chanting Hare Kṛṣṇa important?",
 ];
+
+/* Shorter versions for mobile/tablet — each under 28 characters to fit
+   comfortably on a 375px screen with padding reserved for buttons */
+const MOBILE_QUESTIONS = [
+  "Purpose of human life?",
+  "How to overcome anger?",
+  "What happens after death?",
+  "Why chant Hare Kṛṣṇa?",
+];
+
+function useIsMobile(breakpoint = 768): boolean {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < breakpoint);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, [breakpoint]);
+  return isMobile;
+}
 
 const TYPE_SPEED = 50;
 const PAUSE_DURATION = 3000;
@@ -29,10 +49,20 @@ export default function TypewriterPlaceholder({ isFocused }: TypewriterPlacehold
   const [phase, setPhase] = useState<"typing" | "pausing" | "erasing">("typing");
   const charIndex = useRef(0);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMobile = useIsMobile(768);
+  const questions = isMobile ? MOBILE_QUESTIONS : DESKTOP_QUESTIONS;
 
   const clear = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
   }, []);
+
+  /* Reset animation when switching between mobile/desktop question sets */
+  useEffect(() => {
+    charIndex.current = 0;
+    setText("");
+    setQuestionIndex(0);
+    setPhase("typing");
+  }, [isMobile]);
 
   useEffect(() => {
     if (isFocused) {
@@ -40,7 +70,7 @@ export default function TypewriterPlaceholder({ isFocused }: TypewriterPlacehold
       return;
     }
 
-    const question = QUESTIONS[questionIndex];
+    const question = questions[questionIndex % questions.length];
 
     if (phase === "typing") {
       if (charIndex.current < question.length) {
@@ -60,14 +90,14 @@ export default function TypewriterPlaceholder({ isFocused }: TypewriterPlacehold
           setText(question.slice(0, charIndex.current));
         }, ERASE_SPEED);
       } else {
-        const next = (questionIndex + 1) % QUESTIONS.length;
+        const next = (questionIndex + 1) % questions.length;
         setQuestionIndex(next);
         setPhase("typing");
       }
     }
 
     return clear;
-  }, [isFocused, text, phase, questionIndex, clear]);
+  }, [isFocused, text, phase, questionIndex, clear, questions]);
 
   if (isFocused) return null;
 
@@ -79,11 +109,14 @@ export default function TypewriterPlaceholder({ isFocused }: TypewriterPlacehold
         position: "absolute",
         left: 24,
         top: 20,
+        right: 100,
         fontSize: 17,
         color: "#6B7280",
         pointerEvents: "none",
         display: "flex",
         alignItems: "center",
+        overflow: "hidden",
+        whiteSpace: "nowrap",
       }}
     >
       {text}

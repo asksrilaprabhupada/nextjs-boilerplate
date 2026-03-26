@@ -164,10 +164,14 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                   position: "absolute",
                   left: 24,
                   top: 20,
+                  right: 100,
                   fontSize: "clamp(15px, 2.8vw, 17px)",
                   color: "#C4B5FD",
                   pointerEvents: "none",
                   lineHeight: "1.5",
+                  overflow: "hidden",
+                  whiteSpace: "nowrap",
+                  textOverflow: "ellipsis",
                 }}
               >
                 Ask anything about the scriptures...
