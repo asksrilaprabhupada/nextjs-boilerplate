@@ -303,7 +303,7 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
     ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
     for (const v of d.v.slice(0, 10)) {
       const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
-      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 500)}"\n\n`;
+      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 1500)}"\n\n`;
     }
     for (const p of d.p.slice(0, 5)) {
       ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\n"${p.body_text.substring(0, 400)}"\n\n`;
@@ -325,6 +325,13 @@ SPEAKER ATTRIBUTION (critical — always name the speaker):
 - ALL purports: "Śrīla Prabhupāda illuminates this in his purport...", "His Divine Grace explains further...", "In his commentary, Śrīla Prabhupāda writes..."
 - Prose books: "In [Book Title], Śrīla Prabhupāda writes..."
 - NEVER say "the scripture says" or "according to the text" — always name the speaker.
+
+PURPORT PRIORITY (critical):
+- For every verse you cite, ALWAYS include a substantial purport excerpt after the translation. The purport is where Śrīla Prabhupāda's actual teaching lives — it is the heart of the article.
+- Purport quotes must be substantially longer than translation quotes — quote 3-8 key sentences from the purport, not just one line.
+- The article's content balance should be roughly: 50-60% purport content, 15-20% translation quotes, 20-30% editorial transitions.
+- Prioritize verses that have rich, substantive purports over those with only short translations.
+- An article that only quotes translations without purports is INCOMPLETE and UNACCEPTABLE.
 
 ARTICLE STRUCTURE:
 1. INTRODUCTION (2-4 sentences): Frame the question contextually. Do NOT quote scripture in the intro — just set up what the reader is about to explore. Example tone: "The practice of chanting the holy names occupies a central place in Gauḍīya Vaiṣṇava tradition. Across multiple scriptures, the importance of this practice is established not merely as recommendation but as the prescribed method for spiritual realization in the current age. The evidence from Śrīla Prabhupāda's books paints a compelling and multilayered picture."
