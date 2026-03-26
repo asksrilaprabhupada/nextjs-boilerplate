@@ -37,6 +37,31 @@ const BOOK_NAMES: Record<string, string> = {
 };
 function getBookName(slug: string): string { return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown"; }
 
+/** Smart truncation — never cuts mid-sentence */
+function smartTruncate(text: string, maxLen: number): string {
+  if (!text || text.length <= maxLen) return text || "";
+  const chunk = text.substring(0, maxLen);
+  // Find the last complete sentence — period followed by a space and uppercase or quote
+  const sentenceEnd = chunk.search(/\.\s(?=[A-Z"])/g) !== -1
+    ? chunk.lastIndexOf(". ") + 1
+    : chunk.lastIndexOf(".");
+  if (sentenceEnd > maxLen * 0.4) {
+    return chunk.substring(0, sentenceEnd + 1).trim();
+  }
+  // If no good sentence boundary, cut at last space
+  const lastSpace = chunk.lastIndexOf(" ");
+  if (lastSpace > maxLen * 0.5) {
+    return chunk.substring(0, lastSpace).trim() + "...";
+  }
+  return chunk.trim() + "...";
+}
+
+/** Strip "Text " prefix from verse numbers for clean references */
+function cleanRef(v: { scripture: string; canto_or_division?: string; chapter_number?: string; verse_number: string }): string {
+  const cleanVerseNum = (v.verse_number || "").replace(/^Text\s+/i, "");
+  return `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${cleanVerseNum}`;
+}
+
 /** Fallback URL builder — strips "Text " prefix as safety net */
 function buildVedabaseUrl(scripture: string, canto: string, chapter: string, verse: string): string {
   const base = "https://vedabase.io/en/library";
@@ -301,7 +326,7 @@ function buildVerseUrlMap(verses: VerseHit[]): Map<string, string> {
   const map = new Map<string, string>();
   for (const v of verses) {
     if (!v.vedabase_url) continue;
-    const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
+    const ref = cleanRef(v);
     map.set(ref, v.vedabase_url);
     map.set(`[${ref}]`, v.vedabase_url);
   }
@@ -324,11 +349,13 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
   for (const [slug, d] of Object.entries(byBook)) {
     ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
     for (const v of d.v.slice(0, 10)) {
-      const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
-      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 800)}"\n\n`;
+      const ref = cleanRef(v);
+      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${smartTruncate(v.purport || "", 800)}"\n\n`;
     }
     for (const p of d.p.slice(0, 3)) {
-      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\nText: "${(p.body_text || "").substring(0, 600)}"\n\n`;
+      const bodyText = (p.body_text || "").trim();
+      if (bodyText.length < 80) continue;
+      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
     }
   }
 
@@ -339,16 +366,26 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
 Use ONLY the scripture passages provided below. Never invent philosophy.
 
 STRUCTURE YOUR ARTICLE LIKE THIS:
-1. Start with a <p> paragraph (2-3 sentences) introducing the topic and framing the question
-2. For each key passage you use, write a <p> transition sentence naming the speaker, then quote the passage
-3. End with a <p> paragraph (2-3 sentences) tying the key points together
+1. Start with a <p> paragraph (2-3 sentences) that restates and frames the actual question "${question}" — explain why this question matters or how it is addressed in Śrīla Prabhupāda's books. Do NOT use generic filler like "The scriptures offer clear guidance."
+2. Organize the body by THEME, not just sequentially. Use <h3> headings for each thematic section. Make headings editorial (e.g., "The Rarity of Human Birth", "The Ultimate Goal"), NOT just scripture names.
+3. End with a <p> paragraph (2-3 sentences) that ties the key teachings together into one clear takeaway. Summarize what the scriptures collectively teach about the question. Do NOT just say "click the links" or "read on Vedabase."
+
+THEMATIC STRUCTURE: Do NOT just list verses sequentially. Instead, organize by theme or argument flow. For example, if the question is about the goal of human life:
+- First group: Why human life is rare and valuable
+- Second group: What the actual purpose/goal is
+- Third group: How to achieve it
 
 SPEAKER ATTRIBUTION — always name the speaker before a quote:
 - BG translations: "Lord Kṛṣṇa tells Arjuna..." or "The Supreme Lord declares..."
 - SB translations: Name the speaker — "Śukadeva Gosvāmī narrates...", "Nārada Muni instructs..."
 - CC translations: "Lord Caitanya reveals...", "Kṛṣṇadāsa Kavirāja Gosvāmī records..."
-- ALL purports: "Śrīla Prabhupāda explains in his purport..." or "His Divine Grace writes..."
+- ALL purports: Vary the phrasing — "Śrīla Prabhupāda explains in his purport...", "In his commentary, Śrīla Prabhupāda illuminates...", "His Divine Grace further elaborates...", "Śrīla Prabhupāda writes in the purport...", "The significance is explained by Śrīla Prabhupāda...", "In his purport, His Divine Grace clarifies..."
 - Prose books: "In [Book Title], Śrīla Prabhupāda writes..."
+
+CRITICAL: For every verse you quote, you MUST include BOTH:
+  a) The translation (in a <div class="verse-quote"> block)
+  b) A substantial excerpt from the purport (in a <div class="purport-quote"> block)
+The purport is where Śrīla Prabhupāda's actual explanation lives. An article that shows only translations without purports is INCOMPLETE.
 
 FORMAT RULES:
 - Your intro, transitions, and conclusion go in <p> tags
@@ -358,7 +395,6 @@ FORMAT RULES:
 - Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
 - Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
 - Use 5-8 passages total. Do NOT use all of them.
-- For each verse, include BOTH the translation AND a purport excerpt (purport is where the teaching lives)
 - Output clean HTML only. No markdown. No preamble.
 
 PASSAGES:
@@ -377,16 +413,16 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
     console.log("[Synthesis] Gemini returned", text?.length || 0, "chars");
     if (!text) {
       console.error("[Synthesis] Gemini returned empty — using fallback");
-      return buildFB(verses, prose);
+      return buildFB(question, verses, prose);
     }
     return ensureVerseLinks(text, verseUrlMap);
   } catch (err) {
     console.error("[Synthesis] Gemini call failed:", err);
-    return buildFB(verses, prose);
+    return buildFB(question, verses, prose);
   }
 }
 
-function buildFB(v: VerseHit[], p: ProseHit[]) {
+function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
   if (v.length === 0 && p.length === 0) {
     return "<p>No relevant passages found.</p>";
   }
@@ -394,23 +430,38 @@ function buildFB(v: VerseHit[], p: ProseHit[]) {
   const parts: string[] = [];
   const bookNames = [...new Set(v.slice(0, 6).map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
 
-  // Intro
-  parts.push(`<p>The scriptures offer clear guidance on this topic, drawing from ${bookNames.slice(0, 3).join(", ")}${bookNames.length > 3 ? " and other texts" : ""}. Here is what Śrīla Prabhupāda's books teach.</p>`);
+  // Question-aware intro
+  const questionText = question.replace(/\?$/, "").toLowerCase();
+  parts.push(`<p>The question of ${questionText} is one of the most fundamental inquiries addressed in Śrīla Prabhupāda's books. Across ${bookNames.slice(0, 3).join(", ")}${bookNames.length > 3 ? " and other texts" : ""}, the scriptures and Prabhupāda's purports provide direct and profound guidance.</p>`);
 
-  // Varied transition templates
+  // Varied transition templates (expanded to 10)
   const transitions = [
     (s: string, l: string) => `${s} states in ${l}:`,
     (s: string, l: string) => `In ${l}, ${s} declares:`,
     (s: string, l: string) => `This is further addressed in ${l}, where ${s} says:`,
     (s: string, l: string) => `${s} instructs in ${l}:`,
-    (s: string, l: string) => `Another key teaching from ${l}:`,
-    (s: string, l: string) => `The instruction continues in ${l}:`,
+    (s: string, l: string) => `Another key teaching appears in ${l}:`,
+    (s: string, l: string) => `The instruction continues in ${l}, where ${s} reveals:`,
+    (s: string, l: string) => `${s} further illuminates this in ${l}:`,
+    (s: string, l: string) => `Drawing from ${l}, ${s} teaches:`,
+    (s: string, l: string) => `This truth is echoed in ${l}, where ${s} proclaims:`,
+    (s: string, l: string) => `${s} emphasizes in ${l}:`,
+  ];
+
+  // Varied purport transition phrases
+  const purportTransitions = [
+    "Śrīla Prabhupāda explains in his purport:",
+    "In his commentary, Śrīla Prabhupāda illuminates this point:",
+    "His Divine Grace further elaborates:",
+    "Śrīla Prabhupāda writes in the purport:",
+    "The significance is explained by Śrīla Prabhupāda:",
+    "In his purport, His Divine Grace clarifies:",
   ];
 
   // Verses: show translation AND purport content
   for (let i = 0; i < Math.min(v.length, 6); i++) {
     const x = v[i];
-    const ref = `${x.scripture} ${x.canto_or_division ? x.canto_or_division + "." : ""}${x.chapter_number}.${x.verse_number}`;
+    const ref = cleanRef(x);
     const url = x.vedabase_url || "#";
     const link = `<a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a>`;
     const speaker = getSpeaker(ref, "translation");
@@ -425,34 +476,47 @@ function buildFB(v: VerseHit[], p: ProseHit[]) {
 
     // ACTUAL purport text — this is the heart of the teaching
     if (x.purport && x.purport.length > 10) {
-      let excerpt = x.purport.substring(0, 600);
-      const lastPeriod = excerpt.lastIndexOf(".");
-      if (lastPeriod > 120) excerpt = excerpt.substring(0, lastPeriod + 1);
-      else excerpt += "...";
-      parts.push(`<p>Śrīla Prabhupāda explains in his purport:</p>`);
+      const excerpt = smartTruncate(x.purport, 600);
+      parts.push(`<p>${purportTransitions[i % purportTransitions.length]}</p>`);
       parts.push(`<div class="purport-quote">"${excerpt}"</div>`);
     }
   }
 
-  // Prose: show ACTUAL body_text, not just the book/chapter name
-  for (const x of p.slice(0, 3)) {
+  // Prose: show ACTUAL body_text, skip headings and short content
+  for (const x of p.slice(0, 5)) {
+    const bodyText = (x.body_text || "").trim();
+
+    // Skip if too short or looks like just a heading
+    if (bodyText.length < 80) continue;
+
+    // Skip leading chapter numbers/headings
+    let contentStart = 0;
+    const headingMatch = bodyText.match(/^(?:[A-Z]{3,}\s|CHAPTER\s|Chapter\s|\d+[\.\s])/);
+    if (headingMatch) {
+      const firstNewline = bodyText.indexOf("\n");
+      const firstPeriod = bodyText.indexOf(". ");
+      contentStart = Math.min(
+        firstNewline > 0 ? firstNewline + 1 : bodyText.length,
+        firstPeriod > 0 ? firstPeriod + 2 : bodyText.length,
+      );
+    }
+
+    const usableText = bodyText.substring(contentStart).trim();
+    if (usableText.length < 50) continue;
+
     const bookName = getBookName(x.book_slug);
     const url = x.vedabase_url || "#";
+    const excerpt = smartTruncate(usableText, 500);
 
-    // ACTUAL prose text content
-    if (x.body_text && x.body_text.length > 10) {
-      let excerpt = x.body_text.substring(0, 500);
-      const lp = excerpt.lastIndexOf(".");
-      if (lp > 100) excerpt = excerpt.substring(0, lp + 1);
-      else excerpt += "...";
-
-      parts.push(`<p>In <a href="${url}" class="verse-link" target="_blank">${bookName}</a>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
-      parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
-    }
+    parts.push(`<p>In <a href="${url}" class="verse-link" target="_blank">${bookName}</a>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
+    parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
   }
 
-  // Conclusion
-  parts.push(`<p>For complete purports and further study, click any reference above to read on Vedabase.io.</p>`);
+  // Conclusion that summarizes the teaching
+  const mainTeaching = v.length > 0 && v[0].translation
+    ? "As the scriptures emphasize, the human form of life is meant for spiritual realization — not merely material pursuits."
+    : "These teachings consistently point toward the supreme goal of developing love of God through devotional service.";
+  parts.push(`<p>${mainTeaching} For the complete purports and deeper study of each verse, the full texts are available on Vedabase.io through the reference links above.</p>`);
 
   return parts.join("\n");
 }
@@ -462,7 +526,7 @@ function buildFB(v: VerseHit[], p: ProseHit[]) {
 // =====================================================
 function buildMetadataAndCitations(query: string, verses: VerseHit[], prose: ProseHit[]) {
   const citations = [
-    ...verses.map(v => ({ ref: `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`, book: getBookName(v.book_slug || ""), url: v.vedabase_url || "", type: "verse" as const, title: v.chapter_title || "" })),
+    ...verses.map(v => ({ ref: cleanRef(v), book: getBookName(v.book_slug || ""), url: v.vedabase_url || "", type: "verse" as const, title: v.chapter_title || "" })),
     ...prose.map(p => ({ ref: `${getBookName(p.book_slug)}`, book: getBookName(p.book_slug), url: p.vedabase_url || "", type: "prose" as const, title: p.chapter_title || "" })),
   ];
 
