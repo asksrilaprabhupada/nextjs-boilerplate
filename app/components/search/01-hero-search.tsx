@@ -76,8 +76,8 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
 
   // When clear button is visible we need more right padding to avoid text collision
   const showClearBtn = hasResults && query;
-  // Use CSS clamp for responsive right padding — smaller on mobile
-  const inputRightPadding = showClearBtn ? "clamp(110px, 20vw, 160px)" : "clamp(80px, 16vw, 120px)";
+  // Minimum 100px right padding so text never goes behind mic + submit buttons
+  const inputRightPadding = showClearBtn ? "clamp(140px, 20vw, 160px)" : "clamp(100px, 16vw, 120px)";
 
   return (
     <section style={{
