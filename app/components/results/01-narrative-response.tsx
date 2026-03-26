@@ -165,9 +165,11 @@ interface Props {
   streamingNarrative?: string;
   onSearch: (q: string) => void;
   searchLogId?: string | null;
+  viewMode: "article" | "references";
+  onViewModeChange: (mode: "article" | "references") => void;
 }
 
-export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId }: Props) {
+export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId, viewMode, onViewModeChange }: Props) {
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
   const [digDeeperOpen, setDigDeeperOpen] = useState(false);
   const [summaries, setSummaries] = useState<SummaryItem[]>([]);
@@ -285,67 +287,198 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
               </div>
             )}
 
-            {/* ─── Narrative Card ─── */}
-            <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
-              <div
-                className="narrative-content font-body"
-                dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
-                onClick={handleNarrativeClick}
-                style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
-              />
-              {isStreaming && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
-                  <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
-                    Composing from Prabhupada&apos;s words...
-                  </span>
-                </div>
-              )}
+            {/* ─── Article / References Toggle ─── */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+              <span className="font-body" style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em" }}>View as</span>
+              <div className="view-mode-toggle">
+                <button
+                  className={`font-body${viewMode === "article" ? " active" : ""}`}
+                  onClick={() => onViewModeChange("article")}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                    <line x1="4.5" y1="4" x2="9.5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                    <line x1="4.5" y1="6.5" x2="9.5" y2="6.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                    <line x1="4.5" y1="9" x2="7.5" y2="9" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                  </svg>
+                  Article
+                </button>
+                <button
+                  className={`font-body${viewMode === "references" ? " active" : ""}`}
+                  onClick={() => onViewModeChange("references")}
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <rect x="1" y="1.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
+                    <rect x="1" y="7.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
+                    <line x1="7" y1="2.5" x2="13" y2="2.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                    <line x1="7" y1="4.5" x2="11" y2="4.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
+                    <line x1="7" y1="8.5" x2="13" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
+                    <line x1="7" y1="10.5" x2="11" y2="10.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
+                  </svg>
+                  References
+                </button>
+              </div>
             </div>
 
-            {/* Feedback widget */}
-            {!isStreaming && results && results.totalResults > 0 && (
-              <SearchFeedback searchLogId={searchLogId || null} />
-            )}
-
-            {/* Dig Deeper */}
-            {!isStreaming && results && ((results.totalVerses || 0) + (results.totalProse || 0)) > 25 && (
-              <button
-                onClick={() => setDigDeeperOpen(true)}
-                className="font-body"
-                style={{
-                  width: "100%", marginTop: 16, padding: "14px 20px", borderRadius: 16,
-                  border: "1px dashed rgba(196,181,253,0.4)", background: "rgba(139,92,246,0.04)",
-                  fontSize: 14, fontWeight: 600, color: "#7C3AED", cursor: "pointer",
-                  textAlign: "center", transition: "all 0.3s ease",
-                }}
-                onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
-              >
-                Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources &rarr;
-              </button>
-            )}
-
-            {/* Follow-up questions */}
-            {!isStreaming && followUps.length > 0 && (
-              <div style={{ marginTop: 20, padding: "clamp(14px, 3vw, 20px) clamp(16px, 3vw, 24px)", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
-                <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 12 }}>
-                  People also explore
-                </p>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {followUps.map(q => (
-                    <button
-                      key={q}
-                      onClick={() => onSearch(q)}
-                      className="font-body"
-                      style={{ textAlign: "left", padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", fontSize: 14, color: "#374151", cursor: "pointer", transition: "all 0.3s ease" }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.color = "#7C3AED"; }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.25)"; e.currentTarget.style.color = "#374151"; }}
-                    >
-                      {q} &rarr;
-                    </button>
-                  ))}
+            {/* ─── Article Mode ─── */}
+            {viewMode === "article" && (
+              <div style={{ opacity: 1, transform: "translateY(0)", transition: "opacity 0.2s ease, transform 0.2s ease" }}>
+                <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
+                  <div
+                    className="narrative-content font-body"
+                    dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
+                    onClick={handleNarrativeClick}
+                    style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
+                  />
+                  {isStreaming && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
+                      <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
+                      <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
+                        Composing from Prabhupada&apos;s words...
+                      </span>
+                    </div>
+                  )}
                 </div>
+
+                {/* Feedback widget */}
+                {!isStreaming && results && results.totalResults > 0 && (
+                  <SearchFeedback searchLogId={searchLogId || null} />
+                )}
+
+                {/* Dig Deeper */}
+                {!isStreaming && results && ((results.totalVerses || 0) + (results.totalProse || 0)) > 25 && (
+                  <button
+                    onClick={() => setDigDeeperOpen(true)}
+                    className="font-body"
+                    style={{
+                      width: "100%", marginTop: 16, padding: "14px 20px", borderRadius: 16,
+                      border: "1px dashed rgba(196,181,253,0.4)", background: "rgba(139,92,246,0.04)",
+                      fontSize: 14, fontWeight: 600, color: "#7C3AED", cursor: "pointer",
+                      textAlign: "center", transition: "all 0.3s ease",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
+                  >
+                    Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources &rarr;
+                  </button>
+                )}
+
+                {/* Follow-up questions */}
+                {!isStreaming && followUps.length > 0 && (
+                  <div style={{ marginTop: 20, padding: "clamp(14px, 3vw, 20px) clamp(16px, 3vw, 24px)", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
+                    <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 12 }}>
+                      People also explore
+                    </p>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {followUps.map(q => (
+                        <button
+                          key={q}
+                          onClick={() => onSearch(q)}
+                          className="font-body"
+                          style={{ textAlign: "left", padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", fontSize: 14, color: "#374151", cursor: "pointer", transition: "all 0.3s ease" }}
+                          onMouseEnter={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.color = "#7C3AED"; }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.25)"; e.currentTarget.style.color = "#374151"; }}
+                        >
+                          {q} &rarr;
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ─── References Mode ─── */}
+            {viewMode === "references" && (
+              <div style={{ opacity: 1, transform: "translateY(0)", transition: "opacity 0.2s ease, transform 0.2s ease" }}>
+                {results.books.filter(b => b.verses.length > 0 || b.prose.length > 0).map(book => {
+                  const bookColor = getBookColor(book.slug.toUpperCase());
+                  return (
+                    <div key={book.slug} className="references-book-group">
+                      <h3>{book.name}</h3>
+                      <p className="references-book-count">
+                        {book.verses.length > 0 && `${book.verses.length} verse${book.verses.length !== 1 ? "s" : ""}`}
+                        {book.verses.length > 0 && book.prose.length > 0 && " · "}
+                        {book.prose.length > 0 && `${book.prose.length} passage${book.prose.length !== 1 ? "s" : ""}`}
+                      </p>
+
+                      {book.verses.map(v => {
+                        const ref = `${v.scripture || ""} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`.trim();
+                        const vColor = getBookColor(ref);
+                        return (
+                          <div key={v.id} className="reference-card" id={`source-${ref}`} style={{ borderLeft: `3px solid ${vColor.border}` }}>
+                            <span style={{
+                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
+                              borderRadius: 8, background: vColor.bg, color: vColor.text,
+                            }}>
+                              [{ref}]
+                            </span>
+                            {v.translation && (
+                              <p className="reference-card__translation">{v.translation}</p>
+                            )}
+                            {v.purport && (
+                              <p className="reference-card__purport">
+                                {v.purport.length > 200 ? v.purport.slice(0, 200) + "…" : v.purport}
+                              </p>
+                            )}
+                            <div className="reference-card__links">
+                              <a href={`/verse/${v.id}`} style={{ color: "#534AB7" }}>
+                                Read full purport &rarr;
+                              </a>
+                              {v.vedabase_url && (
+                                <a href={v.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
+                                  Open on Vedabase &#8599;
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {book.prose.map(p => (
+                        <div key={p.id} className="reference-card" id={`source-${p.chapter_title || `${p.book_slug} #${p.paragraph_number}`}`} style={{ borderLeft: `3px solid ${bookColor.border}` }}>
+                          {p.chapter_title && (
+                            <span style={{
+                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
+                              borderRadius: 8, background: bookColor.bg, color: bookColor.text,
+                            }}>
+                              {p.chapter_title}
+                            </span>
+                          )}
+                          <p className="reference-card__purport" style={{ marginTop: p.chapter_title ? 8 : 0 }}>
+                            {p.body_text.length > 250 ? p.body_text.slice(0, 250) + "…" : p.body_text}
+                          </p>
+                          <div className="reference-card__links">
+                            <span />
+                            {p.vedabase_url && (
+                              <a href={p.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
+                                Open on Vedabase &#8599;
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+
+                {/* Dig Deeper in references mode */}
+                {results && ((results.totalVerses || 0) + (results.totalProse || 0)) > 25 && (
+                  <button
+                    onClick={() => setDigDeeperOpen(true)}
+                    className="font-body"
+                    style={{
+                      width: "100%", marginTop: 16, padding: "14px 20px", borderRadius: 16,
+                      border: "1px dashed rgba(196,181,253,0.4)", background: "rgba(139,92,246,0.04)",
+                      fontSize: 14, fontWeight: 600, color: "#7C3AED", cursor: "pointer",
+                      textAlign: "center", transition: "all 0.3s ease",
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
+                  >
+                    Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources &rarr;
+                  </button>
+                )}
               </div>
             )}
           </motion.div>
@@ -546,6 +679,100 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         @keyframes articlePulse {
           0%, 100% { opacity: 0.4; }
           50% { opacity: 1; }
+        }
+
+        /* Article/References toggle */
+        .view-mode-toggle {
+          display: inline-flex;
+          border: 1px solid rgba(0,0,0,0.12);
+          border-radius: 10px;
+          overflow: hidden;
+        }
+        .view-mode-toggle button {
+          padding: 8px 18px;
+          font-size: 13px;
+          font-weight: 500;
+          border: none;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          transition: background 0.15s ease, color 0.15s ease;
+        }
+        .view-mode-toggle button.active {
+          background: #534AB7;
+          color: white;
+        }
+        .view-mode-toggle button:not(.active) {
+          background: transparent;
+          color: #666;
+        }
+        .view-mode-toggle button:not(.active):hover {
+          background: rgba(83, 74, 183, 0.08);
+        }
+
+        /* References view cards */
+        .references-book-group {
+          margin-bottom: 32px;
+        }
+        .references-book-group h3 {
+          font-family: 'Cormorant Garamond', serif;
+          font-size: 1.15rem;
+          font-weight: 600;
+          color: #1E1B4B;
+          margin: 0 0 4px;
+        }
+        .references-book-count {
+          font-size: 12px;
+          color: #888;
+          margin-bottom: 16px;
+        }
+        .reference-card {
+          margin-bottom: 14px;
+          padding: 16px 20px;
+          background: #FAFAFA;
+          border-radius: 0 8px 8px 0;
+          transition: background 0.2s ease;
+        }
+        .reference-card:hover {
+          background: #F5F3FF;
+        }
+        .reference-card__translation {
+          font-size: 15px;
+          line-height: 1.8;
+          font-style: italic;
+          font-family: Georgia, 'Times New Roman', serif;
+          color: #1a1a1a;
+          margin: 8px 0;
+        }
+        .reference-card__purport {
+          font-size: 13px;
+          line-height: 1.7;
+          color: #555;
+          margin: 8px 0;
+        }
+        .reference-card__links {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-top: 8px;
+        }
+        .reference-card__links a {
+          font-size: 12px;
+          font-weight: 500;
+          text-decoration: none;
+          transition: text-decoration 0.2s;
+        }
+        .reference-card__links a:hover {
+          text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+          .view-mode-toggle button {
+            padding: 10px 16px;
+            font-size: 14px;
+          }
         }
       `}</style>
     </>

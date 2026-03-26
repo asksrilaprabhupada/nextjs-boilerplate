@@ -43,6 +43,7 @@ export default function Home() {
   const [streamingNarrative, setStreamingNarrative] = useState("");
   const [currentQuery, setCurrentQuery] = useState("");
   const abortRef = useRef<AbortController | null>(null);
+  const [viewMode, setViewMode] = useState<"article" | "references">("article");
   const [searchLogId, setSearchLogId] = useState<string | null>(null);
   const searchLogIdRef = useRef<string | null>(null);
   const searchStartTimeRef = useRef<number>(0);
@@ -90,6 +91,7 @@ export default function Home() {
     setIsStreaming(false);
     setStreamingNarrative("");
     setCurrentQuery("");
+    setViewMode("article");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
@@ -103,7 +105,7 @@ export default function Home() {
       onDone: (narrativeAccum: string) => void;
     },
   ) => {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal });
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&mode=article`, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const contentType = res.headers.get("content-type") || "";
@@ -342,7 +344,7 @@ export default function Home() {
             />
           </div>
           <div ref={resultsRef}>
-            <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} searchLogId={searchLogId} />
+            <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} searchLogId={searchLogId} viewMode={viewMode} onViewModeChange={setViewMode} />
           </div>
           {!searchResults && !isSearching && (
             <>
