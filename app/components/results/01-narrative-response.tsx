@@ -485,7 +485,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         </div>
 
         {/* ─── Desktop Summary Sidebar ─── */}
-        <div className="desktop-sidebar">
+        <div className="desktop-sidebar" style={{ opacity: viewMode === "article" ? 0.7 : 1 }}>
           <div style={{
             background: "white", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12,
             padding: 16, position: "sticky", top: 80, alignSelf: "start",
@@ -641,21 +641,23 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           border-bottom: 1px solid rgba(196,181,253,0.2);
         }
         .narrative-content h3:first-child { margin-top: 0; }
-        .narrative-content p { margin-bottom: 12px; font-size: 15px; line-height: 1.8; color: #374151; }
+        .narrative-content p {
+          margin-bottom: 16px; font-size: 16px; line-height: 1.85; color: #1E1B4B;
+        }
         .narrative-content .verse-quote {
-          background: rgba(245,240,255,0.5); border: 1px solid rgba(196,181,253,0.25);
-          border-left: 3px solid #8B5CF6; padding: 14px 18px; border-radius: 12px; margin: 12px 0;
+          background: transparent; border: none;
+          border-left: 3px solid #8B5CF6; padding: 12px 20px; border-radius: 0; margin: 20px 0;
           font-family: Georgia, 'Times New Roman', serif; font-size: 16px; font-style: italic; line-height: 1.8; color: #1E1B4B;
         }
         .narrative-content .purport-quote {
-          background: rgba(139,92,246,0.04); border: 1px solid rgba(196,181,253,0.18);
-          border-left: 3px solid #7C3AED; padding: 14px 18px; border-radius: 12px; margin: 12px 0;
-          font-size: 14px; line-height: 1.8; color: #374151;
+          background: transparent; border: none;
+          border-left: 3px solid #7C3AED; padding: 12px 20px; border-radius: 0; margin: 16px 0;
+          font-size: 15px; line-height: 1.8; color: #374151;
         }
         .narrative-content .prose-quote {
-          background: rgba(245,240,255,0.3); border: 1px solid rgba(196,181,253,0.15);
-          border-left: 3px solid #6366F1; padding: 14px 18px; border-radius: 12px; margin: 12px 0;
-          font-size: 14px; line-height: 1.8; color: #374151;
+          background: transparent; border: none;
+          border-left: 3px solid #6366F1; padding: 12px 20px; border-radius: 0; margin: 16px 0;
+          font-size: 15px; line-height: 1.8; color: #374151;
         }
         .narrative-content .verse-ref {
           font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
