@@ -37,6 +37,26 @@ const BOOK_NAMES: Record<string, string> = {
 };
 function getBookName(slug: string): string { return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown"; }
 
+/**
+ * Returns true if the text is mostly Sanskrit transliteration (not useful as prose content).
+ * Detects IAST diacritical characters and Sanskrit verse patterns.
+ */
+function isMostlySanskrit(text: string): boolean {
+  const iastChars = (text.match(/[āīūṛṝḷṃḥṣṭḍṅñśṁ]/g) || []).length;
+  const totalChars = text.replace(/\s/g, "").length;
+  if (totalChars === 0) return false;
+
+  // If more than 15% of characters are IAST diacriticals, it's likely Sanskrit
+  if (iastChars / totalChars > 0.15) return true;
+
+  // Also check for common Sanskrit verse openings
+  const sanskritPatterns = [
+    /^[""]?śrī-bhagavān uvāca/i,
+    /^[""]?[a-zāīūṛṝḷṃḥṣṭḍṅñśṁ\s-]{20,}$/i,
+  ];
+  return sanskritPatterns.some(p => p.test(text.trim()));
+}
+
 /** Smart truncation — never cuts mid-sentence */
 function smartTruncate(text: string, maxLen: number): string {
   if (!text || text.length <= maxLen) return text || "";
@@ -439,8 +459,21 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
       ctx += `[${ref}] (${v.vedabase_url})${tagSummary ? "\nAbout: " + tagSummary : ""}\nTranslation: "${v.translation}"\nPurport: "${smartTruncate(v.purport || "", 800)}"\n\n`;
     }
     for (const p of d.p.slice(0, 3)) {
-      const bodyText = (p.body_text || "").trim();
+      let bodyText = (p.body_text || "").trim();
       if (bodyText.length < 80) continue;
+
+      // Skip Sanskrit transliteration — find English content
+      const lines = bodyText.split("\n");
+      let englishStart = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (!isMostlySanskrit(lines[i]) && lines[i].trim().length > 30) {
+          englishStart = i;
+          break;
+        }
+      }
+      bodyText = lines.slice(englishStart).join("\n").trim();
+      if (isMostlySanskrit(bodyText) || bodyText.length < 50) continue;
+
       const summaryTag = (p.tags || []).find(t => t.startsWith("SUMMARY:"));
       const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
       ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})${tagSummary ? "\nAbout: " + tagSummary : ""}\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
@@ -456,7 +489,9 @@ Use ONLY the scripture passages provided below. Never invent philosophy.
 STRUCTURE YOUR ARTICLE LIKE THIS:
 1. Start with a <p> paragraph (2-3 sentences) that restates and frames the actual question "${question}" — explain why this question matters or how it is addressed in Śrīla Prabhupāda's books. Do NOT use generic filler like "The scriptures offer clear guidance."
 2. Organize the body by THEME, not just sequentially. Use <h3> headings for each thematic section. Make headings editorial (e.g., "The Rarity of Human Birth", "The Ultimate Goal"), NOT just scripture names.
-3. End with a <p> paragraph (2-3 sentences) that ties the key teachings together into one clear takeaway. Summarize what the scriptures collectively teach about the question. Do NOT just say "click the links" or "read on Vedabase."
+3. End with a <p> paragraph (2-3 sentences) that specifically summarizes what the scriptures teach about the question asked: "${question}". DO NOT use a generic conclusion about "the human form of life" — the conclusion must directly relate to the topic discussed in the article. End with a brief mention that full purports are available via Vedabase.io links above.
+
+PRACTICAL TAKEAWAY: If the passages contain specific practical instructions (chant, serve, follow the spiritual master, wake early, etc.), end the article by briefly listing what a devotee should actually DO based on these teachings. Use a short paragraph, not a bullet list. Frame it as: "Based on these teachings, the practical steps are..."
 
 THEMATIC STRUCTURE: Do NOT just list verses sequentially. Instead, organize by theme or argument flow. For example, if the question is about the goal of human life:
 - First group: Why human life is rare and valuable
@@ -483,6 +518,7 @@ FORMAT RULES:
 - Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
 - Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
 - Use 5-8 passages total. Do NOT use all of them.
+- Do NOT quote from the same book more than twice. If multiple passages come from the same book, pick the best one or two and skip the rest.
 - Output clean HTML only. No markdown. No preamble.
 
 PASSAGES:
@@ -540,9 +576,28 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
   const articleVerses = v.slice(0, 6);
   const bookNames = [...new Set(articleVerses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
 
-  // Question-aware intro
-  const questionText = question.replace(/\?$/, "").toLowerCase();
-  parts.push(`<p>The question of ${questionText} is one of the most fundamental inquiries addressed in Śrīla Prabhupāda's books. Across ${bookNames.slice(0, 3).join(", ")}${bookNames.length > 3 ? " and other texts" : ""}, the scriptures and Prabhupāda's purports provide direct and profound guidance.</p>`);
+  // Extract the core topic from the question for intro/conclusion
+  const questionTopic = question
+    .replace(/\?$/, "")
+    .replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "")
+    .replace(/^(srila\s+)?(prabhupada|prabhupāda)\s+(say|said|says|teach|teaches|explain|explains)\s+(about\s+)?/i, "")
+    .trim()
+    .toLowerCase() || question.replace(/\?$/, "").toLowerCase();
+
+  // Grammatically correct book list
+  const bookListStr = bookNames.length === 1
+    ? bookNames[0]
+    : bookNames.length === 2
+      ? `${bookNames[0]} and ${bookNames[1]}`
+      : `${bookNames.slice(0, 2).join(", ")}, and ${bookNames.length > 3 ? "other texts" : bookNames[2]}`;
+
+  // Question-aware intro with correct grammar
+  const isPractical = /how (to|can|should|do)|what (should|can|to do)|practical|practice|daily/i.test(question);
+  if (isPractical) {
+    parts.push(`<p>Śrīla Prabhupāda addressed ${questionTopic} both through his personal example and his teachings. Drawing from ${bookListStr}, here is his guidance on this matter.</p>`);
+  } else {
+    parts.push(`<p>The question of ${questionTopic} is addressed extensively in Śrīla Prabhupāda's books. Through ${bookListStr}, the scriptures and Prabhupāda's purports provide direct and profound guidance.</p>`);
+  }
 
   // Varied transition templates (expanded to 10)
   const transitions = [
@@ -607,8 +662,12 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
     }
   }
 
-  // Prose: show ACTUAL body_text, skip headings and short content
-  for (const x of p.slice(0, 5)) {
+  // Prose: show ACTUAL body_text, skip headings, short content, and Sanskrit
+  // Deduplicate: max one entry per book
+  const seenBookSlugs = new Set<string>();
+  for (const x of p.slice(0, 8)) {
+    if (seenBookSlugs.has(x.book_slug)) continue;
+
     const bodyText = (x.body_text || "").trim();
 
     // Skip if too short or looks like just a heading
@@ -626,8 +685,22 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
       );
     }
 
-    const usableText = bodyText.substring(contentStart).trim();
-    if (usableText.length < 50) continue;
+    // Skip Sanskrit transliteration — try to find English content after it
+    let usableText = bodyText.substring(contentStart).trim();
+    const lines = usableText.split("\n");
+    let englishStart = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (!isMostlySanskrit(lines[i]) && lines[i].trim().length > 30) {
+        englishStart = i;
+        break;
+      }
+    }
+    usableText = lines.slice(englishStart).join("\n").trim();
+
+    // If the entire paragraph is Sanskrit, skip it
+    if (isMostlySanskrit(usableText) || usableText.length < 50) continue;
+
+    seenBookSlugs.add(x.book_slug);
 
     const bookName = getBookName(x.book_slug);
     const url = x.vedabase_url || "#";
@@ -637,11 +710,8 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
     parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
   }
 
-  // Conclusion that summarizes the teaching
-  const mainTeaching = v.length > 0 && v[0].translation
-    ? "As the scriptures emphasize, the human form of life is meant for spiritual realization — not merely material pursuits."
-    : "These teachings consistently point toward the supreme goal of developing love of God through devotional service.";
-  parts.push(`<p>${mainTeaching} For the complete purports and deeper study of each verse, the full texts are available on Vedabase.io through the reference links above.</p>`);
+  // Dynamic conclusion that relates to the actual question topic
+  parts.push(`<p>Through these teachings, Śrīla Prabhupāda provides clear guidance on ${questionTopic}. The consistent instruction is to engage the mind in the service of Lord Kṛṣṇa under the direction of the spiritual master — for this is the practical method recommended across all these scriptures. Full purports are available through the Vedabase.io links above.</p>`);
 
   return parts.join("\n");
 }
