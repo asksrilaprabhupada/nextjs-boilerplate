@@ -255,9 +255,9 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
           transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
           onClick={e => e.stopPropagation()}
           style={{
-            width: "95vw", maxWidth: 720, maxHeight: "85vh", display: "flex", flexDirection: "column",
+            width: "95vw", maxWidth: 820, maxHeight: "85vh", display: "flex", flexDirection: "column",
             background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)",
-            borderRadius: "clamp(12px, 3vw, 16px)",
+            borderRadius: 12,
             boxShadow: "0 24px 80px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)",
             position: "relative",
           }}
@@ -356,7 +356,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                       {ref}
                     </span>
                     <p style={{
-                      fontSize: 15, lineHeight: 1.75, fontStyle: "italic",
+                      fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
                       fontFamily: "Georgia, 'Times New Roman', serif",
                       color: "#1a1a1a", margin: "0 0 8px",
                     }}>
@@ -399,7 +399,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                       {getBookName(p.book_slug)}
                     </span>
                     <p style={{
-                      fontSize: 15, lineHeight: 1.75, fontStyle: "italic",
+                      fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
                       fontFamily: "Georgia, 'Times New Roman', serif",
                       color: "#1a1a1a", margin: "0 0 8px",
                     }}>
