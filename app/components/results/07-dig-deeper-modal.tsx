@@ -2,8 +2,9 @@
  * 07-dig-deeper-modal.tsx — Dig Deeper Modal
  *
  * Full-screen modal showing ALL search results beyond the top 25. Features a compact
- * single-line filter bar with a segmented content-type toggle and multi-select book
- * dropdown replacing the old pill grid. Color-coded scripture cards by book.
+ * single-line filter bar with content-type toggle, group mode toggle, multi-select book
+ * dropdown, and color-coded scripture cards. Now includes tag summary subtitles,
+ * "In article" badges, topic grouping, and staggered card animations.
  */
 "use client";
 
@@ -56,23 +57,59 @@ function truncate(text: string, max: number): string {
   return lp > max * 0.5 ? cut.substring(0, lp + 1) : cut + "...";
 }
 
+/** Extract SUMMARY tag text from tags array */
+function getTagSummary(tags: string[] | null | undefined): string | null {
+  if (!tags) return null;
+  const summary = tags.find(t => t.startsWith("SUMMARY:"));
+  return summary ? summary.replace("SUMMARY:", "").trim() : null;
+}
+
+/** Group verses by their primary topic tag */
+function groupByTopic(verses: VerseHit[]): Map<string, VerseHit[]> {
+  const groups = new Map<string, VerseHit[]>();
+  for (const v of verses) {
+    const topics = (v.tags || []).filter(t =>
+      !t.startsWith("SUMMARY:") && !t.includes("?") &&
+      t.length > 2 && t.length < 40 && /^[a-zA-Z\s]+$/.test(t)
+    );
+    const theme = topics[0]
+      ? topics[0].charAt(0).toUpperCase() + topics[0].slice(1)
+      : "Other";
+    if (!groups.has(theme)) groups.set(theme, []);
+    groups.get(theme)!.push(v);
+  }
+  return groups;
+}
+
+/** Group verses by book name */
+function groupByBook(verses: VerseHit[]): Map<string, VerseHit[]> {
+  const groups = new Map<string, VerseHit[]>();
+  for (const v of verses) {
+    const name = getBookName(v.book_slug || v.scripture?.toLowerCase() || "");
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name)!.push(v);
+  }
+  return groups;
+}
+
 type ContentType = "all" | "verses" | "prose";
+type GroupMode = "flat" | "topic" | "book";
 
 interface DigDeeperProps {
   overflowVerses: VerseHit[];
   overflowProse: ProseHit[];
   totalVerses: number;
   totalProse: number;
+  articleVerseIds?: Set<string>;
   onClose: () => void;
 }
 
-/* ─── Segmented Content Type Toggle ─── */
-function ContentTypeToggle({ value, onChange }: { value: ContentType; onChange: (t: ContentType) => void }) {
-  const options: { key: ContentType; label: string }[] = [
-    { key: "all", label: "All" },
-    { key: "verses", label: "Verses" },
-    { key: "prose", label: "Prose" },
-  ];
+/* ─── Segmented Toggle (reusable) ─── */
+function SegmentedToggle<T extends string>({ options, value, onChange }: {
+  options: { key: T; label: string }[];
+  value: T;
+  onChange: (t: T) => void;
+}) {
   return (
     <div style={{ display: "inline-flex", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, overflow: "hidden" }}>
       {options.map((opt, i) => (
@@ -81,7 +118,7 @@ function ContentTypeToggle({ value, onChange }: { value: ContentType; onChange: 
           onClick={() => onChange(opt.key)}
           className="font-body"
           style={{
-            padding: "6px 14px", fontSize: 13, fontWeight: 500, border: "none",
+            padding: "6px 12px", fontSize: 12, fontWeight: 500, border: "none",
             borderLeft: i > 0 ? "1px solid rgba(0,0,0,0.12)" : "none",
             background: value === opt.key ? "#534AB7" : "transparent",
             color: value === opt.key ? "white" : "#666",
@@ -193,9 +230,176 @@ function BookDropdown({ books, selectedBooks, onSelectionChange }: {
   );
 }
 
-export default function DigDeeperModal({ overflowVerses, overflowProse, totalVerses, totalProse, onClose }: DigDeeperProps) {
+/* ─── Single verse card ─── */
+function VerseCard({ v, index, articleVerseIds }: { v: VerseHit; index: number; articleVerseIds?: Set<string> }) {
+  const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`;
+  const slug = v.book_slug || v.scripture?.toLowerCase() || "";
+  const colors = getBookColor(slug);
+  const summary = getTagSummary(v.tags);
+  const inArticle = articleVerseIds?.has(v.id);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(index * 0.03, 0.6) }}
+      style={{ marginBottom: 20 }}
+    >
+      <div style={{
+        padding: "16px 20px", background: "#FAFAFA",
+        borderLeft: `3px solid ${colors.border}`,
+        borderRadius: "0 8px 8px 0",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+          <span className="font-body" style={{
+            display: "inline-block", fontSize: 11, fontWeight: 500,
+            padding: "2px 8px", borderRadius: 8,
+            background: colors.bg, color: colors.text,
+          }}>
+            {ref}
+          </span>
+          {inArticle && (
+            <span className="font-body" style={{
+              fontSize: 10, color: "#7C3AED", background: "rgba(139,92,246,0.08)",
+              padding: "2px 8px", borderRadius: 6,
+            }}>
+              In article
+            </span>
+          )}
+        </div>
+        <p style={{
+          fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
+          fontFamily: "Georgia, 'Times New Roman', serif",
+          color: "#1a1a1a", margin: "0 0 8px",
+        }}>
+          &ldquo;{truncate(v.translation, 200)}&rdquo;
+        </p>
+        {summary && (
+          <p className="font-body" style={{
+            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontStyle: "italic", lineHeight: 1.5,
+          }}>
+            {summary}
+          </p>
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          {v.chapter_title && (
+            <p className="font-body" style={{ fontSize: 12, color: "#888", margin: 0 }}>{v.chapter_title}</p>
+          )}
+          {v.vedabase_url && (
+            <a href={v.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#534AB7", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
+              onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
+            >
+              Open on Vedabase &#8599;
+            </a>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ─── Single prose card ─── */
+function ProseCard({ p, index }: { p: ProseHit; index: number }) {
+  const slug = p.book_slug || "";
+  const colors = getBookColor(slug);
+  const summary = getTagSummary(p.tags);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(index * 0.03, 0.6) }}
+      style={{ marginBottom: 20 }}
+    >
+      <div style={{
+        padding: "16px 20px", background: "#FAFAFA",
+        borderLeft: `3px solid ${colors.border}`,
+        borderRadius: "0 8px 8px 0",
+      }}>
+        <span className="font-body" style={{
+          display: "inline-block", fontSize: 11, fontWeight: 500,
+          padding: "2px 8px", borderRadius: 8, marginBottom: 8,
+          background: colors.bg, color: colors.text,
+        }}>
+          {getBookName(p.book_slug)}
+        </span>
+        <p style={{
+          fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
+          fontFamily: "Georgia, 'Times New Roman', serif",
+          color: "#1a1a1a", margin: "0 0 8px",
+        }}>
+          {truncate(p.body_text, 200)}
+        </p>
+        {summary && (
+          <p className="font-body" style={{
+            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontStyle: "italic", lineHeight: 1.5,
+          }}>
+            {summary}
+          </p>
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          {p.chapter_title && (
+            <p className="font-body" style={{ fontSize: 12, color: "#888", margin: 0 }}>{p.chapter_title}</p>
+          )}
+          {p.vedabase_url && (
+            <a href={p.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#534AB7", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
+              onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
+            >
+              Read on Vedabase &#8599;
+            </a>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ─── Collapsible topic/book group ─── */
+function CollapsibleGroup({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+  const [isOpen, setIsOpen] = useState(true);
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="font-body"
+        style={{
+          display: "flex", alignItems: "center", gap: 8, width: "100%",
+          padding: "10px 0", background: "transparent", border: "none",
+          cursor: "pointer", fontSize: 14, fontWeight: 600, color: "#1E1B4B",
+          borderBottom: "1px solid rgba(0,0,0,0.06)",
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 12 12" style={{ transition: "transform 0.2s ease", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>
+          <path d="M4 2l5 4-5 4" fill="none" stroke="#534AB7" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+        {title}
+        <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>({count})</span>
+      </button>
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25 }}
+            style={{ overflow: "hidden", paddingTop: 8 }}
+          >
+            {children}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+export default function DigDeeperModal({ overflowVerses, overflowProse, totalVerses, totalProse, articleVerseIds, onClose }: DigDeeperProps) {
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<ContentType>("all");
+  const [groupMode, setGroupMode] = useState<GroupMode>("flat");
 
   const handleKey = useCallback((e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }, [onClose]);
   useEffect(() => {
@@ -238,6 +442,10 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
     return selectedBooks.has(getBookName(p.book_slug || ""));
   }), [overflowProse, typeFilter, selectedBooks]);
 
+  /* Grouped data */
+  const topicGroups = useMemo(() => groupByTopic(filteredVerses), [filteredVerses]);
+  const bookGroups = useMemo(() => groupByBook(filteredVerses), [filteredVerses]);
+
   const hasResults = filteredVerses.length + filteredProse.length > 0;
   const verseCount = filteredVerses.length;
   const proseCount = filteredProse.length;
@@ -263,7 +471,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
           }}
         >
           {/* Close button */}
-          <button onClick={onClose} style={{ position: "absolute", top: 12, right: 12, width: 40, height: 40, borderRadius: 10, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, zIndex: 2 }}>✕</button>
+          <button onClick={onClose} style={{ position: "absolute", top: 12, right: 12, width: 40, height: 40, borderRadius: 10, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, zIndex: 2 }}>&#10005;</button>
 
           {/* Header */}
           <div style={{ padding: "clamp(20px, 4vw, 28px) 24px 0", flexShrink: 0 }}>
@@ -275,19 +483,41 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                 Dig Deeper
               </h2>
               <p className="font-body" style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
-                {verseCount} verse{verseCount !== 1 ? "s" : ""} · {proseCount} prose passage{proseCount !== 1 ? "s" : ""}
+                {verseCount} verse{verseCount !== 1 ? "s" : ""} &middot; {proseCount} prose passage{proseCount !== 1 ? "s" : ""}
               </p>
             </div>
 
-            {/* ─── Compact filter bar: one line ─── */}
+            {/* ─── Compact filter bar ─── */}
             <div style={{
               padding: "12px 0", borderBottom: "1px solid rgba(0,0,0,0.08)",
               display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
             }}>
-              {/* Content type segmented control */}
-              <ContentTypeToggle value={typeFilter} onChange={setTypeFilter} />
+              {/* Content type toggle */}
+              <SegmentedToggle<ContentType>
+                options={[
+                  { key: "all", label: "All" },
+                  { key: "verses", label: "Verses" },
+                  { key: "prose", label: "Prose" },
+                ]}
+                value={typeFilter}
+                onChange={setTypeFilter}
+              />
 
-              {/* Vertical divider */}
+              {/* Divider */}
+              <div style={{ width: 1, height: 24, background: "rgba(0,0,0,0.12)" }} />
+
+              {/* Group mode toggle */}
+              <SegmentedToggle<GroupMode>
+                options={[
+                  { key: "flat", label: "Ranked" },
+                  { key: "topic", label: "By Topic" },
+                  { key: "book", label: "By Book" },
+                ]}
+                value={groupMode}
+                onChange={setGroupMode}
+              />
+
+              {/* Divider */}
               <div style={{ width: 1, height: 24, background: "rgba(0,0,0,0.12)" }} />
 
               {/* Book dropdown */}
@@ -336,92 +566,57 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
               </div>
             )}
 
-            {/* Verse cards — color-coded */}
-            {filteredVerses.map(v => {
-              const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`;
-              const slug = v.book_slug || v.scripture?.toLowerCase() || "";
-              const colors = getBookColor(slug);
-              return (
-                <div key={v.id} style={{ marginBottom: 20 }}>
-                  <div style={{
-                    padding: "16px 20px", background: "#FAFAFA",
-                    borderLeft: `3px solid ${colors.border}`,
-                    borderRadius: "0 8px 8px 0",
-                  }}>
-                    <span className="font-body" style={{
-                      display: "inline-block", fontSize: 11, fontWeight: 500,
-                      padding: "2px 8px", borderRadius: 8, marginBottom: 8,
-                      background: colors.bg, color: colors.text,
-                    }}>
-                      {ref}
-                    </span>
-                    <p style={{
-                      fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
-                      fontFamily: "Georgia, 'Times New Roman', serif",
-                      color: "#1a1a1a", margin: "0 0 8px",
-                    }}>
-                      &ldquo;{truncate(v.translation, 200)}&rdquo;
-                    </p>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      {v.chapter_title && (
-                        <p className="font-body" style={{ fontSize: 12, color: "#888", margin: 0 }}>{v.chapter_title}</p>
-                      )}
-                      {v.vedabase_url && (
-                        <a href={v.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#534AB7", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
-                          onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
-                          onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
-                        >
-                          Open on Vedabase ↗
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {/* ─── Flat (Ranked) mode ─── */}
+            {groupMode === "flat" && (
+              <>
+                {filteredVerses.map((v, i) => (
+                  <VerseCard key={v.id} v={v} index={i} articleVerseIds={articleVerseIds} />
+                ))}
+                {filteredProse.map((p, i) => (
+                  <ProseCard key={p.id} p={p} index={filteredVerses.length + i} />
+                ))}
+              </>
+            )}
 
-            {/* Prose cards — color-coded */}
-            {filteredProse.map(p => {
-              const slug = p.book_slug || "";
-              const colors = getBookColor(slug);
-              return (
-                <div key={p.id} style={{ marginBottom: 20 }}>
-                  <div style={{
-                    padding: "16px 20px", background: "#FAFAFA",
-                    borderLeft: `3px solid ${colors.border}`,
-                    borderRadius: "0 8px 8px 0",
-                  }}>
-                    <span className="font-body" style={{
-                      display: "inline-block", fontSize: 11, fontWeight: 500,
-                      padding: "2px 8px", borderRadius: 8, marginBottom: 8,
-                      background: colors.bg, color: colors.text,
-                    }}>
-                      {getBookName(p.book_slug)}
-                    </span>
-                    <p style={{
-                      fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
-                      fontFamily: "Georgia, 'Times New Roman', serif",
-                      color: "#1a1a1a", margin: "0 0 8px",
-                    }}>
-                      {truncate(p.body_text, 200)}
-                    </p>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                      {p.chapter_title && (
-                        <p className="font-body" style={{ fontSize: 12, color: "#888", margin: 0 }}>{p.chapter_title}</p>
-                      )}
-                      {p.vedabase_url && (
-                        <a href={p.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#534AB7", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
-                          onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
-                          onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
-                        >
-                          Read on Vedabase ↗
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {/* ─── By Topic mode ─── */}
+            {groupMode === "topic" && (
+              <>
+                {[...topicGroups.entries()].map(([topic, verses]) => (
+                  <CollapsibleGroup key={topic} title={topic} count={verses.length}>
+                    {verses.map((v, i) => (
+                      <VerseCard key={v.id} v={v} index={i} articleVerseIds={articleVerseIds} />
+                    ))}
+                  </CollapsibleGroup>
+                ))}
+                {filteredProse.length > 0 && (
+                  <CollapsibleGroup title="Prose Passages" count={filteredProse.length}>
+                    {filteredProse.map((p, i) => (
+                      <ProseCard key={p.id} p={p} index={i} />
+                    ))}
+                  </CollapsibleGroup>
+                )}
+              </>
+            )}
+
+            {/* ─── By Book mode ─── */}
+            {groupMode === "book" && (
+              <>
+                {[...bookGroups.entries()].map(([bookName, verses]) => (
+                  <CollapsibleGroup key={bookName} title={bookName} count={verses.length}>
+                    {verses.map((v, i) => (
+                      <VerseCard key={v.id} v={v} index={i} articleVerseIds={articleVerseIds} />
+                    ))}
+                  </CollapsibleGroup>
+                ))}
+                {filteredProse.length > 0 && (
+                  <CollapsibleGroup title="Prose Passages" count={filteredProse.length}>
+                    {filteredProse.map((p, i) => (
+                      <ProseCard key={p.id} p={p} index={i} />
+                    ))}
+                  </CollapsibleGroup>
+                )}
+              </>
+            )}
           </div>
         </motion.div>
       </motion.div>

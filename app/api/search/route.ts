@@ -265,55 +265,193 @@ async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose:
 // =====================================================
 
 /**
- * Score how relevant a verse/prose is to the question using its tags.
- * Returns a score from 0 to 1 where higher = more relevant.
+ * Scores how relevant a result is to the query using its tags.
+ *
+ * Tags contain three types of data:
+ *   - Topics: "anger", "detachment", "devotional service" (general keywords)
+ *   - Questions: "How to overcome anger?" (questions this verse answers)
+ *   - Summary: "SUMMARY: This verse teaches that anger arises from lust" (1-2 line summary)
+ *
+ * Returns a score from 0.0 to 1.0 where:
+ *   0.0 = no tag overlap with query (likely irrelevant)
+ *   0.5 = moderate overlap (tangentially related)
+ *   1.0 = strong overlap (directly answers the query)
  */
-function scoreRelevance(question: string, tags: string[] | null | undefined): number {
-  if (!tags || tags.length === 0) return 0.3; // No tags = neutral score, don't exclude
+function scoreTagRelevance(query: string, tags: string[] | null | undefined): number {
+  if (!tags || tags.length === 0) return 0.25; // No tags = neutral, don't hard-exclude
 
-  const questionLower = question.toLowerCase();
-  const questionWords = questionLower
-    .replace(/[?!.,;:'"]/g, "")
-    .split(/\s+/)
-    .filter(w => w.length > 2);
+  const queryLower = query.toLowerCase().replace(/[?!.,;:'"]/g, "");
+  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
 
-  let score = 0;
-  let maxScore = 0;
+  const stopWords = new Set([
+    "the", "and", "for", "that", "this", "with", "from", "how", "what",
+    "why", "when", "where", "who", "does", "did", "was", "are", "has",
+    "have", "about", "which", "their", "they", "been", "being", "will",
+    "would", "could", "should", "into", "also", "very", "just", "can",
+    "srila", "prabhupada", "prabhupāda", "said", "say", "says",
+  ]);
+  const queryKeywords = queryWords.filter(w => !stopWords.has(w));
+
+  if (queryKeywords.length === 0) return 0.25;
+
+  let summaryScore = 0;
+  let questionScore = 0;
+  let topicScore = 0;
+  let topicCount = 0;
 
   for (const tag of tags) {
     const tagLower = tag.toLowerCase();
 
-    // Check if tag is a SUMMARY — extract and compare
+    // ── SUMMARY tags (highest signal) ──
     if (tagLower.startsWith("summary:")) {
       const summary = tagLower.substring(8).trim();
-      const matches = questionWords.filter(w => summary.includes(w)).length;
-      score += (matches / Math.max(questionWords.length, 1)) * 3; // Weight summaries heavily
-      maxScore += 3;
+      const summaryWords = summary.split(/\s+/).filter(w => w.length > 2);
+      const matches = queryKeywords.filter(qw =>
+        summaryWords.some(sw => sw.includes(qw) || qw.includes(sw))
+      ).length;
+      summaryScore = matches / queryKeywords.length;
       continue;
     }
 
-    // Check if tag is a QUESTION — compare with the user's question
+    // ── QUESTION tags (high signal — direct intent match) ──
     if (tagLower.includes("?")) {
-      const tagWords = tagLower.replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 2);
-      const overlap = questionWords.filter(w => tagWords.includes(w)).length;
-      score += (overlap / Math.max(questionWords.length, 1)) * 2; // Weight questions
-      maxScore += 2;
+      const questionWords = tagLower.replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
+      const matches = queryKeywords.filter(qw =>
+        questionWords.some(qfw => qfw.includes(qw) || qw.includes(qfw))
+      ).length;
+      const qScore = matches / Math.max(queryKeywords.length, 1);
+      questionScore = Math.max(questionScore, qScore);
       continue;
     }
 
-    // Regular topic/term tag — check if question contains it
-    if (questionLower.includes(tagLower) || tagLower.split(/\s+/).some(tw => tw.length > 3 && questionLower.includes(tw))) {
-      score += 1;
-    }
-    maxScore += 1;
+    // ── Topic tags (moderate signal) ──
+    topicCount++;
+    const tagWords = tagLower.split(/\s+/).filter(w => w.length > 2);
+    const hasOverlap = queryKeywords.some(qw =>
+      tagWords.some(tw => tw.includes(qw) || qw.includes(tw))
+    ) || queryKeywords.some(qw => tagLower.includes(qw));
+
+    if (hasOverlap) topicScore += 1;
   }
 
-  return maxScore > 0 ? Math.min(score / Math.max(maxScore * 0.3, 1), 1) : 0.3;
+  const normalizedTopicScore = topicCount > 0 ? Math.min(topicScore / Math.max(queryKeywords.length * 0.5, 1), 1) : 0;
+
+  // Weighted combination: summary > question > topic
+  const finalScore = (
+    summaryScore * 0.45 +
+    questionScore * 0.35 +
+    normalizedTopicScore * 0.20
+  );
+
+  return Math.min(Math.max(finalScore, 0), 1);
 }
 
 /**
- * Re-rank results by combining RRF score, tag relevance, and semantic similarity.
- * Filters out very low relevance results, with fallback to unfiltered if too few survive.
+ * Checks if a verse/prose result is garbage and should be excluded.
+ * Returns true if the result should be REMOVED.
+ */
+function isGarbageResult(
+  item: { translation?: string; body_text?: string; purport?: string; tags?: string[] },
+  type: "verse" | "prose"
+): boolean {
+  if (type === "prose") {
+    const text = (item.body_text || "").trim();
+
+    // Too short to be useful
+    if (text.length < 50) return true;
+
+    // Just a chapter/section heading
+    if (/^(TEXT\s|CHAPTER\s|Chapter\s|\d+\s*$)/i.test(text)) return true;
+    if (/^[A-Z\s]{3,30}$/.test(text.trim())) return true;
+
+    // Just someone's question (not Prabhupāda's teaching)
+    if (/^[""\u201C]?[A-Z][^.]{5,80}\?\s*[""\u201D]?\s*$/.test(text)) return true;
+    if (/^(Bob|Śyāmasundara|Lieutenant|Mr\.|Mrs\.|Boy|Girl|Student|Reporter|Question):/i.test(text)) return true;
+
+    // Mostly Sanskrit transliteration (not English content)
+    const iastChars = (text.match(/[āīūṛṝḷṃḥṣṭḍṅñśṁ]/g) || []).length;
+    const totalChars = text.replace(/\s/g, "").length;
+    if (totalChars > 0 && iastChars / totalChars > 0.15) return true;
+
+    return false;
+  }
+
+  // For verses: very rarely garbage, but check for empty translation
+  if (type === "verse") {
+    if (!item.translation && !item.purport) return true;
+    if ((item.translation || "").trim().length < 10) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Multi-signal relevance ranker for the Explore section.
+ *
+ * Combines:
+ *   1. RRF score (from initial search merge)
+ *   2. Tag relevance score (how well tags match the query)
+ *   3. Embedding similarity (semantic closeness to query)
+ *
+ * Then filters out garbage and low-relevance results.
+ */
+function rankAndFilterOverflow(
+  query: string,
+  verses: VerseHit[],
+  prose: ProseHit[],
+): { verses: VerseHit[]; prose: ProseHit[]; totalFiltered: number } {
+
+  // ── Score and filter verses ──
+  const scoredVerses = verses
+    .filter(v => !isGarbageResult(v, "verse"))
+    .map(v => {
+      const tagScore = scoreTagRelevance(query, v.tags);
+      const semanticScore = v.similarity || 0;
+      const rrfScore = v.score || 0;
+
+      const combinedScore = (
+        rrfScore * 0.30 +
+        tagScore * 0.45 +
+        semanticScore * 0.25
+      );
+
+      return { ...v, _combinedScore: combinedScore, _tagScore: tagScore };
+    })
+    .filter(v => v._tagScore >= 0.08)
+    .sort((a, b) => b._combinedScore - a._combinedScore);
+
+  // ── Score and filter prose ──
+  const scoredProse = prose
+    .filter(p => !isGarbageResult(p, "prose"))
+    .map(p => {
+      const tagScore = scoreTagRelevance(query, p.tags);
+      const semanticScore = p.similarity || 0;
+      const rrfScore = p.score || 0;
+
+      const combinedScore = (
+        rrfScore * 0.30 +
+        tagScore * 0.45 +
+        semanticScore * 0.25
+      );
+
+      return { ...p, _combinedScore: combinedScore, _tagScore: tagScore };
+    })
+    .filter(p => p._tagScore >= 0.08)
+    .sort((a, b) => b._combinedScore - a._combinedScore);
+
+  const totalOriginal = verses.length + prose.length;
+  const totalAfterFilter = scoredVerses.length + scoredProse.length;
+
+  return {
+    verses: scoredVerses,
+    prose: scoredProse,
+    totalFiltered: totalOriginal - totalAfterFilter,
+  };
+}
+
+/**
+ * Re-rank all results by combining RRF score with tag relevance.
+ * Used to improve both article (top 20) and overflow ordering.
  */
 function reRankResults<T extends { score?: number; tags?: string[]; similarity?: number }>(
   items: T[],
@@ -323,13 +461,13 @@ function reRankResults<T extends { score?: number; tags?: string[]; similarity?:
 ): T[] {
   const scored = items.map(item => ({
     ...item,
-    _relevanceScore: scoreRelevance(query, item.tags),
+    _relevanceScore: scoreTagRelevance(query, item.tags),
   }));
 
-  // Sort by combined RRF score + relevance score + semantic similarity
+  // Sort by combined RRF score + tag relevance + semantic similarity
   scored.sort((a, b) => {
-    const aTotal = (a.score || 0) + a._relevanceScore * 0.5 + (a.similarity || 0) * 0.3;
-    const bTotal = (b.score || 0) + b._relevanceScore * 0.5 + (b.similarity || 0) * 0.3;
+    const aTotal = (a.score || 0) + a._relevanceScore * 0.4 + (a.similarity || 0) * 0.25;
+    const bTotal = (b.score || 0) + b._relevanceScore * 0.4 + (b.similarity || 0) * 0.25;
     return bTotal - aTotal;
   });
 
@@ -762,20 +900,30 @@ export async function GET(request: NextRequest) {
     const narrativeVerses = rankedVerses.slice(0, 20);
     const narrativeProse = rankedProse.slice(0, 5);
 
-    // Overflow for "dig deeper" modal (everything else)
-    const overflowVerses = rankedVerses.slice(20);
-    const overflowProse = rankedProse.slice(5);
+    // Overflow for "dig deeper" modal — apply multi-signal relevance pipeline
+    const rawOverflowVerses = rankedVerses.slice(20);
+    const rawOverflowProse = rankedProse.slice(5);
+    const rankedOverflow = rankAndFilterOverflow(query, rawOverflowVerses, rawOverflowProse);
+
+    const overflowVerses = rankedOverflow.verses;
+    const overflowProse = rankedOverflow.prose;
+
+    if (rankedOverflow.totalFiltered > 0) {
+      console.log(`[Relevance] Filtered ${rankedOverflow.totalFiltered} low-relevance overflow results`);
+    }
 
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);
     const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse);
 
-    // Add overflow data to metadata
+    // Add overflow data to metadata — include article verse IDs for frontend badges
+    const articleVerseIds = narrativeVerses.map(v => v.id);
     const fullMetadata = {
       ...metadata,
       overflowVerses,
       overflowProse,
       totalVerses: verses.length,
       totalProse: prose.length,
+      articleVerseIds,
     };
 
     // References mode: skip Gemini synthesis, return metadata with empty narrative
