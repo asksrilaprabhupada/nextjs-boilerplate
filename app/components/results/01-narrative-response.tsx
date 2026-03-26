@@ -188,7 +188,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
     const passages: { reference: string; text: string }[] = [];
     for (const book of results.books) {
       for (const v of book.verses) {
-        passages.push({ reference: v.verse_number || v.id, text: v.translation || v.purport || "" });
+        const ref = `${v.scripture || ""} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`;
+        passages.push({ reference: ref.trim(), text: v.translation || v.purport || "" });
       }
       for (const p of book.prose) {
         passages.push({ reference: p.chapter_title || `${p.book_slug} #${p.paragraph_number}`, text: p.body_text || "" });

@@ -2,53 +2,95 @@
  * generate-summary/route.ts — Key Answers Summary Generator
  *
  * Accepts an array of scripture passages and returns a one-line summary for each,
- * powered by Claude. Used by the search results sidebar to show key answers.
+ * powered by Gemini 2.5 Flash Lite (cheapest model). Used by the search results
+ * sidebar to show key answers.
  */
-import Anthropic from "@anthropic-ai/sdk";
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const geminiKey = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
+
+async function callGemini(prompt: string): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": geminiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          maxOutputTokens: 1000,
+          temperature: 0.2,
+          responseMimeType: "application/json",
+        },
+      }),
+    });
+    if (!res.ok) {
+      console.error("Gemini summary API error:", res.status, await res.text());
+      return "";
+    }
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  } catch (err) {
+    console.error("Gemini summary call failed:", err);
+    return "";
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
     const { passages } = await request.json();
 
     if (!passages || !Array.isArray(passages) || passages.length === 0) {
-      return Response.json({ summaries: [] });
+      return NextResponse.json({ summaries: [] });
     }
 
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      system: `Summarize scripture passages. For each, write ONE line (max 15 words) stating what the verse says. No interpretation. No quotes. Return ONLY a JSON array of strings. No preamble, no markdown.`,
-      messages: [
-        {
-          role: "user",
-          content: JSON.stringify(
-            passages.map((p: { reference: string; text: string }) => ({
-              ref: p.reference,
-              text: p.text.slice(0, 300),
-            }))
-          ),
-        },
-      ],
-    });
+    const passageList = passages
+      .map((p: { reference: string; text: string }, i: number) =>
+        `${i + 1}. [${p.reference}] "${(p.text || "").slice(0, 300)}"`
+      )
+      .join("\n");
 
-    const text = message.content
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("");
+    const prompt = `You summarize scripture passages from Srila Prabhupada's books.
 
-    try {
-      return Response.json({ summaries: JSON.parse(text.trim()) });
-    } catch {
-      return Response.json({
+For each passage below, write ONE short summary line (maximum 15 words) stating what the verse teaches. Rules:
+- No interpretation or commentary — just state what the passage says
+- No quotation marks in summaries
+- Return ONLY a JSON array of strings, same order as input
+- Example: ["Devotional service begins with hearing and chanting about Krishna", "The soul is eternal and never destroyed"]
+
+Passages:
+${passageList}`;
+
+    const raw = await callGemini(prompt);
+
+    if (!raw) {
+      return NextResponse.json({
         summaries: passages.map(() => "View this passage"),
       });
     }
+
+    try {
+      // Clean any markdown fencing the model might add
+      const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim();
+      const summaries = JSON.parse(cleaned);
+
+      if (Array.isArray(summaries) && summaries.length > 0) {
+        return NextResponse.json({ summaries });
+      }
+    } catch {
+      // JSON parse failed
+    }
+
+    return NextResponse.json({
+      summaries: passages.map(() => "View this passage"),
+    });
   } catch (err) {
     console.error("Summary generation error:", err);
-    return Response.json({
+    return NextResponse.json({
       summaries: [],
       error: "Failed to generate summaries",
     });

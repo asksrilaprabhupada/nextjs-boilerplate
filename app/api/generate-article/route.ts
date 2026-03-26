@@ -3,12 +3,12 @@
  *
  * Accepts questions and scripture passages, returns a flowing article where
  * AI writes ONLY filler/transition sentences and all scripture is verbatim.
- * Uses Claude to connect passages with speaker attributions and context.
+ * Uses Gemini 2.5 Flash Lite (cheapest model — fillers are simple tasks).
  */
-import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const geminiKey = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 /* ─── Speaker attribution map ─── */
 const SPEAKERS: Record<string, string> = {
@@ -38,7 +38,6 @@ function getSpeaker(ref: string, type: string): string {
     const k = parts.slice(0, i).join(".");
     if (SPEAKERS[k]) return SPEAKERS[k];
   }
-  // Try space-separated prefix matching (e.g. "SB 1", "SB 10")
   const spaceKey = ref.split(".")[0];
   if (SPEAKERS[spaceKey]) return SPEAKERS[spaceKey];
   const firstWord = ref.split(" ")[0];
@@ -47,6 +46,36 @@ function getSpeaker(ref: string, type: string): string {
 }
 
 export { getSpeaker };
+
+async function callGemini(prompt: string, systemPrompt: string): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": geminiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: {
+          maxOutputTokens: 4000,
+          temperature: 0.3,
+        },
+      }),
+    });
+    if (!res.ok) {
+      console.error("Gemini article API error:", res.status, await res.text());
+      return "";
+    }
+    const data = await res.json();
+    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  } catch (err) {
+    console.error("Gemini article call failed:", err);
+    return "";
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -82,17 +111,7 @@ OUTPUT: Only the article. No preamble.`;
         .join("\n\n")
     }\n\nArrange into a flowing article using EVERY passage exactly as given.`;
 
-    const message = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userContent }],
-    });
-
-    const article = message.content
-      .filter((b: { type: string }) => b.type === "text")
-      .map((b: { type: string; text?: string }) => b.text || "")
-      .join("\n");
+    const article = await callGemini(userContent, systemPrompt);
 
     return NextResponse.json({ article });
   } catch (error) {
