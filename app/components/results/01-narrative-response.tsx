@@ -25,12 +25,14 @@ export interface VerseHit {
   id: string; scripture: string; verse_number: string; sanskrit_devanagari: string;
   transliteration: string; translation: string; purport: string;
   chapter_number?: string; canto_or_division?: string; chapter_title?: string;
-  book_slug?: string; vedabase_url?: string;
+  book_slug?: string; vedabase_url?: string; tags?: string[];
+  score?: number; similarity?: number;
 }
 
 export interface ProseHit {
   id: string; book_slug: string; paragraph_number: number; body_text: string;
-  chapter_title?: string; vedabase_url?: string;
+  chapter_title?: string; vedabase_url?: string; tags?: string[];
+  score?: number; similarity?: number;
 }
 
 export interface BookGroup {
@@ -50,6 +52,7 @@ export interface SearchResults {
   overflowProse?: ProseHit[];
   totalVerses?: number;
   totalProse?: number;
+  articleVerseIds?: string[];
 }
 
 /* ─── Per-book color system (ONLY for tags and left borders) ─── */
@@ -359,7 +362,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
                   >
-                    Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources &rarr;
+                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.books?.reduce((s, b) => s + b.verses.length + b.prose.length, 0) || 0)} sources &rarr;
                   </button>
                 )}
 
@@ -476,7 +479,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
                   >
-                    Explore all {(results.totalVerses || 0) + (results.totalProse || 0)} sources &rarr;
+                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.books?.reduce((s, b) => s + b.verses.length + b.prose.length, 0) || 0)} sources &rarr;
                   </button>
                 )}
               </div>
@@ -563,6 +566,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           overflowProse={results.overflowProse || []}
           totalVerses={results.totalVerses || 0}
           totalProse={results.totalProse || 0}
+          articleVerseIds={new Set(results.articleVerseIds || [])}
           onClose={() => setDigDeeperOpen(false)}
         />
       )}
