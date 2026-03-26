@@ -290,9 +290,9 @@ function buildVerseUrlMap(verses: VerseHit[]): Map<string, string> {
 // SYNTHESIS PROMPT BUILDER
 // =====================================================
 function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[]): string {
-  // Only pass top 20 verses and top 5 prose to synthesis (overflow is for "dig deeper" modal)
-  const synthVerses = verses.slice(0, 20);
-  const synthProse = prose.slice(0, 5);
+  // Reduce context to avoid overwhelming the model
+  const synthVerses = verses.slice(0, 8);
+  const synthProse = prose.slice(0, 3);
 
   let ctx = "";
   const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
@@ -303,62 +303,43 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
     ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
     for (const v of d.v.slice(0, 10)) {
       const ref = `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${v.verse_number}`;
-      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 1500)}"\n\n`;
+      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${(v.purport || "").substring(0, 400)}"\n\n`;
     }
-    for (const p of d.p.slice(0, 5)) {
-      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\n"${p.body_text.substring(0, 400)}"\n\n`;
+    for (const p of d.p.slice(0, 3)) {
+      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\n"${p.body_text.substring(0, 300)}"\n\n`;
     }
   }
 
   if (!ctx.trim()) return "";
 
-  return `You are the editorial synthesis engine for asksrilaprabhupada.com. A devotee asked: "${question}"
+  return `You are writing a short article answering a devotee's question: "${question}"
 
-Use ONLY the retrieved data below. Never invent or generate your own philosophical statements.
+Use ONLY the scripture passages provided below. Never invent philosophy.
 
-YOUR ROLE: You are a senior EDITORIAL WRITER at a devotional journal — warm, flowing, authoritative, readable. You are an EDITOR, not a guru. You write transitions, attribution, and structural signposting. Every philosophical or doctrinal statement MUST be a direct quote from the retrieved data, wrapped in the appropriate quote div.
+STRUCTURE YOUR ARTICLE LIKE THIS:
+1. Start with a <p> paragraph (2-3 sentences) introducing the topic and framing the question
+2. For each key passage you use, write a <p> transition sentence naming the speaker, then quote the passage
+3. End with a <p> paragraph (2-3 sentences) tying the key points together
 
-SPEAKER ATTRIBUTION (critical — always name the speaker):
-- BG translations: "Lord Kṛṣṇa tells Arjuna in the Bhagavad Gītā..." or "The Supreme Lord declares..."
-- SB translations: Use speaker names where identifiable — "Śukadeva Gosvāmī narrates to King Parīkṣit...", "Nārada Muni instructs...", "Lord Kapila explains to His mother Devahūti..."
+SPEAKER ATTRIBUTION — always name the speaker before a quote:
+- BG translations: "Lord Kṛṣṇa tells Arjuna..." or "The Supreme Lord declares..."
+- SB translations: Name the speaker — "Śukadeva Gosvāmī narrates...", "Nārada Muni instructs..."
 - CC translations: "Lord Caitanya reveals...", "Kṛṣṇadāsa Kavirāja Gosvāmī records..."
-- ALL purports: "Śrīla Prabhupāda illuminates this in his purport...", "His Divine Grace explains further...", "In his commentary, Śrīla Prabhupāda writes..."
+- ALL purports: "Śrīla Prabhupāda explains in his purport..." or "His Divine Grace writes..."
 - Prose books: "In [Book Title], Śrīla Prabhupāda writes..."
-- NEVER say "the scripture says" or "according to the text" — always name the speaker.
 
-PURPORT PRIORITY (critical):
-- For every verse you cite, ALWAYS include a substantial purport excerpt after the translation. The purport is where Śrīla Prabhupāda's actual teaching lives — it is the heart of the article.
-- Purport quotes must be substantially longer than translation quotes — quote 3-8 key sentences from the purport, not just one line.
-- The article's content balance should be roughly: 50-60% purport content, 15-20% translation quotes, 20-30% editorial transitions.
-- Prioritize verses that have rich, substantive purports over those with only short translations.
-- An article that only quotes translations without purports is INCOMPLETE and UNACCEPTABLE.
+FORMAT RULES:
+- Your intro, transitions, and conclusion go in <p> tags
+- Verse/translation quotes go in <div class="verse-quote">
+- Purport quotes go in <div class="purport-quote">
+- Prose book quotes go in <div class="prose-quote">
+- Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
+- Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
+- Use 5-8 passages total. Do NOT use all of them.
+- For each verse, include BOTH the translation AND a purport excerpt (purport is where the teaching lives)
+- Output clean HTML only. No markdown. No preamble.
 
-ARTICLE STRUCTURE:
-1. INTRODUCTION (2-4 sentences): Frame the question contextually. Do NOT quote scripture in the intro — just set up what the reader is about to explore. Example tone: "The practice of chanting the holy names occupies a central place in Gauḍīya Vaiṣṇava tradition. Across multiple scriptures, the importance of this practice is established not merely as recommendation but as the prescribed method for spiritual realization in the current age. The evidence from Śrīla Prabhupāda's books paints a compelling and multilayered picture."
-2. BODY SECTIONS with <h3> headers that read like editorial subheadings — NOT book names. Examples: "The Foundation: What the Gītā Establishes", "A Deeper Dimension from the Bhāgavatam", "Lord Caitanya's Direct Instruction", "Prabhupāda's Practical Guidance". These should feel like chapter titles in a magazine feature. Organize by THEME or ARGUMENT FLOW, not by book. A section may pull from BG and SB together if they address the same sub-point.
-3. TRANSITIONS: Between quotes, write 2-4 sentence transition paragraphs that explain WHY the next quote matters in context. Not "On a related note..." but "This principle finds its most direct application in..." or "The question naturally arises — how does one begin? Lord Caitanya Himself addresses this..."
-4. CONCLUSION (2-3 sentences): Tie the threads together WITHOUT generating new philosophy. Example: "From the foundational instruction of the Gītā through the detailed narrations of the Bhāgavatam to Lord Caitanya's own practice, the scriptures speak with one voice on this subject. Śrīla Prabhupāda's purports bring these threads together into a practical, accessible path."
-
-CRITICAL RULES:
-- Use 10-15+ distinct references minimum. Weave them throughout the article — do NOT cluster all quotes together.
-- EVERY reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
-- Direct quotes MUST be in quotation marks inside the quote divs.
-- Diacritical marks always (Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.).
-- Warm devotional tone. Serve the devotees.
-- Do NOT just list quotes with one-line intros.
-- Do NOT use "In another place..." or "Furthermore..." as your only transitions. Vary the connective language.
-- Do NOT organize sections by book name. Organize by THEME or ARGUMENT FLOW.
-- Do NOT generate any philosophical claims in your own voice.
-
-FORMAT: Clean HTML only. No markdown anywhere.
-- <h3> for section headers (editorial subheadings, not book names)
-- <div class="verse-quote"> for translations
-- <div class="purport-quote"> for purports
-- <div class="prose-quote"> for prose book excerpts
-- <a href="URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a> for all references
-- <p> for narrative/transition paragraphs
-
-DATA:
+PASSAGES:
 ${ctx}`;
 }
 
@@ -371,20 +352,30 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
 
   try {
     const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 4500);
-    if (!text) return buildFB(verses, prose);
+    console.log("[Synthesis] Gemini returned", text?.length || 0, "chars");
+    if (!text) {
+      console.error("[Synthesis] Gemini returned empty — using fallback");
+      return buildFB(verses, prose);
+    }
     return ensureVerseLinks(text, verseUrlMap);
-  } catch {
+  } catch (err) {
+    console.error("[Synthesis] Gemini call failed:", err);
     return buildFB(verses, prose);
   }
 }
 
 function buildFB(v: VerseHit[], p: ProseHit[]) {
-  let h = "";
-  for (const x of v.slice(0, 15)) {
+  let h = '<p style="color:#6B7280;font-style:italic;margin-bottom:16px;">Here are the most relevant passages from Śrīla Prabhupāda\'s books on this topic:</p>';
+  for (const x of v.slice(0, 10)) {
     const ref = `${x.scripture} ${x.canto_or_division ? x.canto_or_division + "." : ""}${x.chapter_number}.${x.verse_number}`;
     h += `<div class="verse-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a> "${x.translation}"</div>`;
+    if (x.purport) {
+      h += `<div class="purport-quote"><strong>Śrīla Prabhupāda:</strong> "${(x.purport).substring(0, 300)}..."</div>`;
+    }
   }
-  for (const x of p.slice(0, 10)) h += `<div class="prose-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank">${getBookName(x.book_slug)}</a>: "${x.body_text.substring(0, 300)}..."</div>`;
+  for (const x of p.slice(0, 5)) {
+    h += `<div class="prose-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank">${getBookName(x.book_slug)}</a>: "${x.body_text.substring(0, 300)}..."</div>`;
+  }
   return h;
 }
 
@@ -493,6 +484,7 @@ export async function GET(request: NextRequest) {
           });
 
           if (!geminiRes.ok || !geminiRes.body) {
+            console.error("[Streaming] Gemini streaming failed:", geminiRes.status, await geminiRes.text().catch(() => ""));
             throw new Error(`Gemini streaming failed: ${geminiRes.status}`);
           }
 
