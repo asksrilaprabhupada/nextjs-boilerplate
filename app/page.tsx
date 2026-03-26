@@ -24,6 +24,11 @@ import FeedbackButton from "./components/feedback/01-feedback-button";
 import { logSearch, logBehavior } from "./lib/02-analytics";
 import { useSearchBehaviorTracker } from "./hooks/01-use-search-behavior-tracker";
 
+/* ─── Multi-question parser ─── */
+function parseQuestions(input: string): string[] {
+  return input.split("?").map(q => q.trim()).filter(q => q.length > 0).map(q => q + "?");
+}
+
 type OverlayItem = "About" | "Donate" | "Contact" | "Feature Request";
 
 const overlayParamToItem: Record<string, OverlayItem> = { about: "About", donate: "Donate", contact: "Contact", feature: "Feature Request" };
@@ -88,6 +93,55 @@ export default function Home() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
+  /* ─── Helper: fetch a single query via SSE or JSON ─── */
+  const fetchSingleSearch = useCallback(async (
+    q: string,
+    controller: AbortController,
+    callbacks: {
+      onMetadata: (event: any) => void;
+      onNarrativeChunk: (html: string) => void;
+      onDone: (narrativeAccum: string) => void;
+    },
+  ) => {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`, { signal: controller.signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const contentType = res.headers.get("content-type") || "";
+
+    if (contentType.includes("application/json")) {
+      const jsonResults = await res.json();
+      callbacks.onMetadata(jsonResults);
+      callbacks.onDone(jsonResults.narrative || "");
+      return jsonResults;
+    }
+
+    if (!res.body) throw new Error("No response body");
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let narrativeAccum = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr) continue;
+        try {
+          const event = JSON.parse(jsonStr);
+          if (event.type === "metadata") callbacks.onMetadata(event);
+          else if (event.type === "narrative_chunk") { narrativeAccum += event.html; callbacks.onNarrativeChunk(narrativeAccum); }
+          else if (event.type === "done") callbacks.onDone(narrativeAccum);
+        } catch { /* skip */ }
+      }
+    }
+    return null;
+  }, []);
+
   const handleSearch = useCallback(async (query: string) => {
     // Abort any ongoing stream
     if (abortRef.current) abortRef.current.abort();
@@ -112,70 +166,23 @@ export default function Home() {
     scrollToProgress();
 
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`, {
-        signal: controller.signal,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const questions = parseQuestions(query);
 
-      const contentType = res.headers.get("content-type") || "";
+      if (questions.length <= 1) {
+        // ─── Single question: standard SSE path ───
+        let partialResults: SearchResults | null = null;
+        let narrativeAccum = "";
 
-      // Non-streaming response (cached results return as JSON)
-      if (contentType.includes("application/json")) {
-        const jsonResults = await res.json();
-        setSearchResults(jsonResults);
-        setIsSearching(false);
-
-        // Scroll to results
-        scrollToResults();
-
-        // Log the search asynchronously (fire and forget)
-        logSearch({
-          query,
-          totalResults: jsonResults.totalResults || 0,
-          verseIds: (jsonResults.books || []).flatMap((b: any) => (b.verses || []).map((v: any) => v.id)),
-          proseIds: (jsonResults.books || []).flatMap((b: any) => (b.prose || []).map((p: any) => p.id)),
-          booksReturned: (jsonResults.books || []).map((b: any) => b.slug),
-          searchMethod: "hybrid",
-          totalDurationMs: Date.now() - searchStartTimeRef.current,
-          narrativeLength: (jsonResults.narrative || "").length,
-        }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
-
-        return;
-      }
-
-      // Streaming SSE response
-      if (!res.body) throw new Error("No response body");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let narrativeAccum = "";
-      let partialResults: SearchResults | null = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const jsonStr = line.slice(6).trim();
-          if (!jsonStr) continue;
-
-          try {
-            const event = JSON.parse(jsonStr);
-
-            if (event.type === "metadata") {
-              // Metadata arrived — render sidebar/layout immediately
+        await fetchSingleSearch(query, controller, {
+          onMetadata: (event) => {
+            if (event.books) {
+              // SSE metadata event
               partialResults = {
-                query: event.query,
+                query: event.query || query,
                 keywords: event.keywords || [],
                 synonyms: event.synonyms || [],
                 relatedConcepts: event.relatedConcepts || [],
-                narrative: "",
+                narrative: event.narrative || "",
                 totalResults: event.totalResults,
                 citations: event.citations,
                 books: event.books,
@@ -187,37 +194,126 @@ export default function Home() {
               setSearchResults(partialResults);
               setIsSearching(false);
               setIsStreaming(true);
-
-              // Scroll to results when metadata arrives
               scrollToResults();
-            } else if (event.type === "narrative_chunk") {
-              narrativeAccum += event.html;
-              setStreamingNarrative(narrativeAccum);
-            } else if (event.type === "done") {
-              // Finalize: set the complete narrative into results
-              if (partialResults) {
-                const finalResults = { ...partialResults, narrative: narrativeAccum };
-                setSearchResults(finalResults);
-
-                // Log the search asynchronously (fire and forget)
-                logSearch({
-                  query,
-                  totalResults: finalResults.totalResults || 0,
-                  verseIds: (finalResults.books || []).flatMap((b: any) => (b.verses || []).map((v: any) => v.id)),
-                  proseIds: (finalResults.books || []).flatMap((b: any) => (b.prose || []).map((p: any) => p.id)),
-                  booksReturned: (finalResults.books || []).map((b: any) => b.slug),
-                  searchMethod: "hybrid",
-                  totalDurationMs: Date.now() - searchStartTimeRef.current,
-                  narrativeLength: narrativeAccum.length,
-                }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
-              }
-              setIsStreaming(false);
-              setStreamingNarrative("");
             }
-          } catch {
-            // Skip malformed events
+          },
+          onNarrativeChunk: (accum) => {
+            narrativeAccum = accum;
+            setStreamingNarrative(accum);
+          },
+          onDone: (finalNarrative) => {
+            narrativeAccum = finalNarrative;
+            if (partialResults) {
+              const finalResults = { ...partialResults, narrative: narrativeAccum };
+              setSearchResults(finalResults);
+              logSearch({
+                query,
+                totalResults: finalResults.totalResults || 0,
+                verseIds: (finalResults.books || []).flatMap((b: any) => (b.verses || []).map((v: any) => v.id)),
+                proseIds: (finalResults.books || []).flatMap((b: any) => (b.prose || []).map((p: any) => p.id)),
+                booksReturned: (finalResults.books || []).map((b: any) => b.slug),
+                searchMethod: "hybrid",
+                totalDurationMs: Date.now() - searchStartTimeRef.current,
+                narrativeLength: narrativeAccum.length,
+              }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
+            }
+            setIsStreaming(false);
+            setStreamingNarrative("");
+          },
+        });
+      } else {
+        // ─── Multiple questions: parallel search, merge, deduplicate ───
+        const allMetadata: any[] = [];
+        const allNarratives: string[] = [];
+
+        await Promise.all(
+          questions.map((q, idx) =>
+            fetchSingleSearch(q, controller, {
+              onMetadata: (event) => { allMetadata[idx] = event; },
+              onNarrativeChunk: () => {},
+              onDone: (narrative) => { allNarratives[idx] = narrative; },
+            })
+          )
+        );
+
+        // Merge and deduplicate books/citations
+        const seenVerses = new Set<string>();
+        const seenProse = new Set<string>();
+        const mergedBooks: Record<string, any> = {};
+        const mergedCitations: any[] = [];
+        const mergedOverflowVerses: any[] = [];
+        const mergedOverflowProse: any[] = [];
+        let mergedKeywords: string[] = [];
+        let mergedSynonyms: string[] = [];
+        let mergedRelatedConcepts: string[] = [];
+        let totalVerses = 0;
+        let totalProse = 0;
+
+        for (const meta of allMetadata) {
+          if (!meta) continue;
+          mergedKeywords = [...mergedKeywords, ...(meta.keywords || [])];
+          mergedSynonyms = [...mergedSynonyms, ...(meta.synonyms || [])];
+          mergedRelatedConcepts = [...mergedRelatedConcepts, ...(meta.relatedConcepts || [])];
+          totalVerses += meta.totalVerses || 0;
+          totalProse += meta.totalProse || 0;
+
+          for (const book of (meta.books || [])) {
+            if (!mergedBooks[book.slug]) {
+              mergedBooks[book.slug] = { slug: book.slug, name: book.name, verses: [], prose: [] };
+            }
+            for (const v of book.verses) {
+              if (!seenVerses.has(v.id)) { seenVerses.add(v.id); mergedBooks[book.slug].verses.push(v); }
+            }
+            for (const p of book.prose) {
+              if (!seenProse.has(p.id)) { seenProse.add(p.id); mergedBooks[book.slug].prose.push(p); }
+            }
+          }
+
+          for (const c of (meta.citations || [])) {
+            if (!mergedCitations.find((mc: any) => mc.ref === c.ref)) mergedCitations.push(c);
+          }
+
+          for (const v of (meta.overflowVerses || [])) {
+            if (!seenVerses.has(v.id)) { seenVerses.add(v.id); mergedOverflowVerses.push(v); }
+          }
+          for (const p of (meta.overflowProse || [])) {
+            if (!seenProse.has(p.id)) { seenProse.add(p.id); mergedOverflowProse.push(p); }
           }
         }
+
+        const mergedBooksArr = Object.values(mergedBooks);
+        const totalResults = mergedBooksArr.reduce((sum: number, b: any) => sum + b.verses.length + b.prose.length, 0);
+        const mergedNarrative = allNarratives.filter(Boolean).join("\n<hr/>\n");
+
+        const finalResults: SearchResults = {
+          query,
+          keywords: [...new Set(mergedKeywords)],
+          synonyms: [...new Set(mergedSynonyms)],
+          relatedConcepts: [...new Set(mergedRelatedConcepts)],
+          narrative: mergedNarrative,
+          totalResults,
+          citations: mergedCitations,
+          books: mergedBooksArr as any,
+          overflowVerses: mergedOverflowVerses,
+          overflowProse: mergedOverflowProse,
+          totalVerses,
+          totalProse,
+        };
+
+        setSearchResults(finalResults);
+        setIsSearching(false);
+        scrollToResults();
+
+        logSearch({
+          query,
+          totalResults,
+          verseIds: mergedBooksArr.flatMap((b: any) => b.verses.map((v: any) => v.id)),
+          proseIds: mergedBooksArr.flatMap((b: any) => b.prose.map((p: any) => p.id)),
+          booksReturned: mergedBooksArr.map((b: any) => b.slug),
+          searchMethod: "hybrid",
+          totalDurationMs: Date.now() - searchStartTimeRef.current,
+          narrativeLength: mergedNarrative.length,
+        }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
@@ -227,7 +323,7 @@ export default function Home() {
       setIsSearching(false);
       setIsStreaming(false);
     }
-  }, [scrollToProgress, scrollToResults]);
+  }, [scrollToProgress, scrollToResults, fetchSingleSearch]);
 
   return (
     <>

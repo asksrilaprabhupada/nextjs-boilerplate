@@ -67,6 +67,153 @@ export function getBookColor(ref: string) {
   return BOOK_COLORS[prefix] || BOOK_COLORS["default"];
 }
 
+/* ─── Speaker attribution (mirrors API) ─── */
+const SPEAKERS: Record<string, string> = {
+  "BG": "Lord Krsna", "SB 1": "Suta Gosvami", "SB 2": "Sukadeva Gosvami",
+  "SB 3": "Maitreya Rsi", "SB 4": "Maitreya Rsi", "SB 5": "Sukadeva Gosvami",
+  "SB 6": "Sukadeva Gosvami", "SB 7": "Narada Muni", "SB 8": "Sukadeva Gosvami",
+  "SB 9": "Sukadeva Gosvami", "SB 10": "Sukadeva Gosvami",
+  "SB 11": "Lord Krsna to Uddhava", "SB 12": "Sukadeva Gosvami",
+  "CC": "Krsnadasa Kaviraja Gosvami", "NOI": "Srila Rupa Gosvami",
+  "ISO": "Sri Isopanisad", "BS": "Lord Brahma",
+};
+
+function getSpeaker(ref: string, type: string): string {
+  if (type === "purport") return "Srila Prabhupada";
+  const spaceKey = ref.split(".")[0];
+  if (SPEAKERS[spaceKey]) return SPEAKERS[spaceKey];
+  const firstWord = ref.split(" ")[0];
+  if (SPEAKERS[firstWord]) return SPEAKERS[firstWord];
+  return "the scripture";
+}
+
+/* ─── Article parser: splits AI article into filler + scripture segments ─── */
+interface ArticleSegment {
+  type: "filler" | "scripture";
+  text: string;
+  reference?: string;
+}
+
+function parseArticle(content: string): ArticleSegment[] {
+  const segments: ArticleSegment[] = [];
+  let filler = "";
+  let quote = "";
+
+  for (const line of content.split("\n")) {
+    if (line.startsWith("> ")) {
+      if (filler.trim()) { segments.push({ type: "filler", text: filler.trim() }); filler = ""; }
+      quote += (quote ? " " : "") + line.replace(/^>\s*/, "").replace(/^"|"$/g, "");
+    } else {
+      if (quote) {
+        const m = quote.match(/\u2014\s*\[([^\]]+)\]\s*$/);
+        segments.push({
+          type: "scripture",
+          text: m ? quote.replace(/\u2014\s*\[([^\]]+)\]\s*$/, "").trim() : quote.trim(),
+          reference: m ? m[1] : "Unknown",
+        });
+        quote = "";
+      }
+      if (line.trim()) filler += (filler ? " " : "") + line.trim();
+      else if (filler.trim()) { segments.push({ type: "filler", text: filler.trim() }); filler = ""; }
+    }
+  }
+  if (filler.trim()) segments.push({ type: "filler", text: filler.trim() });
+  if (quote) {
+    const m = quote.match(/\u2014\s*\[([^\]]+)\]\s*$/);
+    segments.push({
+      type: "scripture",
+      text: m ? quote.replace(m[0], "").trim() : quote.trim(),
+      reference: m?.[1] || "Unknown",
+    });
+  }
+  return segments;
+}
+
+/* ─── Build Vedabase URL from reference ─── */
+function buildVedabaseUrl(ref: string): string {
+  const base = "https://vedabase.io/en/library";
+  const clean = ref.replace(/\s+/g, "/").toLowerCase();
+  return `${base}/${clean}/`;
+}
+
+/* ─── Article View Renderer ─── */
+function ArticleView({ segments }: { segments: ArticleSegment[] }) {
+  return (
+    <div style={{ maxWidth: 720, margin: "0 auto", padding: "24px 0" }}>
+      {segments.map((seg, i) => {
+        if (seg.type === "filler") {
+          return (
+            <p key={i} className="font-body" style={{
+              fontSize: 16, lineHeight: 1.8, color: "#333", margin: "0 0 20px",
+              fontFamily: "Georgia, 'Times New Roman', serif",
+            }}>{seg.text}</p>
+          );
+        }
+        const colors = getBookColor(seg.reference || "");
+        return (
+          <div key={i} style={{
+            padding: "20px 24px", margin: "24px 0",
+            borderLeft: `3px solid ${colors.border}`, background: "#FAFAFA", borderRadius: "0 8px 8px 0",
+          }}>
+            <p style={{
+              fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
+              fontFamily: "Georgia, 'Times New Roman', serif", color: "#1a1a1a", margin: "0 0 12px",
+            }}>&ldquo;{seg.text}&rdquo;</p>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+              <span style={{
+                fontSize: 11, fontWeight: 500, padding: "2px 8px", borderRadius: 8,
+                background: colors.bg, color: colors.text,
+              }}>{seg.reference}</span>
+              <a
+                href={buildVedabaseUrl(seg.reference || "")}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 12, color: "#534AB7", textDecoration: "none" }}
+              >
+                Open on Vedabase
+              </a>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ─── Article Skeleton Loader ─── */
+function ArticleSkeleton() {
+  return (
+    <div style={{ maxWidth: 720, margin: "0 auto", padding: "24px 0" }}>
+      <p className="font-body" style={{ fontSize: 14, color: "#888", marginBottom: 24 }}>
+        Composing article from Srila Prabhupada&apos;s teachings...
+      </p>
+      {[100, 90, 95, 60].map((w, i) => (
+        <div key={i} style={{
+          height: 14, background: "#F0F0F0", borderRadius: 4,
+          width: `${w}%`, marginBottom: 12, animation: "articlePulse 1.5s ease-in-out infinite",
+        }} />
+      ))}
+      <div style={{
+        padding: 20, margin: "24px 0", borderLeft: "3px solid #E0E0E0",
+        background: "#FAFAFA", borderRadius: "0 8px 8px 0",
+      }}>
+        {[100, 95, 50].map((w, i) => (
+          <div key={i} style={{
+            height: 14, background: "#F0F0F0", borderRadius: 4,
+            width: `${w}%`, marginBottom: 8, animation: "articlePulse 1.5s ease-in-out infinite",
+          }} />
+        ))}
+      </div>
+      {[85, 100, 70].map((w, i) => (
+        <div key={`b${i}`} style={{
+          height: 14, background: "#F0F0F0", borderRadius: 4,
+          width: `${w}%`, marginBottom: 12, animation: "articlePulse 1.5s ease-in-out infinite",
+        }} />
+      ))}
+    </div>
+  );
+}
+
 /* ─── Scroll helper ─── */
 function scrollToSource(ref: string) {
   document.getElementById(`source-${ref}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -176,11 +323,19 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
   const [summaries, setSummaries] = useState<SummaryItem[]>([]);
   const [summariesLoading, setSummariesLoading] = useState(false);
 
+  // Article mode state
+  const [viewMode, setViewMode] = useState<"sources" | "article">("sources");
+  const [article, setArticle] = useState<ArticleSegment[] | null>(null);
+  const [isGeneratingArticle, setIsGeneratingArticle] = useState(false);
+
   // Reset states when results change
   useEffect(() => {
     setDigDeeperOpen(false);
     setSummaries([]);
     setShowSummaryPopup(false);
+    setViewMode("sources");
+    setArticle(null);
+    setIsGeneratingArticle(false);
   }, [results?.query]);
 
   // Fetch summaries when search results arrive and streaming is done
@@ -227,6 +382,48 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
       .finally(() => setSummariesLoading(false));
   }, [results, isStreaming]);
 
+  // Generate article from passages
+  const generateArticle = async () => {
+    if (article || !results) return;
+    setIsGeneratingArticle(true);
+    try {
+      // Build passages from search results
+      const passages: { reference: string; type: string; speaker: string; text: string }[] = [];
+      for (const book of results.books) {
+        for (const v of book.verses) {
+          if (passages.length >= 15) break;
+          const ref = `${v.scripture} ${v.verse_number}`;
+          if (v.translation) {
+            passages.push({ reference: ref, type: "translation", speaker: getSpeaker(ref, "translation"), text: v.translation });
+          }
+          if (v.purport) {
+            passages.push({ reference: ref, type: "purport", speaker: getSpeaker(ref, "purport"), text: v.purport.substring(0, 500) });
+          }
+        }
+        for (const p of book.prose) {
+          if (passages.length >= 20) break;
+          const ref = `${p.book_slug} ${p.chapter_title || ""}`.trim();
+          passages.push({ reference: ref, type: "prose", speaker: "Srila Prabhupada", text: p.body_text.substring(0, 500) });
+        }
+      }
+
+      const questions = results.query.split("?").map(q => q.trim()).filter(q => q.length > 0).map(q => q + "?");
+      const res = await fetch("/api/generate-article", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questions, passages }),
+      });
+      const data = await res.json();
+      if (data.article) {
+        setArticle(parseArticle(data.article));
+      }
+    } catch (err) {
+      console.error("Article generation failed:", err);
+    } finally {
+      setIsGeneratingArticle(false);
+    }
+  };
+
   if (isLoading) return null;
   if (!results) return null;
 
@@ -272,6 +469,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
               padding: "12px 20px", borderBottom: "1px solid rgba(0,0,0,0.08)", marginBottom: 16,
+              flexWrap: "wrap", gap: 8,
             }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#7F77DD" }} />
@@ -279,10 +477,38 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                   From Śrīla Prabhupāda&apos;s books
                 </span>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span className="font-body" style={{ fontSize: 13, color: "#888" }}>
                   {results.totalResults} sources
                 </span>
+                {/* Sources / Article toggle */}
+                {!isStreaming && (
+                  <div style={{
+                    display: "flex", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, overflow: "hidden",
+                  }}>
+                    <button
+                      onClick={() => setViewMode("sources")}
+                      className="font-body"
+                      style={{
+                        padding: "4px 10px", fontSize: 12, fontWeight: 500, border: "none",
+                        background: viewMode === "sources" ? "#534AB7" : "transparent",
+                        color: viewMode === "sources" ? "white" : "#888", cursor: "pointer",
+                        transition: "all 0.2s ease",
+                      }}
+                    >Sources</button>
+                    <button
+                      onClick={() => { setViewMode("article"); if (!article) generateArticle(); }}
+                      className="font-body"
+                      style={{
+                        padding: "4px 10px", fontSize: 12, fontWeight: 500, border: "none",
+                        borderLeft: "1px solid rgba(0,0,0,0.12)",
+                        background: viewMode === "article" ? "#534AB7" : "transparent",
+                        color: viewMode === "article" ? "white" : "#888", cursor: "pointer",
+                        transition: "all 0.2s ease",
+                      }}
+                    >Article</button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -309,23 +535,35 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
               </div>
             )}
 
-            {/* ─── Narrative Card ─── */}
-            <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
-              <div
-                className="narrative-content font-body"
-                dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
-                onClick={handleNarrativeClick}
-                style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
-              />
-              {isStreaming && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
-                  <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
-                    Composing from Prabhupāda&apos;s words...
-                  </span>
-                </div>
-              )}
-            </div>
+            {/* ─── Content Area: Sources or Article ─── */}
+            {viewMode === "sources" ? (
+              <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
+                <div
+                  className="narrative-content font-body"
+                  dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
+                  onClick={handleNarrativeClick}
+                  style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
+                />
+                {isStreaming && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, opacity: 0.6 }}>
+                    <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6", animation: "pulse 1.2s ease-in-out infinite" }} />
+                    <span className="font-body" style={{ fontSize: 12, color: "#6B7280", fontStyle: "italic" }}>
+                      Composing from Prabhupāda&apos;s words...
+                    </span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
+                {isGeneratingArticle && <ArticleSkeleton />}
+                {article && !isGeneratingArticle && <ArticleView segments={article} />}
+                {!article && !isGeneratingArticle && (
+                  <p className="font-body" style={{ fontSize: 14, color: "#888", textAlign: "center", padding: 40 }}>
+                    Unable to generate article. Please try again.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* Feedback widget */}
             {!isStreaming && results && results.totalResults > 0 && (
@@ -561,6 +799,10 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         @keyframes pulse {
           0%, 100% { opacity: 0.4; transform: scale(1); }
           50% { opacity: 1; transform: scale(1.3); }
+        }
+        @keyframes articlePulse {
+          0%, 100% { opacity: 0.4; }
+          50% { opacity: 1; }
         }
       `}</style>
     </>
