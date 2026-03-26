@@ -129,24 +129,28 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 // TYPES
 // =====================================================
-interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; }
+interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; }
 
 // =====================================================
 // RRF (Reciprocal Rank Fusion) SCORING
 // =====================================================
 const RRF_K = 60;
 
-function rrfMerge<T extends { id: string }>(
+function rrfMerge<T extends { id: string; similarity?: number }>(
   semanticList: T[],
   ftsList: T[],
   tagList: T[],
-): Map<string, T & { score: number }> {
-  const map = new Map<string, T & { score: number }>();
+): Map<string, T & { score: number; similarity?: number }> {
+  const map = new Map<string, T & { score: number; similarity?: number }>();
 
   semanticList.forEach((v, rank) => {
     const existing = map.get(v.id) || { ...v, score: 0 };
     existing.score += 1 / (RRF_K + rank);
+    // Preserve semantic similarity score from the vector search RPC
+    if ((v as Record<string, unknown>).similarity != null) {
+      existing.similarity = (v as Record<string, unknown>).similarity as number;
+    }
     if (!map.has(v.id)) map.set(v.id, existing);
   });
 
@@ -234,6 +238,86 @@ async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose:
     const raw = await fullTextSearch(query);
     return await legacyEnrich(raw.verses, raw.prose);
   }
+}
+
+// =====================================================
+// TAG-BASED RELEVANCE SCORING
+// =====================================================
+
+/**
+ * Score how relevant a verse/prose is to the question using its tags.
+ * Returns a score from 0 to 1 where higher = more relevant.
+ */
+function scoreRelevance(question: string, tags: string[] | null | undefined): number {
+  if (!tags || tags.length === 0) return 0.3; // No tags = neutral score, don't exclude
+
+  const questionLower = question.toLowerCase();
+  const questionWords = questionLower
+    .replace(/[?!.,;:'"]/g, "")
+    .split(/\s+/)
+    .filter(w => w.length > 2);
+
+  let score = 0;
+  let maxScore = 0;
+
+  for (const tag of tags) {
+    const tagLower = tag.toLowerCase();
+
+    // Check if tag is a SUMMARY — extract and compare
+    if (tagLower.startsWith("summary:")) {
+      const summary = tagLower.substring(8).trim();
+      const matches = questionWords.filter(w => summary.includes(w)).length;
+      score += (matches / Math.max(questionWords.length, 1)) * 3; // Weight summaries heavily
+      maxScore += 3;
+      continue;
+    }
+
+    // Check if tag is a QUESTION — compare with the user's question
+    if (tagLower.includes("?")) {
+      const tagWords = tagLower.replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 2);
+      const overlap = questionWords.filter(w => tagWords.includes(w)).length;
+      score += (overlap / Math.max(questionWords.length, 1)) * 2; // Weight questions
+      maxScore += 2;
+      continue;
+    }
+
+    // Regular topic/term tag — check if question contains it
+    if (questionLower.includes(tagLower) || tagLower.split(/\s+/).some(tw => tw.length > 3 && questionLower.includes(tw))) {
+      score += 1;
+    }
+    maxScore += 1;
+  }
+
+  return maxScore > 0 ? Math.min(score / Math.max(maxScore * 0.3, 1), 1) : 0.3;
+}
+
+/**
+ * Re-rank results by combining RRF score, tag relevance, and semantic similarity.
+ * Filters out very low relevance results, with fallback to unfiltered if too few survive.
+ */
+function reRankResults<T extends { score?: number; tags?: string[]; similarity?: number }>(
+  items: T[],
+  query: string,
+  minRelevance: number,
+  minCount: number,
+): T[] {
+  const scored = items.map(item => ({
+    ...item,
+    _relevanceScore: scoreRelevance(query, item.tags),
+  }));
+
+  // Sort by combined RRF score + relevance score + semantic similarity
+  scored.sort((a, b) => {
+    const aTotal = (a.score || 0) + a._relevanceScore * 0.5 + (a.similarity || 0) * 0.3;
+    const bTotal = (b.score || 0) + b._relevanceScore * 0.5 + (b.similarity || 0) * 0.3;
+    return bTotal - aTotal;
+  });
+
+  // Filter out very low relevance results
+  const relevant = scored.filter(item => item._relevanceScore >= minRelevance);
+
+  // Fall back to unfiltered if too few survive
+  return (relevant.length >= minCount ? relevant : scored);
 }
 
 async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
@@ -350,12 +434,16 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
     ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
     for (const v of d.v.slice(0, 10)) {
       const ref = cleanRef(v);
-      ctx += `[${ref}] (${v.vedabase_url})\nTranslation: "${v.translation}"\nPurport: "${smartTruncate(v.purport || "", 800)}"\n\n`;
+      const summaryTag = (v.tags || []).find(t => t.startsWith("SUMMARY:"));
+      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+      ctx += `[${ref}] (${v.vedabase_url})${tagSummary ? "\nAbout: " + tagSummary : ""}\nTranslation: "${v.translation}"\nPurport: "${smartTruncate(v.purport || "", 800)}"\n\n`;
     }
     for (const p of d.p.slice(0, 3)) {
       const bodyText = (p.body_text || "").trim();
       if (bodyText.length < 80) continue;
-      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
+      const summaryTag = (p.tags || []).find(t => t.startsWith("SUMMARY:"));
+      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})${tagSummary ? "\nAbout: " + tagSummary : ""}\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
     }
   }
 
@@ -422,13 +510,35 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
   }
 }
 
+/** Group verses by their primary topic tag for thematic sections */
+function groupByTheme(verses: VerseHit[]): Map<string, VerseHit[]> {
+  const groups = new Map<string, VerseHit[]>();
+
+  for (const v of verses) {
+    const topics = (v.tags || []).filter(t =>
+      !t.startsWith("SUMMARY:") &&
+      !t.includes("?") &&
+      t.length > 2 &&
+      t.length < 40 &&
+      /^[a-zA-Z\s]+$/.test(t)
+    );
+
+    const theme = topics[0] || "General";
+    if (!groups.has(theme)) groups.set(theme, []);
+    groups.get(theme)!.push(v);
+  }
+
+  return groups;
+}
+
 function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
   if (v.length === 0 && p.length === 0) {
     return "<p>No relevant passages found.</p>";
   }
 
   const parts: string[] = [];
-  const bookNames = [...new Set(v.slice(0, 6).map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
+  const articleVerses = v.slice(0, 6);
+  const bookNames = [...new Set(articleVerses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
 
   // Question-aware intro
   const questionText = question.replace(/\?$/, "").toLowerCase();
@@ -458,27 +568,42 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
     "In his purport, His Divine Grace clarifies:",
   ];
 
-  // Verses: show translation AND purport content
-  for (let i = 0; i < Math.min(v.length, 6); i++) {
-    const x = v[i];
+  /** Render a single verse with transition, translation, and purport */
+  const renderSingleVerse = (idx: number, x: VerseHit) => {
     const ref = cleanRef(x);
     const url = x.vedabase_url || "#";
     const link = `<a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a>`;
     const speaker = getSpeaker(ref, "translation");
 
-    // Transition with speaker attribution
-    parts.push(`<p>${transitions[i % transitions.length](speaker, link)}</p>`);
+    parts.push(`<p>${transitions[idx % transitions.length](speaker, link)}</p>`);
 
-    // ACTUAL translation text
     if (x.translation) {
       parts.push(`<div class="verse-quote">"${x.translation}"</div>`);
     }
 
-    // ACTUAL purport text — this is the heart of the teaching
     if (x.purport && x.purport.length > 10) {
       const excerpt = smartTruncate(x.purport, 600);
-      parts.push(`<p>${purportTransitions[i % purportTransitions.length]}</p>`);
+      parts.push(`<p>${purportTransitions[idx % purportTransitions.length]}</p>`);
       parts.push(`<div class="purport-quote">"${excerpt}"</div>`);
+    }
+  };
+
+  // If we have enough verses with tags, group them by theme
+  const themes = groupByTheme(articleVerses);
+  if (themes.size >= 2 && themes.size <= 4) {
+    let verseIndex = 0;
+    for (const [theme, themeVerses] of themes) {
+      const heading = theme.charAt(0).toUpperCase() + theme.slice(1);
+      parts.push(`<h3>${heading}</h3>`);
+      for (const tv of themeVerses) {
+        renderSingleVerse(verseIndex, tv);
+        verseIndex++;
+      }
+    }
+  } else {
+    // Not enough theme diversity — render flat
+    for (let i = 0; i < articleVerses.length; i++) {
+      renderSingleVerse(i, articleVerses[i]);
     }
   }
 
@@ -559,13 +684,17 @@ export async function GET(request: NextRequest) {
   try {
     const { verses, prose } = await hybridSearch(query);
 
+    // ── Re-rank by tag relevance + semantic similarity ──
+    const rankedVerses = reRankResults(verses, query, 0.1, 3);
+    const rankedProse = reRankResults(prose, query, 0.1, 2);
+
     // Top results for AI narrative (the AI only sees these)
-    const narrativeVerses = verses.slice(0, 20);
-    const narrativeProse = prose.slice(0, 5);
+    const narrativeVerses = rankedVerses.slice(0, 20);
+    const narrativeProse = rankedProse.slice(0, 5);
 
     // Overflow for "dig deeper" modal (everything else)
-    const overflowVerses = verses.slice(20);
-    const overflowProse = prose.slice(5);
+    const overflowVerses = rankedVerses.slice(20);
+    const overflowProse = rankedProse.slice(5);
 
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);
     const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse);
