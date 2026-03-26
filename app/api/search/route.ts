@@ -358,7 +358,7 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
 }
 
 function buildFB(v: VerseHit[], p: ProseHit[]) {
-  let h = "<h3>Scripture References</h3>";
+  let h = "";
   for (const x of v.slice(0, 15)) {
     const ref = `${x.scripture} ${x.canto_or_division ? x.canto_or_division + "." : ""}${x.chapter_number}.${x.verse_number}`;
     h += `<div class="verse-quote"><a href="${x.vedabase_url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a> "${x.translation}"</div>`;

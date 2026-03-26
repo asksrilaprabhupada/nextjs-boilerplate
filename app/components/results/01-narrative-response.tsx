@@ -256,25 +256,11 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
   return (
     <>
-      {/* 2-column grid layout */}
+      {/* 2-column grid layout — both columns start at the same top level */}
       <div className="results-grid-container">
         {/* ─── Content Column ─── */}
         <div>
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-
-            {/* Sources Header Bar */}
-            <div style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "12px 20px", borderBottom: "1px solid rgba(0,0,0,0.08)", marginBottom: 16,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#7F77DD" }} />
-                <span className="font-body" style={{ fontSize: 14, fontWeight: 500 }}>From Srila Prabhupada&apos;s books</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <span className="font-body" style={{ fontSize: 13, color: "#888" }}>{results.totalResults} sources</span>
-              </div>
-            </div>
 
             {/* Mobile: View key answers button */}
             {summaries.length > 0 && (
@@ -369,7 +355,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         <div className="desktop-sidebar">
           <div style={{
             background: "white", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12,
-            padding: 16, position: "sticky", top: 20, alignSelf: "start",
+            padding: 16, position: "sticky", top: 80, alignSelf: "start",
           }}>
             {/* Key answers section */}
             {summaries.length > 0 && (
@@ -450,11 +436,12 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
       {/* Styles */}
       <style jsx global>{`
-        /* 2-column grid: content (1fr) + sidebar (220px) */
+        /* 2-column grid: content (1fr) + sidebar (220px) — aligned at top */
         .results-grid-container {
           display: grid;
           grid-template-columns: minmax(0, 1fr) 220px;
           gap: 20px;
+          align-items: start;
           max-width: 1100px;
           margin: 0 auto;
           padding: 0 20px;
