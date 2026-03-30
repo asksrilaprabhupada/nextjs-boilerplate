@@ -98,7 +98,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
         {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 560, lineHeight: 1.65, marginBottom: 10 }}>Search across 36 books, 3,700 lectures, and 6,500 letters — every answer drawn directly from his translations, purports, and personal correspondence.</p>}
 
         {heroVisible && (
-          <p className="font-body tagline-gradient" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 500, textAlign: "center", letterSpacing: "0.03em", marginBottom: 22 }}>Nothing Added, Nothing Invented.</p>
+          <p className="font-body tagline-gradient" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 500, textAlign: "center", letterSpacing: "0.03em", marginBottom: 22, lineHeight: 1.65 }}>Nothing Added, Nothing Invented.</p>
         )}
 
         {/* Search form */}

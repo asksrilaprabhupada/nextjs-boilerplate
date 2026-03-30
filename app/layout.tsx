@@ -8,9 +8,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Ask Śrīla Prabhupāda — Search 36 Books, Lectures & Letters",
+  title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
   description:
-    "AI-powered search across 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda. 244,000+ searchable passages — every answer from Prabhupāda's actual words.",
+    "AI-powered search across 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda. 244,000 searchable passages from Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, recorded lectures, and personal letters. Every answer from Prabhupāda's actual words.",
   keywords: [
     "Srila Prabhupada", "Bhagavad Gita", "Srimad Bhagavatam", "Caitanya Caritamrita",
     "ISKCON", "Krishna", "Vedic", "scripture search", "purport", "devotional service",
@@ -24,9 +24,9 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: "https://asksrilaprabhupada.com",
     siteName: "Ask Śrīla Prabhupāda",
-    title: "Ask Śrīla Prabhupāda — Search 36 Books, Lectures & Letters",
+    title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
     description:
-      "AI-powered search engine. Ask any question and get answers from Śrīla Prabhupāda's 36 books, 3,700 lectures, and 6,500 letters — 244,000+ searchable passages.",
+      "AI-powered scripture search engine. Ask any question and get answers directly from Śrīla Prabhupāda's books, lectures, and letters — 244,000 searchable passages.",
     images: [
       {
         url: "/images/og-image.png",
@@ -38,9 +38,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Ask Śrīla Prabhupāda — Search 36 Books, Lectures & Letters",
+    title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
     description:
-      "AI-powered search across 36 books, 3,700 lectures, and 6,500 letters. Every answer from Prabhupāda's actual words.",
+      "AI-powered search across Prabhupāda's books, lectures, and letters. 244,000 passages. Every answer from his actual words.",
     images: ["/images/og-image.png"],
   },
   robots: {
