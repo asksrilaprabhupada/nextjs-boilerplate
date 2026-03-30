@@ -1176,11 +1176,17 @@ export async function GET(request: NextRequest) {
         : boostedVerses;
 
       // ── Step 4: LLM-based re-ranking (score each candidate's actual relevance) ──
-      const llmReRanked = await llmReRank(
-        query,
-        demotedVerses.slice(0, 50),
-        rankedProse.slice(0, 15),
-      );
+      // Skip LLM rerank if top result clearly dominates (saves ~1-2s and ~$0.01-0.02 per query)
+      const topScores = demotedVerses.slice(0, 5).map(v => v.score || 0);
+      const clearWinner = topScores.length >= 2 && topScores[0] > topScores[1] * 2;
+
+      const llmReRanked = clearWinner
+        ? { verses: demotedVerses.slice(0, 50), prose: rankedProse.slice(0, 15) }
+        : await llmReRank(
+            query,
+            demotedVerses.slice(0, 50),
+            rankedProse.slice(0, 15),
+          );
 
       // ── Step 5: Slice for narrative and overflow ──
       narrativeVerses = llmReRanked.verses.slice(0, 40);

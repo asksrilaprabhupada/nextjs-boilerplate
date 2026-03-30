@@ -11,7 +11,7 @@ import FooterSection from "../components/layout/02-footer";
 
 export const metadata: Metadata = {
   title: "Features — Ask Śrīla Prabhupāda",
-  description: "AI-powered search across 27 books of Śrīla Prabhupāda. 25,112 verses, 34,145 paragraphs, narrative answers, citation links to Vedabase.io.",
+  description: "AI-powered search across 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda. 244,000+ passages, narrative answers, citation links to Vedabase.io.",
 };
 
 export default function FeaturesPage() {

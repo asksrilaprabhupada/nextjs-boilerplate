@@ -10,7 +10,7 @@ import { useState, useEffect } from "react";
 
 const STEPS = [
   { label: "Understanding your question...", delay: 0, emoji: "🙏" },
-  { label: "Searching 27 books...", delay: 500, emoji: "📚" },
+  { label: "Searching 36 books, lectures & letters...", delay: 500, emoji: "📚" },
   { label: "Finding relevant verses...", delay: 1500, emoji: "🔍" },
   { label: "Composing answer from Prabhupāda's words...", delay: 3000, emoji: "✨" },
 ];
