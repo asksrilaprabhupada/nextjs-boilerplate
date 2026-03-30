@@ -3,11 +3,78 @@
  *
  * Landing page section showcasing the breadth of Srila Prabhupada's library
  * that is searchable through the platform. Displays stats for books, lectures,
- * and letters in a three-card grid.
+ * and letters in a three-card grid with animated count-up numbers.
  */
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+
+/* ─── Animated Counter Hook ─── */
+function useCountUp(target: number, duration: number = 2000, startCounting: boolean = false): number {
+  const [count, setCount] = useState(0);
+  const rafRef = useRef<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
+  const hasStarted = useRef(false);
+
+  useEffect(() => {
+    if (!startCounting || hasStarted.current) return;
+    hasStarted.current = true;
+
+    const animate = (timestamp: number) => {
+      if (!startTimeRef.current) startTimeRef.current = timestamp;
+      const elapsed = timestamp - startTimeRef.current;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // Ease-out cubic for a satisfying deceleration
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setCount(Math.round(eased * target));
+
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [startCounting, target, duration]);
+
+  return count;
+}
+
+/* ─── Format number with commas ─── */
+function formatNumber(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/* ─── Counter Display Component ─── */
+function AnimatedStat({ target, suffix, color, isVisible }: {
+  target: number;
+  suffix: string;
+  color: string;
+  isVisible: boolean;
+}) {
+  const count = useCountUp(target, 2200, isVisible);
+
+  return (
+    <p
+      className="font-display"
+      style={{
+        fontSize: "clamp(32px, 4vw, 44px)",
+        fontWeight: 700,
+        letterSpacing: "-0.02em",
+        color,
+        lineHeight: 1.1,
+        marginBottom: 4,
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {formatNumber(count)}{suffix}
+    </p>
+  );
+}
 
 const sources = [
   {
@@ -16,7 +83,8 @@ const sources = [
         <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
       </svg>
     ),
-    stat: "36",
+    target: 36,
+    suffix: "",
     label: "Books",
     description: "Bhagavad Gita, Srimad Bhagavatam, Caitanya Caritamrita, Nectar of Devotion, Krishna Book, and 30+ more titles.",
     color: "#8B5CF6",
@@ -30,7 +98,8 @@ const sources = [
         <line x1="8" x2="16" y1="23" y2="23" />
       </svg>
     ),
-    stat: "3,700+",
+    target: 3700,
+    suffix: "+",
     label: "Lectures",
     description: "Transcribed lectures, conversations, morning walks, and room conversations spanning decades of teaching.",
     color: "#7C3AED",
@@ -43,7 +112,8 @@ const sources = [
         <path d="M2 8v11c0 1.1.9 2 2 2h2" />
       </svg>
     ),
-    stat: "6,500+",
+    target: 6500,
+    suffix: "+",
     label: "Letters",
     description: "Personal correspondence and instructions to disciples, friends, and world leaders.",
     color: "#6366F1",
@@ -52,14 +122,19 @@ const sources = [
 
 export default function SourcesSection() {
   const ref = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(false);
+
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
           if (entry.isIntersecting) {
+            // Trigger scroll-reveal animations
             entry.target.querySelectorAll(".scroll-reveal").forEach((child, i) =>
               setTimeout(() => child.classList.add("visible"), i * 100)
             );
+            // Trigger count-up
+            setIsVisible(true);
             observer.unobserve(entry.target);
           }
         });
@@ -84,7 +159,17 @@ export default function SourcesSection() {
             color: "#1E1B4B",
           }}
         >
-          Śrīla Prabhupāda&apos;s <span className="gradient-text">complete library</span>
+          <span
+            style={{
+              background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)",
+              backgroundClip: "text",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+            }}
+          >
+            Śrīla Prabhupāda&apos;s
+          </span>{" "}
+          <span className="gradient-text">complete library</span>
         </h2>
       </div>
 
@@ -109,19 +194,12 @@ export default function SourcesSection() {
             >
               {source.icon}
             </div>
-            <p
-              className="font-display"
-              style={{
-                fontSize: "clamp(32px, 4vw, 44px)",
-                fontWeight: 700,
-                letterSpacing: "-0.02em",
-                color: source.color,
-                lineHeight: 1.1,
-                marginBottom: 4,
-              }}
-            >
-              {source.stat}
-            </p>
+            <AnimatedStat
+              target={source.target}
+              suffix={source.suffix}
+              color={source.color}
+              isVisible={isVisible}
+            />
             <h3 className="font-body" style={{ fontSize: 18, fontWeight: 600, color: "#1E1B4B", marginBottom: 10 }}>
               {source.label}
             </h3>

@@ -10,20 +10,20 @@ import { useEffect, useRef } from "react";
 
 const testimonials = [
   {
-    quote: "I use it every morning to trace a topic across Gītā, Bhāgavatam, and purports in under 5 minutes. It has completely transformed how I prepare for class.",
-    name: "Radha Govinda Das",
-    role: "Temple President · ISKCON Mumbai",
+    quote: "[FAKE] I use it every morning to trace a topic across Gītā, Bhāgavatam, and purports in under 5 minutes. It has completely transformed how I prepare for class.",
+    name: "XXX",
+    role: "Temple President · ISKCON AAA",
     color: "#8B5CF6",
   },
   {
-    quote: "It helps me prepare Bhāgavatam classes faster because I can verify the exact source immediately — no more flipping through six books to find one purport.",
-    name: "Vrindavan Lila Devi",
+    quote: "[FAKE] It helps me prepare Bhāgavatam classes faster because I can verify the exact source immediately — no more flipping through six books to find one purport.",
+    name: "BBB",
     role: "Bhakti-śāstrī Scholar",
     color: "#7C3AED",
   },
   {
-    quote: "As a new devotee, it helped me study without relying on unsourced summaries. Every answer links back to Prabhupāda's actual words, so I know it's authentic.",
-    name: "Arjuna Krishna Das",
+    quote: "[FAKE] As a new devotee, it helped me study without relying on unsourced summaries. Every answer links back to Prabhupāda's actual words, so I know it's authentic.",
+    name: "CCC",
     role: "Aspiring Devotee · 6 months",
     color: "#6366F1",
   },
