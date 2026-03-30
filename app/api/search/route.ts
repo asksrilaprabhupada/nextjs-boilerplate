@@ -151,6 +151,8 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
 interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; }
+interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
+interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
 
 // =====================================================
 // RRF (Reciprocal Rank Fusion) SCORING
@@ -192,7 +194,7 @@ function rrfMerge<T extends { id: string; similarity?: number }>(
 // =====================================================
 // V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
 // =====================================================
-async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[] }> {
   const supabase = getSupabase();
   const preprocessed = await preprocessQuery(query);
   const mainPhrase = preprocessed.searchPhrases[0];
@@ -200,33 +202,49 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   // WAVE 1: Instant (no embedding needed)
   const ftsVersesPromise = supabase.rpc("search_verses_fulltext_v2", { search_query: mainPhrase, match_count: 25 });
   const ftsProsePromise = supabase.rpc("search_prose_fulltext_v2", { search_query: mainPhrase, match_count: 15 });
+  const ftsTranscriptsPromise = supabase.rpc("search_transcript_paragraphs_fulltext", { search_query: mainPhrase, match_count: 10 });
+  const ftsLettersPromise = supabase.rpc("search_letter_paragraphs_fulltext", { search_query: mainPhrase, match_count: 8 });
   const tagVersesPromise = preprocessed.tagTerms.length > 0
     ? supabase.rpc("search_verses_by_tags", { search_terms: preprocessed.tagTerms, match_count: 15 })
     : Promise.resolve({ data: [] as VerseHit[] });
   const tagProsePromise = preprocessed.tagTerms.length > 0
     ? supabase.rpc("search_prose_by_tags", { search_terms: preprocessed.tagTerms, match_count: 10 })
     : Promise.resolve({ data: [] as ProseHit[] });
+  const tagTranscriptsPromise = preprocessed.tagTerms.length > 0
+    ? supabase.rpc("search_transcript_paragraphs_by_tags", { search_terms: preprocessed.tagTerms, match_count: 8 })
+    : Promise.resolve({ data: [] as TranscriptHit[] });
+  const tagLettersPromise = preprocessed.tagTerms.length > 0
+    ? supabase.rpc("search_letter_paragraphs_by_tags", { search_terms: preprocessed.tagTerms, match_count: 6 })
+    : Promise.resolve({ data: [] as LetterHit[] });
 
   // WAVE 2: Embedding (parallel with Wave 1)
   const embeddingPromise = embedQuery(preprocessed.isLong ? mainPhrase : query);
 
   // Wait for all Wave 1 + embedding in parallel
-  const [ftsVerses, ftsProse, tagVerses, tagProse, embedding] = await Promise.all([
-    ftsVersesPromise, ftsProsePromise, tagVersesPromise, tagProsePromise, embeddingPromise,
+  const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, tagVerses, tagProse, tagTranscripts, tagLetters, embedding] = await Promise.all([
+    ftsVersesPromise, ftsProsePromise, ftsTranscriptsPromise, ftsLettersPromise,
+    tagVersesPromise, tagProsePromise, tagTranscriptsPromise, tagLettersPromise,
+    embeddingPromise,
   ]);
 
   // When embedding is ready, fire semantic search
   let semanticVersesData: VerseHit[] = [];
   let semanticProseData: ProseHit[] = [];
+  let semanticTranscriptsData: TranscriptHit[] = [];
+  let semanticLettersData: LetterHit[] = [];
 
   if (embedding.length === 1536) {
     const vectorStr = `[${embedding.join(",")}]`;
-    const [semV, semP] = await Promise.all([
+    const [semV, semP, semT, semL] = await Promise.all([
       supabase.rpc("search_verses_semantic_v2", { query_embedding: vectorStr, match_count: 30 }),
       supabase.rpc("search_prose_semantic_v2", { query_embedding: vectorStr, match_count: 20 }),
+      supabase.rpc("search_transcript_paragraphs_semantic", { query_embedding: vectorStr, match_count: 15 }),
+      supabase.rpc("search_letter_paragraphs_semantic", { query_embedding: vectorStr, match_count: 10 }),
     ]);
     semanticVersesData = semV.data || [];
     semanticProseData = semP.data || [];
+    semanticTranscriptsData = semT.data || [];
+    semanticLettersData = semL.data || [];
   }
 
   // MERGE with RRF
@@ -240,23 +258,36 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
     ftsProse.data || [],
     tagProse.data || [],
   );
+  const transcriptMap = rrfMerge<TranscriptHit>(
+    semanticTranscriptsData,
+    ftsTranscripts.data || [],
+    tagTranscripts.data || [],
+  );
+  const letterMap = rrfMerge<LetterHit>(
+    semanticLettersData,
+    ftsLetters.data || [],
+    tagLetters.data || [],
+  );
 
   const allVerses = [...verseMap.values()].sort((a, b) => b.score - a.score);
   const allProse = [...proseMap.values()].sort((a, b) => b.score - a.score);
+  const allTranscripts = [...transcriptMap.values()].sort((a, b) => b.score - a.score);
+  const allLetters = [...letterMap.values()].sort((a, b) => b.score - a.score);
 
-  return { verses: allVerses, prose: allProse };
+  return { verses: allVerses, prose: allProse, transcripts: allTranscripts, letters: allLetters };
 }
 
 // =====================================================
 // HYBRID SEARCH: V2 with fallback to legacy V1
 // =====================================================
-async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[] }> {
   try {
     return await hybridSearchV2(query);
   } catch (err) {
     console.error("V2 search failed, falling back to v1:", err);
     const raw = await fullTextSearch(query);
-    return await legacyEnrich(raw.verses, raw.prose);
+    const enriched = await legacyEnrich(raw.verses, raw.prose);
+    return { ...enriched, transcripts: [], letters: [] };
   }
 }
 
@@ -825,10 +856,12 @@ ${toScore.map((c, i) => `${i + 1}. ${c.snippet}`).join("\n")}`;
 // =====================================================
 // SYNTHESIS PROMPT BUILDER
 // =====================================================
-function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[]): string {
+function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[], transcripts: TranscriptHit[] = [], letters: LetterHit[] = []): string {
   // Reduce context to avoid overwhelming the model
   const synthVerses = verses.slice(0, 30);
   const synthProse = prose.slice(0, 8);
+  const synthTranscripts = transcripts.slice(0, 6);
+  const synthLetters = letters.slice(0, 4);
 
   let ctx = "";
   const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
@@ -865,6 +898,36 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
     }
   }
 
+  // Add lecture passages
+  if (synthTranscripts.length > 0) {
+    ctx += `\n=== LECTURES ===\n`;
+    for (const t of synthTranscripts) {
+      let bodyText = (t.body_text || "").trim();
+      if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+      const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+      const locationPart = t.location || "";
+      const label = t.title || [datePart, locationPart].filter(Boolean).join(", ") || "Lecture";
+      const summaryTag = (t.tags || []).find(tag => tag.startsWith("SUMMARY:"));
+      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+      ctx += `[Lecture: ${label}] (${t.vedabase_url || ""})${datePart ? " — " + datePart : ""}${locationPart ? ", " + locationPart : ""}${tagSummary ? "\nAbout: " + tagSummary : ""}\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
+    }
+  }
+
+  // Add letter passages
+  if (synthLetters.length > 0) {
+    ctx += `\n=== LETTERS ===\n`;
+    for (const l of synthLetters) {
+      let bodyText = (l.body_text || "").trim();
+      if (bodyText.length < 80) continue;
+      const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+      const recipientPart = l.recipient || "";
+      const label = recipientPart ? `Letter to ${recipientPart}` : (l.title || "Letter");
+      const summaryTag = (l.tags || []).find(tag => tag.startsWith("SUMMARY:"));
+      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+      ctx += `[${label}] (${l.vedabase_url || ""})${datePart ? " — " + datePart : ""}${tagSummary ? "\nAbout: " + tagSummary : ""}\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
+    }
+  }
+
   if (!ctx.trim()) return "";
 
   return `You are writing a short article answering a devotee's question: "${question}"
@@ -889,6 +952,8 @@ SPEAKER ATTRIBUTION — always name the speaker before a quote:
 - CC translations: "Lord Caitanya reveals...", "Kṛṣṇadāsa Kavirāja Gosvāmī records..."
 - ALL purports: Vary the phrasing — "Śrīla Prabhupāda explains in his purport...", "In his commentary, Śrīla Prabhupāda illuminates...", "His Divine Grace further elaborates...", "Śrīla Prabhupāda writes in the purport...", "The significance is explained by Śrīla Prabhupāda...", "In his purport, His Divine Grace clarifies..."
 - Prose books: "In [Book Title], Śrīla Prabhupāda writes..."
+- Lectures: "In a lecture on [date] at [location], Śrīla Prabhupāda said...", "Speaking at [location], Śrīla Prabhupāda explained...", "During a lecture on [scripture_ref], Prabhupāda remarked..."
+- Letters: "In a letter to [recipient] on [date], Śrīla Prabhupāda wrote...", "Writing to [recipient], His Divine Grace advised..."
 
 CRITICAL: For every verse you quote, you MUST include BOTH:
   a) The translation (in a <div class="verse-quote"> block)
@@ -900,6 +965,8 @@ FORMAT RULES:
 - Verse/translation quotes go in <div class="verse-quote">
 - Purport quotes go in <div class="purport-quote">
 - Prose book quotes go in <div class="prose-quote">
+- Lecture quotes go in <div class="lecture-quote">
+- Letter quotes go in <div class="letter-quote">
 - Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
 - Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
 - Use 25-30 passages. Organize them into 5-7 thematic sections.
@@ -916,8 +983,8 @@ ${ctx}`;
 // =====================================================
 // NON-STREAMING SYNTHESIS (fallback)
 // =====================================================
-async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[], verseUrlMap: Map<string, string>) {
-  const prompt = buildSynthesisPrompt(question, verses, prose);
+async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[], verseUrlMap: Map<string, string>, transcripts: TranscriptHit[] = [], letters: LetterHit[] = []) {
+  const prompt = buildSynthesisPrompt(question, verses, prose, transcripts, letters);
   if (!prompt) return "<p>No relevant passages found.</p>";
 
   try {
@@ -925,12 +992,12 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
     console.log("[Synthesis] Gemini returned", text?.length || 0, "chars");
     if (!text) {
       console.error("[Synthesis] Gemini returned empty — using fallback");
-      return buildFB(question, verses, prose);
+      return buildFB(question, verses, prose, transcripts, letters);
     }
     return ensureVerseLinks(text, verseUrlMap);
   } catch (err) {
     console.error("[Synthesis] Gemini call failed:", err);
-    return buildFB(question, verses, prose);
+    return buildFB(question, verses, prose, transcripts, letters);
   }
 }
 
@@ -955,8 +1022,8 @@ function groupByTheme(verses: VerseHit[]): Map<string, VerseHit[]> {
   return groups;
 }
 
-function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
-  if (v.length === 0 && p.length === 0) {
+function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHit[] = [], l: LetterHit[] = []) {
+  if (v.length === 0 && p.length === 0 && t.length === 0 && l.length === 0) {
     return "<p>No relevant passages found.</p>";
   }
 
@@ -1098,6 +1165,44 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
     parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
   }
 
+  // Transcripts: show lecture passages with proper attribution
+  for (const x of t.slice(0, 6)) {
+    const bodyText = (x.body_text || "").trim();
+    if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+
+    const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+    const locationPart = x.location || "";
+    const url = x.vedabase_url || "#";
+    const excerpt = smartTruncate(bodyText, 500);
+
+    let attribution = "In a lecture";
+    if (locationPart && datePart) attribution = `In a lecture at ${locationPart} on ${datePart}`;
+    else if (locationPart) attribution = `In a lecture at ${locationPart}`;
+    else if (datePart) attribution = `In a lecture on ${datePart}`;
+
+    parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda said</a>:</p>`);
+    parts.push(`<div class="lecture-quote">"${excerpt}"</div>`);
+  }
+
+  // Letters: show letter passages with proper attribution
+  for (const x of l.slice(0, 4)) {
+    const bodyText = (x.body_text || "").trim();
+    if (bodyText.length < 80) continue;
+
+    const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+    const recipientPart = x.recipient || "";
+    const url = x.vedabase_url || "#";
+    const excerpt = smartTruncate(bodyText, 500);
+
+    let attribution = "In a letter";
+    if (recipientPart && datePart) attribution = `In a letter to ${recipientPart} on ${datePart}`;
+    else if (recipientPart) attribution = `In a letter to ${recipientPart}`;
+    else if (datePart) attribution = `In a letter on ${datePart}`;
+
+    parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda wrote</a>:</p>`);
+    parts.push(`<div class="letter-quote">"${excerpt}"</div>`);
+  }
+
   // Dynamic conclusion that relates to the actual question topic
   parts.push(`<p>Through these teachings, Śrīla Prabhupāda provides clear guidance on ${questionTopic}. The consistent instruction is to engage the mind in the service of Lord Kṛṣṇa under the direction of the spiritual master — for this is the practical method recommended across all these scriptures. Full purports are available through the Vedabase.io links above.</p>`);
 
@@ -1107,19 +1212,29 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[]) {
 // =====================================================
 // METADATA + CITATIONS BUILDER
 // =====================================================
-function buildMetadataAndCitations(query: string, verses: VerseHit[], prose: ProseHit[]) {
+function buildMetadataAndCitations(query: string, verses: VerseHit[], prose: ProseHit[], transcripts: TranscriptHit[] = [], letters: LetterHit[] = []) {
   const citations = [
     ...verses.map(v => ({ ref: cleanRef(v), book: getBookName(v.book_slug || ""), url: v.vedabase_url || "", type: "verse" as const, title: v.chapter_title || "" })),
     ...prose.map(p => ({ ref: `${getBookName(p.book_slug)}`, book: getBookName(p.book_slug), url: p.vedabase_url || "", type: "prose" as const, title: p.chapter_title || "" })),
+    ...transcripts.map(t => ({ ref: `Lecture: ${t.title || ""}`, book: "Lectures", url: t.vedabase_url || "", type: "transcript" as const, title: t.title || "" })),
+    ...letters.map(l => ({ ref: `Letter to ${l.recipient || ""}`, book: "Letters", url: l.vedabase_url || "", type: "letter" as const, title: l.title || "" })),
   ];
 
-  const books: Record<string, { slug: string; name: string; verses: typeof verses; prose: typeof prose }> = {};
-  for (const v of verses) { const s = (v.book_slug || "").toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].verses.push(v); }
-  for (const p of prose) { const s = p.book_slug.toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [] }; books[s].prose.push(p); }
+  const books: Record<string, { slug: string; name: string; verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[] }> = {};
+  for (const v of verses) { const s = (v.book_slug || "").toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [], transcripts: [], letters: [] }; books[s].verses.push(v); }
+  for (const p of prose) { const s = p.book_slug.toLowerCase(); if (!books[s]) books[s] = { slug: s, name: getBookName(s), verses: [], prose: [], transcripts: [], letters: [] }; books[s].prose.push(p); }
+  if (transcripts.length > 0) {
+    if (!books["lectures"]) books["lectures"] = { slug: "lectures", name: "Lectures", verses: [], prose: [], transcripts: [], letters: [] };
+    books["lectures"].transcripts = transcripts;
+  }
+  if (letters.length > 0) {
+    if (!books["letters"]) books["letters"] = { slug: "letters", name: "Letters", verses: [], prose: [], transcripts: [], letters: [] };
+    books["letters"].letters = letters;
+  }
 
   return {
     query,
-    totalResults: verses.length + prose.length,
+    totalResults: verses.length + prose.length + transcripts.length + letters.length,
     citations,
     books: Object.values(books),
   };
@@ -1140,7 +1255,7 @@ export async function GET(request: NextRequest) {
   if (cached) return NextResponse.json(cached);
 
   try {
-    const { verses, prose } = await hybridSearch(query);
+    const { verses, prose, transcripts, letters } = await hybridSearch(query);
 
     // Skip re-ranking layers for direct verse lookups (e.g., "BG 2.20")
     const isDirectLookup = /^(BG|SB|CC|NOI|ISO|BS)\s+\d/i.test(query);
@@ -1148,6 +1263,14 @@ export async function GET(request: NextRequest) {
     // ── Step 1: Re-rank by tag relevance + semantic similarity ──
     const rankedVerses = reRankResults(verses, query, 0.1, 3);
     const rankedProse = reRankResults(prose, query, 0.1, 2);
+    const rankedTranscripts = reRankResults(transcripts, query, 0.1, 2);
+    const rankedLetters = reRankResults(letters, query, 0.1, 2);
+
+    // Slice transcripts/letters for narrative and overflow
+    const narrativeTranscripts = rankedTranscripts.slice(0, 8);
+    const narrativeLetters = rankedLetters.slice(0, 6);
+    const overflowTranscripts = rankedTranscripts.slice(8);
+    const overflowLetters = rankedLetters.slice(6);
 
     let narrativeVerses: VerseHit[];
     let narrativeProse: ProseHit[];
@@ -1213,7 +1336,7 @@ export async function GET(request: NextRequest) {
     }
 
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);
-    const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse);
+    const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
 
     // Add overflow data to metadata — include article verse IDs for frontend badges
     const articleVerseIds = narrativeVerses.map(v => v.id);
@@ -1221,8 +1344,12 @@ export async function GET(request: NextRequest) {
       ...metadata,
       overflowVerses,
       overflowProse,
+      overflowTranscripts,
+      overflowLetters,
       totalVerses: verses.length,
       totalProse: prose.length,
+      totalTranscripts: transcripts.length,
+      totalLetters: letters.length,
       articleVerseIds,
     };
 
@@ -1234,13 +1361,13 @@ export async function GET(request: NextRequest) {
     }
 
     if (!wantStream) {
-      const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap);
+      const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap, narrativeTranscripts, narrativeLetters);
       const result = { ...fullMetadata, narrative };
       setCached(query, result);
       return NextResponse.json(result);
     }
 
-    const prompt = buildSynthesisPrompt(query, narrativeVerses, narrativeProse);
+    const prompt = buildSynthesisPrompt(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
     if (!prompt) {
       const result = { ...fullMetadata, narrative: "<p>No relevant passages found.</p>" };
       return NextResponse.json(result);
@@ -1321,7 +1448,7 @@ export async function GET(request: NextRequest) {
           send({ type: "done" });
         } catch (streamErr) {
           console.error("Streaming synthesis failed, falling back:", streamErr);
-          const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap);
+          const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap, narrativeTranscripts, narrativeLetters);
           send({ type: "narrative_chunk", html: narrative });
 
           const result = { ...fullMetadata, narrative };

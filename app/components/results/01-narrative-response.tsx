@@ -17,7 +17,7 @@ export interface Citation {
   ref: string;
   book: string;
   url: string;
-  type: "verse" | "prose";
+  type: "verse" | "prose" | "transcript" | "letter";
   title: string;
 }
 
@@ -35,8 +35,23 @@ export interface ProseHit {
   score?: number; similarity?: number;
 }
 
+export interface TranscriptHit {
+  id: string; transcript_id?: string; paragraph_number: number; body_text: string;
+  content_type?: string; title?: string; date?: string; location?: string;
+  occasion?: string; scripture_ref?: string; vedabase_url?: string;
+  tags?: string[]; score?: number; similarity?: number;
+}
+
+export interface LetterHit {
+  id: string; letter_id?: string; paragraph_number: number; body_text: string;
+  content_type?: string; title?: string; date?: string; location?: string;
+  recipient?: string; vedabase_url?: string;
+  tags?: string[]; score?: number; similarity?: number;
+}
+
 export interface BookGroup {
   slug: string; name: string; verses: VerseHit[]; prose: ProseHit[];
+  transcripts?: TranscriptHit[]; letters?: LetterHit[];
 }
 
 export interface SearchResults {
@@ -50,19 +65,25 @@ export interface SearchResults {
   books: BookGroup[];
   overflowVerses?: VerseHit[];
   overflowProse?: ProseHit[];
+  overflowTranscripts?: TranscriptHit[];
+  overflowLetters?: LetterHit[];
   totalVerses?: number;
   totalProse?: number;
+  totalTranscripts?: number;
+  totalLetters?: number;
   articleVerseIds?: string[];
 }
 
 /* ─── Per-book color system (ONLY for tags and left borders) ─── */
 const BOOK_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  SB:      { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
-  CC:      { bg: "#FAECE7", text: "#993C1D", border: "#F0997B" },
-  NOI:     { bg: "#E1F5EE", text: "#0F6E56", border: "#9FE1CB" },
-  BG:      { bg: "#FAEEDA", text: "#854F0B", border: "#FAC775" },
-  SPL:     { bg: "#FBEAF0", text: "#993556", border: "#ED93B1" },
-  default: { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
+  SB:       { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
+  CC:       { bg: "#FAECE7", text: "#993C1D", border: "#F0997B" },
+  NOI:      { bg: "#E1F5EE", text: "#0F6E56", border: "#9FE1CB" },
+  BG:       { bg: "#FAEEDA", text: "#854F0B", border: "#FAC775" },
+  SPL:      { bg: "#FBEAF0", text: "#993556", border: "#ED93B1" },
+  LECTURES: { bg: "#FFF7ED", text: "#C2410C", border: "#FB923C" },
+  LETTERS:  { bg: "#F0FDF4", text: "#15803D", border: "#4ADE80" },
+  default:  { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
 };
 
 export function getBookColor(reference: string) {
@@ -395,7 +416,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                 )}
 
                 {/* Dig Deeper */}
-                {!isStreaming && results && ((results.totalVerses || 0) + (results.totalProse || 0)) > 25 && (
+                {!isStreaming && results && ((results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)) > 25 && (
                   <button
                     onClick={() => setDigDeeperOpen(true)}
                     className="font-body"
@@ -408,8 +429,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
                   >
-                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0)} additional sources
-                    ({results.overflowVerses?.length || 0} verses · {results.overflowProse?.length || 0} passages) &rarr;
+                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.overflowTranscripts?.length || 0) + (results.overflowLetters?.length || 0)} additional sources &rarr;
                   </button>
                 )}
 
@@ -441,15 +461,21 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
             {/* ─── References Mode ─── */}
             {viewMode === "references" && (
               <div style={{ opacity: 1, transform: "translateY(0)", transition: "opacity 0.2s ease, transform 0.2s ease" }}>
-                {results.books.filter(b => b.verses.length > 0 || b.prose.length > 0).map(book => {
+                {results.books.filter(b => b.verses.length > 0 || b.prose.length > 0 || (b.transcripts?.length || 0) > 0 || (b.letters?.length || 0) > 0).map(book => {
                   const bookColor = getBookColor(book.slug.toUpperCase());
+                  const tCount = book.transcripts?.length || 0;
+                  const lCount = book.letters?.length || 0;
                   return (
                     <div key={book.slug} className="references-book-group">
                       <h3>{book.name}</h3>
                       <p className="references-book-count">
                         {book.verses.length > 0 && `${book.verses.length} verse${book.verses.length !== 1 ? "s" : ""}`}
-                        {book.verses.length > 0 && book.prose.length > 0 && " · "}
+                        {book.verses.length > 0 && (book.prose.length > 0 || tCount > 0 || lCount > 0) && " · "}
                         {book.prose.length > 0 && `${book.prose.length} passage${book.prose.length !== 1 ? "s" : ""}`}
+                        {book.prose.length > 0 && (tCount > 0 || lCount > 0) && " · "}
+                        {tCount > 0 && `${tCount} lecture${tCount !== 1 ? "s" : ""}`}
+                        {tCount > 0 && lCount > 0 && " · "}
+                        {lCount > 0 && `${lCount} letter${lCount !== 1 ? "s" : ""}`}
                       </p>
 
                       {book.verses.map(v => {
@@ -514,12 +540,78 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                           </div>
                         </div>
                       ))}
+
+                      {(book.transcripts || []).map(t => {
+                        const lectureColor = BOOK_COLORS["LECTURES"];
+                        const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+                        const label = t.title || [datePart, t.location].filter(Boolean).join(" — ") || "Lecture";
+                        return (
+                          <div key={t.id} className="reference-card" style={{ borderLeft: `3px solid ${lectureColor.border}` }}>
+                            <span style={{
+                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
+                              borderRadius: 8, background: lectureColor.bg, color: lectureColor.text,
+                            }}>
+                              Lecture
+                            </span>
+                            <p style={{ fontSize: 12, color: "#666", margin: "4px 0 2px", fontStyle: "italic" }}>
+                              {label}
+                            </p>
+                            <ExpandableReferenceCard
+                              preview={t.body_text.length > 250 ? t.body_text.slice(0, 250) + "…" : t.body_text}
+                              fullText={t.body_text}
+                            >
+                              <span />
+                            </ExpandableReferenceCard>
+                            <div className="reference-card__links">
+                              <span />
+                              {t.vedabase_url && (
+                                <a href={t.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
+                                  Open on Vedabase &#8599;
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {(book.letters || []).map(l => {
+                        const letterColor = BOOK_COLORS["LETTERS"];
+                        const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+                        const label = [l.recipient ? `To ${l.recipient}` : "", datePart].filter(Boolean).join(" — ") || "Letter";
+                        return (
+                          <div key={l.id} className="reference-card" style={{ borderLeft: `3px solid ${letterColor.border}` }}>
+                            <span style={{
+                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
+                              borderRadius: 8, background: letterColor.bg, color: letterColor.text,
+                            }}>
+                              Letter
+                            </span>
+                            <p style={{ fontSize: 12, color: "#666", margin: "4px 0 2px", fontStyle: "italic" }}>
+                              {label}
+                            </p>
+                            <ExpandableReferenceCard
+                              preview={l.body_text.length > 250 ? l.body_text.slice(0, 250) + "…" : l.body_text}
+                              fullText={l.body_text}
+                            >
+                              <span />
+                            </ExpandableReferenceCard>
+                            <div className="reference-card__links">
+                              <span />
+                              {l.vedabase_url && (
+                                <a href={l.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
+                                  Open on Vedabase &#8599;
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   );
                 })}
 
                 {/* Dig Deeper in references mode */}
-                {results && ((results.totalVerses || 0) + (results.totalProse || 0)) > 25 && (
+                {results && ((results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)) > 25 && (
                   <button
                     onClick={() => setDigDeeperOpen(true)}
                     className="font-body"
@@ -532,8 +624,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                     onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
                   >
-                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0)} additional sources
-                    ({results.overflowVerses?.length || 0} verses · {results.overflowProse?.length || 0} passages) &rarr;
+                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.overflowTranscripts?.length || 0) + (results.overflowLetters?.length || 0)} additional sources &rarr;
                   </button>
                 )}
               </div>
@@ -622,8 +713,12 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         <DigDeeperModal
           overflowVerses={results.overflowVerses || []}
           overflowProse={results.overflowProse || []}
+          overflowTranscripts={results.overflowTranscripts || []}
+          overflowLetters={results.overflowLetters || []}
           totalVerses={results.totalVerses || 0}
           totalProse={results.totalProse || 0}
+          totalTranscripts={results.totalTranscripts || 0}
+          totalLetters={results.totalLetters || 0}
           articleVerseIds={new Set(results.articleVerseIds || [])}
           onClose={() => setDigDeeperOpen(false)}
         />
@@ -744,6 +839,16 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         .narrative-content .prose-quote {
           background: transparent; border: none;
           border-left: 3px solid #6366F1; padding: 12px 20px; border-radius: 0; margin: 16px 0;
+          font-size: 15px; line-height: 1.8; color: #374151;
+        }
+        .narrative-content .lecture-quote {
+          background: rgba(251,146,60,0.04); border: none;
+          border-left: 3px solid #FB923C; padding: 12px 20px; border-radius: 0; margin: 16px 0;
+          font-size: 15px; line-height: 1.8; color: #374151;
+        }
+        .narrative-content .letter-quote {
+          background: rgba(74,222,128,0.04); border: none;
+          border-left: 3px solid #4ADE80; padding: 12px 20px; border-radius: 0; margin: 16px 0;
           font-size: 15px; line-height: 1.8; color: #374151;
         }
         .narrative-content .verse-ref {
