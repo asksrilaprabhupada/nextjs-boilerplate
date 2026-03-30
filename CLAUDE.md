@@ -16,7 +16,7 @@ npm run build
 
 ### Tech Stack
 
-Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses and chapters tables, 25,020 verses), Tailwind CSS 4, Framer Motion, Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
+Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses, verse_chunks, prose_paragraphs, transcript_paragraphs, letter_paragraphs tables, 244,000+ searchable passages), Tailwind CSS 4, Framer Motion, Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
 
 ### Environment Variables (in .env.local)
 
