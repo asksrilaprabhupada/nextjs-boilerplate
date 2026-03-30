@@ -84,7 +84,7 @@ export default function SourcesSection() {
             color: "#1E1B4B",
           }}
         >
-          <span className="gradient-text">Prabhupada&apos;s complete library</span>
+          Śrīla Prabhupāda&apos;s <span className="gradient-text">complete library</span>
         </h2>
       </div>
 
