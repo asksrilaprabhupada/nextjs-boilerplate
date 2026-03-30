@@ -480,13 +480,6 @@ body {
   animation: gradientText 6s ease-in-out infinite alternate;
 }
 
-.tagline-gradient {
-  background: linear-gradient(90deg, #D4760A, #993556, #7C3AED);
-  background-clip: text;
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-}
-
 /* ============================================================
    SCROLL REVEAL
    ============================================================ */
