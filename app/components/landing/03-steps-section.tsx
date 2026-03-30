@@ -9,7 +9,7 @@
 import { useEffect, useRef } from "react";
 
 const steps = [
-  { number: "01", title: "Ask", description: "Type any spiritual, philosophical, or practical question. AI understands your intent and searches across all 27 books." },
+  { number: "01", title: "Ask", description: "Type any spiritual, philosophical, or practical question. AI understands your intent and searches across 244,000 passages from books, lectures, and letters." },
   { number: "02", title: "Verify", description: "Read an answer built from Prabhupāda's actual words — every verse and purport citation links directly to Vedabase.io." },
   { number: "03", title: "Go deeper", description: "Open the original verse, read the full purport, and continue your study with related references across scriptures." },
 ];

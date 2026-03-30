@@ -40,7 +40,7 @@ export default function CTASection() {
             Ask your first question
           </h2>
           <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "#374151", marginBottom: 28, maxWidth: 480, margin: "0 auto 28px" }}>
-            27 books. 25,000+ verses. Every answer grounded in Śrīla Prabhupāda&apos;s actual words.
+            36 books. 3,700+ lectures. 6,500+ letters. 244,000+ searchable passages — every answer grounded in Śrīla Prabhupāda&apos;s actual words.
           </p>
           <button className="btn-primary" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
             <span>Search the books</span>

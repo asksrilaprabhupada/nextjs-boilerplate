@@ -10,8 +10,8 @@ interface CacheEntry<T> {
   timestamp: number;
 }
 
-const MAX_ENTRIES = 200;
-const TTL_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_ENTRIES = 2000;
+const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours — corpus is fixed, cached answers don't go stale
 
 const cache = new Map<string, CacheEntry<unknown>>();
 

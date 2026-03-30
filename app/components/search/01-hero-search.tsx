@@ -95,7 +95,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
         {heroVisible && (
           <div className="font-body" style={{ ...stagger(0), display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 16px 6px 10px", borderRadius: 100, background: "rgba(139,92,246,0.08)", border: "1px solid rgba(196,181,253,0.3)", marginBottom: 24 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#8B5CF6", animation: "pulseDot 2.5s ease-in-out infinite" }} />
-            <span style={{ fontSize: "clamp(10px, 2.5vw, 12px)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.10em", color: "#7C3AED" }}>27 books · 59,000+ searchable entries</span>
+            <span style={{ fontSize: "clamp(10px, 2.5vw, 12px)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.10em", color: "#7C3AED" }}>36 books · 3,700+ lectures · 6,500+ letters</span>
           </div>
         )}
 
@@ -103,7 +103,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
         {heroVisible && <h1 className="font-display" style={{ ...stagger(1), fontSize: "clamp(38px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 16, color: "#1E1B4B", overflowWrap: "break-word" }}>Ask<br /><span style={{ background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
 
         {/* Subtitle */}
-        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.65, marginBottom: 22 }}>Explore 27 books of Śrīla Prabhupāda — every answer drawn directly from his translations, purports, and teachings. Nothing added, nothing invented.</p>}
+        {heroVisible && <p className="font-body" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 400, color: "#374151", textAlign: "center", maxWidth: 540, lineHeight: 1.65, marginBottom: 22 }}>Search across 36 books, 3,700 lectures, and 6,500 letters — every answer drawn directly from his translations, purports, and personal correspondence. Nothing added, nothing invented.</p>}
 
         {/* Search form */}
         <form

@@ -23,8 +23,8 @@ const cards = [
   },
   {
     icon: <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" /></svg>,
-    title: "One place for all major books",
-    description: "Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and 22 more — searched together, instantly.",
+    title: "Every book, lecture, and letter",
+    description: "Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, Kṛṣṇa Book, and 30 more books, 3,700 lectures, and 6,500 letters — searched together, instantly.",
     color: "#6366F1",
   },
 ];
