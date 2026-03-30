@@ -11,6 +11,7 @@ import LockScreen from "./components/lockscreen/01-lock-screen";
 import Header from "./components/layout/01-header";
 import HeroSearch from "./components/search/01-hero-search";
 import NarrativeResponse, { SearchResults } from "./components/results/01-narrative-response";
+import SourcesSection from "./components/landing/00-sources-section";
 import WhyDifferent from "./components/landing/01-why-different";
 import TestimonialsSection from "./components/landing/04-testimonials-section";
 import CTASection from "./components/landing/05-cta-section";
@@ -349,6 +350,7 @@ export default function Home() {
           </div>
           {!searchResults && !isSearching && (
             <>
+              <SourcesSection />
               <WhyDifferent />
               <TestimonialsSection />
               <CTASection />
