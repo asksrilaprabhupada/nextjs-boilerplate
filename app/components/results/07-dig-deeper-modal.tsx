@@ -10,7 +10,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { VerseHit, ProseHit } from "./01-narrative-response";
+import type { VerseHit, ProseHit, TranscriptHit, LetterHit } from "./01-narrative-response";
 
 const BOOK_NAMES: Record<string, string> = {
   bg: "Bhagavad Gītā As It Is", sb: "Śrīmad Bhāgavatam", cc: "Śrī Caitanya Caritāmṛta",
@@ -33,8 +33,10 @@ const BOOK_COLORS: Record<string, { bg: string; text: string; border: string }> 
   NOI:     { bg: "#E1F5EE", text: "#0F6E56", border: "#9FE1CB" },
   CC:      { bg: "#FAECE7", text: "#993C1D", border: "#F0997B" },
   SPL:     { bg: "#FBEAF0", text: "#993556", border: "#ED93B1" },
-  BG:      { bg: "#FAEEDA", text: "#854F0B", border: "#FAC775" },
-  default: { bg: "#F1EFE8", text: "#5F5E5A", border: "#B4B2A9" },
+  BG:       { bg: "#FAEEDA", text: "#854F0B", border: "#FAC775" },
+  LECTURES: { bg: "#FFF7ED", text: "#C2410C", border: "#FB923C" },
+  LETTERS:  { bg: "#F0FDF4", text: "#15803D", border: "#4ADE80" },
+  default:  { bg: "#F1EFE8", text: "#5F5E5A", border: "#B4B2A9" },
 };
 
 function getBookSlugPrefix(slug: string): string {
@@ -92,14 +94,18 @@ function groupByBook(verses: VerseHit[]): Map<string, VerseHit[]> {
   return groups;
 }
 
-type ContentType = "all" | "verses" | "prose";
+type ContentType = "all" | "verses" | "prose" | "lectures" | "letters";
 type GroupMode = "flat" | "topic" | "book";
 
 interface DigDeeperProps {
   overflowVerses: VerseHit[];
   overflowProse: ProseHit[];
+  overflowTranscripts?: TranscriptHit[];
+  overflowLetters?: LetterHit[];
   totalVerses: number;
   totalProse: number;
+  totalTranscripts?: number;
+  totalLetters?: number;
   articleVerseIds?: Set<string>;
   onClose: () => void;
 }
@@ -358,6 +364,120 @@ function ProseCard({ p, index }: { p: ProseHit; index: number }) {
   );
 }
 
+/* ─── Single transcript (lecture) card ─── */
+function TranscriptCard({ t, index }: { t: TranscriptHit; index: number }) {
+  const colors = BOOK_COLORS["LECTURES"];
+  const summary = getTagSummary(t.tags);
+  const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+  const label = t.title || [datePart, t.location].filter(Boolean).join(" — ") || "Lecture";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(index * 0.03, 0.6) }}
+      style={{ marginBottom: 20 }}
+    >
+      <div style={{
+        padding: "16px 20px", background: "#FAFAFA",
+        borderLeft: `3px solid ${colors.border}`,
+        borderRadius: "0 8px 8px 0",
+      }}>
+        <span className="font-body" style={{
+          display: "inline-block", fontSize: 11, fontWeight: 500,
+          padding: "2px 8px", borderRadius: 8, marginBottom: 8,
+          background: colors.bg, color: colors.text,
+        }}>
+          Lecture
+        </span>
+        <p className="font-body" style={{ fontSize: 12, color: "#666", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
+        <p style={{
+          fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
+          fontFamily: "Georgia, 'Times New Roman', serif",
+          color: "#1a1a1a", margin: "0 0 8px",
+        }}>
+          {truncate(t.body_text, 200)}
+        </p>
+        {summary && (
+          <p className="font-body" style={{
+            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontStyle: "italic", lineHeight: 1.5,
+          }}>
+            {summary}
+          </p>
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+          {t.vedabase_url && (
+            <a href={t.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#C2410C", textDecoration: "none", fontWeight: 500 }}
+              onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
+            >
+              Open on Vedabase &#8599;
+            </a>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+/* ─── Single letter card ─── */
+function LetterCard({ l, index }: { l: LetterHit; index: number }) {
+  const colors = BOOK_COLORS["LETTERS"];
+  const summary = getTagSummary(l.tags);
+  const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+  const label = [l.recipient ? `To ${l.recipient}` : "", datePart].filter(Boolean).join(" — ") || "Letter";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, delay: Math.min(index * 0.03, 0.6) }}
+      style={{ marginBottom: 20 }}
+    >
+      <div style={{
+        padding: "16px 20px", background: "#FAFAFA",
+        borderLeft: `3px solid ${colors.border}`,
+        borderRadius: "0 8px 8px 0",
+      }}>
+        <span className="font-body" style={{
+          display: "inline-block", fontSize: 11, fontWeight: 500,
+          padding: "2px 8px", borderRadius: 8, marginBottom: 8,
+          background: colors.bg, color: colors.text,
+        }}>
+          Letter
+        </span>
+        <p className="font-body" style={{ fontSize: 12, color: "#666", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
+        <p style={{
+          fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
+          fontFamily: "Georgia, 'Times New Roman', serif",
+          color: "#1a1a1a", margin: "0 0 8px",
+        }}>
+          {truncate(l.body_text, 200)}
+        </p>
+        {summary && (
+          <p className="font-body" style={{
+            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontStyle: "italic", lineHeight: 1.5,
+          }}>
+            {summary}
+          </p>
+        )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
+          {l.vedabase_url && (
+            <a href={l.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#15803D", textDecoration: "none", fontWeight: 500 }}
+              onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
+            >
+              Open on Vedabase &#8599;
+            </a>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 /* ─── Collapsible topic/book group ─── */
 function CollapsibleGroup({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(true);
@@ -396,7 +516,7 @@ function CollapsibleGroup({ title, count, children }: { title: string; count: nu
   );
 }
 
-export default function DigDeeperModal({ overflowVerses, overflowProse, totalVerses, totalProse, articleVerseIds, onClose }: DigDeeperProps) {
+export default function DigDeeperModal({ overflowVerses, overflowProse, overflowTranscripts = [], overflowLetters = [], totalVerses, totalProse, articleVerseIds, onClose }: DigDeeperProps) {
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<ContentType>("all");
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
@@ -419,8 +539,10 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
       const name = getBookName(p.book_slug || "");
       counts.set(name, (counts.get(name) || 0) + 1);
     });
+    if (overflowTranscripts.length > 0) counts.set("Lectures", overflowTranscripts.length);
+    if (overflowLetters.length > 0) counts.set("Letters", overflowLetters.length);
     return counts;
-  }, [overflowVerses, overflowProse]);
+  }, [overflowVerses, overflowProse, overflowTranscripts, overflowLetters]);
 
   const books = useMemo(() =>
     Array.from(bookCounts.entries())
@@ -431,24 +553,38 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
 
   /* Apply filters */
   const filteredVerses = useMemo(() => overflowVerses.filter(v => {
-    if (typeFilter === "prose") return false;
+    if (typeFilter !== "all" && typeFilter !== "verses") return false;
     if (selectedBooks.size === 0) return true;
     return selectedBooks.has(getBookName(v.book_slug || v.scripture?.toLowerCase() || ""));
   }), [overflowVerses, typeFilter, selectedBooks]);
 
   const filteredProse = useMemo(() => overflowProse.filter(p => {
-    if (typeFilter === "verses") return false;
+    if (typeFilter !== "all" && typeFilter !== "prose") return false;
     if (selectedBooks.size === 0) return true;
     return selectedBooks.has(getBookName(p.book_slug || ""));
   }), [overflowProse, typeFilter, selectedBooks]);
+
+  const filteredTranscripts = useMemo(() => overflowTranscripts.filter(() => {
+    if (typeFilter !== "all" && typeFilter !== "lectures") return false;
+    if (selectedBooks.size === 0) return true;
+    return selectedBooks.has("Lectures");
+  }), [overflowTranscripts, typeFilter, selectedBooks]);
+
+  const filteredLetters = useMemo(() => overflowLetters.filter(() => {
+    if (typeFilter !== "all" && typeFilter !== "letters") return false;
+    if (selectedBooks.size === 0) return true;
+    return selectedBooks.has("Letters");
+  }), [overflowLetters, typeFilter, selectedBooks]);
 
   /* Grouped data */
   const topicGroups = useMemo(() => groupByTopic(filteredVerses), [filteredVerses]);
   const bookGroups = useMemo(() => groupByBook(filteredVerses), [filteredVerses]);
 
-  const hasResults = filteredVerses.length + filteredProse.length > 0;
+  const hasResults = filteredVerses.length + filteredProse.length + filteredTranscripts.length + filteredLetters.length > 0;
   const verseCount = filteredVerses.length;
   const proseCount = filteredProse.length;
+  const transcriptCount = filteredTranscripts.length;
+  const letterCount = filteredLetters.length;
 
   return (
     <AnimatePresence>
@@ -483,7 +619,12 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                 Dig Deeper
               </h2>
               <p className="font-body" style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
-                {verseCount} verse{verseCount !== 1 ? "s" : ""} &middot; {proseCount} prose passage{proseCount !== 1 ? "s" : ""}
+                {[
+                  verseCount > 0 && `${verseCount} verse${verseCount !== 1 ? "s" : ""}`,
+                  proseCount > 0 && `${proseCount} prose passage${proseCount !== 1 ? "s" : ""}`,
+                  transcriptCount > 0 && `${transcriptCount} lecture${transcriptCount !== 1 ? "s" : ""}`,
+                  letterCount > 0 && `${letterCount} letter${letterCount !== 1 ? "s" : ""}`,
+                ].filter(Boolean).join(" \u00B7 ")}
               </p>
             </div>
 
@@ -498,6 +639,8 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                   { key: "all", label: "All" },
                   { key: "verses", label: "Verses" },
                   { key: "prose", label: "Prose" },
+                  ...(overflowTranscripts.length > 0 ? [{ key: "lectures" as ContentType, label: "Lectures" }] : []),
+                  ...(overflowLetters.length > 0 ? [{ key: "letters" as ContentType, label: "Letters" }] : []),
                 ]}
                 value={typeFilter}
                 onChange={setTypeFilter}
@@ -575,6 +718,12 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                 {filteredProse.map((p, i) => (
                   <ProseCard key={p.id} p={p} index={filteredVerses.length + i} />
                 ))}
+                {filteredTranscripts.map((t, i) => (
+                  <TranscriptCard key={t.id} t={t} index={filteredVerses.length + filteredProse.length + i} />
+                ))}
+                {filteredLetters.map((l, i) => (
+                  <LetterCard key={l.id} l={l} index={filteredVerses.length + filteredProse.length + filteredTranscripts.length + i} />
+                ))}
               </>
             )}
 
@@ -595,6 +744,20 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                     ))}
                   </CollapsibleGroup>
                 )}
+                {filteredTranscripts.length > 0 && (
+                  <CollapsibleGroup title="Lecture Passages" count={filteredTranscripts.length}>
+                    {filteredTranscripts.map((t, i) => (
+                      <TranscriptCard key={t.id} t={t} index={i} />
+                    ))}
+                  </CollapsibleGroup>
+                )}
+                {filteredLetters.length > 0 && (
+                  <CollapsibleGroup title="Letter Passages" count={filteredLetters.length}>
+                    {filteredLetters.map((l, i) => (
+                      <LetterCard key={l.id} l={l} index={i} />
+                    ))}
+                  </CollapsibleGroup>
+                )}
               </>
             )}
 
@@ -612,6 +775,20 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, totalVer
                   <CollapsibleGroup title="Prose Passages" count={filteredProse.length}>
                     {filteredProse.map((p, i) => (
                       <ProseCard key={p.id} p={p} index={i} />
+                    ))}
+                  </CollapsibleGroup>
+                )}
+                {filteredTranscripts.length > 0 && (
+                  <CollapsibleGroup title="Lecture Passages" count={filteredTranscripts.length}>
+                    {filteredTranscripts.map((t, i) => (
+                      <TranscriptCard key={t.id} t={t} index={i} />
+                    ))}
+                  </CollapsibleGroup>
+                )}
+                {filteredLetters.length > 0 && (
+                  <CollapsibleGroup title="Letter Passages" count={filteredLetters.length}>
+                    {filteredLetters.map((l, i) => (
+                      <LetterCard key={l.id} l={l} index={i} />
                     ))}
                   </CollapsibleGroup>
                 )}

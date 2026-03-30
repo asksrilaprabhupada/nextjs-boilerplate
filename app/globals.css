@@ -565,7 +565,9 @@ body {
   }
   .narrative-content .verse-quote,
   .narrative-content .purport-quote,
-  .narrative-content .prose-quote {
+  .narrative-content .prose-quote,
+  .narrative-content .lecture-quote,
+  .narrative-content .letter-quote {
     padding: 10px 12px !important;
     border-radius: 10px !important;
     margin: 8px 0 !important;
@@ -574,7 +576,9 @@ body {
     font-size: 0.92rem !important;
   }
   .narrative-content .purport-quote,
-  .narrative-content .prose-quote {
+  .narrative-content .prose-quote,
+  .narrative-content .lecture-quote,
+  .narrative-content .letter-quote {
     font-size: 13px !important;
   }
   .step-connectors {

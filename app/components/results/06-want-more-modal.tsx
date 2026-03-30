@@ -56,7 +56,12 @@ export default function WantMoreModal({ book, onClose }: Props) {
               {book.name}
             </h2>
             <p className="font-body" style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
-              {book.verses.length} verses · {book.prose.length} prose passages
+              {[
+                book.verses.length > 0 && `${book.verses.length} verses`,
+                book.prose.length > 0 && `${book.prose.length} prose passages`,
+                (book.transcripts?.length || 0) > 0 && `${book.transcripts!.length} lecture passages`,
+                (book.letters?.length || 0) > 0 && `${book.letters!.length} letter passages`,
+              ].filter(Boolean).join(" · ")}
             </p>
           </div>
 
@@ -103,6 +108,46 @@ export default function WantMoreModal({ book, onClose }: Props) {
               )}
             </div>
           ))}
+
+          {/* Transcripts (Lectures) */}
+          {(book.transcripts || []).map(t => {
+            const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+            const label = t.title || [datePart, t.location].filter(Boolean).join(" — ") || "Lecture";
+            return (
+              <div key={t.id} style={{ marginBottom: 14, background: "rgba(251,146,60,0.04)", border: "1px solid rgba(251,146,60,0.15)", borderLeft: "3px solid #FB923C", padding: "14px 18px", borderRadius: 14 }}>
+                <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#C2410C", marginBottom: 6 }}>Lecture</p>
+                <p className="font-body" style={{ fontSize: 12, color: "#666", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
+                <p className="font-body" style={{ fontSize: 14, lineHeight: 1.8, color: "#374151" }}>{truncate(t.body_text, 500)}</p>
+                {t.vedabase_url && (
+                  <div style={{ textAlign: "right", marginTop: 6 }}>
+                    <a href={t.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#C2410C", textDecoration: "none", fontWeight: 500 }}>
+                      Read on Vedabase ↗
+                    </a>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Letters */}
+          {(book.letters || []).map(l => {
+            const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
+            const label = [l.recipient ? `To ${l.recipient}` : "", datePart].filter(Boolean).join(" — ") || "Letter";
+            return (
+              <div key={l.id} style={{ marginBottom: 14, background: "rgba(74,222,128,0.04)", border: "1px solid rgba(74,222,128,0.15)", borderLeft: "3px solid #4ADE80", padding: "14px 18px", borderRadius: 14 }}>
+                <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#15803D", marginBottom: 6 }}>Letter</p>
+                <p className="font-body" style={{ fontSize: 12, color: "#666", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
+                <p className="font-body" style={{ fontSize: 14, lineHeight: 1.8, color: "#374151" }}>{truncate(l.body_text, 500)}</p>
+                {l.vedabase_url && (
+                  <div style={{ textAlign: "right", marginTop: 6 }}>
+                    <a href={l.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#15803D", textDecoration: "none", fontWeight: 500 }}>
+                      Read on Vedabase ↗
+                    </a>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </motion.div>
       </motion.div>
     </AnimatePresence>
