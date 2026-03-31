@@ -194,6 +194,7 @@ export default function Home() {
                 overflowProse: event.overflowProse || [],
                 totalVerses: event.totalVerses || 0,
                 totalProse: event.totalProse || 0,
+                suggestion: event.suggestion || null,
               };
               setSearchResults(partialResults);
               setIsSearching(false);
@@ -346,6 +347,34 @@ export default function Home() {
             />
           </div>
           <div ref={resultsRef}>
+            {searchResults?.suggestion && !isSearching && (
+              <div style={{
+                maxWidth: 1100, margin: '8px auto 0', padding: '0 20px',
+              }}>
+                <div style={{
+                  padding: '12px 20px', borderRadius: 12,
+                  background: 'rgba(139,92,246,0.06)',
+                  border: '1px solid rgba(196,181,253,0.3)',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                }}>
+                  <span className="font-body" style={{ fontSize: 14, color: '#6B7280' }}>
+                    Did you mean:
+                  </span>
+                  <button
+                    onClick={() => handleSearch(searchResults.suggestion!)}
+                    className="font-body"
+                    style={{
+                      fontSize: 14, fontWeight: 600, color: '#7C3AED',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      textDecoration: 'underline', padding: 0,
+                    }}
+                  >
+                    {searchResults.suggestion}
+                  </button>
+                  <span className="font-body" style={{ fontSize: 14, color: '#6B7280' }}>?</span>
+                </div>
+              </div>
+            )}
             <NarrativeResponse results={searchResults} isLoading={isSearching} isStreaming={isStreaming} streamingNarrative={streamingNarrative} onSearch={handleSearch} searchLogId={searchLogId} viewMode={viewMode} onViewModeChange={setViewMode} />
           </div>
           {!searchResults && !isSearching && (
