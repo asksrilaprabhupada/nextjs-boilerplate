@@ -739,69 +739,105 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
   const synthTranscripts = transcripts.slice(0, 6);
   const synthLetters = letters.slice(0, 4);
 
-  let ctx = "";
-  const byBook: Record<string, { v: VerseHit[]; p: ProseHit[] }> = {};
-  for (const v of synthVerses) { const s = v.book_slug || v.scripture?.toLowerCase() || "x"; if (!byBook[s]) byBook[s] = { v: [], p: [] }; byBook[s].v.push(v); }
-  for (const p of synthProse) { if (!byBook[p.book_slug]) byBook[p.book_slug] = { v: [], p: [] }; byBook[p.book_slug].p.push(p); }
+  // Build a unified list of all passages with scores
+  interface UnifiedPassage {
+    score: number;
+    type: 'verse' | 'prose' | 'lecture' | 'letter';
+    ref: string;
+    url: string;
+    tagSummary: string;
+    content: string;
+  }
 
-  for (const [slug, d] of Object.entries(byBook)) {
-    ctx += `\n=== ${getBookName(slug).toUpperCase()} ===\n`;
-    for (const v of d.v.slice(0, 10)) {
-      const ref = cleanRef(v);
-      const summaryTag = (v.tags || []).find(t => t.startsWith("SUMMARY:"));
-      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
-      ctx += `[${ref}] (${v.vedabase_url})${tagSummary ? "\nAbout: " + tagSummary : ""}\nTranslation: "${v.translation}"\nPurport: "${smartTruncate(v.purport || "", 800)}"\n\n`;
-    }
-    for (const p of d.p.slice(0, 3)) {
-      let bodyText = (p.body_text || "").trim();
-      if (bodyText.length < 80) continue;
+  const allPassages: UnifiedPassage[] = [];
 
-      // Skip Sanskrit transliteration — find English content
-      const lines = bodyText.split("\n");
-      let englishStart = 0;
-      for (let i = 0; i < lines.length; i++) {
-        if (!isMostlySanskrit(lines[i]) && lines[i].trim().length > 30) {
-          englishStart = i;
-          break;
-        }
+  // Add verses
+  for (const v of synthVerses) {
+    const ref = cleanRef(v);
+    const summaryTag = (v.tags || []).find(t => t.startsWith("SUMMARY:"));
+    const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+    const content = `Translation: "${v.translation}"\nPurport: "${smartTruncate(v.purport || "", 800)}"`;
+    allPassages.push({
+      score: v.score || 0,
+      type: 'verse',
+      ref: `[${ref}]`,
+      url: v.vedabase_url || "",
+      tagSummary,
+      content,
+    });
+  }
+
+  // Add prose
+  for (const p of synthProse) {
+    let bodyText = (p.body_text || "").trim();
+    if (bodyText.length < 80) continue;
+    const lines = bodyText.split("\n");
+    let englishStart = 0;
+    for (let i = 0; i < lines.length; i++) {
+      if (!isMostlySanskrit(lines[i]) && lines[i].trim().length > 30) {
+        englishStart = i;
+        break;
       }
-      bodyText = lines.slice(englishStart).join("\n").trim();
-      if (isMostlySanskrit(bodyText) || bodyText.length < 50) continue;
-
-      const summaryTag = (p.tags || []).find(t => t.startsWith("SUMMARY:"));
-      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
-      ctx += `[${getBookName(p.book_slug)} - ${p.chapter_title}] (${p.vedabase_url})${tagSummary ? "\nAbout: " + tagSummary : ""}\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
     }
+    bodyText = lines.slice(englishStart).join("\n").trim();
+    if (isMostlySanskrit(bodyText) || bodyText.length < 50) continue;
+    const summaryTag = (p.tags || []).find(t => t.startsWith("SUMMARY:"));
+    const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+    allPassages.push({
+      score: p.score || 0,
+      type: 'prose',
+      ref: `[${getBookName(p.book_slug)} - ${p.chapter_title}]`,
+      url: p.vedabase_url || "",
+      tagSummary,
+      content: `Text: "${smartTruncate(bodyText, 600)}"`,
+    });
   }
 
-  // Add lecture passages
-  if (synthTranscripts.length > 0) {
-    ctx += `\n=== LECTURES ===\n`;
-    for (const t of synthTranscripts) {
-      let bodyText = (t.body_text || "").trim();
-      if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
-      const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
-      const locationPart = t.location || "";
-      const label = t.title || [datePart, locationPart].filter(Boolean).join(", ") || "Lecture";
-      const summaryTag = (t.tags || []).find(tag => tag.startsWith("SUMMARY:"));
-      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
-      ctx += `[Lecture: ${label}] (${t.vedabase_url || ""})${datePart ? " — " + datePart : ""}${locationPart ? ", " + locationPart : ""}${tagSummary ? "\nAbout: " + tagSummary : ""}\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
-    }
+  // Add transcripts (lectures)
+  for (const t of synthTranscripts) {
+    let bodyText = (t.body_text || "").trim();
+    if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+    const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+    const locationPart = t.location || "";
+    const label = t.title || [datePart, locationPart].filter(Boolean).join(", ") || "Lecture";
+    const summaryTag = (t.tags || []).find(tag => tag.startsWith("SUMMARY:"));
+    const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+    allPassages.push({
+      score: t.score || 0,
+      type: 'lecture',
+      ref: `[Lecture: ${label}]`,
+      url: t.vedabase_url || "",
+      tagSummary,
+      content: `Text: "${smartTruncate(bodyText, 600)}"`,
+    });
   }
 
-  // Add letter passages
-  if (synthLetters.length > 0) {
-    ctx += `\n=== LETTERS ===\n`;
-    for (const l of synthLetters) {
-      let bodyText = (l.body_text || "").trim();
-      if (bodyText.length < 80) continue;
-      const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
-      const recipientPart = l.recipient || "";
-      const label = recipientPart ? `Letter to ${recipientPart}` : (l.title || "Letter");
-      const summaryTag = (l.tags || []).find(tag => tag.startsWith("SUMMARY:"));
-      const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
-      ctx += `[${label}] (${l.vedabase_url || ""})${datePart ? " — " + datePart : ""}${tagSummary ? "\nAbout: " + tagSummary : ""}\nText: "${smartTruncate(bodyText, 600)}"\n\n`;
-    }
+  // Add letters
+  for (const l of synthLetters) {
+    let bodyText = (l.body_text || "").trim();
+    if (bodyText.length < 80) continue;
+    const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+    const recipientPart = l.recipient || "";
+    const label = recipientPart ? `Letter to ${recipientPart}` : (l.title || "Letter");
+    const summaryTag = (l.tags || []).find(tag => tag.startsWith("SUMMARY:"));
+    const tagSummary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
+    allPassages.push({
+      score: l.score || 0,
+      type: 'letter',
+      ref: `[${label}]`,
+      url: l.vedabase_url || "",
+      tagSummary,
+      content: `Text: "${smartTruncate(bodyText, 600)}"`,
+    });
+  }
+
+  // Sort ALL passages by score (highest first)
+  allPassages.sort((a, b) => b.score - a.score);
+
+  // Build the context string from the unified sorted list
+  let ctx = "";
+  for (const p of allPassages) {
+    ctx += `${p.ref} (${p.url})${p.tagSummary ? "\nAbout: " + p.tagSummary : ""}\nSource type: ${p.type}\n${p.content}\n\n`;
   }
 
   if (!ctx.trim()) return "";
@@ -974,37 +1010,11 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     }
   };
 
-  // If we have enough verses with tags, group them by theme
-  const themes = groupByTheme(articleVerses);
-  if (themes.size >= 2 && themes.size <= 8) {
-    let verseIndex = 0;
-    for (const [theme, themeVerses] of themes) {
-      const heading = theme.charAt(0).toUpperCase() + theme.slice(1);
-      parts.push(`<h3>${heading}</h3>`);
-      for (const tv of themeVerses) {
-        renderSingleVerse(verseIndex, tv);
-        verseIndex++;
-      }
-    }
-  } else {
-    // Not enough theme diversity — render flat
-    for (let i = 0; i < articleVerses.length; i++) {
-      renderSingleVerse(i, articleVerses[i]);
-    }
-  }
-
-  // Prose: show ACTUAL body_text, skip headings, short content, and Sanskrit
-  // Deduplicate: max one entry per book
-  const seenBookSlugs = new Set<string>();
-  for (const x of p.slice(0, 8)) {
-    if (seenBookSlugs.has(x.book_slug)) continue;
-
+  /** Render a single prose passage */
+  const renderSingleProse = (x: ProseHit) => {
     const bodyText = (x.body_text || "").trim();
+    if (bodyText.length < 80) return false;
 
-    // Skip if too short or looks like just a heading
-    if (bodyText.length < 80) continue;
-
-    // Skip leading chapter numbers/headings
     let contentStart = 0;
     const headingMatch = bodyText.match(/^(?:[A-Z]{3,}\s|CHAPTER\s|Chapter\s|\d+[\.\s])/);
     if (headingMatch) {
@@ -1016,7 +1026,6 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       );
     }
 
-    // Skip Sanskrit transliteration — try to find English content after it
     let usableText = bodyText.substring(contentStart).trim();
     const lines = usableText.split("\n");
     let englishStart = 0;
@@ -1027,11 +1036,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       }
     }
     usableText = lines.slice(englishStart).join("\n").trim();
-
-    // If the entire paragraph is Sanskrit, skip it
-    if (isMostlySanskrit(usableText) || usableText.length < 50) continue;
-
-    seenBookSlugs.add(x.book_slug);
+    if (isMostlySanskrit(usableText) || usableText.length < 50) return false;
 
     const bookName = getBookName(x.book_slug);
     const url = x.vedabase_url || "#";
@@ -1039,12 +1044,13 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
     parts.push(`<p>In <a href="${url}" class="verse-link" target="_blank">${bookName}</a>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
     parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
-  }
+    return true;
+  };
 
-  // Transcripts: show lecture passages with proper attribution
-  for (const x of t.slice(0, 6)) {
+  /** Render a single transcript (lecture) passage */
+  const renderSingleTranscript = (x: TranscriptHit) => {
     const bodyText = (x.body_text || "").trim();
-    if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+    if (bodyText.length < 80 || isMostlySanskrit(bodyText)) return;
 
     const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
     const locationPart = x.location || "";
@@ -1058,12 +1064,12 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
     parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda said</a>:</p>`);
     parts.push(`<div class="lecture-quote">"${excerpt}"</div>`);
-  }
+  };
 
-  // Letters: show letter passages with proper attribution
-  for (const x of l.slice(0, 4)) {
+  /** Render a single letter passage */
+  const renderSingleLetter = (x: LetterHit) => {
     const bodyText = (x.body_text || "").trim();
-    if (bodyText.length < 80) continue;
+    if (bodyText.length < 80) return;
 
     const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
     const recipientPart = x.recipient || "";
@@ -1077,6 +1083,61 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
     parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda wrote</a>:</p>`);
     parts.push(`<div class="letter-quote">"${excerpt}"</div>`);
+  };
+
+  // Build unified list of all items with scores, sort by relevance
+  interface FBItem {
+    score: number;
+    type: 'verse' | 'prose' | 'lecture' | 'letter';
+    data: VerseHit | ProseHit | TranscriptHit | LetterHit;
+  }
+
+  const allItems: FBItem[] = [];
+
+  for (const x of v.slice(0, 30)) {
+    allItems.push({ score: x.score || 0, type: 'verse', data: x });
+  }
+  const seenBookSlugs = new Set<string>();
+  for (const x of p.slice(0, 8)) {
+    if (seenBookSlugs.has(x.book_slug)) continue;
+    const bodyText = (x.body_text || "").trim();
+    if (bodyText.length < 80) continue;
+    if (isMostlySanskrit(bodyText) || bodyText.length < 50) continue;
+    seenBookSlugs.add(x.book_slug);
+    allItems.push({ score: x.score || 0, type: 'prose', data: x });
+  }
+  for (const x of t.slice(0, 6)) {
+    const bodyText = (x.body_text || "").trim();
+    if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+    allItems.push({ score: x.score || 0, type: 'lecture', data: x });
+  }
+  for (const x of l.slice(0, 4)) {
+    const bodyText = (x.body_text || "").trim();
+    if (bodyText.length < 80) continue;
+    allItems.push({ score: x.score || 0, type: 'letter', data: x });
+  }
+
+  // Sort all items by score (highest first)
+  allItems.sort((a, b) => b.score - a.score);
+
+  // Render each item using the appropriate helper
+  let itemIdx = 0;
+  for (const item of allItems) {
+    switch (item.type) {
+      case 'verse':
+        renderSingleVerse(itemIdx, item.data as VerseHit);
+        break;
+      case 'prose':
+        renderSingleProse(item.data as ProseHit);
+        break;
+      case 'lecture':
+        renderSingleTranscript(item.data as TranscriptHit);
+        break;
+      case 'letter':
+        renderSingleLetter(item.data as LetterHit);
+        break;
+    }
+    itemIdx++;
   }
 
   // Dynamic conclusion that relates to the actual question topic
