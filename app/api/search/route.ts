@@ -1159,11 +1159,10 @@ export async function GET(request: NextRequest) {
     const rankedTranscripts = reRankResults(transcripts, query, 0.1, 2);
     const rankedLetters = reRankResults(letters, query, 0.1, 2);
 
-    // Slice transcripts/letters for narrative and overflow
-    const narrativeTranscripts = rankedTranscripts.slice(0, 8);
-    const narrativeLetters = rankedLetters.slice(0, 6);
-    const overflowTranscripts = rankedTranscripts.slice(8);
-    const overflowLetters = rankedLetters.slice(6);
+    let narrativeTranscripts: TranscriptHit[];
+    let narrativeLetters: LetterHit[];
+    let overflowTranscripts: TranscriptHit[];
+    let overflowLetters: LetterHit[];
 
     let narrativeVerses: VerseHit[];
     let narrativeProse: ProseHit[];
@@ -1176,6 +1175,10 @@ export async function GET(request: NextRequest) {
       narrativeProse = rankedProse.slice(0, 12);
       rawOverflowVerses = rankedVerses.slice(40);
       rawOverflowProse = rankedProse.slice(12);
+      narrativeTranscripts = rankedTranscripts.slice(0, 8);
+      narrativeLetters = rankedLetters.slice(0, 6);
+      overflowTranscripts = rankedTranscripts.slice(8);
+      overflowLetters = rankedLetters.slice(6);
     } else {
       // ── Step 2: Instructional language boost for "how to" queries ──
       const boostedVerses = applyInstructionalBoost(query, rankedVerses);
@@ -1198,17 +1201,25 @@ export async function GET(request: NextRequest) {
 
       let rerankedVerses: VerseHit[];
       let rerankedProse: ProseHit[];
+      let rerankedTranscripts: TranscriptHit[];
+      let rerankedLetters: LetterHit[];
 
       if (clearWinner) {
         rerankedVerses = demotedVerses.slice(0, 50);
         rerankedProse = rankedProse.slice(0, 15);
+        rerankedTranscripts = rankedTranscripts.slice(0, 10);
+        rerankedLetters = rankedLetters.slice(0, 8);
       } else {
-        const [verseResults, proseResults] = await Promise.all([
+        const [verseResults, proseResults, transcriptResults, letterResults] = await Promise.all([
           cohereRerank(query, demotedVerses.slice(0, 50), 50),
           cohereRerank(query, rankedProse.slice(0, 15), 15),
+          cohereRerank(query, rankedTranscripts.slice(0, 10), 10),
+          cohereRerank(query, rankedLetters.slice(0, 8), 8),
         ]);
         rerankedVerses = verseResults.map(r => ({ ...r.item, score: r.relevance_score }));
         rerankedProse = proseResults.map(r => ({ ...r.item, score: r.relevance_score }));
+        rerankedTranscripts = transcriptResults.map(r => ({ ...r.item, score: r.relevance_score }));
+        rerankedLetters = letterResults.map(r => ({ ...r.item, score: r.relevance_score }));
       }
 
       // ── Step 5: Slice for narrative and overflow ──
@@ -1222,6 +1233,17 @@ export async function GET(request: NextRequest) {
       rawOverflowProse = [
         ...rerankedProse.slice(12),
         ...rankedProse.slice(15),
+      ];
+
+      narrativeTranscripts = rerankedTranscripts.slice(0, 8);
+      narrativeLetters = rerankedLetters.slice(0, 6);
+      overflowTranscripts = [
+        ...rerankedTranscripts.slice(8),
+        ...rankedTranscripts.slice(10),
+      ];
+      overflowLetters = [
+        ...rerankedLetters.slice(6),
+        ...rankedLetters.slice(8),
       ];
     }
 
