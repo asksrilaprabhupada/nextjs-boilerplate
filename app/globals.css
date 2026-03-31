@@ -102,22 +102,48 @@ body {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Scrollbar styling */
+/* ─── Custom Scrollbar (Desktop only) ─── */
 ::-webkit-scrollbar {
-  width: 5px;
+  width: 10px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(245, 240, 255, 0.5);
+  border-radius: 10px;
+  margin: 4px 0;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(196, 181, 253, 0.4);
-  border-radius: 3px;
+  background: linear-gradient(180deg, #C4B5FD, #A78BFA, #8B5CF6);
+  border-radius: 10px;
+  border: 2px solid rgba(245, 240, 255, 0.5);
+  transition: background 0.3s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(139, 92, 246, 0.5);
+  background: linear-gradient(180deg, #A78BFA, #8B5CF6, #7C3AED);
+  border: 2px solid rgba(245, 240, 255, 0.3);
+}
+
+::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, #8B5CF6, #7C3AED, #6D28D9);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #A78BFA rgba(245, 240, 255, 0.5);
+}
+
+/* Hide custom scrollbar on tablets and mobile — use native */
+@media (max-width: 1024px) {
+  ::-webkit-scrollbar {
+    width: 0px;
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+  }
 }
 
 /* Selection */
