@@ -1133,19 +1133,19 @@ export async function GET(request: NextRequest) {
   try {
     const { verses, prose, transcripts, letters } = await hybridSearch(query);
 
-    // "Did you mean?" — check spelling if few results
+    // "Did you mean?" — always check spelling for possible corrections
     let suggestion: string | null = null;
-    const totalRaw = verses.length + prose.length + transcripts.length + letters.length;
-    if (totalRaw < 5) {
-      try {
-        const supabase = getSupabase();
-        const { data: spellData } = await supabase.rpc('suggest_spelling', { raw_query: query });
-        if (spellData && typeof spellData === 'string' && spellData.toLowerCase() !== query.toLowerCase()) {
-          suggestion = spellData;
+    try {
+      const supabase = getSupabase();
+      const { data: spellData } = await supabase.rpc('suggest_spelling', { raw_query: query });
+      if (spellData && spellData.length > 0 && spellData[0].suggested_query) {
+        const suggested = spellData[0].suggested_query;
+        if (suggested.toLowerCase() !== query.toLowerCase()) {
+          suggestion = suggested;
         }
-      } catch (e) {
-        console.error('[suggest_spelling] Error:', e);
       }
+    } catch (e) {
+      console.error('[suggest_spelling] Error:', e);
     }
 
     // Skip re-ranking layers for direct verse lookups (e.g., "BG 2.20")
