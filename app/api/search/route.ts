@@ -1135,6 +1135,7 @@ export async function GET(request: NextRequest) {
 
     // "Did you mean?" — always check spelling for possible corrections
     let suggestion: string | null = null;
+    let suggestionDisplay: string | null = null;
     try {
       const supabase = getSupabase();
       const { data: spellData } = await supabase.rpc('suggest_spelling', { raw_query: query });
@@ -1142,6 +1143,7 @@ export async function GET(request: NextRequest) {
         const suggested = spellData[0].suggested_query;
         if (suggested.toLowerCase() !== query.toLowerCase()) {
           suggestion = suggested;
+          suggestionDisplay = spellData[0].display_query || suggested;
         }
       }
     } catch (e) {
@@ -1241,6 +1243,7 @@ export async function GET(request: NextRequest) {
     const fullMetadata = {
       ...metadata,
       suggestion,
+      suggestionDisplay,
       overflowVerses,
       overflowProse,
       overflowTranscripts,
