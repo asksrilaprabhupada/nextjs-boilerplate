@@ -1,0 +1,3761 @@
+{
+  "generated_at": "2026-03-31T22:10:11.445Z",
+  "target": "http://localhost:3000",
+  "duration": "39.5m",
+  "summary": {
+    "total": 300,
+    "passed": 166,
+    "failed": 134,
+    "errors": 0,
+    "pass_rate": "55.3%",
+    "by_category": {
+      "multi_source": {
+        "total": 18,
+        "passed": 4,
+        "rate": "22.2%"
+      },
+      "edge_case": {
+        "total": 32,
+        "passed": 10,
+        "rate": "31.3%"
+      },
+      "transliteration": {
+        "total": 23,
+        "passed": 9,
+        "rate": "39.1%"
+      },
+      "practical": {
+        "total": 47,
+        "passed": 23,
+        "rate": "48.9%"
+      },
+      "conceptual": {
+        "total": 50,
+        "passed": 26,
+        "rate": "52.0%"
+      },
+      "exact_reference": {
+        "total": 57,
+        "passed": 34,
+        "rate": "59.6%"
+      },
+      "phrase_recall": {
+        "total": 35,
+        "passed": 25,
+        "rate": "71.4%"
+      },
+      "person_pastime": {
+        "total": 38,
+        "passed": 35,
+        "rate": "92.1%"
+      }
+    },
+    "by_difficulty": {
+      "easy": {
+        "total": 94,
+        "passed": 66,
+        "rate": "70.2%"
+      },
+      "medium": {
+        "total": 144,
+        "passed": 72,
+        "rate": "50.0%"
+      },
+      "hard": {
+        "total": 62,
+        "passed": 28,
+        "rate": "45.2%"
+      }
+    }
+  },
+  "failures": [
+    {
+      "query": "what are the three modes of material nature",
+      "category": "conceptual",
+      "difficulty": "easy",
+      "expected": [
+        "bg:14:5",
+        "bg:14:6",
+        "bg:14:7",
+        "bg:14:8"
+      ],
+      "found_top10": [
+        "bg:14:5",
+        "bg:7:13",
+        "bg:7:12",
+        "bg:14:27",
+        "bg:14:10",
+        "bg:13:20",
+        "sb:11:13:1",
+        "sb:11:24:5",
+        "sb:11:22:12",
+        "sb:6:1:41"
+      ],
+      "matched": [
+        "bg:14:5"
+      ],
+      "missing": [
+        "bg:14:6",
+        "bg:14:7",
+        "bg:14:8"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is maya",
+      "category": "conceptual",
+      "difficulty": "easy",
+      "expected": [
+        "bg:7:14",
+        "bg:7:15"
+      ],
+      "found_top10": [
+        "sb:5:24:28",
+        "sb:11:11:2",
+        "sb:10:87:38",
+        "sb:3:31:20",
+        "sb:4:7:44",
+        "sb:4:29:29",
+        "sb:5:2:7",
+        "sb:11:3:16",
+        "sb:9:21:17",
+        "sb:5:3:14"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:7:14",
+        "bg:7:15"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is bhakti yoga",
+      "category": "conceptual",
+      "difficulty": "easy",
+      "expected": [
+        "bg:9:2",
+        "bg:12:6",
+        "bg:12:7",
+        "sb:1:2:6"
+      ],
+      "found_top10": [
+        "bg:6:46",
+        "bg:8:14",
+        "bg:12:9",
+        "bg:6:47",
+        "bg:6:20-23",
+        "bg:10:10",
+        "bg:6:3",
+        "bg:2:39",
+        "bg:12:10",
+        "sb:1:5:35"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:9:2",
+        "bg:12:6",
+        "bg:12:7",
+        "sb:1:2:6"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the spiritual world",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:8:20",
+        "bg:8:21",
+        "bg:15:6"
+      ],
+      "found_top10": [
+        "cc:madhya:20:257",
+        "cc:madhya:11:8",
+        "cc:madhya:21:55",
+        "cc:madhya:20:270",
+        "cc:madhya:8:139",
+        "cc:madhya:21:56",
+        "cc:madhya:20:150",
+        "cc:adi:7:113",
+        "cc:adi:4:34",
+        "cc:madhya:8:90"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:8:20",
+        "bg:8:21",
+        "bg:15:6"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what are the 9 processes of devotional service",
+      "category": "conceptual",
+      "difficulty": "easy",
+      "expected": [
+        "sb:7:5:23"
+      ],
+      "found_top10": [
+        "cc:madhya:15:107",
+        "cc:antya:4:70",
+        "cc:madhya:19:180",
+        "cc:madhya:22:121",
+        "cc:madhya:9:261",
+        "cc:adi:7:141",
+        "cc:antya:4:71",
+        "cc:madhya:9:259-260",
+        "cc:madhya:24:30",
+        "cc:madhya:22:135"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:7:5:23"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the difference between jnana and bhakti",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:12:1",
+        "bg:12:5",
+        "sb:10:14:3"
+      ],
+      "found_top10": [
+        "bg:12:5",
+        "bg:8:14",
+        "bg:18:55",
+        "sb:3:25:29",
+        "sb:3:32:33",
+        "sb:1:5:35",
+        "sb:3:32:27",
+        "sb:1:2:15",
+        "sb:4:31:14",
+        "sb:2:2:12"
+      ],
+      "matched": [
+        "bg:12:5"
+      ],
+      "missing": [
+        "bg:12:1",
+        "sb:10:14:3"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is varnashrama dharma",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:4:13",
+        "bg:18:41",
+        "bg:18:42",
+        "bg:18:43",
+        "bg:18:44"
+      ],
+      "found_top10": [
+        "sb:1:2:13",
+        "sb:5:4:14",
+        "sb:4:20:9",
+        "sb:4:17:9",
+        "sb:6:3:29",
+        "sb:5:1:29",
+        "sb:7:11:2",
+        "sb:7:8:48",
+        "sb:5:19:19",
+        "sb:5:1:14"
+      ],
+      "matched": [
+        "bg:4:13",
+        "bg:18:44"
+      ],
+      "missing": [
+        "bg:18:41",
+        "bg:18:42",
+        "bg:18:43"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the Absolute Truth",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "sb:1:2:11",
+        "bg:7:7",
+        "bg:10:8"
+      ],
+      "found_top10": [
+        "cc:adi:7:111",
+        "cc:adi:2:11",
+        "cc:adi:1:54",
+        "cc:madhya:25:132",
+        "cc:madhya:6:89",
+        "cc:adi:1:96",
+        "cc:madhya:6:143",
+        "cc:adi:2:65",
+        "cc:adi:7:121",
+        "cc:madhya:24:75"
+      ],
+      "matched": [
+        "sb:1:2:11"
+      ],
+      "missing": [
+        "bg:7:7",
+        "bg:10:8"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what are the 4 yugas",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "sb:1:1:1"
+      ],
+      "found_top10": [
+        "cc:madhya:20:329",
+        "cc:adi:3:7",
+        "cc:madhya:20:330",
+        "cc:madhya:20:246",
+        "cc:madhya:20:343",
+        "cc:madhya:20:305",
+        "cc:madhya:6:101",
+        "cc:madhya:20:244",
+        "cc:adi:3:9",
+        "cc:antya:3:255"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:1:1"
+      ],
+      "totalResults": 62,
+      "error": null
+    },
+    {
+      "query": "what is ahamkara false ego",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:7:4",
+        "bg:3:27",
+        "bg:13:6"
+      ],
+      "found_top10": [
+        "sb:3:26:26",
+        "sb:11:13:29",
+        "sb:11:24:7",
+        "sb:11:28:15",
+        "sb:11:28:17",
+        "sb:3:26:23-24",
+        "sb:3:5:29",
+        "sb:3:5:30",
+        "sb:5:11:9",
+        "sb:3:6:25"
+      ],
+      "matched": [
+        "bg:3:27"
+      ],
+      "missing": [
+        "bg:7:4",
+        "bg:13:6"
+      ],
+      "totalResults": 64,
+      "error": null
+    },
+    {
+      "query": "five topics of Bhagavad Gita",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:introduction"
+      ],
+      "found_top10": [
+        "bg:18:78",
+        "bg:1:1",
+        "bg:13:6-7",
+        "bg:18:1",
+        "bg:18:13",
+        "bg:18:68",
+        "bg:4:2",
+        "bg:18:67",
+        "bg:18:71",
+        "bg:18:72"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:introduction"
+      ],
+      "totalResults": 53,
+      "error": null
+    },
+    {
+      "query": "what is liberation",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "sb:1:2:6",
+        "bg:4:9",
+        "bg:14:26"
+      ],
+      "found_top10": [
+        "cc:antya:3:186",
+        "cc:madhya:24:135",
+        "cc:madhya:6:266",
+        "cc:adi:3:18",
+        "cc:adi:5:30",
+        "cc:antya:3:188",
+        "cc:madhya:24:139",
+        "cc:antya:3:196",
+        "cc:adi:4:204",
+        "cc:madhya:6:272"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:2:6",
+        "bg:4:9",
+        "bg:14:26"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the difference between atma and paramatma",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:13:23",
+        "bg:15:15",
+        "bg:2:20"
+      ],
+      "found_top10": [
+        "sb:7:7:32",
+        "sb:4:20:7",
+        "sb:2:9:4",
+        "sb:4:28:63",
+        "sb:7:7:24",
+        "sb:10:87:38",
+        "sb:4:22:37",
+        "sb:4:24:33",
+        "sb:11:11:46",
+        "sb:7:1:25"
+      ],
+      "matched": [
+        "bg:13:23"
+      ],
+      "missing": [
+        "bg:15:15",
+        "bg:2:20"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the meaning of om",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:7:8",
+        "bg:8:13",
+        "bg:17:23"
+      ],
+      "found_top10": [
+        "sb:8:19:41",
+        "sb:2:1:17",
+        "sb:6:16:18-19",
+        "sb:2:1:Invocation",
+        "sb:11:3:49",
+        "sb:6:5:26",
+        "sb:9:19:29",
+        "sb:12:6:42",
+        "sb:11:3:24",
+        "sb:12:6:39"
+      ],
+      "matched": [
+        "bg:17:23"
+      ],
+      "missing": [
+        "bg:7:8",
+        "bg:8:13"
+      ],
+      "totalResults": 61,
+      "error": null
+    },
+    {
+      "query": "what is time according to Krishna",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:10:30",
+        "bg:10:33",
+        "bg:11:32"
+      ],
+      "found_top10": [
+        "bg:11:32",
+        "bg:8:23",
+        "bg:6:17",
+        "sb:1:8:28",
+        "sb:11:1:11-12",
+        "sb:4:11:19",
+        "sb:7:1:11",
+        "sb:10:51:19",
+        "sb:10:69:29",
+        "sb:11:10:14-16"
+      ],
+      "matched": [
+        "bg:11:32"
+      ],
+      "missing": [
+        "bg:10:30",
+        "bg:10:33"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the meaning of Hare Krishna mahamantra",
+      "category": "conceptual",
+      "difficulty": "easy",
+      "expected": [
+        "siksastakam:1"
+      ],
+      "found_top10": [
+        "cc:adi:17:22",
+        "cc:adi:7:83",
+        "cc:antya:7:137",
+        "cc:adi:8:28",
+        "cc:adi:8:26",
+        "cc:adi:7:76",
+        "cc:adi:7:73",
+        "cc:madhya:6:242",
+        "cc:madhya:15:108",
+        "cc:adi:8:24"
+      ],
+      "matched": [],
+      "missing": [
+        "siksastakam:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "qualities of a pure devotee",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:12:13",
+        "bg:12:14",
+        "bg:12:15",
+        "bg:12:16"
+      ],
+      "found_top10": [
+        "sb:3:14:49",
+        "sb:1:5:25",
+        "sb:5:12:13",
+        "sb:3:29:11-12",
+        "sb:3:13:4",
+        "sb:5:3:14",
+        "sb:11:20:36",
+        "sb:2:9:40",
+        "sb:7:5:23-24",
+        "sb:4:24:59"
+      ],
+      "matched": [
+        "bg:12:16"
+      ],
+      "missing": [
+        "bg:12:13",
+        "bg:12:14",
+        "bg:12:15"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what are the four defects of conditioned soul",
+      "category": "conceptual",
+      "difficulty": "hard",
+      "expected": [
+        "bg:introduction"
+      ],
+      "found_top10": [
+        "sb:4:18:5",
+        "sb:11:1:16",
+        "sb:5:14:26",
+        "sb:3:24:12",
+        "sb:7:1:25",
+        "sb:4:21:21",
+        "sb:11:28:15",
+        "sb:4:29:41",
+        "sb:3:27:3",
+        "sb:7:13:28"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:introduction"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the universal form of God",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:11:9",
+        "bg:11:10",
+        "bg:11:12",
+        "bg:11:32"
+      ],
+      "found_top10": [
+        "sb:2:6:17",
+        "sb:3:26:52",
+        "sb:2:2:14",
+        "sb:3:26:55",
+        "sb:11:24:21",
+        "sb:2:5:39",
+        "sb:10:7:35-36",
+        "sb:2:1:26",
+        "sb:3:6:8",
+        "sb:2:10:35"
+      ],
+      "matched": [
+        "bg:11:9"
+      ],
+      "missing": [
+        "bg:11:10",
+        "bg:11:12",
+        "bg:11:32"
+      ],
+      "totalResults": 62,
+      "error": null
+    },
+    {
+      "query": "what is the difference between sakama and niskama bhakti",
+      "category": "conceptual",
+      "difficulty": "hard",
+      "expected": [
+        "sb:1:2:6",
+        "bg:9:22"
+      ],
+      "found_top10": [
+        "sb:2:3:10",
+        "sb:1:5:35",
+        "sb:8:16:21",
+        "sb:3:32:37",
+        "sb:7:9:50",
+        "sb:11:20:35",
+        "sb:4:24:55",
+        "sb:3:29:10",
+        "sb:4:28:32",
+        "sb:11:25:10"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:2:6",
+        "bg:9:22"
+      ],
+      "totalResults": 56,
+      "error": null
+    },
+    {
+      "query": "what is the causal ocean",
+      "category": "conceptual",
+      "difficulty": "hard",
+      "expected": [
+        "sb:3:8"
+      ],
+      "found_top10": [
+        "cc:madhya:20:269",
+        "cc:madhya:15:175",
+        "cc:adi:5:51",
+        "cc:madhya:15:176",
+        "cc:adi:5:54",
+        "cc:adi:5:57",
+        "cc:adi:5:55",
+        "cc:antya:18:21",
+        "cc:antya:20:134",
+        "sb:4:22:40"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:3:8"
+      ],
+      "totalResults": 59,
+      "error": null
+    },
+    {
+      "query": "what is the difference between jiva and maya",
+      "category": "conceptual",
+      "difficulty": "medium",
+      "expected": [
+        "bg:7:4",
+        "bg:7:5"
+      ],
+      "found_top10": [
+        "bs:Brahma-saṁhitā:21:Verse text",
+        "bs:Brahma-saṁhitā:62:Verse text",
+        "sb:6:16:9",
+        "sb:10:87:50",
+        "sb:11:11:3",
+        "sb:8:12:8",
+        "sb:4:23:18",
+        "sb:10:87:32",
+        "sb:10:87:14",
+        "sb:11:11:4"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:7:4",
+        "bg:7:5"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is suddha sattva",
+      "category": "conceptual",
+      "difficulty": "hard",
+      "expected": [
+        "sb:1:2:19",
+        "cc:madhya:19:151"
+      ],
+      "found_top10": [
+        "sb:5:3:20",
+        "sb:3:4:31",
+        "sb:4:3:23",
+        "sb:3:26:21",
+        "sb:8:3:11",
+        "sb:3:27:13",
+        "sb:8:16:20",
+        "sb:8:5:29",
+        "sb:9:19:25",
+        "sb:7:15:25"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:2:19",
+        "cc:madhya:19:151"
+      ],
+      "totalResults": 52,
+      "error": null
+    },
+    {
+      "query": "what is the marginal potency",
+      "category": "conceptual",
+      "difficulty": "hard",
+      "expected": [
+        "bg:7:5",
+        "bg:15:7"
+      ],
+      "found_top10": [
+        "sb:7:3:34",
+        "sb:2:5:19",
+        "sb:2:7:50",
+        "sb:3:27:17",
+        "sb:2:2:14",
+        "sb:2:7:41",
+        "sb:11:11:3",
+        "sb:10:1:25",
+        "sb:11:22:28",
+        "sb:3:6:39"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:7:5",
+        "bg:15:7"
+      ],
+      "totalResults": 63,
+      "error": null
+    },
+    {
+      "query": "is Krishna God or a myth",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:10:8",
+        "bg:7:7",
+        "bg:9:18"
+      ],
+      "found_top10": [
+        "cc:adi:3:87",
+        "cc:adi:2:61",
+        "cc:madhya:24:75",
+        "cc:madhya:21:97",
+        "cc:madhya:9:141",
+        "cc:madhya:21:34",
+        "cc:adi:2:106",
+        "cc:madhya:23:67",
+        "cc:adi:5:130",
+        "cc:adi:5:79"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:10:8",
+        "bg:7:7",
+        "bg:9:18"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "can you prove God exists",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:10:8",
+        "bg:7:7",
+        "bg:9:4"
+      ],
+      "found_top10": [
+        "sb:10:86:47",
+        "sb:7:7:19-20",
+        "sb:11:3:37",
+        "sb:4:21:27",
+        "sb:2:10:20",
+        "sb:7:9:30",
+        "sb:12:2:19-20",
+        "sb:2:9:33",
+        "sb:6:4:27-28",
+        "sb:3:15:45"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:10:8",
+        "bg:7:7",
+        "bg:9:4"
+      ],
+      "totalResults": 60,
+      "error": null
+    },
+    {
+      "query": "why do bad things happen to good people",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:2:14",
+        "bg:4:17",
+        "bg:13:21"
+      ],
+      "found_top10": [
+        "sb:4:13:46",
+        "sb:10:82:19",
+        "sb:11:25:13",
+        "sb:4:29:28",
+        "sb:10:4:46",
+        "sb:10:49:21",
+        "sb:11:13:3",
+        "sb:11:21:7",
+        "sb:12:3:27",
+        "sb:11:25:10"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:2:14",
+        "bg:4:17",
+        "bg:13:21"
+      ],
+      "totalResults": 45,
+      "error": null
+    },
+    {
+      "query": "do animals have souls",
+      "category": "edge_case",
+      "difficulty": "medium",
+      "expected": [
+        "bg:2:20",
+        "bg:5:18",
+        "bg:14:4"
+      ],
+      "found_top10": [
+        "sb:4:22:31",
+        "sb:4:26:9",
+        "sb:6:16:7",
+        "sb:10:10:12",
+        "sb:4:29:29.1a-2a",
+        "sb:11:22:52",
+        "sb:11:9:28",
+        "sb:3:29:28",
+        "sb:3:29:27",
+        "sb:4:20:7"
+      ],
+      "matched": [
+        "bg:2:20"
+      ],
+      "missing": [
+        "bg:5:18",
+        "bg:14:4"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "is the world an illusion",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:7:14",
+        "bg:15:1"
+      ],
+      "found_top10": [
+        "sb:11:13:34",
+        "sb:11:13:35",
+        "sb:10:14:22",
+        "sb:10:86:45",
+        "sb:10:49:25",
+        "sb:11:10:13",
+        "sb:3:30:9",
+        "sb:10:38:11",
+        "sb:6:18:30",
+        "sb:10:87:36"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:7:14",
+        "bg:15:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "did Krishna really exist historically",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:4:1",
+        "bg:4:5",
+        "sb:1:1:1"
+      ],
+      "found_top10": [
+        "bg:2:12",
+        "bg:9:11",
+        "bg:7:10",
+        "bg:10:14",
+        "sb:7:10:51",
+        "sb:10:14:56",
+        "sb:10:14:23",
+        "sb:10:1:11",
+        "sb:12:2:33",
+        "sb:10:46:43"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:4:1",
+        "bg:4:5",
+        "sb:1:1:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "are other planets mentioned in Vedas",
+      "category": "edge_case",
+      "difficulty": "medium",
+      "expected": [
+        "bg:8:16",
+        "sb:5:16"
+      ],
+      "found_top10": [
+        "sb:2:2:32",
+        "sb:4:29:48",
+        "sb:1:3:41",
+        "sb:7:4:5-7",
+        "sb:2:5:15",
+        "sb:3:12:38",
+        "sb:5:21:11",
+        "sb:5:24:7",
+        "sb:5:20:3-4",
+        "sb:6:3:25"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:8:16",
+        "sb:5:16"
+      ],
+      "totalResults": 60,
+      "error": null
+    },
+    {
+      "query": "what about evolution and Darwin",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:2:13",
+        "bg:15:7"
+      ],
+      "found_top10": [
+        "sb:7:13:25",
+        "sb:3:29:29",
+        "sb:5:14:30",
+        "sb:3:26:38"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:2:13",
+        "bg:15:7"
+      ],
+      "totalResults": 25,
+      "error": null
+    },
+    {
+      "query": "can non-Hindus practice Krishna consciousness",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:9:32",
+        "bg:4:11"
+      ],
+      "found_top10": [
+        "bg:9:11",
+        "bg:11:54",
+        "bg:18:55",
+        "bg:2:40",
+        "bg:9:3",
+        "bg:18:66",
+        "bg:12:9",
+        "bg:9:23",
+        "cc:madhya:15:108",
+        "cc:madhya:19:168"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:9:32",
+        "bg:4:11"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "is ISKCON a cult",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:4:2",
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "cc:adi:10:160",
+        "cc:adi:10:7",
+        "cc:adi:12:8",
+        "cc:adi:12:73",
+        "cc:madhya:9:49",
+        "cc:adi:12:27",
+        "cc:antya:6:68",
+        "cc:madhya:8:128",
+        "cc:antya:4:67",
+        "cc:antya:9:49"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:4:2",
+        "prabhupada:letters"
+      ],
+      "totalResults": 60,
+      "error": null
+    },
+    {
+      "query": "predestination vs free will",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:18:63",
+        "bg:5:15"
+      ],
+      "found_top10": [
+        "sb:10:24:15",
+        "sb:1:6:37",
+        "sb:10:24:16",
+        "sb:11:15:6-7",
+        "sb:5:24:20",
+        "sb:10:16:59",
+        "sb:1:6:7",
+        "sb:12:6:25",
+        "sb:9:6:29",
+        "sb:4:30:18"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:63",
+        "bg:5:15"
+      ],
+      "totalResults": 36,
+      "error": null
+    },
+    {
+      "query": "is meditation alone enough",
+      "category": "edge_case",
+      "difficulty": "medium",
+      "expected": [
+        "bg:6:47",
+        "bg:12:1",
+        "bg:12:5"
+      ],
+      "found_top10": [
+        "sb:10:69:30",
+        "sb:11:3:25",
+        "sb:1:9:30",
+        "sb:2:2:13",
+        "sb:11:18:21",
+        "sb:7:5:23-24",
+        "sb:2:1:19",
+        "sb:4:8:77",
+        "sb:11:14:44",
+        "sb:11:14:46"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:6:47",
+        "bg:12:1",
+        "bg:12:5"
+      ],
+      "totalResults": 65,
+      "error": null
+    },
+    {
+      "query": "what does Prabhupada say about abortion",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "sb:10:14:12",
+        "sb:3:31:1",
+        "sb:3:31:5",
+        "sb:9:9:31",
+        "sb:7:7:46",
+        "sb:12:3:34",
+        "sb:10:1:10",
+        "sb:11:20:5",
+        "sb:1:15:24",
+        "sb:7:4:45"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:lectures"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Prabhupada on homosexuality",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "sb:11:3:18",
+        "sb:11:5:11",
+        "sb:5:26:21",
+        "sb:7:13:26",
+        "sb:7:12:11",
+        "sb:11:17:33",
+        "sb:3:20:23",
+        "sb:12:2:3",
+        "sb:9:19:17",
+        "sb:5:26:20"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 42,
+      "error": null
+    },
+    {
+      "query": "is caste system supported by Gita",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:4:13",
+        "bg:18:41"
+      ],
+      "found_top10": [
+        "sb:3:29:31",
+        "sb:1:2:13",
+        "sb:9:2:23-24",
+        "sb:7:11:35",
+        "sb:1:9:26",
+        "sb:3:6:30",
+        "sb:11:10:1",
+        "sb:3:12:41",
+        "sb:11:17:13",
+        "sb:5:19:19"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:4:13",
+        "bg:18:41"
+      ],
+      "totalResults": 59,
+      "error": null
+    },
+    {
+      "query": "why do Hare Krishnas shave their heads",
+      "category": "edge_case",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "sb:10:54:35",
+        "sb:10:54:37",
+        "sb:4:4:6",
+        "sb:11:5:32",
+        "sb:9:1:17",
+        "sb:10:1:10",
+        "cc:adi:4:175",
+        "cc:adi:4:183",
+        "cc:madhya:3:152",
+        "cc:antya:20:13"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 54,
+      "error": null
+    },
+    {
+      "query": "can you be Krishna conscious without ISKCON",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:4:34",
+        "bg:4:2"
+      ],
+      "found_top10": [
+        "sb:7:14:30-33",
+        "sb:4:22:24",
+        "sb:11:6:19",
+        "sb:4:22:23",
+        "sb:11:5:33",
+        "sb:4:3:23",
+        "sb:3:32:23",
+        "sb:11:11:22",
+        "sb:11:14:23",
+        "sb:10:77:23"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:4:34",
+        "bg:4:2"
+      ],
+      "totalResults": 65,
+      "error": null
+    },
+    {
+      "query": "what about Buddhism and Krishna consciousness",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:4:7",
+        "sb:1:3:24"
+      ],
+      "found_top10": [
+        "cc:madhya:25:265",
+        "cc:adi:7:110",
+        "cc:antya:4:175",
+        "bg:2:66",
+        "bg:2:65",
+        "bg:2:41",
+        "bg:9:11",
+        "bg:18:66",
+        "bg:7:10",
+        "bg:18:32"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:4:7",
+        "sb:1:3:24"
+      ],
+      "totalResults": 63,
+      "error": null
+    },
+    {
+      "query": "what about Christianity and Krishna consciousness",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:4:11",
+        "bg:7:21"
+      ],
+      "found_top10": [
+        "cc:madhya:25:20",
+        "cc:madhya:25:265",
+        "cc:adi:17:1",
+        "cc:adi:14:50",
+        "cc:madhya:7:148",
+        "cc:madhya:22:31",
+        "cc:madhya:8:61",
+        "cc:antya:19:103",
+        "cc:madhya:21:35",
+        "cc:madhya:20:154"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:4:11",
+        "bg:7:21"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "why do bad people seem to prosper",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "bg:16:6",
+        "bg:16:19",
+        "bg:16:20"
+      ],
+      "found_top10": [
+        "sb:10:70:27",
+        "sb:1:14:9",
+        "sb:5:16:24",
+        "sb:4:4:15",
+        "sb:12:3:21",
+        "sb:1:14:3",
+        "sb:12:3:25",
+        "sb:10:89:24",
+        "sb:12:3:35",
+        "sb:11:11:15"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:16:6",
+        "bg:16:19",
+        "bg:16:20"
+      ],
+      "totalResults": 43,
+      "error": null
+    },
+    {
+      "query": "what happens to a devotee who falls down",
+      "category": "edge_case",
+      "difficulty": "medium",
+      "expected": [
+        "bg:6:40",
+        "bg:6:41",
+        "bg:6:43"
+      ],
+      "found_top10": [
+        "sb:1:5:19",
+        "sb:1:5:17",
+        "sb:10:2:33",
+        "sb:3:32:21",
+        "sb:10:2:32",
+        "sb:10:74:40",
+        "sb:11:5:3",
+        "sb:4:9:29",
+        "sb:1:9:22",
+        "sb:6:1:19"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:6:40",
+        "bg:6:41",
+        "bg:6:43"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Prabhupad on internet and technology",
+      "category": "edge_case",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "iso:9:Verse text",
+        "cc:antya:6:278",
+        "cc:antya:4:215",
+        "cc:antya:6:236",
+        "cc:antya:6:246",
+        "cc:madhya:17:73",
+        "cc:adi:7:107",
+        "cc:madhya:16:257",
+        "cc:madhya:20:13",
+        "cc:madhya:6:169"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 45,
+      "error": null
+    },
+    {
+      "query": "BG 18.66",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "bg:18:66"
+      ],
+      "found_top10": [
+        "cc:madhya:8:63",
+        "cc:madhya:22:57-58",
+        "cc:madhya:24:252",
+        "cc:madhya:20:139",
+        "cc:adi:14:66",
+        "sb:11:29:2",
+        "sb:10:50:31",
+        "sb:8:10:38",
+        "sb:11:20:19",
+        "sb:7:15:32-33"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:66"
+      ],
+      "totalResults": 61,
+      "error": null
+    },
+    {
+      "query": "SB 1.1.1",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "sb:1:1:1"
+      ],
+      "found_top10": [
+        "sb:3:20:7",
+        "sb:1:2:18",
+        "sb:1:7:11",
+        "sb:1:2:4",
+        "sb:12:12:69",
+        "sb:12:12:1",
+        "sb:2:10:51",
+        "sb:12:13:19",
+        "sb:1:7:6",
+        "sb:1:4:2"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:1:1"
+      ],
+      "totalResults": 46,
+      "error": null
+    },
+    {
+      "query": "NOI verse 1",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "noi:1"
+      ],
+      "found_top10": [
+        "cc:madhya:25:113",
+        "cc:adi:2:64",
+        "cc:madhya:15:174",
+        "cc:adi:3:22",
+        "cc:madhya:13:122",
+        "cc:adi:1:24",
+        "cc:adi:16:49",
+        "cc:adi:1:29",
+        "cc:madhya:4:193",
+        "cc:madhya:20:218"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:1"
+      ],
+      "totalResults": 55,
+      "error": null
+    },
+    {
+      "query": "ISO mantra 1",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "iso:1"
+      ],
+      "found_top10": [
+        "cc:madhya:15:108",
+        "cc:adi:7:128",
+        "cc:madhya:24:331",
+        "cc:antya:3:76",
+        "cc:adi:7:73",
+        "cc:madhya:25:66",
+        "cc:adi:17:22",
+        "cc:madhya:21:125",
+        "sb:8:6:15",
+        "sb:6:8:8-10"
+      ],
+      "matched": [],
+      "missing": [
+        "iso:1"
+      ],
+      "totalResults": 54,
+      "error": null
+    },
+    {
+      "query": "BG 8.5",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "bg:8:5"
+      ],
+      "found_top10": [
+        "bg:8:19",
+        "bg:8:18",
+        "bg:8:3",
+        "bg:8:10",
+        "bg:8:13",
+        "bg:8:23",
+        "bg:8:20",
+        "bg:2:44",
+        "bg:12:9",
+        "bg:8:16"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:8:5"
+      ],
+      "totalResults": 53,
+      "error": null
+    },
+    {
+      "query": "BG 18.55",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "bg:18:55"
+      ],
+      "found_top10": [
+        "bg:18:48",
+        "bg:10:1",
+        "bg:18:2",
+        "bg:18:60",
+        "bg:18:44",
+        "bg:14:12",
+        "bg:6:35",
+        "bg:18:4",
+        "bg:18:8",
+        "bg:15:20"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:55"
+      ],
+      "totalResults": 53,
+      "error": null
+    },
+    {
+      "query": "BG 18.61",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "bg:18:61"
+      ],
+      "found_top10": [
+        "bg:6:35",
+        "bg:18:60",
+        "bg:18:48",
+        "bg:6:10",
+        "bg:6:40",
+        "bg:6:36",
+        "bg:6:5",
+        "bg:6:6",
+        "bg:3:2",
+        "bg:13:29"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:61"
+      ],
+      "totalResults": 60,
+      "error": null
+    },
+    {
+      "query": "BG 18.65",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "bg:18:65"
+      ],
+      "found_top10": [
+        "sb:7:15:32-33",
+        "sb:11:29:2",
+        "sb:11:15:3",
+        "sb:11:20:19",
+        "sb:11:20:18",
+        "sb:7:9:52",
+        "sb:4:29:58",
+        "sb:5:5:9",
+        "sb:11:13:11",
+        "sb:3:28:8"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:65"
+      ],
+      "totalResults": 61,
+      "error": null
+    },
+    {
+      "query": "SB 1.2.10",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "sb:1:2:10"
+      ],
+      "found_top10": [
+        "sb:1:2:18",
+        "sb:1:7:6",
+        "sb:1:5:22",
+        "sb:1:2:6",
+        "sb:3:26:2",
+        "sb:7:10:45",
+        "sb:2:10:2",
+        "sb:3:6:26",
+        "sb:1:7:11",
+        "sb:4:29:41"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:2:10"
+      ],
+      "totalResults": 50,
+      "error": null
+    },
+    {
+      "query": "SB 1.2.17",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "sb:1:2:17"
+      ],
+      "found_top10": [
+        "sb:1:7:11",
+        "sb:1:2:18",
+        "sb:1:7:6",
+        "sb:1:2:6",
+        "sb:1:5:22",
+        "sb:2:4:11",
+        "sb:7:10:45",
+        "sb:3:6:26",
+        "sb:6:14:8",
+        "sb:12:12:69"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:2:17"
+      ],
+      "totalResults": 50,
+      "error": null
+    },
+    {
+      "query": "SB 1.3.28",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "sb:1:3:28"
+      ],
+      "found_top10": [
+        "sb:3:8:15",
+        "sb:9:1:9",
+        "sb:1:7:11",
+        "sb:1:2:30",
+        "sb:3:6:26",
+        "sb:1:3:10",
+        "sb:10:38:12",
+        "sb:3:33:22",
+        "sb:11:24:6",
+        "sb:6:9:28"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:3:28"
+      ],
+      "totalResults": 51,
+      "error": null
+    },
+    {
+      "query": "SB 2.3.17",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "sb:2:3:17"
+      ],
+      "found_top10": [
+        "sb:3:6:26",
+        "sb:3:8:15",
+        "sb:9:1:9",
+        "sb:2:6:17",
+        "sb:2:4:11",
+        "sb:2:1:23",
+        "sb:10:87:2",
+        "sb:12:6:37",
+        "sb:11:24:6",
+        "sb:3:7:21"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:2:3:17"
+      ],
+      "totalResults": 47,
+      "error": null
+    },
+    {
+      "query": "SB 3.25.25",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "sb:3:25:25"
+      ],
+      "found_top10": [
+        "sb:10:87:2",
+        "sb:3:33:22",
+        "sb:3:6:26",
+        "sb:2:6:17",
+        "sb:1:3:10",
+        "sb:5:25:1",
+        "sb:11:13:25",
+        "sb:3:8:15",
+        "sb:4:7:26",
+        "sb:3:33:23"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:3:25:25"
+      ],
+      "totalResults": 50,
+      "error": null
+    },
+    {
+      "query": "SB 7.5.23",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "sb:7:5:23"
+      ],
+      "found_top10": [
+        "sb:7:5:28",
+        "sb:7:5:5",
+        "sb:8:21:20",
+        "sb:7:6:1",
+        "sb:7:5:11",
+        "sb:7:6:3",
+        "sb:7:5:30",
+        "sb:7:7:12",
+        "sb:11:20:5",
+        "sb:7:5:51"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:7:5:23"
+      ],
+      "totalResults": 51,
+      "error": null
+    },
+    {
+      "query": "SB 10.14.3",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "sb:10:14:3"
+      ],
+      "found_top10": [
+        "sb:10:9:19",
+        "sb:3:9:20",
+        "sb:10:3:12",
+        "sb:10:14:57",
+        "sb:10:26:13",
+        "sb:11:11:28",
+        "sb:10:90:26",
+        "sb:10:14:12",
+        "sb:10:34:8",
+        "sb:10:14:31"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:10:14:3"
+      ],
+      "totalResults": 50,
+      "error": null
+    },
+    {
+      "query": "CC Adi 1.1",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "cc:adi:1:1"
+      ],
+      "found_top10": [
+        "cc:adi:3:48",
+        "cc:madhya:1:15",
+        "cc:antya:10:116",
+        "cc:adi:6:118",
+        "cc:madhya:25:167",
+        "cc:adi:9:2",
+        "cc:madhya:16:61",
+        "cc:adi:6:6",
+        "cc:adi:1:39",
+        "cc:adi:17:66"
+      ],
+      "matched": [],
+      "missing": [
+        "cc:adi:1:1"
+      ],
+      "totalResults": 28,
+      "error": null
+    },
+    {
+      "query": "CC Madhya 19.151",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "cc:madhya:19:151"
+      ],
+      "found_top10": [
+        "cc:madhya:19:257",
+        "cc:madhya:1:18",
+        "cc:madhya:16:72",
+        "cc:madhya:25:242",
+        "cc:madhya:25:240",
+        "cc:madhya:1:248",
+        "cc:antya:1:9",
+        "cc:madhya:1:20",
+        "cc:madhya:1:21",
+        "cc:madhya:25:263"
+      ],
+      "matched": [],
+      "missing": [
+        "cc:madhya:19:151"
+      ],
+      "totalResults": 47,
+      "error": null
+    },
+    {
+      "query": "CC Madhya 20.108",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "cc:madhya:20:108"
+      ],
+      "found_top10": [
+        "cc:madhya:19:257",
+        "cc:madhya:1:18",
+        "cc:madhya:16:72",
+        "cc:madhya:25:240",
+        "cc:madhya:25:242",
+        "cc:madhya:1:248",
+        "cc:antya:1:9",
+        "cc:madhya:1:20",
+        "cc:madhya:1:21",
+        "cc:madhya:25:263"
+      ],
+      "matched": [],
+      "missing": [
+        "cc:madhya:20:108"
+      ],
+      "totalResults": 40,
+      "error": null
+    },
+    {
+      "query": "CC Madhya 22.107",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "cc:madhya:22:107"
+      ],
+      "found_top10": [
+        "cc:madhya:16:72",
+        "cc:madhya:1:18",
+        "cc:adi:10:145",
+        "cc:madhya:19:257",
+        "cc:madhya:25:240",
+        "cc:madhya:25:242",
+        "cc:madhya:1:248",
+        "cc:antya:1:9",
+        "cc:madhya:1:20",
+        "cc:madhya:1:21"
+      ],
+      "matched": [],
+      "missing": [
+        "cc:madhya:22:107"
+      ],
+      "totalResults": 46,
+      "error": null
+    },
+    {
+      "query": "NOI verse 3",
+      "category": "exact_reference",
+      "difficulty": "easy",
+      "expected": [
+        "noi:3"
+      ],
+      "found_top10": [
+        "sb:8:19:22",
+        "sb:8:24:33",
+        "sb:8:21:29",
+        "sb:11:2:22",
+        "sb:10:47:30",
+        "sb:12:4:13",
+        "sb:6:4:47",
+        "sb:12:3:30",
+        "sb:10:48:21",
+        "sb:10:72:24-25"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:3"
+      ],
+      "totalResults": 49,
+      "error": null
+    },
+    {
+      "query": "NOI verse 5",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "noi:5"
+      ],
+      "found_top10": [
+        "cc:adi:4:3",
+        "cc:adi:5:3",
+        "cc:adi:1:27",
+        "cc:adi:17:318",
+        "cc:adi:16:68",
+        "cc:adi:1:26",
+        "cc:adi:4:274",
+        "cc:madhya:15:174",
+        "cc:madhya:20:218",
+        "cc:adi:16:54"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:5"
+      ],
+      "totalResults": 55,
+      "error": null
+    },
+    {
+      "query": "NOI verse 6",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "noi:6"
+      ],
+      "found_top10": [
+        "cc:adi:4:101",
+        "cc:adi:1:27",
+        "cc:adi:4:273",
+        "cc:adi:4:229",
+        "cc:adi:5:3",
+        "cc:adi:1:26",
+        "cc:madhya:15:174",
+        "cc:adi:5:12",
+        "cc:madhya:20:218",
+        "cc:antya:5:147"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:6"
+      ],
+      "totalResults": 54,
+      "error": null
+    },
+    {
+      "query": "ISO mantra 12",
+      "category": "exact_reference",
+      "difficulty": "medium",
+      "expected": [
+        "iso:12"
+      ],
+      "found_top10": [
+        "sb:4:8:54",
+        "sb:6:8:7",
+        "sb:6:19:8",
+        "sb:8:6:15",
+        "sb:6:8:8-10",
+        "sb:11:21:15",
+        "sb:4:8:53",
+        "sb:9:1:17",
+        "sb:8:7:29",
+        "sb:6:15:27"
+      ],
+      "matched": [],
+      "missing": [
+        "iso:12"
+      ],
+      "totalResults": 51,
+      "error": null
+    },
+    {
+      "query": "importance of chanting 16 rounds",
+      "category": "multi_source",
+      "difficulty": "medium",
+      "expected": [
+        "noi:1",
+        "siksastakam:1"
+      ],
+      "found_top10": [
+        "cc:adi:17:23",
+        "cc:madhya:15:108",
+        "cc:madhya:4:125",
+        "cc:antya:20:14",
+        "cc:madhya:6:242",
+        "cc:madhya:15:107",
+        "cc:antya:7:83",
+        "cc:adi:7:76",
+        "cc:antya:20:11",
+        "cc:antya:3:177"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:1",
+        "siksastakam:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "four regulative principles",
+      "category": "multi_source",
+      "difficulty": "easy",
+      "expected": [
+        "noi:1",
+        "bg:17:8"
+      ],
+      "found_top10": [
+        "sb:4:22:34",
+        "sb:6:1:12",
+        "sb:11:19:33-35",
+        "sb:11:17:21",
+        "sb:4:22:24",
+        "sb:1:17:41",
+        "sb:11:17:34-35",
+        "sb:1:17:38",
+        "sb:11:18:33",
+        "sb:1:17:25"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:1",
+        "bg:17:8"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Prabhupada on chanting Hare Krishna",
+      "category": "multi_source",
+      "difficulty": "easy",
+      "expected": [
+        "siksastakam:1"
+      ],
+      "found_top10": [
+        "sb:11:2:40",
+        "sb:12:3:52",
+        "sb:11:2:35",
+        "sb:12:13:23",
+        "sb:10:69:45",
+        "sb:11:5:4",
+        "sb:11:3:31",
+        "sb:8:23:16",
+        "sb:12:3:51",
+        "sb:6:2:19"
+      ],
+      "matched": [],
+      "missing": [
+        "siksastakam:1"
+      ],
+      "totalResults": 65,
+      "error": null
+    },
+    {
+      "query": "how to start a temple",
+      "category": "multi_source",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "sb:11:27:50",
+        "sb:3:29:24",
+        "sb:7:14:39",
+        "sb:11:27:52",
+        "sb:7:14:27-28",
+        "sb:3:1:23",
+        "sb:3:29:16",
+        "sb:7:14:29",
+        "sb:11:27:51",
+        "sb:3:29:9"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 65,
+      "error": null
+    },
+    {
+      "query": "distributing prasadam",
+      "category": "multi_source",
+      "difficulty": "medium",
+      "expected": [
+        "bg:9:26"
+      ],
+      "found_top10": [
+        "sb:8:16:55",
+        "sb:7:14:18",
+        "sb:3:29:24",
+        "sb:7:15:6",
+        "sb:7:14:17",
+        "sb:8:16:56",
+        "sb:8:16:54",
+        "sb:3:29:23",
+        "sb:7:15:11",
+        "cc:antya:7:68"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:9:26"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Prabhupada instructions on marriage",
+      "category": "multi_source",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "sb:4:30:15",
+        "sb:10:69:32",
+        "sb:6:19:17",
+        "sb:10:29:25",
+        "sb:10:60:15",
+        "sb:11:17:39",
+        "sb:5:14:37",
+        "sb:3:14:13",
+        "sb:3:3:8",
+        "sb:7:13:26"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 56,
+      "error": null
+    },
+    {
+      "query": "gurukula education for children",
+      "category": "multi_source",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "sb:11:17:22",
+        "sb:7:5:56-57",
+        "sb:11:3:21",
+        "sb:5:4:8",
+        "sb:7:12:13-14",
+        "sb:7:12:1",
+        "sb:7:5:7",
+        "sb:4:12:23",
+        "sb:1:5:24",
+        "sb:10:80:31"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Prabhupada on women role in ISKCON",
+      "category": "multi_source",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "sb:10:29:25",
+        "sb:6:18:42",
+        "sb:1:8:20",
+        "sb:7:11:25",
+        "sb:6:9:9",
+        "sb:9:19:17",
+        "sb:10:29:32",
+        "sb:7:11:28",
+        "sb:11:4:12",
+        "sb:9:14:37"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 65,
+      "error": null
+    },
+    {
+      "query": "importance of deity worship arcana",
+      "category": "multi_source",
+      "difficulty": "medium",
+      "expected": [
+        "sb:7:5:23",
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "cc:madhya:15:108",
+        "cc:madhya:24:334",
+        "cc:madhya:15:107",
+        "cc:madhya:22:130",
+        "cc:madhya:22:124",
+        "cc:madhya:22:122",
+        "cc:madhya:4:60",
+        "cc:madhya:11:31",
+        "sb:3:9:21",
+        "sb:11:27:48"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:7:5:23",
+        "prabhupada:letters"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Prabhupada on science and religion",
+      "category": "multi_source",
+      "difficulty": "medium",
+      "expected": [
+        "bg:2:13",
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "cc:adi:17:260",
+        "cc:adi:1:56",
+        "cc:adi:7:127",
+        "sb:2:7:37",
+        "sb:3:12:25",
+        "sb:7:15:14",
+        "sb:11:3:43"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:2:13",
+        "prabhupada:lectures"
+      ],
+      "totalResults": 29,
+      "error": null
+    },
+    {
+      "query": "Sunday love feast program",
+      "category": "multi_source",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "noi:4:Devanagari",
+        "cc:madhya:11:210",
+        "cc:madhya:3:49",
+        "cc:madhya:14:67",
+        "cc:antya:18:20",
+        "cc:madhya:3:136",
+        "cc:madhya:9:283",
+        "cc:adi:4:163",
+        "cc:antya:17:67",
+        "cc:adi:4:129"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 50,
+      "error": null
+    },
+    {
+      "query": "sannyasa initiation rules",
+      "category": "multi_source",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters",
+        "bg:18:2"
+      ],
+      "found_top10": [
+        "cc:adi:17:265",
+        "cc:madhya:10:108",
+        "cc:madhya:3:177",
+        "cc:madhya:6:73",
+        "cc:antya:8:85",
+        "cc:adi:17:272",
+        "cc:antya:8:66",
+        "cc:madhya:3:178",
+        "cc:antya:12:113",
+        "cc:madhya:3:8"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters",
+        "bg:18:2"
+      ],
+      "totalResults": 63,
+      "error": null
+    },
+    {
+      "query": "Prabhupada on television and movies",
+      "category": "multi_source",
+      "difficulty": "hard",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "cc:madhya:8:273",
+        "cc:madhya:8:274",
+        "sb:11:14:26"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 20,
+      "error": null
+    },
+    {
+      "query": "importance of Kartik month Damodara",
+      "category": "multi_source",
+      "difficulty": "medium",
+      "expected": [
+        "sb:10:9"
+      ],
+      "found_top10": [
+        "cc:madhya:20:201",
+        "cc:adi:10:32",
+        "cc:madhya:14:155",
+        "cc:madhya:12:26",
+        "cc:madhya:13:167",
+        "cc:antya:3:21",
+        "cc:antya:3:42",
+        "cc:madhya:10:116",
+        "cc:antya:14:9",
+        "cc:madhya:19:230"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:10:9"
+      ],
+      "totalResults": 52,
+      "error": null
+    },
+    {
+      "query": "Krishna rasa lila",
+      "category": "person_pastime",
+      "difficulty": "medium",
+      "expected": [
+        "sb:10:29",
+        "sb:10:30",
+        "sb:10:33"
+      ],
+      "found_top10": [
+        "cc:madhya:8:113",
+        "cc:madhya:8:114",
+        "cc:adi:4:219",
+        "cc:adi:1:72",
+        "cc:madhya:9:134",
+        "cc:madhya:8:109",
+        "cc:adi:1:73-74",
+        "cc:adi:7:8",
+        "cc:madhya:8:105",
+        "cc:adi:4:114"
+      ],
+      "matched": [
+        "sb:10:33"
+      ],
+      "missing": [
+        "sb:10:29",
+        "sb:10:30"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Srila Prabhupada journey to America",
+      "category": "person_pastime",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada"
+      ],
+      "found_top10": [
+        "cc:madhya:1:246",
+        "cc:madhya:16:122",
+        "cc:madhya:17:73",
+        "cc:madhya:20:17",
+        "cc:madhya:9:6",
+        "cc:madhya:18:143",
+        "cc:madhya:16:198",
+        "cc:madhya:20:13",
+        "cc:adi:5:199",
+        "cc:madhya:1:241"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada"
+      ],
+      "totalResults": 43,
+      "error": null
+    },
+    {
+      "query": "how Prabhupada started ISKCON",
+      "category": "person_pastime",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada"
+      ],
+      "found_top10": [
+        "noi:3:Devanagari",
+        "cc:antya:4:215",
+        "cc:madhya:7:107",
+        "cc:antya:4:80",
+        "cc:madhya:1:22",
+        "cc:madhya:23:9",
+        "cc:antya:6:247",
+        "cc:madhya:22:83",
+        "cc:madhya:16:259",
+        "cc:adi:1:20"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada"
+      ],
+      "totalResults": 49,
+      "error": null
+    },
+    {
+      "query": "he who has no attachments can really love others",
+      "category": "phrase_recall",
+      "difficulty": "hard",
+      "expected": [
+        "noi:1"
+      ],
+      "found_top10": [
+        "bg:4:20",
+        "bg:18:49",
+        "bg:2:64",
+        "bg:3:19",
+        "bg:5:7",
+        "bg:5:10",
+        "bg:12:16",
+        "bg:2:47",
+        "bg:3:18",
+        "bg:2:71"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:1"
+      ],
+      "totalResults": 65,
+      "error": null
+    },
+    {
+      "query": "one who is not envious but is a kind friend to all",
+      "category": "phrase_recall",
+      "difficulty": "medium",
+      "expected": [
+        "bg:12:13"
+      ],
+      "found_top10": [
+        "cc:madhya:23:106-107",
+        "cc:madhya:23:111-112",
+        "cc:adi:3:45",
+        "cc:madhya:22:81",
+        "cc:madhya:9:110",
+        "cc:madhya:23:108",
+        "cc:madhya:23:109",
+        "cc:adi:6:62",
+        "cc:adi:4:25",
+        "bg:12:13-14"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:12:13"
+      ],
+      "totalResults": 62,
+      "error": null
+    },
+    {
+      "query": "a person in the divine consciousness although engaged in seeing hearing",
+      "category": "phrase_recall",
+      "difficulty": "hard",
+      "expected": [
+        "bg:5:8"
+      ],
+      "found_top10": [
+        "bg:5:8-9",
+        "bg:16:1-3",
+        "bg:2:61",
+        "bg:4:18",
+        "bg:2:53",
+        "bg:2:55",
+        "bg:5:21",
+        "bg:6:29",
+        "bg:2:58",
+        "bg:6:8"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:5:8"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "this material world is just like a blazing forest fire",
+      "category": "phrase_recall",
+      "difficulty": "medium",
+      "expected": [
+        "sb:1:1:1"
+      ],
+      "found_top10": [
+        "sb:5:14:15",
+        "sb:3:27:23",
+        "sb:5:13:9",
+        "sb:10:19:7",
+        "sb:11:21:27",
+        "sb:5:6:8",
+        "sb:5:13:6",
+        "sb:11:7:29",
+        "sb:5:13:3",
+        "sb:10:19:2"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:1:1:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "chant Hare Krishna and be happy",
+      "category": "phrase_recall",
+      "difficulty": "easy",
+      "expected": [
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "cc:adi:8:24",
+        "cc:antya:7:137",
+        "cc:antya:13:121",
+        "cc:adi:7:83",
+        "cc:adi:8:26",
+        "cc:adi:8:28",
+        "cc:adi:7:73",
+        "cc:adi:7:76",
+        "cc:madhya:15:107",
+        "cc:madhya:6:242"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:lectures"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "the whole world is suffering for want of Krishna consciousness",
+      "category": "phrase_recall",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "cc:adi:13:67",
+        "cc:adi:7:26",
+        "cc:adi:9:39",
+        "cc:adi:9:36",
+        "cc:madhya:22:31",
+        "cc:madhya:23:22",
+        "cc:adi:12:6",
+        "cc:madhya:20:117",
+        "cc:antya:3:226",
+        "cc:madhya:17:75"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:lectures"
+      ],
+      "totalResults": 62,
+      "error": null
+    },
+    {
+      "query": "back to home back to Godhead",
+      "category": "phrase_recall",
+      "difficulty": "easy",
+      "expected": [
+        "bg:4:9",
+        "bg:8:21"
+      ],
+      "found_top10": [
+        "sb:10:3:39",
+        "sb:4:29:48",
+        "sb:11:14:25",
+        "sb:8:5:43",
+        "sb:2:2:21",
+        "sb:10:3:45",
+        "sb:7:15:52",
+        "sb:3:32:43",
+        "sb:10:2:31",
+        "sb:6:1:1"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:4:9",
+        "bg:8:21"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "simple living high thinking",
+      "category": "phrase_recall",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "sb:4:22:24",
+        "sb:2:2:3",
+        "sb:7:14:6",
+        "sb:11:7:39",
+        "sb:2:2:4",
+        "sb:2:8:14",
+        "sb:3:27:8",
+        "sb:11:3:25",
+        "sb:3:28:3",
+        "sb:11:11:4"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:lectures"
+      ],
+      "totalResults": 57,
+      "error": null
+    },
+    {
+      "query": "Govinda Jaya Jaya prayer",
+      "category": "phrase_recall",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "sb:10:87:14",
+        "sb:5:18:7",
+        "sb:11:6:20",
+        "sb:6:9:47",
+        "sb:3:16:34",
+        "sb:6:4:22",
+        "sb:3:8:6",
+        "sb:3:19:1",
+        "cc:adi:2:14",
+        "cc:adi:17:122"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:lectures"
+      ],
+      "totalResults": 63,
+      "error": null
+    },
+    {
+      "query": "this is the sum and substance of Lord Caitanyas mission",
+      "category": "phrase_recall",
+      "difficulty": "hard",
+      "expected": [
+        "cc:madhya:19"
+      ],
+      "found_top10": [
+        "cc:adi:8:20",
+        "cc:antya:4:100",
+        "cc:madhya:25:264",
+        "cc:adi:4:220",
+        "cc:adi:3:53",
+        "cc:madhya:8:280",
+        "cc:antya:5:151",
+        "cc:antya:2:3",
+        "cc:antya:3:226",
+        "cc:adi:2:120"
+      ],
+      "matched": [],
+      "missing": [
+        "cc:madhya:19"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "how to chant Hare Krishna properly",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "siksastakam:1",
+        "noi:1"
+      ],
+      "found_top10": [
+        "cc:adi:8:24",
+        "cc:adi:8:31",
+        "cc:adi:8:26",
+        "cc:madhya:15:108",
+        "cc:adi:7:74",
+        "cc:madhya:11:176",
+        "cc:adi:7:76",
+        "cc:antya:7:137",
+        "cc:madhya:15:107",
+        "cc:madhya:6:242"
+      ],
+      "matched": [],
+      "missing": [
+        "siksastakam:1",
+        "noi:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "how to develop detachment",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:2:55",
+        "bg:2:56",
+        "bg:6:35",
+        "bg:13:8"
+      ],
+      "found_top10": [
+        "sb:11:10:7",
+        "sb:11:9:11",
+        "sb:11:19:17",
+        "sb:3:32:42",
+        "sb:3:32:34-36",
+        "sb:11:20:18",
+        "sb:11:20:13",
+        "sb:3:3:22",
+        "sb:11:8:38",
+        "sb:1:2:7"
+      ],
+      "matched": [
+        "bg:6:35"
+      ],
+      "missing": [
+        "bg:2:55",
+        "bg:2:56",
+        "bg:13:8"
+      ],
+      "totalResults": 64,
+      "error": null
+    },
+    {
+      "query": "how to preach Krishna consciousness",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "found_top10": [
+        "sb:7:6:24",
+        "sb:9:11:25",
+        "sb:7:7:53",
+        "sb:7:9:41",
+        "sb:8:5:23",
+        "sb:4:28:31",
+        "sb:3:22:7",
+        "sb:7:13:8",
+        "sb:11:2:45",
+        "sb:11:5:12"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "how to deal with criticism",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:2:14",
+        "bg:2:57",
+        "bg:12:18"
+      ],
+      "found_top10": [
+        "sb:11:28:2",
+        "sb:11:28:8",
+        "sb:10:74:40",
+        "sb:12:6:34",
+        "sb:11:2:46",
+        "sb:7:14:39",
+        "sb:7:5:7",
+        "sb:11:11:15",
+        "sb:11:28:1",
+        "sb:11:23:37"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:2:14",
+        "bg:2:57",
+        "bg:12:18"
+      ],
+      "totalResults": 62,
+      "error": null
+    },
+    {
+      "query": "should devotees study Vedic scriptures",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:15:15",
+        "sb:1:1:1"
+      ],
+      "found_top10": [
+        "cc:madhya:22:118",
+        "cc:adi:3:111",
+        "cc:madhya:1:34",
+        "cc:adi:13:65",
+        "cc:madhya:4:87",
+        "cc:madhya:22:66",
+        "cc:adi:2:117",
+        "cc:adi:16:11",
+        "cc:adi:7:101",
+        "cc:madhya:20:146"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:15:15",
+        "sb:1:1:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "importance of morning program mangala arati",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "noi:3"
+      ],
+      "found_top10": [
+        "cc:madhya:24:334",
+        "cc:madhya:5:139",
+        "cc:madhya:4:209",
+        "cc:madhya:22:124",
+        "cc:madhya:3:59",
+        "cc:madhya:3:58",
+        "cc:madhya:24:332",
+        "cc:madhya:4:122",
+        "cc:madhya:11:214",
+        "cc:adi:12:87"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:3"
+      ],
+      "totalResults": 59,
+      "error": null
+    },
+    {
+      "query": "how to handle material desires",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:3:37",
+        "bg:2:62",
+        "bg:2:63",
+        "bg:5:22"
+      ],
+      "found_top10": [
+        "sb:4:22:28",
+        "sb:7:7:42",
+        "sb:1:6:22",
+        "sb:7:14:8",
+        "sb:11:13:9-10",
+        "sb:9:19:14",
+        "sb:9:19:16",
+        "sb:9:19:13",
+        "sb:11:7:39",
+        "sb:11:8:44"
+      ],
+      "matched": [
+        "bg:2:62"
+      ],
+      "missing": [
+        "bg:3:37",
+        "bg:2:63",
+        "bg:5:22"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "how to raise children in Krishna consciousness",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "sb:7:5:23"
+      ],
+      "found_top10": [
+        "sb:6:14:55",
+        "sb:11:5:12",
+        "sb:10:3:45",
+        "sb:3:14:38",
+        "sb:7:14:3-4",
+        "sb:7:6:1",
+        "sb:10:14:61",
+        "sb:4:21:27",
+        "sb:11:17:55",
+        "sb:5:1:4"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:7:5:23"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "importance of book distribution",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "found_top10": [
+        "cc:madhya:6:205",
+        "cc:adi:17:316",
+        "cc:adi:9:39",
+        "cc:antya:11:88",
+        "cc:madhya:11:143",
+        "cc:antya:4:222",
+        "cc:antya:4:100",
+        "cc:adi:16:11",
+        "cc:antya:4:97",
+        "cc:madhya:9:323"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "totalResults": 61,
+      "error": null
+    },
+    {
+      "query": "how to develop love for Krishna",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "cc:madhya:22:107",
+        "sb:1:2:17",
+        "sb:1:2:18"
+      ],
+      "found_top10": [
+        "sb:7:7:51-52",
+        "sb:4:12:42",
+        "sb:4:29:50",
+        "sb:10:3:37-38",
+        "sb:10:30:34",
+        "sb:3:28:34",
+        "sb:11:5:47",
+        "sb:11:2:40",
+        "sb:11:11:33",
+        "sb:11:12:8"
+      ],
+      "matched": [
+        "cc:madhya:22:107"
+      ],
+      "missing": [
+        "sb:1:2:17",
+        "sb:1:2:18"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the importance of deity worship",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "sb:7:5:23",
+        "bg:12:5"
+      ],
+      "found_top10": [
+        "sb:7:14:40",
+        "sb:11:11:34-41",
+        "sb:11:27:48",
+        "sb:6:3:25",
+        "sb:11:27:1",
+        "sb:7:14:29",
+        "sb:11:2:47",
+        "sb:11:27:3-4",
+        "sb:3:29:24",
+        "sb:3:29:25"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:7:5:23",
+        "bg:12:5"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "should a devotee give up family life",
+      "category": "practical",
+      "difficulty": "hard",
+      "expected": [
+        "bg:3:4",
+        "bg:3:5",
+        "bg:18:7"
+      ],
+      "found_top10": [
+        "sb:7:6:17-18",
+        "sb:8:22:27",
+        "sb:1:13:26",
+        "sb:5:1:5",
+        "sb:5:18:10",
+        "sb:7:6:16",
+        "sb:9:4:65",
+        "sb:4:30:19",
+        "sb:7:5:37",
+        "sb:3:25:39-40"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:3:4",
+        "bg:3:5",
+        "bg:18:7"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "how to handle depression spiritual life",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:2:3",
+        "bg:2:14",
+        "bg:18:66"
+      ],
+      "found_top10": [
+        "sb:11:18:33",
+        "sb:11:20:18",
+        "sb:12:3:30",
+        "sb:7:13:34",
+        "sb:11:25:18",
+        "sb:4:8:33",
+        "sb:11:11:22",
+        "sb:6:12:14",
+        "sb:7:15:24",
+        "sb:7:15:23"
+      ],
+      "matched": [
+        "bg:2:14"
+      ],
+      "missing": [
+        "bg:2:3",
+        "bg:18:66"
+      ],
+      "totalResults": 56,
+      "error": null
+    },
+    {
+      "query": "how to set up a home altar",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "cc:madhya:24:333",
+        "cc:madhya:3:190",
+        "cc:antya:6:143",
+        "cc:madhya:3:207",
+        "cc:madhya:7:58",
+        "cc:madhya:3:206",
+        "cc:madhya:14:66",
+        "cc:adi:5:162",
+        "cc:madhya:7:121",
+        "cc:antya:6:130"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 46,
+      "error": null
+    },
+    {
+      "query": "importance of reading Prabhupada books",
+      "category": "practical",
+      "difficulty": "easy",
+      "expected": [
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "found_top10": [
+        "cc:madhya:24:353",
+        "cc:antya:4:97",
+        "cc:madhya:24:193",
+        "cc:adi:16:11",
+        "cc:madhya:24:317",
+        "cc:madhya:9:308",
+        "cc:adi:8:36",
+        "cc:adi:2:117",
+        "cc:madhya:25:270",
+        "cc:antya:5:89"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "totalResults": 54,
+      "error": null
+    },
+    {
+      "query": "how to observe Janmashtami",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "sb:10:3"
+      ],
+      "found_top10": [
+        "cc:madhya:24:340",
+        "cc:madhya:15:17",
+        "cc:madhya:24:342",
+        "cc:madhya:1:146",
+        "cc:madhya:22:116",
+        "cc:madhya:24:341",
+        "cc:madhya:4:169",
+        "cc:madhya:5:137",
+        "cc:madhya:16:162-163",
+        "sb:11:11:34-41"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:10:3"
+      ],
+      "totalResults": 48,
+      "error": null
+    },
+    {
+      "query": "how to do kirtan properly",
+      "category": "practical",
+      "difficulty": "easy",
+      "expected": [
+        "siksastakam:1",
+        "sb:7:5:23"
+      ],
+      "found_top10": [
+        "cc:antya:4:71",
+        "cc:adi:17:139",
+        "cc:adi:17:135",
+        "cc:adi:17:133",
+        "cc:adi:7:92",
+        "cc:madhya:6:241",
+        "cc:madhya:13:33",
+        "cc:antya:7:11",
+        "cc:adi:17:127",
+        "cc:madhya:13:71"
+      ],
+      "matched": [],
+      "missing": [
+        "siksastakam:1",
+        "sb:7:5:23"
+      ],
+      "totalResults": 62,
+      "error": null
+    },
+    {
+      "query": "what is the Tulasi plant and how to worship",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "cc:madhya:24:261",
+        "cc:antya:6:296",
+        "cc:adi:13:70",
+        "cc:adi:3:107",
+        "cc:antya:3:141",
+        "cc:antya:3:100",
+        "cc:antya:6:297",
+        "cc:adi:6:94",
+        "cc:madhya:24:333",
+        "cc:antya:3:137"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "how to deal with offenses to devotees",
+      "category": "practical",
+      "difficulty": "hard",
+      "expected": [
+        "noi:6",
+        "bg:16:1"
+      ],
+      "found_top10": [
+        "cc:madhya:19:157",
+        "cc:madhya:19:156",
+        "cc:madhya:24:336",
+        "cc:madhya:12:127",
+        "cc:antya:3:213",
+        "cc:antya:1:107",
+        "cc:adi:8:24",
+        "cc:adi:17:266",
+        "cc:madhya:3:100",
+        "cc:madhya:7:154"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:6",
+        "bg:16:1"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "how to develop tolerance",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:2:14",
+        "bg:12:18",
+        "siksastakam:3"
+      ],
+      "found_top10": [
+        "sb:11:7:37",
+        "sb:11:19:36-39",
+        "sb:11:3:24",
+        "sb:10:87:35",
+        "sb:4:11:13",
+        "sb:4:4:10",
+        "sb:11:18:31",
+        "sb:1:16:31",
+        "sb:4:22:24",
+        "sb:12:6:34"
+      ],
+      "matched": [
+        "bg:2:14"
+      ],
+      "missing": [
+        "bg:12:18",
+        "siksastakam:3"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "what is the best charity",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "bg:17:20",
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "found_top10": [
+        "sb:7:14:34",
+        "sb:8:16:61",
+        "sb:8:19:41",
+        "sb:7:15:2",
+        "sb:3:7:41",
+        "sb:8:19:27",
+        "sb:8:20:9",
+        "sb:8:16:60",
+        "sb:11:17:40",
+        "sb:10:31:14"
+      ],
+      "matched": [
+        "bg:17:20"
+      ],
+      "missing": [
+        "bg:18:68",
+        "bg:18:69"
+      ],
+      "totalResults": 64,
+      "error": null
+    },
+    {
+      "query": "Prabhupada daily schedule",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada"
+      ],
+      "found_top10": [
+        "cc:adi:10:99",
+        "cc:adi:10:102",
+        "cc:antya:6:310",
+        "cc:antya:14:22",
+        "cc:madhya:19:130",
+        "cc:madhya:14:70",
+        "cc:madhya:24:332",
+        "cc:madhya:20:390",
+        "cc:antya:10:83-84",
+        "cc:madhya:24:333"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada"
+      ],
+      "totalResults": 42,
+      "error": null
+    },
+    {
+      "query": "importance of following Ekadasi",
+      "category": "practical",
+      "difficulty": "medium",
+      "expected": [
+        "prabhupada:letters"
+      ],
+      "found_top10": [
+        "sb:12:12:60",
+        "sb:8:16:25",
+        "sb:10:28:1",
+        "sb:6:5:31",
+        "sb:6:18:60",
+        "sb:8:16:62",
+        "sb:4:8:72",
+        "sb:3:16:23",
+        "sb:8:16:47",
+        "sb:1:2:14"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:letters"
+      ],
+      "totalResults": 57,
+      "error": null
+    },
+    {
+      "query": "what is nama aparadha offenses to holy name",
+      "category": "practical",
+      "difficulty": "hard",
+      "expected": [
+        "noi:1",
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "cc:adi:17:73",
+        "cc:adi:8:24",
+        "cc:adi:17:32",
+        "cc:antya:3:60",
+        "cc:madhya:24:336",
+        "cc:antya:4:71",
+        "cc:madhya:19:156",
+        "cc:adi:8:16",
+        "cc:adi:8:29-30",
+        "cc:antya:3:61"
+      ],
+      "matched": [],
+      "missing": [
+        "noi:1",
+        "prabhupada:lectures"
+      ],
+      "totalResults": 64,
+      "error": null
+    },
+    {
+      "query": "Krishna consciousness",
+      "category": "transliteration",
+      "difficulty": "easy",
+      "expected": [
+        "bg:2:13",
+        "sb:1:2:6"
+      ],
+      "found_top10": [
+        "cc:madhya:25:265",
+        "cc:madhya:22:31",
+        "cc:adi:1:49",
+        "cc:madhya:22:45",
+        "cc:madhya:23:22",
+        "cc:madhya:24:136",
+        "cc:madhya:19:236",
+        "cc:madhya:22:49",
+        "cc:madhya:23:12",
+        "cc:madhya:23:9"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:2:13",
+        "sb:1:2:6"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Krisna",
+      "category": "transliteration",
+      "difficulty": "easy",
+      "expected": [
+        "bg:2:13"
+      ],
+      "found_top10": [
+        "cc:adi:2:8",
+        "cc:madhya:23:71",
+        "cc:madhya:15:140",
+        "cc:madhya:21:35",
+        "cc:adi:2:107",
+        "cc:madhya:20:154",
+        "cc:madhya:23:74",
+        "cc:madhya:9:30",
+        "cc:adi:5:129",
+        "cc:madhya:8:139"
+      ],
+      "matched": [],
+      "missing": [
+        "bg:2:13"
+      ],
+      "totalResults": 48,
+      "error": null
+    },
+    {
+      "query": "Prabhupad",
+      "category": "transliteration",
+      "difficulty": "easy",
+      "expected": [
+        "prabhupada"
+      ],
+      "found_top10": [
+        "cc:madhya:10:23",
+        "cc:adi:10:7",
+        "cc:adi:7:106",
+        "cc:antya:7:151",
+        "cc:adi:7:64",
+        "cc:madhya:8:124",
+        "cc:antya:4:191",
+        "cc:adi:7:71",
+        "cc:adi:7:107",
+        "cc:madhya:12:185"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada"
+      ],
+      "totalResults": 38,
+      "error": null
+    },
+    {
+      "query": "Radha Rani",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "sb:10"
+      ],
+      "found_top10": [
+        "cc:adi:4:83",
+        "cc:madhya:8:181",
+        "cc:adi:4:71",
+        "cc:madhya:8:162",
+        "cc:madhya:14:160",
+        "cc:adi:4:69",
+        "cc:adi:4:214",
+        "cc:madhya:8:99",
+        "cc:adi:4:70",
+        "cc:madhya:8:209"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:10"
+      ],
+      "totalResults": 57,
+      "error": null
+    },
+    {
+      "query": "Jaganath",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "jagannatha"
+      ],
+      "found_top10": [
+        "cc:antya:9:44",
+        "cc:antya:5:118",
+        "cc:madhya:13:13",
+        "cc:madhya:15:135",
+        "cc:antya:5:148",
+        "cc:antya:15:7",
+        "cc:madhya:1:122",
+        "cc:madhya:1:63",
+        "cc:madhya:13:8",
+        "cc:antya:10:52"
+      ],
+      "matched": [],
+      "missing": [
+        "jagannatha"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Shankar acharya",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "sankaracarya"
+      ],
+      "found_top10": [
+        "cc:madhya:6:180",
+        "cc:madhya:9:244",
+        "cc:madhya:6:182",
+        "cc:madhya:6:176",
+        "cc:madhya:25:27",
+        "cc:adi:7:109",
+        "cc:madhya:25:48",
+        "cc:adi:7:122",
+        "cc:madhya:25:42",
+        "cc:adi:7:136"
+      ],
+      "matched": [],
+      "missing": [
+        "sankaracarya"
+      ],
+      "totalResults": 63,
+      "error": null
+    },
+    {
+      "query": "Ramayan",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "ramayana"
+      ],
+      "found_top10": [
+        "sb:1:3:22",
+        "sb:2:7:23",
+        "sb:1:12:19",
+        "sb:1:9:28",
+        "sb:11:2:39",
+        "sb:2:3:14",
+        "sb:1:1:19",
+        "sb:12:13:4-9",
+        "sb:10:87:32",
+        "sb:1:1:6"
+      ],
+      "matched": [],
+      "missing": [
+        "ramayana"
+      ],
+      "totalResults": 58,
+      "error": null
+    },
+    {
+      "query": "Gopal Krishna",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "gopala",
+        "krsna"
+      ],
+      "found_top10": [
+        "cc:madhya:4:173",
+        "cc:adi:12:77",
+        "cc:madhya:25:64",
+        "cc:madhya:4:93",
+        "cc:madhya:7:81",
+        "cc:madhya:5:32",
+        "cc:antya:7:149",
+        "cc:madhya:4:102",
+        "cc:adi:17:122",
+        "cc:madhya:18:26"
+      ],
+      "matched": [],
+      "missing": [
+        "gopala",
+        "krsna"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Mathura Vrindavan",
+      "category": "transliteration",
+      "difficulty": "easy",
+      "expected": [
+        "mathura",
+        "vrndavana"
+      ],
+      "found_top10": [
+        "sb:10:1:28",
+        "sb:10:78:16",
+        "sb:10:44:13",
+        "sb:10:1:69",
+        "sb:11:12:10",
+        "sb:10:46:1",
+        "sb:10:13:60",
+        "sb:10:11:35",
+        "sb:10:18:7",
+        "cc:antya:4:81"
+      ],
+      "matched": [],
+      "missing": [
+        "mathura",
+        "vrndavana"
+      ],
+      "totalResults": 66,
+      "error": null
+    },
+    {
+      "query": "Dwarka",
+      "category": "transliteration",
+      "difficulty": "easy",
+      "expected": [
+        "dvaraka"
+      ],
+      "found_top10": [
+        "sb:1:11:10",
+        "sb:10:69:7-8",
+        "sb:10:52:27",
+        "sb:10:54:56",
+        "sb:10:54:60",
+        "sb:10:50:21",
+        "sb:11:31:23",
+        "sb:11:2:1",
+        "sb:1:11:24",
+        "sb:10:63:52"
+      ],
+      "matched": [],
+      "missing": [
+        "dvaraka"
+      ],
+      "totalResults": 45,
+      "error": null
+    },
+    {
+      "query": "Tulasi plant importance",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "tulasi"
+      ],
+      "found_top10": [
+        "sb:3:15:19",
+        "sb:4:8:55",
+        "sb:3:15:22",
+        "sb:3:15:43",
+        "sb:3:16:20",
+        "sb:10:13:49",
+        "sb:10:30:8",
+        "sb:10:30:7",
+        "sb:7:5:23-24",
+        "sb:3:10:20"
+      ],
+      "matched": [],
+      "missing": [
+        "tulasi"
+      ],
+      "totalResults": 63,
+      "error": null
+    },
+    {
+      "query": "Ekadashi fasting rules",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "ekadasi"
+      ],
+      "found_top10": [
+        "cc:adi:15:9",
+        "cc:adi:15:10",
+        "cc:madhya:22:116",
+        "cc:adi:10:71",
+        "cc:madhya:24:340",
+        "cc:madhya:24:342",
+        "cc:adi:14:39",
+        "cc:adi:2:74",
+        "cc:madhya:24:341",
+        "cc:madhya:11:114"
+      ],
+      "matched": [],
+      "missing": [
+        "ekadasi"
+      ],
+      "totalResults": 59,
+      "error": null
+    },
+    {
+      "query": "Nrsimha pranam prayers",
+      "category": "transliteration",
+      "difficulty": "medium",
+      "expected": [
+        "sb:7:9"
+      ],
+      "found_top10": [
+        "sb:5:18:8",
+        "sb:5:18:7",
+        "sb:7:8:44",
+        "sb:10:40:19",
+        "sb:7:8:46",
+        "sb:6:8:14",
+        "sb:6:8:34",
+        "sb:4:24:79",
+        "sb:8:16:42",
+        "sb:11:27:45"
+      ],
+      "matched": [],
+      "missing": [
+        "sb:7:9"
+      ],
+      "totalResults": 53,
+      "error": null
+    },
+    {
+      "query": "Haribol meaning",
+      "category": "transliteration",
+      "difficulty": "easy",
+      "expected": [
+        "prabhupada:lectures"
+      ],
+      "found_top10": [
+        "cc:madhya:14:45",
+        "cc:madhya:17:189",
+        "cc:antya:14:101",
+        "cc:madhya:14:46",
+        "cc:antya:14:70",
+        "cc:antya:11:68",
+        "cc:madhya:17:45",
+        "cc:madhya:24:59",
+        "cc:adi:17:199",
+        "cc:madhya:7:97"
+      ],
+      "matched": [],
+      "missing": [
+        "prabhupada:lectures"
+      ],
+      "totalResults": 54,
+      "error": null
+    }
+  ]
+}
