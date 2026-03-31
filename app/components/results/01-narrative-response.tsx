@@ -987,8 +987,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         .narrative-content .lecture-quote::after,
         .narrative-content .letter-quote::after {
           position: absolute;
-          top: 8px;
-          right: 8px;
+          top: -14px;
+          left: 20px;
           padding: 4px 10px;
           border-radius: 6px;
           font-family: 'DM Sans', sans-serif;
@@ -1000,7 +1000,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           opacity: 0;
           pointer-events: none;
           z-index: 5;
-          transform: scale(0.85) translateY(-4px);
+          transform: scale(0.85) translateY(4px);
           animation: none;
         }
 
@@ -1056,14 +1056,14 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         @keyframes tooltipBounceIn {
           0% {
             opacity: 0;
-            transform: scale(0.8) translateY(-8px);
+            transform: scale(0.8) translateY(6px);
           }
           50% {
             opacity: 1;
-            transform: scale(1.06) translateY(1px);
+            transform: scale(1.06) translateY(-2px);
           }
           75% {
-            transform: scale(0.97) translateY(-1px);
+            transform: scale(0.97) translateY(1px);
           }
           100% {
             opacity: 1;
