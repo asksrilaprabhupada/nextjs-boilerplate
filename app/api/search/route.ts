@@ -1133,6 +1133,21 @@ export async function GET(request: NextRequest) {
   try {
     const { verses, prose, transcripts, letters } = await hybridSearch(query);
 
+    // "Did you mean?" — check spelling if few results
+    let suggestion: string | null = null;
+    const totalRaw = verses.length + prose.length + transcripts.length + letters.length;
+    if (totalRaw < 5) {
+      try {
+        const supabase = getSupabase();
+        const { data: spellData } = await supabase.rpc('suggest_spelling', { raw_query: query });
+        if (spellData && typeof spellData === 'string' && spellData.toLowerCase() !== query.toLowerCase()) {
+          suggestion = spellData;
+        }
+      } catch (e) {
+        console.error('[suggest_spelling] Error:', e);
+      }
+    }
+
     // Skip re-ranking layers for direct verse lookups (e.g., "BG 2.20")
     const isDirectLookup = /^(BG|SB|CC|NOI|ISO|BS)\s+\d/i.test(query);
 
@@ -1225,6 +1240,7 @@ export async function GET(request: NextRequest) {
     const articleVerseIds = narrativeVerses.map(v => v.id);
     const fullMetadata = {
       ...metadata,
+      suggestion,
       overflowVerses,
       overflowProse,
       overflowTranscripts,

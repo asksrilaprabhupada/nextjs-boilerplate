@@ -72,6 +72,7 @@ export interface SearchResults {
   totalTranscripts?: number;
   totalLetters?: number;
   articleVerseIds?: string[];
+  suggestion?: string | null;
 }
 
 /* ─── Per-book color system (ONLY for tags and left borders) ─── */
