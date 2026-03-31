@@ -676,3 +676,14 @@ body {
     top: 7px !important;
   }
 }
+
+.narrative-content .verse-label {
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  color: #6366F1;
+  font-style: normal;
+  background: rgba(99, 102, 241, 0.08);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
