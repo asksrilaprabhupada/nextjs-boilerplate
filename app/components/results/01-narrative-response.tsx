@@ -275,21 +275,55 @@ function QuoteTooltip() {
     }
 
     function extractBookRef(quoteEl: HTMLElement): string | null {
-      let el: Element | null = quoteEl.previousElementSibling;
-      let attempts = 0;
-      while (el && attempts < 5) {
-        const refEl = el.querySelector('.verse-ref');
-        if (refEl && refEl.textContent) {
-          return refEl.textContent.replace(/[\[\]]/g, '').trim();
-        }
-        const linkEl = el.querySelector('.verse-link');
-        if (linkEl && linkEl.textContent) {
-          const text = linkEl.textContent.replace(/[\[\]]/g, '').trim();
-          if (text.match(/^(BG|SB|CC|NOI|ISO|BS)\s/i)) return text;
-        }
-        el = el.previousElementSibling;
-        attempts++;
+      // ONLY check the immediately preceding element — never go further
+      const prev = quoteEl.previousElementSibling;
+      if (!prev) return null;
+
+      const refEl = prev.querySelector('.verse-ref');
+      if (refEl && refEl.textContent) {
+        let ref = refEl.textContent.replace(/[\[\]]/g, '').trim();
+        // Clean up "Text" from verse numbers like "SB 5.14.Text 31"
+        ref = ref.replace(/\.?Text\s*/gi, '.').replace(/\.+/g, '.').replace(/\.$/, '');
+        return ref;
       }
+
+      const linkEl = prev.querySelector('.verse-link');
+      if (linkEl && linkEl.textContent) {
+        let text = linkEl.textContent.replace(/[\[\]]/g, '').trim();
+        text = text.replace(/\.?Text\s*/gi, '.').replace(/\.+/g, '.').replace(/\.$/, '');
+        if (text.match(/^(BG|SB|CC|NOI|ISO|BS)\s/i)) return text;
+      }
+
+      return null;
+    }
+
+    function extractProseBookName(quoteEl: HTMLElement): string | null {
+      // For prose/lecture/letter quotes, extract the book or source name from the text above
+      const prev = quoteEl.previousElementSibling;
+      if (!prev) return null;
+
+      const text = prev.textContent || '';
+
+      // Match patterns like "In Book Name, Śrīla Prabhupāda writes:"
+      // or "In Book Name (Chapter), Śrīla Prabhupāda writes:"
+      const bookPatterns = [
+        /In\s+(.+?)(?:\s*\(|,\s*Śrīla|,\s*Prabhupāda|,\s*His\s+Divine)/i,
+        /In\s+(.+?),\s+(?:Śrīla|Prabhupāda|His\s+Divine)/i,
+        /From\s+(.+?)(?:,\s*Śrīla|,\s*Prabhupāda)/i,
+      ];
+
+      for (const pattern of bookPatterns) {
+        const match = text.match(pattern);
+        if (match && match[1]) {
+          let name = match[1].trim();
+          // Don't return if it's just "a lecture" or "a letter"
+          if (/^a\s+(lecture|letter)/i.test(name)) return null;
+          // Trim trailing punctuation
+          name = name.replace(/[,.:;]+$/, '').trim();
+          if (name.length > 3 && name.length < 80) return name;
+        }
+      }
+
       return null;
     }
 
@@ -353,10 +387,16 @@ function QuoteTooltip() {
       let mainText = config.label;
       let subtext = '';
 
-      if (quoteType === 'verse-quote' || quoteType === 'purport-quote' || quoteType === 'prose-quote') {
+      if (quoteType === 'verse-quote' || quoteType === 'purport-quote') {
         const bookRef = extractBookRef(quoteEl);
         if (bookRef) {
           mainText = expandBookAbbreviation(bookRef);
+          subtext = config.label;
+        }
+      } else if (quoteType === 'prose-quote') {
+        const bookName = extractProseBookName(quoteEl);
+        if (bookName) {
+          mainText = bookName;
           subtext = config.label;
         }
       } else if (quoteType === 'lecture-quote') {
