@@ -11,6 +11,7 @@ import { embedQuery } from "@/app/lib/03-embed";
 import { getCached, setCached } from "@/app/lib/04-search-cache";
 import { ensureVerseLinks } from "@/app/lib/05-link-postprocessor";
 import { preprocessQuery } from "@/app/lib/07-query-preprocessor";
+import { cohereRerank } from "@/app/lib/08-cohere-rerank";
 import { getSpeaker } from "@/app/api/generate-article/route";
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
@@ -725,133 +726,8 @@ function isPastimeNarrative(v: VerseHit): boolean {
 }
 
 // =====================================================
-// LLM-BASED RE-RANKING (Layer 1 — Primary Fix)
+// (Reranking now handled by cohereRerank from app/lib/08-cohere-rerank.ts)
 // =====================================================
-
-/**
- * LLM-based re-ranking: asks Gemini Flash Lite to score each passage's
- * relevance to the user's question on a 1-5 scale.
- *
- * This catches the critical distinction between verses that MENTION a topic
- * (e.g., a pastime where someone gets angry) vs verses that TEACH about it
- * (e.g., Kṛṣṇa explaining anger's root cause in BG 3.37).
- *
- * Cost: ~1-2 cents per query on Flash Lite. Latency: ~1-2 seconds.
- */
-async function llmReRank(
-  query: string,
-  verses: VerseHit[],
-  prose: ProseHit[],
-): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
-  if (verses.length === 0 && prose.length === 0) return { verses, prose };
-
-  // Build a compact list of candidates for scoring
-  const candidates: { idx: number; type: "verse" | "prose"; snippet: string }[] = [];
-
-  for (let i = 0; i < verses.length; i++) {
-    const v = verses[i];
-    const summaryTag = (v.tags || []).find(t => t.startsWith("SUMMARY:"));
-    const summary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
-    const ref = cleanRef(v);
-    const snippet = summary
-      ? `[${ref}] ${summary}`
-      : `[${ref}] ${(v.translation || "").slice(0, 150)}`;
-    candidates.push({ idx: i, type: "verse", snippet });
-  }
-
-  for (let i = 0; i < prose.length; i++) {
-    const p = prose[i];
-    const summaryTag = (p.tags || []).find(t => t.startsWith("SUMMARY:"));
-    const summary = summaryTag ? summaryTag.replace("SUMMARY:", "").trim() : "";
-    const bookName = getBookName(p.book_slug);
-    const snippet = summary
-      ? `[${bookName}] ${summary}`
-      : `[${bookName}] ${(p.body_text || "").slice(0, 150)}`;
-    candidates.push({ idx: i, type: "prose", snippet });
-  }
-
-  // Limit to top 55 candidates to keep the prompt manageable
-  const toScore = candidates.slice(0, 55);
-
-  const prompt = `You are scoring search results for a devotee's question about Śrīla Prabhupāda's teachings.
-
-QUESTION: "${query}"
-
-Score each passage below from 1 to 5:
-5 = Directly answers or teaches about the question (instructional verse, philosophical explanation, practical guidance)
-4 = Strongly relevant teaching that addresses the topic
-3 = Moderately relevant — related topic but doesn't directly answer the question
-2 = Tangentially related — mentions the topic in passing or in a different context
-1 = Not relevant — merely mentions a keyword from the question but doesn't teach about it (e.g., a pastime where someone happens to be angry when the question is about overcoming anger)
-
-CRITICAL DISTINCTION: A verse where someone IS angry in a story scores 1-2. A verse that TEACHES about anger (its cause, how to overcome it, its nature) scores 4-5.
-
-Return ONLY a JSON array of numbers (scores), same order as the passages. No explanation, no markdown.
-
-PASSAGES:
-${toScore.map((c, i) => `${i + 1}. ${c.snippet}`).join("\n")}`;
-
-  try {
-    const raw = await callGemini(prompt, "gemini-2.5-flash-lite", 500);
-    if (!raw) return { verses, prose };
-
-    // Parse the JSON array of scores
-    const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/gi, "").trim();
-    let scores: number[];
-    try {
-      scores = JSON.parse(cleaned);
-    } catch {
-      // Try to extract numbers if JSON parse fails
-      const nums = cleaned.match(/\d/g);
-      if (nums) {
-        scores = nums.map(Number);
-      } else {
-        return { verses, prose };
-      }
-    }
-
-    if (!Array.isArray(scores) || scores.length === 0) return { verses, prose };
-
-    // Apply LLM scores to the candidates
-    const scoreMap = new Map<string, number>();
-    for (let i = 0; i < Math.min(scores.length, toScore.length); i++) {
-      const score = Math.min(5, Math.max(1, scores[i] || 3));
-      const key = `${toScore[i].type}-${toScore[i].idx}`;
-      scoreMap.set(key, score);
-    }
-
-    // Re-sort verses by combining existing RRF score with LLM relevance score
-    const rerankedVerses = verses.map((v, i) => {
-      const llmScore = scoreMap.get(`verse-${i}`) || 3;
-      const combinedScore = (v.score || 0) * 0.25 + (llmScore / 5) * 0.75;
-      return { ...v, score: combinedScore, _llmScore: llmScore };
-    });
-
-    // Filter out verses with LLM score of 1 (completely irrelevant)
-    const filteredVerses = rerankedVerses
-      .filter(v => (v as Record<string, unknown>)._llmScore as number >= 2)
-      .sort((a, b) => b.score - a.score);
-
-    // Re-sort prose similarly
-    const rerankedProse = prose.map((p, i) => {
-      const llmScore = scoreMap.get(`prose-${i}`) || 3;
-      const combinedScore = (p.score || 0) * 0.25 + (llmScore / 5) * 0.75;
-      return { ...p, score: combinedScore, _llmScore: llmScore };
-    });
-
-    const filteredProse = rerankedProse
-      .filter(p => (p as Record<string, unknown>)._llmScore as number >= 2)
-      .sort((a, b) => b.score - a.score);
-
-    console.log(`[LLM ReRank] ${verses.length} verses -> ${filteredVerses.length} after filtering (removed ${verses.length - filteredVerses.length} irrelevant)`);
-    console.log(`[LLM ReRank] ${prose.length} prose -> ${filteredProse.length} after filtering`);
-
-    return { verses: filteredVerses, prose: filteredProse };
-  } catch (err) {
-    console.error("[LLM ReRank] Failed, using original order:", err);
-    return { verses, prose };
-  }
-}
 
 // =====================================================
 // SYNTHESIS PROMPT BUILDER
@@ -1298,29 +1174,36 @@ export async function GET(request: NextRequest) {
           }).sort((a, b) => (b.score || 0) - (a.score || 0))
         : boostedVerses;
 
-      // ── Step 4: LLM-based re-ranking (score each candidate's actual relevance) ──
-      // Skip LLM rerank if top result clearly dominates (saves ~1-2s and ~$0.01-0.02 per query)
+      // ── Step 4: Cohere cross-encoder re-ranking ──
+      // Skip rerank if top result clearly dominates (saves latency)
       const topScores = demotedVerses.slice(0, 5).map(v => v.score || 0);
       const clearWinner = topScores.length >= 2 && topScores[0] > topScores[1] * 2;
 
-      const llmReRanked = clearWinner
-        ? { verses: demotedVerses.slice(0, 50), prose: rankedProse.slice(0, 15) }
-        : await llmReRank(
-            query,
-            demotedVerses.slice(0, 50),
-            rankedProse.slice(0, 15),
-          );
+      let rerankedVerses: VerseHit[];
+      let rerankedProse: ProseHit[];
+
+      if (clearWinner) {
+        rerankedVerses = demotedVerses.slice(0, 50);
+        rerankedProse = rankedProse.slice(0, 15);
+      } else {
+        const [verseResults, proseResults] = await Promise.all([
+          cohereRerank(query, demotedVerses.slice(0, 50), 50),
+          cohereRerank(query, rankedProse.slice(0, 15), 15),
+        ]);
+        rerankedVerses = verseResults.map(r => ({ ...r.item, score: r.relevance_score }));
+        rerankedProse = proseResults.map(r => ({ ...r.item, score: r.relevance_score }));
+      }
 
       // ── Step 5: Slice for narrative and overflow ──
-      narrativeVerses = llmReRanked.verses.slice(0, 40);
-      narrativeProse = llmReRanked.prose.slice(0, 12);
+      narrativeVerses = rerankedVerses.slice(0, 40);
+      narrativeProse = rerankedProse.slice(0, 12);
 
       rawOverflowVerses = [
-        ...llmReRanked.verses.slice(40),
+        ...rerankedVerses.slice(40),
         ...demotedVerses.slice(50),
       ];
       rawOverflowProse = [
-        ...llmReRanked.prose.slice(12),
+        ...rerankedProse.slice(12),
         ...rankedProse.slice(15),
       ];
     }
