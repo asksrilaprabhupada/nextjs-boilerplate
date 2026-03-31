@@ -6,7 +6,7 @@
  * Long queries get broken into 3-5 focused search phrases + tag terms.
  */
 const GEMINI_FLASH_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+  "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent";
 export interface PreprocessedQuery {
   searchPhrases: string[];
   tagTerms: string[];
