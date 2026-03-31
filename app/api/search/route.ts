@@ -982,10 +982,10 @@ The purport is where Śrīla Prabhupāda's actual explanation lives. An article 
 FORMAT RULES:
 - Your intro, transitions, and conclusion go in <p> tags
 - Verse/translation quotes go in <div class="verse-quote">
-- Purport quotes go in <div class="purport-quote">
-- Prose book quotes go in <div class="prose-quote">
-- Lecture quotes go in <div class="lecture-quote">
-- Letter quotes go in <div class="letter-quote">
+- Purport quotes go in <div class="purport-quote"> — ALWAYS end the purport block with the same clickable reference link as the verse: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
+- Prose book quotes go in <div class="prose-quote"> — end with the book name as a styled reference if a Vedabase link exists
+- Lecture quotes go in <div class="lecture-quote"> — end with a clickable reference link to the lecture on Vedabase
+- Letter quotes go in <div class="letter-quote"> — end with a clickable reference link to the letter on Vedabase
 - Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
 - EXCEPTION: If the VEDABASE_URL is empty or missing, do NOT create a link. Instead render the reference as: <span class="verse-label">[REF]</span> — this applies to books not available on Vedabase.io (Nārada Bhakti Sūtra, Mukunda-mālā-stotra, Renunciation Through Wisdom, Life Comes From Life, Kṛṣṇa Consciousness: The Topmost Yoga System, Elevation to Kṛṣṇa Consciousness, Message of Godhead, Easy Journey to Other Planets, Transcendental Teachings of Prahlāda Mahārāja).
 - Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
@@ -1147,6 +1147,9 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       const excerpt = smartTruncate(x.purport, 600);
       parts.push(`<p>${purportTransitions[idx % purportTransitions.length]}</p>`);
       parts.push(`<div class="purport-quote">"${excerpt}"</div>`);
+      if (url) {
+        parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a></p>`);
+      }
     }
   };
 
@@ -1188,6 +1191,9 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       parts.push(`<p>In <span class="verse-label">${bookName}</span>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
     }
     parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
+    if (url) {
+      parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">${bookName}</span></a></p>`);
+    }
     return true;
   };
 
@@ -1212,6 +1218,9 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
     }
     parts.push(`<div class="lecture-quote">"${excerpt}"</div>`);
+    if (url) {
+      parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">View on Vedabase</span></a></p>`);
+    }
   };
 
   /** Render a single letter passage */
@@ -1235,6 +1244,9 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
     }
     parts.push(`<div class="letter-quote">"${excerpt}"</div>`);
+    if (url) {
+      parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">View on Vedabase</span></a></p>`);
+    }
   };
 
   // Build unified list of all items with scores, sort by relevance

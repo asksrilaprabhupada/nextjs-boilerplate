@@ -766,41 +766,19 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                 <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
                   <div
                     className="narrative-content font-body"
-                    dangerouslySetInnerHTML={{ __html: (isStreaming && streamingNarrative) ? streamingNarrative : results.narrative }}
+                    dangerouslySetInnerHTML={{ __html: results.narrative }}
                     onClick={handleNarrativeClick}
                     style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
                   />
-                  {isStreaming && (
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: 10, marginTop: 16, padding: "12px 16px",
-                      borderRadius: 12, background: "rgba(139,92,246,0.04)", border: "1px solid rgba(196,181,253,0.2)",
-                    }}>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        {[0, 1, 2].map(i => (
-                          <div key={i} style={{
-                            width: 6, height: 6, borderRadius: "50%", background: "#8B5CF6",
-                            animation: `pulse 1.4s ease-in-out ${i * 0.2}s infinite`,
-                          }} />
-                        ))}
-                      </div>
-                      <span className="font-body" style={{ fontSize: 13, color: "#7C3AED", fontWeight: 500 }}>
-                        Weaving Prabhupāda&apos;s words into a narrative...
-                      </span>
-                      <span style={{
-                        width: 2, height: 16, background: "#8B5CF6", borderRadius: 1, marginLeft: "auto",
-                        animation: "streamCursorBlink 0.8s step-end infinite",
-                      }} />
-                    </div>
-                  )}
                 </div>
 
                 {/* Feedback widget */}
-                {!isStreaming && results && results.totalResults > 0 && (
+                {results && results.totalResults > 0 && (
                   <SearchFeedback searchLogId={searchLogId || null} />
                 )}
 
                 {/* Dig Deeper */}
-                {!isStreaming && results && ((results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)) > 25 && (
+                {results && ((results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)) > 25 && (
                   <button
                     onClick={() => setDigDeeperOpen(true)}
                     className="font-body"
@@ -818,7 +796,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                 )}
 
                 {/* Follow-up questions */}
-                {!isStreaming && followUps.length > 0 && (
+                {followUps.length > 0 && (
                   <div style={{ marginTop: 20, padding: "clamp(14px, 3vw, 20px) clamp(16px, 3vw, 24px)", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
                     <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 12 }}>
                       People also explore

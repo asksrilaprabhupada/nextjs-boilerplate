@@ -41,8 +41,8 @@ export default function Home() {
   const [overlayOpen, setOverlayOpen] = useState<OverlayItem | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResults | null>(null);
   const [isSearching, setIsSearching] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [streamingNarrative, setStreamingNarrative] = useState("");
+  const [isStreaming] = useState(false);
+  const [streamingNarrative] = useState("");
   const [currentQuery, setCurrentQuery] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const [viewMode, setViewMode] = useState<"article" | "references">("article");
@@ -90,8 +90,6 @@ export default function Home() {
     // Reset all search state → hero will reappear
     setSearchResults(null);
     setIsSearching(false);
-    setIsStreaming(false);
-    setStreamingNarrative("");
     setCurrentQuery("");
     setViewMode("article");
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -107,7 +105,7 @@ export default function Home() {
       onDone: (narrativeAccum: string) => void;
     },
   ) => {
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&mode=article`, { signal: controller.signal });
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&mode=article&stream=false`, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const contentType = res.headers.get("content-type") || "";
@@ -159,8 +157,6 @@ export default function Home() {
 
     searchStartTimeRef.current = Date.now();
     setIsSearching(true);
-    setIsStreaming(false);
-    setStreamingNarrative("");
     setSearchResults(null);
     setSearchLogId(null);
     searchLogIdRef.current = null;
@@ -173,60 +169,48 @@ export default function Home() {
       const questions = parseQuestions(query);
 
       if (questions.length <= 1) {
-        // ─── Single question: standard SSE path ───
-        let partialResults: SearchResults | null = null;
-        let narrativeAccum = "";
+        // ─── Single question: JSON path (no streaming) ───
+        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&mode=article&stream=false`, { signal: controller.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        await fetchSingleSearch(query, controller, {
-          onMetadata: (event) => {
-            if (event.books) {
-              // SSE metadata event
-              partialResults = {
-                query: event.query || query,
-                keywords: event.keywords || [],
-                synonyms: event.synonyms || [],
-                relatedConcepts: event.relatedConcepts || [],
-                narrative: event.narrative || "",
-                totalResults: event.totalResults,
-                citations: event.citations,
-                books: event.books,
-                overflowVerses: event.overflowVerses || [],
-                overflowProse: event.overflowProse || [],
-                totalVerses: event.totalVerses || 0,
-                totalProse: event.totalProse || 0,
-                suggestion: event.suggestion || null,
-                suggestionDisplay: event.suggestionDisplay || null,
-              };
-              setSearchResults(partialResults);
-              setIsSearching(false);
-              setIsStreaming(true);
-              scrollToResults();
-            }
-          },
-          onNarrativeChunk: (accum) => {
-            narrativeAccum = accum;
-            setStreamingNarrative(accum);
-          },
-          onDone: (finalNarrative) => {
-            narrativeAccum = finalNarrative;
-            if (partialResults) {
-              const finalResults = { ...partialResults, narrative: narrativeAccum };
-              setSearchResults(finalResults);
-              logSearch({
-                query,
-                totalResults: finalResults.totalResults || 0,
-                verseIds: (finalResults.books || []).flatMap((b: any) => (b.verses || []).map((v: any) => v.id)),
-                proseIds: (finalResults.books || []).flatMap((b: any) => (b.prose || []).map((p: any) => p.id)),
-                booksReturned: (finalResults.books || []).map((b: any) => b.slug),
-                searchMethod: "hybrid",
-                totalDurationMs: Date.now() - searchStartTimeRef.current,
-                narrativeLength: narrativeAccum.length,
-              }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
-            }
-            setIsStreaming(false);
-            setStreamingNarrative("");
-          },
-        });
+        const jsonResults = await res.json();
+
+        const finalResults: SearchResults = {
+          query: jsonResults.query || query,
+          keywords: jsonResults.keywords || [],
+          synonyms: jsonResults.synonyms || [],
+          relatedConcepts: jsonResults.relatedConcepts || [],
+          narrative: jsonResults.narrative || "",
+          totalResults: jsonResults.totalResults,
+          citations: jsonResults.citations,
+          books: jsonResults.books,
+          overflowVerses: jsonResults.overflowVerses || [],
+          overflowProse: jsonResults.overflowProse || [],
+          overflowTranscripts: jsonResults.overflowTranscripts || [],
+          overflowLetters: jsonResults.overflowLetters || [],
+          totalVerses: jsonResults.totalVerses || 0,
+          totalProse: jsonResults.totalProse || 0,
+          totalTranscripts: jsonResults.totalTranscripts || 0,
+          totalLetters: jsonResults.totalLetters || 0,
+          articleVerseIds: jsonResults.articleVerseIds || [],
+          suggestion: jsonResults.suggestion || null,
+          suggestionDisplay: jsonResults.suggestionDisplay || null,
+        };
+
+        setSearchResults(finalResults);
+        setIsSearching(false);
+        scrollToResults();
+
+        logSearch({
+          query,
+          totalResults: finalResults.totalResults || 0,
+          verseIds: (finalResults.books || []).flatMap((b: any) => (b.verses || []).map((v: any) => v.id)),
+          proseIds: (finalResults.books || []).flatMap((b: any) => (b.prose || []).map((p: any) => p.id)),
+          booksReturned: (finalResults.books || []).map((b: any) => b.slug),
+          searchMethod: "hybrid",
+          totalDurationMs: Date.now() - searchStartTimeRef.current,
+          narrativeLength: (finalResults.narrative || "").length,
+        }).then(id => { searchLogIdRef.current = id; setSearchLogId(id); });
       } else {
         // ─── Multiple questions: parallel search, merge, deduplicate ───
         const allMetadata: any[] = [];
@@ -327,7 +311,6 @@ export default function Home() {
       }
     } finally {
       setIsSearching(false);
-      setIsStreaming(false);
     }
   }, [scrollToProgress, scrollToResults, fetchSingleSearch]);
 
