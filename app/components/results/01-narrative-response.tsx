@@ -981,132 +981,113 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           cursor: default;
         }
 
-        .narrative-content .verse-quote::before,
-        .narrative-content .purport-quote::before,
-        .narrative-content .prose-quote::before,
-        .narrative-content .lecture-quote::before,
-        .narrative-content .letter-quote::before {
+        .narrative-content .verse-quote::after,
+        .narrative-content .purport-quote::after,
+        .narrative-content .prose-quote::after,
+        .narrative-content .lecture-quote::after,
+        .narrative-content .letter-quote::after {
           position: absolute;
-          left: -3px;
-          top: 50%;
-          padding: 7px 14px 7px 12px;
-          border-radius: 10px;
+          top: 8px;
+          right: 8px;
+          padding: 4px 10px;
+          border-radius: 6px;
           font-family: 'DM Sans', sans-serif;
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 600;
           font-style: normal;
-          letter-spacing: 0.02em;
+          letter-spacing: 0.03em;
           white-space: nowrap;
           opacity: 0;
           pointer-events: none;
-          z-index: 10;
-          transform: translateX(-100%) translateY(-50%) translateX(-12px) scale(0.92);
+          z-index: 5;
+          transform: scale(0.85) translateY(-4px);
           animation: none;
         }
 
-        .narrative-content .verse-quote:hover::before,
-        .narrative-content .purport-quote:hover::before,
-        .narrative-content .prose-quote:hover::before,
-        .narrative-content .lecture-quote:hover::before,
-        .narrative-content .letter-quote:hover::before {
-          animation: tooltipBounceIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
-                     tooltipGlow 2s ease-in-out 0.5s infinite;
+        .narrative-content .verse-quote:hover::after,
+        .narrative-content .purport-quote:hover::after,
+        .narrative-content .prose-quote:hover::after,
+        .narrative-content .lecture-quote:hover::after,
+        .narrative-content .letter-quote:hover::after {
+          animation: tooltipBounceIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+                     tooltipGlow 2.5s ease-in-out 0.5s infinite;
         }
 
-        /* Verse translation tooltip */
-        .narrative-content .verse-quote::before {
-          content: "● Verse Translation";
+        .narrative-content .verse-quote::after {
+          content: "⬤ Verse Translation";
           background: linear-gradient(135deg, #F5F3FF, #EDE9FE);
           color: #7C3AED;
           border: 1px solid #C4B5FD;
-          box-shadow: 0 4px 16px rgba(139, 92, 246, 0.12);
+          box-shadow: 0 2px 10px rgba(139, 92, 246, 0.15);
         }
 
-        /* Purport tooltip */
-        .narrative-content .purport-quote::before {
-          content: "● Purport";
+        .narrative-content .purport-quote::after {
+          content: "⬤ Purport";
           background: linear-gradient(135deg, #F5F3FF, #EDE9FE);
           color: #6D28D9;
           border: 1px solid #A78BFA;
-          box-shadow: 0 4px 16px rgba(109, 40, 217, 0.12);
+          box-shadow: 0 2px 10px rgba(109, 40, 217, 0.15);
         }
 
-        /* Book passage tooltip */
-        .narrative-content .prose-quote::before {
-          content: "● Book Passage";
+        .narrative-content .prose-quote::after {
+          content: "⬤ Book Passage";
           background: linear-gradient(135deg, #EEF2FF, #E0E7FF);
           color: #4F46E5;
           border: 1px solid #A5B4FC;
-          box-shadow: 0 4px 16px rgba(79, 70, 229, 0.12);
+          box-shadow: 0 2px 10px rgba(79, 70, 229, 0.15);
         }
 
-        /* Lecture tooltip */
-        .narrative-content .lecture-quote::before {
-          content: "● Lecture";
+        .narrative-content .lecture-quote::after {
+          content: "⬤ Lecture";
           background: linear-gradient(135deg, #FFF7ED, #FFEDD5);
           color: #C2410C;
           border: 1px solid #FDBA74;
-          box-shadow: 0 4px 16px rgba(251, 146, 60, 0.15);
+          box-shadow: 0 2px 10px rgba(251, 146, 60, 0.18);
         }
 
-        /* Letter tooltip */
-        .narrative-content .letter-quote::before {
-          content: "● Letter";
+        .narrative-content .letter-quote::after {
+          content: "⬤ Letter";
           background: linear-gradient(135deg, #F0FDF4, #DCFCE7);
           color: #15803D;
           border: 1px solid #86EFAC;
-          box-shadow: 0 4px 16px rgba(74, 222, 128, 0.15);
+          box-shadow: 0 2px 10px rgba(74, 222, 128, 0.18);
         }
 
-        /* Bounce in animation — slide + scale + overshoot */
         @keyframes tooltipBounceIn {
           0% {
             opacity: 0;
-            transform: translateX(-100%) translateY(-50%) translateX(-16px) scale(0.85);
+            transform: scale(0.8) translateY(-8px);
           }
-          40% {
-            opacity: 0.9;
-            transform: translateX(-100%) translateY(-50%) translateX(4px) scale(1.04);
-          }
-          60% {
+          50% {
             opacity: 1;
-            transform: translateX(-100%) translateY(-50%) translateX(-2px) scale(0.98);
+            transform: scale(1.06) translateY(1px);
           }
-          80% {
-            transform: translateX(-100%) translateY(-50%) translateX(1px) scale(1.01);
+          75% {
+            transform: scale(0.97) translateY(-1px);
           }
           100% {
             opacity: 1;
-            transform: translateX(-100%) translateY(-50%) translateX(0px) scale(1);
+            transform: scale(1) translateY(0);
           }
         }
 
-        /* Soft glow pulse — repeats gently after the bounce */
         @keyframes tooltipGlow {
           0%, 100% {
-            filter: brightness(1) drop-shadow(0 0 0px transparent);
+            filter: brightness(1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
           }
           50% {
-            filter: brightness(1.05) drop-shadow(0 0 8px currentColor);
+            filter: brightness(1.06);
+            box-shadow: 0 2px 14px rgba(0,0,0,0.12);
           }
         }
 
-        /* Hide on exit — fade out quickly */
-        .narrative-content .verse-quote:not(:hover)::before,
-        .narrative-content .purport-quote:not(:hover)::before,
-        .narrative-content .prose-quote:not(:hover)::before,
-        .narrative-content .lecture-quote:not(:hover)::before,
-        .narrative-content .letter-quote:not(:hover)::before {
-          transition: opacity 0.2s ease;
-        }
-
-        /* Hide tooltips on mobile (no hover on touch devices) */
         @media (max-width: 768px) {
-          .narrative-content .verse-quote::before,
-          .narrative-content .purport-quote::before,
-          .narrative-content .prose-quote::before,
-          .narrative-content .lecture-quote::before,
-          .narrative-content .letter-quote::before {
+          .narrative-content .verse-quote::after,
+          .narrative-content .purport-quote::after,
+          .narrative-content .prose-quote::after,
+          .narrative-content .lecture-quote::after,
+          .narrative-content .letter-quote::after {
             display: none;
           }
         }
