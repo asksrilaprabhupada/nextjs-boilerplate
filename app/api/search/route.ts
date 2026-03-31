@@ -62,6 +62,9 @@ const BOOK_NAMES: Record<string, string> = {
 };
 function getBookName(slug: string): string { return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown"; }
 
+/** Books that exist in our database but NOT on vedabase.io — never create links for these */
+const NO_VEDABASE_BOOKS = new Set(["nbs", "mms", "rtw", "lcfl", "kcty", "ekc", "mog", "ejop", "top"]);
+
 /**
  * Returns true if the text is mostly Sanskrit transliteration (not useful as prose content).
  * Detects IAST diacritical characters and Sanskrit verse patterns.
@@ -115,6 +118,7 @@ function buildVedabaseUrl(scripture: string, canto: string, chapter: string, ver
   if (s === "bg") return `${base}/bg/${chapter}/${cleanVerse}/`;
   if (s === "sb") return `${base}/sb/${canto}/${chapter}/${cleanVerse}/`;
   if (s === "cc") return `${base}/cc/${canto}/${chapter}/${cleanVerse}/`;
+  if (NO_VEDABASE_BOOKS.has(s)) return "";
   return `${base}/${s}/`;
 }
 
@@ -178,6 +182,7 @@ interface VerseHit { id: string; scripture: string; verse_number: string; sanskr
 interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; }
 interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
 interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
+interface ChunkHit { id: string; verse_id: string; scripture: string; chapter_number?: number; verse_number: string; chunk_number: number; body_text: string; tags?: string[]; score?: number; similarity?: number; }
 
 // =====================================================
 // RRF (Reciprocal Rank Fusion) SCORING
@@ -224,11 +229,21 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   const preprocessed = await preprocessQuery(query);
   const mainPhrase = preprocessed.searchPhrases[0];
 
+  // For long queries with multiple extracted phrases, run additional FTS searches
+  const additionalPhrases = preprocessed.searchPhrases.slice(1, 3);
+  const additionalFtsPromises = additionalPhrases.flatMap(phrase => [
+    supabase.rpc("search_verses_fulltext_v2", { search_query: phrase, match_count: 10 }),
+    supabase.rpc("search_prose_fulltext_v2", { search_query: phrase, match_count: 5 }),
+    supabase.rpc("search_transcript_paragraphs_fulltext", { search_query: phrase, match_count: 5 }),
+    supabase.rpc("search_letter_paragraphs_fulltext", { search_query: phrase, match_count: 3 }),
+  ]);
+
   // WAVE 1: Instant (no embedding needed)
   const ftsVersesPromise = supabase.rpc("search_verses_fulltext_v2", { search_query: mainPhrase, match_count: 25 });
   const ftsProsePromise = supabase.rpc("search_prose_fulltext_v2", { search_query: mainPhrase, match_count: 15 });
   const ftsTranscriptsPromise = supabase.rpc("search_transcript_paragraphs_fulltext", { search_query: mainPhrase, match_count: 10 });
   const ftsLettersPromise = supabase.rpc("search_letter_paragraphs_fulltext", { search_query: mainPhrase, match_count: 8 });
+  const ftsChunksPromise = supabase.rpc("search_verse_chunks_fulltext", { search_query: mainPhrase, match_count: 15 });
   const tagVersesPromise = preprocessed.tagTerms.length > 0
     ? supabase.rpc("search_verses_by_tags", { search_terms: preprocessed.tagTerms, match_count: 15 })
     : Promise.resolve({ data: [] as VerseHit[] });
@@ -241,14 +256,17 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   const tagLettersPromise = preprocessed.tagTerms.length > 0
     ? supabase.rpc("search_letter_paragraphs_by_tags", { search_terms: preprocessed.tagTerms, match_count: 6 })
     : Promise.resolve({ data: [] as LetterHit[] });
+  const tagChunksPromise = preprocessed.tagTerms.length > 0
+    ? supabase.rpc("search_verse_chunks_by_tags", { search_terms: preprocessed.tagTerms, match_count: 10 })
+    : Promise.resolve({ data: [] as ChunkHit[] });
 
   // WAVE 2: Embedding (parallel with Wave 1)
   const embeddingPromise = embedQuery(preprocessed.isLong ? mainPhrase : query);
 
   // Wait for all Wave 1 + embedding in parallel
-  const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, tagVerses, tagProse, tagTranscripts, tagLetters, embedding] = await Promise.all([
-    ftsVersesPromise, ftsProsePromise, ftsTranscriptsPromise, ftsLettersPromise,
-    tagVersesPromise, tagProsePromise, tagTranscriptsPromise, tagLettersPromise,
+  const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, ftsChunks, tagVerses, tagProse, tagTranscripts, tagLetters, tagChunks, embedding] = await Promise.all([
+    ftsVersesPromise, ftsProsePromise, ftsTranscriptsPromise, ftsLettersPromise, ftsChunksPromise,
+    tagVersesPromise, tagProsePromise, tagTranscriptsPromise, tagLettersPromise, tagChunksPromise,
     embeddingPromise,
   ]);
 
@@ -257,19 +275,48 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   let semanticProseData: ProseHit[] = [];
   let semanticTranscriptsData: TranscriptHit[] = [];
   let semanticLettersData: LetterHit[] = [];
+  let semanticChunksData: ChunkHit[] = [];
 
   if (embedding.length === 1536) {
     const vectorStr = `[${embedding.join(",")}]`;
-    const [semV, semP, semT, semL] = await Promise.all([
+    const [semV, semP, semT, semL, semC] = await Promise.all([
       supabase.rpc("search_verses_semantic_v2", { query_embedding: vectorStr, match_count: 30 }),
       supabase.rpc("search_prose_semantic_v2", { query_embedding: vectorStr, match_count: 20 }),
       supabase.rpc("search_transcript_paragraphs_semantic", { query_embedding: vectorStr, match_count: 15 }),
       supabase.rpc("search_letter_paragraphs_semantic", { query_embedding: vectorStr, match_count: 10 }),
+      supabase.rpc("search_verse_chunks_semantic", { query_embedding: vectorStr, match_count: 15 }),
     ]);
     semanticVersesData = semV.data || [];
     semanticProseData = semP.data || [];
     semanticTranscriptsData = semT.data || [];
     semanticLettersData = semL.data || [];
+    semanticChunksData = semC.data || [];
+  }
+
+  // Resolve additional phrase FTS results
+  let additionalFtsResults: { data: any[] | null }[] = [];
+  if (additionalPhrases.length > 0) {
+    additionalFtsResults = await Promise.all(additionalFtsPromises);
+  }
+
+  // Merge additional phrase FTS results into main FTS arrays before RRF
+  if (additionalFtsResults.length > 0) {
+    for (let p = 0; p < additionalPhrases.length; p++) {
+      const base = p * 4;
+      const extraVerses = additionalFtsResults[base]?.data || [];
+      const extraProse = additionalFtsResults[base + 1]?.data || [];
+      const extraTranscripts = additionalFtsResults[base + 2]?.data || [];
+      const extraLetters = additionalFtsResults[base + 3]?.data || [];
+
+      if (ftsVerses.data) ftsVerses.data.push(...extraVerses);
+      else ftsVerses.data = extraVerses;
+      if (ftsProse.data) ftsProse.data.push(...extraProse);
+      else ftsProse.data = extraProse;
+      if (ftsTranscripts.data) ftsTranscripts.data.push(...extraTranscripts);
+      else ftsTranscripts.data = extraTranscripts;
+      if (ftsLetters.data) ftsLetters.data.push(...extraLetters);
+      else ftsLetters.data = extraLetters;
+    }
   }
 
   // MERGE with RRF
@@ -293,6 +340,23 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
     ftsLetters.data || [],
     tagLetters.data || [],
   );
+
+  // RRF merge chunks
+  const chunkMap = rrfMerge<ChunkHit>(
+    semanticChunksData,
+    ftsChunks.data || [],
+    tagChunks.data || [],
+  );
+
+  // Boost parent verses found via chunks — surfaces content buried deep in long purports
+  for (const chunk of chunkMap.values()) {
+    if (!chunk.verse_id) continue;
+    const existingVerse = verseMap.get(chunk.verse_id);
+    if (existingVerse) {
+      // Verse already found by direct search — give it a chunk boost
+      existingVerse.score += chunk.score * 0.3;
+    }
+  }
 
   const allVerses = [...verseMap.values()].sort((a, b) => b.score - a.score);
   const allProse = [...proseMap.values()].sort((a, b) => b.score - a.score);
@@ -923,6 +987,7 @@ FORMAT RULES:
 - Lecture quotes go in <div class="lecture-quote">
 - Letter quotes go in <div class="letter-quote">
 - Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
+- EXCEPTION: If the VEDABASE_URL is empty or missing, do NOT create a link. Instead render the reference as: <span class="verse-label">[REF]</span> — this applies to books not available on Vedabase.io (Nārada Bhakti Sūtra, Mukunda-mālā-stotra, Renunciation Through Wisdom, Life Comes From Life, Kṛṣṇa Consciousness: The Topmost Yoga System, Elevation to Kṛṣṇa Consciousness, Message of Godhead, Easy Journey to Other Planets, Transcendental Teachings of Prahlāda Mahārāja).
 - Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
 - Use 25-30 passages. Organize them into 5-7 thematic sections.
 - Each section should have an <h3> heading and 2-3 sentences of context, then the passages.
@@ -1066,8 +1131,10 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
   /** Render a single verse with transition, translation, and purport */
   const renderSingleVerse = (idx: number, x: VerseHit) => {
     const ref = cleanRef(x);
-    const url = x.vedabase_url || "#";
-    const link = `<a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a>`;
+    const url = x.vedabase_url || "";
+    const link = url
+      ? `<a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a>`
+      : `<span class="verse-label">[${ref}]</span>`;
     const speaker = getSpeaker(ref, "translation");
 
     parts.push(`<p>${transitions[idx % transitions.length](speaker, link)}</p>`);
@@ -1112,10 +1179,14 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     if (isMostlySanskrit(usableText) || usableText.length < 50) return false;
 
     const bookName = getBookName(x.book_slug);
-    const url = x.vedabase_url || "#";
+    const url = x.vedabase_url || "";
     const excerpt = smartTruncate(usableText, 500);
 
-    parts.push(`<p>In <a href="${url}" class="verse-link" target="_blank">${bookName}</a>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
+    if (url) {
+      parts.push(`<p>In <a href="${url}" class="verse-link" target="_blank">${bookName}</a>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
+    } else {
+      parts.push(`<p>In <span class="verse-label">${bookName}</span>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
+    }
     parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
     return true;
   };
@@ -1127,7 +1198,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
     const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
     const locationPart = x.location || "";
-    const url = x.vedabase_url || "#";
+    const url = x.vedabase_url || "";
     const excerpt = smartTruncate(bodyText, 500);
 
     let attribution = "In a lecture";
@@ -1135,7 +1206,11 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     else if (locationPart) attribution = `In a lecture at ${locationPart}`;
     else if (datePart) attribution = `In a lecture on ${datePart}`;
 
-    parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda said</a>:</p>`);
+    if (url) {
+      parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda said</a>:</p>`);
+    } else {
+      parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
+    }
     parts.push(`<div class="lecture-quote">"${excerpt}"</div>`);
   };
 
@@ -1146,7 +1221,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
     const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
     const recipientPart = x.recipient || "";
-    const url = x.vedabase_url || "#";
+    const url = x.vedabase_url || "";
     const excerpt = smartTruncate(bodyText, 500);
 
     let attribution = "In a letter";
@@ -1154,7 +1229,11 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     else if (recipientPart) attribution = `In a letter to ${recipientPart}`;
     else if (datePart) attribution = `In a letter on ${datePart}`;
 
-    parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda wrote</a>:</p>`);
+    if (url) {
+      parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda wrote</a>:</p>`);
+    } else {
+      parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
+    }
     parts.push(`<div class="letter-quote">"${excerpt}"</div>`);
   };
 
@@ -1269,14 +1348,20 @@ export async function GET(request: NextRequest) {
   if (cached) return NextResponse.json(cached);
 
   try {
-    const { verses, prose, transcripts, letters } = await hybridSearch(query);
+    // Fire search and spelling check in parallel
+    const spellingSupa = getSupabase();
+    const [searchResults, spellResult] = await Promise.all([
+      hybridSearch(query),
+      spellingSupa.rpc('suggest_spelling', { raw_query: query }).then(res => res, () => ({ data: null })),
+    ]);
 
-    // "Did you mean?" — always check spelling for possible corrections
+    const { verses, prose, transcripts, letters } = searchResults;
+
+    // "Did you mean?" — extract spelling suggestion
     let suggestion: string | null = null;
     let suggestionDisplay: string | null = null;
     try {
-      const supabase = getSupabase();
-      const { data: spellData } = await supabase.rpc('suggest_spelling', { raw_query: query });
+      const spellData = spellResult.data;
       if (spellData && spellData.length > 0 && spellData[0].suggested_query) {
         const suggested = spellData[0].suggested_query;
         if (suggested.toLowerCase() !== query.toLowerCase()) {
