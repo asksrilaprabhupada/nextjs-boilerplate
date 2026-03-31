@@ -7,7 +7,7 @@
  */
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import WantMoreModal from "./06-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
@@ -201,6 +201,150 @@ function ExpandableReferenceCard({ children, preview, fullText }: {
           </span>
         )}
       </p>
+    </div>
+  );
+}
+
+/* ─── Quote Tooltip (JS-powered, left-border hover zone) ─── */
+function QuoteTooltip() {
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [tooltip, setTooltip] = useState<{
+    text: string;
+    color: string;
+    bg: string;
+    border: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const HOVER_ZONE_WIDTH = 30;
+
+    const typeConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
+      'verse-quote': { label: 'Verse Translation', color: '#7C3AED', bg: 'linear-gradient(135deg, #F5F3FF, #EDE9FE)', border: '#C4B5FD' },
+      'purport-quote': { label: 'Purport', color: '#6D28D9', bg: 'linear-gradient(135deg, #F5F3FF, #EDE9FE)', border: '#A78BFA' },
+      'prose-quote': { label: 'Book Passage', color: '#4F46E5', bg: 'linear-gradient(135deg, #EEF2FF, #E0E7FF)', border: '#A5B4FC' },
+      'lecture-quote': { label: 'Lecture', color: '#C2410C', bg: 'linear-gradient(135deg, #FFF7ED, #FFEDD5)', border: '#FDBA74' },
+      'letter-quote': { label: 'Letter', color: '#15803D', bg: 'linear-gradient(135deg, #F0FDF4, #DCFCE7)', border: '#86EFAC' },
+    };
+
+    function getQuoteType(el: HTMLElement): string | null {
+      for (const cls of Object.keys(typeConfig)) {
+        if (el.classList.contains(cls)) return cls;
+      }
+      return null;
+    }
+
+    function extractBookRef(quoteEl: HTMLElement): string | null {
+      let el: Element | null = quoteEl.previousElementSibling;
+      let attempts = 0;
+      while (el && attempts < 5) {
+        const refEl = el.querySelector('.verse-ref');
+        if (refEl && refEl.textContent) {
+          return refEl.textContent.replace(/[\[\]]/g, '').trim();
+        }
+        const linkEl = el.querySelector('.verse-link');
+        if (linkEl && linkEl.textContent) {
+          const text = linkEl.textContent.replace(/[\[\]]/g, '').trim();
+          if (text.match(/^(BG|SB|CC|NOI|ISO|BS)\s/i)) return text;
+        }
+        el = el.previousElementSibling;
+        attempts++;
+      }
+      return null;
+    }
+
+    function handleMouseMove(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      const quoteEl = target.closest('.verse-quote, .purport-quote, .prose-quote, .lecture-quote, .letter-quote') as HTMLElement | null;
+
+      if (!quoteEl) {
+        setTooltip(null);
+        return;
+      }
+
+      const rect = quoteEl.getBoundingClientRect();
+      const mouseXRelative = e.clientX - rect.left;
+
+      if (mouseXRelative > HOVER_ZONE_WIDTH) {
+        setTooltip(null);
+        return;
+      }
+
+      const quoteType = getQuoteType(quoteEl);
+      if (!quoteType) {
+        setTooltip(null);
+        return;
+      }
+
+      const config = typeConfig[quoteType];
+      const bookRef = extractBookRef(quoteEl);
+
+      let text = '';
+      if (bookRef && (quoteType === 'verse-quote' || quoteType === 'purport-quote' || quoteType === 'prose-quote')) {
+        text = bookRef + '  ·  ' + config.label;
+      } else {
+        text = config.label;
+      }
+
+      setTooltip({
+        text,
+        color: config.color,
+        bg: config.bg,
+        border: config.border,
+        x: rect.left + 20,
+        y: rect.top - 8,
+      });
+    }
+
+    function handleMouseLeave(e: MouseEvent) {
+      const related = e.relatedTarget as HTMLElement | null;
+      if (!related || !related.closest('.verse-quote, .purport-quote, .prose-quote, .lecture-quote, .letter-quote')) {
+        setTooltip(null);
+      }
+    }
+
+    const narrativeEl = document.querySelector('.narrative-content');
+    if (narrativeEl) {
+      narrativeEl.addEventListener('mousemove', handleMouseMove as EventListener);
+      narrativeEl.addEventListener('mouseleave', handleMouseLeave as EventListener);
+    }
+
+    return () => {
+      if (narrativeEl) {
+        narrativeEl.removeEventListener('mousemove', handleMouseMove as EventListener);
+        narrativeEl.removeEventListener('mouseleave', handleMouseLeave as EventListener);
+      }
+    };
+  }, []);
+
+  if (!tooltip) return null;
+
+  return (
+    <div
+      ref={tooltipRef}
+      style={{
+        position: 'fixed',
+        top: tooltip.y,
+        left: tooltip.x,
+        transform: 'translateY(-100%)',
+        padding: '5px 12px',
+        borderRadius: 8,
+        fontFamily: "'DM Sans', sans-serif",
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: '0.02em',
+        whiteSpace: 'nowrap',
+        color: tooltip.color,
+        background: tooltip.bg,
+        border: `1px solid ${tooltip.border}`,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
+        zIndex: 1000,
+        pointerEvents: 'none',
+        animation: 'quoteTooltipIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
+      }}
+    >
+      ● {tooltip.text}
     </div>
   );
 }
@@ -726,6 +870,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         />
       )}
 
+      <QuoteTooltip />
+
       {/* Styles */}
       <style jsx global>{`
         /* Controls row above grid */
@@ -971,124 +1117,27 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           }
         }
 
-        /* ─── Source type tooltips on quote blocks ─── */
+        /* Quote block cursor */
         .narrative-content .verse-quote,
         .narrative-content .purport-quote,
         .narrative-content .prose-quote,
         .narrative-content .lecture-quote,
         .narrative-content .letter-quote {
-          position: relative;
           cursor: default;
         }
 
-        .narrative-content .verse-quote::after,
-        .narrative-content .purport-quote::after,
-        .narrative-content .prose-quote::after,
-        .narrative-content .lecture-quote::after,
-        .narrative-content .letter-quote::after {
-          position: absolute;
-          top: -14px;
-          left: 20px;
-          padding: 4px 10px;
-          border-radius: 6px;
-          font-family: 'DM Sans', sans-serif;
-          font-size: 10px;
-          font-weight: 600;
-          font-style: normal;
-          letter-spacing: 0.03em;
-          white-space: nowrap;
-          opacity: 0;
-          pointer-events: none;
-          z-index: 5;
-          transform: scale(0.85) translateY(4px);
-          animation: none;
-        }
-
-        .narrative-content .verse-quote:hover::after,
-        .narrative-content .purport-quote:hover::after,
-        .narrative-content .prose-quote:hover::after,
-        .narrative-content .lecture-quote:hover::after,
-        .narrative-content .letter-quote:hover::after {
-          animation: tooltipBounceIn 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
-                     tooltipGlow 2.5s ease-in-out 0.5s infinite;
-        }
-
-        .narrative-content .verse-quote::after {
-          content: "⬤ Verse Translation";
-          background: linear-gradient(135deg, #F5F3FF, #EDE9FE);
-          color: #7C3AED;
-          border: 1px solid #C4B5FD;
-          box-shadow: 0 2px 10px rgba(139, 92, 246, 0.15);
-        }
-
-        .narrative-content .purport-quote::after {
-          content: "⬤ Purport";
-          background: linear-gradient(135deg, #F5F3FF, #EDE9FE);
-          color: #6D28D9;
-          border: 1px solid #A78BFA;
-          box-shadow: 0 2px 10px rgba(109, 40, 217, 0.15);
-        }
-
-        .narrative-content .prose-quote::after {
-          content: "⬤ Book Passage";
-          background: linear-gradient(135deg, #EEF2FF, #E0E7FF);
-          color: #4F46E5;
-          border: 1px solid #A5B4FC;
-          box-shadow: 0 2px 10px rgba(79, 70, 229, 0.15);
-        }
-
-        .narrative-content .lecture-quote::after {
-          content: "⬤ Lecture";
-          background: linear-gradient(135deg, #FFF7ED, #FFEDD5);
-          color: #C2410C;
-          border: 1px solid #FDBA74;
-          box-shadow: 0 2px 10px rgba(251, 146, 60, 0.18);
-        }
-
-        .narrative-content .letter-quote::after {
-          content: "⬤ Letter";
-          background: linear-gradient(135deg, #F0FDF4, #DCFCE7);
-          color: #15803D;
-          border: 1px solid #86EFAC;
-          box-shadow: 0 2px 10px rgba(74, 222, 128, 0.18);
-        }
-
-        @keyframes tooltipBounceIn {
+        @keyframes quoteTooltipIn {
           0% {
             opacity: 0;
-            transform: scale(0.8) translateY(6px);
+            transform: translateY(-100%) scale(0.88) translateY(6px);
           }
           50% {
             opacity: 1;
-            transform: scale(1.06) translateY(-2px);
-          }
-          75% {
-            transform: scale(0.97) translateY(1px);
+            transform: translateY(-100%) scale(1.04) translateY(-1px);
           }
           100% {
             opacity: 1;
-            transform: scale(1) translateY(0);
-          }
-        }
-
-        @keyframes tooltipGlow {
-          0%, 100% {
-            filter: brightness(1);
-            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
-          }
-          50% {
-            filter: brightness(1.06);
-            box-shadow: 0 2px 14px rgba(0,0,0,0.12);
-          }
-        }
-
-        @media (max-width: 768px) {
-          .narrative-content .verse-quote::after,
-          .narrative-content .purport-quote::after,
-          .narrative-content .prose-quote::after,
-          .narrative-content .lecture-quote::after,
-          .narrative-content .letter-quote::after {
-            display: none;
+            transform: translateY(-100%) scale(1) translateY(0);
           }
         }
       `}</style>
