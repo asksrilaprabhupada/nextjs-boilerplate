@@ -207,25 +207,55 @@ function ExpandableReferenceCard({ children, preview, fullText }: {
 
 /* ─── Quote Tooltip (JS-powered, left-border hover zone) ─── */
 function QuoteTooltip() {
-  const tooltipRef = useRef<HTMLDivElement>(null);
   const [tooltip, setTooltip] = useState<{
     text: string;
+    subtext: string;
     color: string;
     bg: string;
     border: string;
-    x: number;
+    dotColor: string;
     y: number;
+    cardLeft: number;
+    quoteTop: number;
+    quoteHeight: number;
   } | null>(null);
+  const [visible, setVisible] = useState(false);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [lineWidth, setLineWidth] = useState(0);
 
   useEffect(() => {
-    const HOVER_ZONE_WIDTH = 30;
+    if (visible && tooltipRef.current && tooltip) {
+      const tooltipRect = tooltipRef.current.getBoundingClientRect();
+      const gap = tooltip.cardLeft - tooltipRect.right;
+      setLineWidth(Math.max(gap + 4, 0));
+    }
+  }, [visible, tooltip]);
 
-    const typeConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
-      'verse-quote': { label: 'Verse Translation', color: '#7C3AED', bg: 'linear-gradient(135deg, #F5F3FF, #EDE9FE)', border: '#C4B5FD' },
-      'purport-quote': { label: 'Purport', color: '#6D28D9', bg: 'linear-gradient(135deg, #F5F3FF, #EDE9FE)', border: '#A78BFA' },
-      'prose-quote': { label: 'Book Passage', color: '#4F46E5', bg: 'linear-gradient(135deg, #EEF2FF, #E0E7FF)', border: '#A5B4FC' },
-      'lecture-quote': { label: 'Lecture', color: '#C2410C', bg: 'linear-gradient(135deg, #FFF7ED, #FFEDD5)', border: '#FDBA74' },
-      'letter-quote': { label: 'Letter', color: '#15803D', bg: 'linear-gradient(135deg, #F0FDF4, #DCFCE7)', border: '#86EFAC' },
+  useEffect(() => {
+    const HOVER_ZONE_WIDTH = 35;
+
+    const FULL_BOOK_NAMES: Record<string, string> = {
+      'BG': 'Bhagavad Gītā',
+      'SB': 'Śrīmad Bhāgavatam',
+      'CC': 'Caitanya Caritāmṛta',
+      'NOI': 'Nectar of Instruction',
+      'ISO': 'Śrī Īśopaniṣad',
+      'BS': 'Brahma-saṁhitā',
+      'KB': 'Kṛṣṇa Book',
+      'NOD': 'Nectar of Devotion',
+      'TLC': 'Teachings of Lord Caitanya',
+      'TLK': 'Teachings of Lord Kapila',
+      'TQK': 'Teachings of Queen Kuntī',
+      'SSR': 'Science of Self-Realization',
+      'SPL': 'Prabhupāda-līlāmṛta',
+    };
+
+    const typeConfig: Record<string, { label: string; color: string; bg: string; border: string; dotColor: string }> = {
+      'verse-quote': { label: 'Verse Translation', color: '#7C3AED', bg: 'rgba(245, 243, 255, 0.75)', border: '#C4B5FD', dotColor: '#8B5CF6' },
+      'purport-quote': { label: 'Purport', color: '#6D28D9', bg: 'rgba(245, 243, 255, 0.75)', border: '#A78BFA', dotColor: '#7C3AED' },
+      'prose-quote': { label: 'Book Passage', color: '#4F46E5', bg: 'rgba(238, 242, 255, 0.75)', border: '#A5B4FC', dotColor: '#6366F1' },
+      'lecture-quote': { label: 'Lecture', color: '#C2410C', bg: 'rgba(255, 247, 237, 0.75)', border: '#FDBA74', dotColor: '#FB923C' },
+      'letter-quote': { label: 'Letter', color: '#15803D', bg: 'rgba(240, 253, 244, 0.75)', border: '#86EFAC', dotColor: '#4ADE80' },
     };
 
     function getQuoteType(el: HTMLElement): string | null {
@@ -233,6 +263,15 @@ function QuoteTooltip() {
         if (el.classList.contains(cls)) return cls;
       }
       return null;
+    }
+
+    function expandBookAbbreviation(ref: string): string {
+      const parts = ref.split(' ');
+      const abbr = parts[0]?.toUpperCase();
+      if (FULL_BOOK_NAMES[abbr]) {
+        return FULL_BOOK_NAMES[abbr] + ' ' + parts.slice(1).join(' ');
+      }
+      return ref;
     }
 
     function extractBookRef(quoteEl: HTMLElement): string | null {
@@ -254,12 +293,45 @@ function QuoteTooltip() {
       return null;
     }
 
+    function extractLectureInfo(quoteEl: HTMLElement): string | null {
+      let el: Element | null = quoteEl.previousElementSibling;
+      let attempts = 0;
+      while (el && attempts < 3) {
+        const text = el.textContent || '';
+        const dateMatch = text.match(/((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4})/i);
+        const placeMatch = text.match(/(?:at|in)\s+([A-Z][a-zA-Zāīūṛṝḷṃḥṣṭḍṅñśṁ\s]+?)(?:,|\s+on\s|:|\s+Śrīla)/);
+        const parts = [dateMatch?.[1], placeMatch?.[1]?.trim()].filter(Boolean);
+        if (parts.length > 0) return parts.join(' · ');
+        el = el.previousElementSibling;
+        attempts++;
+      }
+      return null;
+    }
+
+    function extractLetterInfo(quoteEl: HTMLElement): string | null {
+      let el: Element | null = quoteEl.previousElementSibling;
+      let attempts = 0;
+      while (el && attempts < 3) {
+        const text = el.textContent || '';
+        const recipientMatch = text.match(/letter\s+to\s+([^,]+?)(?:\s+on\s|,|\s*Śrīla|:)/i);
+        const dateMatch = text.match(/((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4})/i);
+        const parts = [recipientMatch?.[1]?.trim(), dateMatch?.[1]].filter(Boolean);
+        if (parts.length > 0) return parts.join(' · ');
+        el = el.previousElementSibling;
+        attempts++;
+      }
+      return null;
+    }
+
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
     function handleMouseMove(e: MouseEvent) {
       const target = e.target as HTMLElement;
       const quoteEl = target.closest('.verse-quote, .purport-quote, .prose-quote, .lecture-quote, .letter-quote') as HTMLElement | null;
 
       if (!quoteEl) {
-        setTooltip(null);
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => { setVisible(false); setTimeout(() => setTooltip(null), 300); }, 80);
         return;
       }
 
@@ -267,85 +339,187 @@ function QuoteTooltip() {
       const mouseXRelative = e.clientX - rect.left;
 
       if (mouseXRelative > HOVER_ZONE_WIDTH) {
-        setTooltip(null);
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => { setVisible(false); setTimeout(() => setTooltip(null), 300); }, 80);
         return;
       }
+
+      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
 
       const quoteType = getQuoteType(quoteEl);
-      if (!quoteType) {
-        setTooltip(null);
-        return;
-      }
+      if (!quoteType) return;
 
       const config = typeConfig[quoteType];
-      const bookRef = extractBookRef(quoteEl);
+      let mainText = config.label;
+      let subtext = '';
 
-      let text = '';
-      if (bookRef && (quoteType === 'verse-quote' || quoteType === 'purport-quote' || quoteType === 'prose-quote')) {
-        text = bookRef + '  ·  ' + config.label;
-      } else {
-        text = config.label;
+      if (quoteType === 'verse-quote' || quoteType === 'purport-quote' || quoteType === 'prose-quote') {
+        const bookRef = extractBookRef(quoteEl);
+        if (bookRef) {
+          mainText = expandBookAbbreviation(bookRef);
+          subtext = config.label;
+        }
+      } else if (quoteType === 'lecture-quote') {
+        const info = extractLectureInfo(quoteEl);
+        if (info) subtext = info;
+      } else if (quoteType === 'letter-quote') {
+        const info = extractLetterInfo(quoteEl);
+        if (info) subtext = info;
       }
 
+      const cardEl = quoteEl.closest('.aurora-card');
+      const cardLeft = cardEl ? cardEl.getBoundingClientRect().left : rect.left;
+
       setTooltip({
-        text,
+        text: mainText,
+        subtext,
         color: config.color,
         bg: config.bg,
         border: config.border,
-        x: rect.left + 20,
-        y: rect.top - 8,
+        dotColor: config.dotColor,
+        y: rect.top + rect.height / 2,
+        cardLeft,
+        quoteTop: rect.top,
+        quoteHeight: rect.height,
       });
-    }
-
-    function handleMouseLeave(e: MouseEvent) {
-      const related = e.relatedTarget as HTMLElement | null;
-      if (!related || !related.closest('.verse-quote, .purport-quote, .prose-quote, .lecture-quote, .letter-quote')) {
-        setTooltip(null);
-      }
+      setVisible(true);
     }
 
     const narrativeEl = document.querySelector('.narrative-content');
     if (narrativeEl) {
       narrativeEl.addEventListener('mousemove', handleMouseMove as EventListener);
-      narrativeEl.addEventListener('mouseleave', handleMouseLeave as EventListener);
     }
 
     return () => {
       if (narrativeEl) {
         narrativeEl.removeEventListener('mousemove', handleMouseMove as EventListener);
-        narrativeEl.removeEventListener('mouseleave', handleMouseLeave as EventListener);
       }
+      if (hideTimer) clearTimeout(hideTimer);
     };
   }, []);
 
   if (!tooltip) return null;
 
   return (
-    <div
-      ref={tooltipRef}
-      style={{
-        position: 'fixed',
-        top: tooltip.y,
-        left: tooltip.x,
-        transform: 'translateY(-100%)',
-        padding: '5px 12px',
-        borderRadius: 8,
-        fontFamily: "'DM Sans', sans-serif",
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: '0.02em',
-        whiteSpace: 'nowrap',
-        color: tooltip.color,
-        background: tooltip.bg,
-        border: `1px solid ${tooltip.border}`,
-        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-        zIndex: 1000,
-        pointerEvents: 'none',
-        animation: 'quoteTooltipIn 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards',
-      }}
-    >
-      ● {tooltip.text}
-    </div>
+    <>
+      {/* Connecting line from tooltip to quote border */}
+      {visible && lineWidth > 0 && (
+        <div
+          style={{
+            position: 'fixed',
+            top: tooltip.y,
+            left: tooltip.cardLeft - lineWidth,
+            width: lineWidth + 4,
+            height: 2,
+            zIndex: 999,
+            pointerEvents: 'none',
+            transform: 'translateY(-50%)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              background: `linear-gradient(90deg, ${tooltip.dotColor}00, ${tooltip.dotColor}66, ${tooltip.dotColor})`,
+              borderRadius: 1,
+              animation: 'tooltipLineGrow 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+              transformOrigin: 'right center',
+            }}
+          />
+        </div>
+      )}
+
+      {/* Tooltip card */}
+      <div
+        ref={tooltipRef}
+        style={{
+          position: 'fixed',
+          top: tooltip.y,
+          left: tooltip.cardLeft - 16,
+          transform: visible
+            ? 'translateX(-100%) translateY(-50%) translateX(0) scale(1)'
+            : 'translateX(-100%) translateY(-50%) translateX(12px) scale(0.88)',
+          padding: '9px 16px 9px 12px',
+          borderRadius: 12,
+          fontFamily: "'DM Sans', sans-serif",
+          whiteSpace: 'nowrap',
+          color: tooltip.color,
+          background: tooltip.bg,
+          backdropFilter: 'blur(16px) saturate(1.3)',
+          WebkitBackdropFilter: 'blur(16px) saturate(1.3)',
+          border: `1px solid ${tooltip.border}`,
+          boxShadow: `0 8px 32px rgba(0,0,0,0.06), 0 0 0 1px ${tooltip.border}18`,
+          zIndex: 1000,
+          pointerEvents: 'none',
+          opacity: visible ? 1 : 0,
+          animation: visible ? 'tooltipElasticIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards' : 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+          gap: 3,
+          maxWidth: 240,
+          overflow: 'hidden',
+        }}
+      >
+        {/* Shimmer sweep overlay */}
+        {visible && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              borderRadius: 12,
+              overflow: 'hidden',
+              pointerEvents: 'none',
+            }}
+          >
+            <div
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: '-100%',
+                width: '60%',
+                height: '100%',
+                background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.5) 50%, transparent 70%)',
+                animation: 'tooltipShimmer 0.8s ease-out 0.3s forwards',
+              }}
+            />
+          </div>
+        )}
+
+        {/* Content */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, position: 'relative', zIndex: 1 }}>
+          <span style={{
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: tooltip.dotColor,
+            flexShrink: 0,
+            boxShadow: `0 0 6px ${tooltip.dotColor}44`,
+            animation: visible ? 'tooltipDotPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both' : 'none',
+          }} />
+          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.3 }}>
+            {tooltip.text}
+          </span>
+        </div>
+        {tooltip.subtext && (
+          <span style={{
+            fontSize: 10,
+            fontWeight: 500,
+            opacity: 0.65,
+            marginLeft: 15,
+            lineHeight: 1.3,
+            position: 'relative',
+            zIndex: 1,
+          }}>
+            {tooltip.subtext}
+          </span>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -1126,18 +1300,63 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           cursor: default;
         }
 
-        @keyframes quoteTooltipIn {
+        /* ─── Premium Quote Tooltip Animations ─── */
+        @keyframes tooltipElasticIn {
           0% {
             opacity: 0;
-            transform: translateY(-100%) scale(0.88) translateY(6px);
+            transform: translateX(-100%) translateY(-50%) translateX(16px) scale(0.85);
           }
-          50% {
+          40% {
             opacity: 1;
-            transform: translateY(-100%) scale(1.04) translateY(-1px);
+            transform: translateX(-100%) translateY(-50%) translateX(-5px) scale(1.04);
+          }
+          65% {
+            transform: translateX(-100%) translateY(-50%) translateX(2px) scale(0.98);
+          }
+          85% {
+            transform: translateX(-100%) translateY(-50%) translateX(-1px) scale(1.01);
           }
           100% {
             opacity: 1;
-            transform: translateY(-100%) scale(1) translateY(0);
+            transform: translateX(-100%) translateY(-50%) translateX(0) scale(1);
+          }
+        }
+
+        @keyframes tooltipLineGrow {
+          0% {
+            transform: scaleX(0);
+            opacity: 0;
+          }
+          60% {
+            opacity: 1;
+          }
+          100% {
+            transform: scaleX(1);
+            opacity: 1;
+          }
+        }
+
+        @keyframes tooltipDotPop {
+          0% {
+            transform: scale(0);
+          }
+          50% {
+            transform: scale(1.8);
+          }
+          75% {
+            transform: scale(0.85);
+          }
+          100% {
+            transform: scale(1);
+          }
+        }
+
+        @keyframes tooltipShimmer {
+          0% {
+            left: -100%;
+          }
+          100% {
+            left: 200%;
           }
         }
       `}</style>
