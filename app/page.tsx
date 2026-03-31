@@ -195,6 +195,7 @@ export default function Home() {
                 totalVerses: event.totalVerses || 0,
                 totalProse: event.totalProse || 0,
                 suggestion: event.suggestion || null,
+                suggestionDisplay: event.suggestionDisplay || null,
               };
               setSearchResults(partialResults);
               setIsSearching(false);
@@ -369,7 +370,7 @@ export default function Home() {
                       textDecoration: 'underline', padding: 0,
                     }}
                   >
-                    {searchResults.suggestion}
+                    {searchResults.suggestionDisplay || searchResults.suggestion}
                   </button>
                   <span className="font-body" style={{ fontSize: 14, color: '#6B7280' }}>?</span>
                 </div>
