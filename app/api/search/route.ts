@@ -18,7 +18,7 @@ const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE
 const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const geminiKey = process.env.GEMINI_API_KEY || "";
 
-const GEMINI_MODEL_SYNTHESIS = "gemini-2.0-flash";
+const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash";
 
 function getSupabase() { return createClient(supabaseUrl, supabaseKey); }
 
