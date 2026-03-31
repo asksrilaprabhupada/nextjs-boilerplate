@@ -822,10 +822,10 @@ function isPastimeNarrative(v: VerseHit): boolean {
 // =====================================================
 function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: ProseHit[], transcripts: TranscriptHit[] = [], letters: LetterHit[] = []): string {
   // Reduce context to avoid overwhelming the model
-  const synthVerses = verses.slice(0, 30);
-  const synthProse = prose.slice(0, 8);
-  const synthTranscripts = transcripts.slice(0, 6);
-  const synthLetters = letters.slice(0, 4);
+  const synthVerses = verses.slice(0, 15);
+  const synthProse = prose.slice(0, 5);
+  const synthTranscripts = transcripts.slice(0, 4);
+  const synthLetters = letters.slice(0, 2);
 
   // Build a unified list of all passages with scores
   interface UnifiedPassage {
@@ -986,10 +986,18 @@ FORMAT RULES:
 - Prose book quotes go in <div class="prose-quote"> — end with the book name as a styled reference if a Vedabase link exists
 - Lecture quotes go in <div class="lecture-quote"> — end with a clickable reference link to the lecture on Vedabase
 - Letter quotes go in <div class="letter-quote"> — end with a clickable reference link to the letter on Vedabase
-- Every reference MUST be a clickable link: <a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a>
+- Every quote block MUST end with a citation INSIDE the div, right-aligned. Use this exact format:
+  <div class="cite-ref"><a href="VEDABASE_URL" class="verse-link" target="_blank"><span class="verse-ref">[REF]</span></a></div>
+- For verse translations: citation is [BG 6.34] or [SB 1.2.6] etc.
+- For purport quotes: citation is the SAME reference as the verse — [BG 6.34]. The purport is on the same Vedabase page.
+- For prose book quotes: citation is [Book Title]. If no Vedabase URL, use <span class="verse-label">[Book Title]</span> instead of a link.
+- For lecture quotes: citation is [Lecture · YEAR · CITY] — only the year, not the full date. Only the city name, not the full address. Example: [Lecture · 1973 · Stockholm]
+- For letter quotes: citation is [Letter to RECIPIENT · YEAR] — only the year. Example: [Letter to Hamsaduta · 1972]
+- If the VEDABASE_URL is empty or missing, render as: <div class="cite-ref"><span class="verse-label">[REF]</span></div>
+- Do NOT put citations in the transition/context paragraphs. Citations go ONLY inside quote block divs.
 - EXCEPTION: If the VEDABASE_URL is empty or missing, do NOT create a link. Instead render the reference as: <span class="verse-label">[REF]</span> — this applies to books not available on Vedabase.io (Nārada Bhakti Sūtra, Mukunda-mālā-stotra, Renunciation Through Wisdom, Life Comes From Life, Kṛṣṇa Consciousness: The Topmost Yoga System, Elevation to Kṛṣṇa Consciousness, Message of Godhead, Easy Journey to Other Planets, Transcendental Teachings of Prahlāda Mahārāja).
 - Use diacritical marks: Kṛṣṇa, Prabhupāda, Bhāgavatam, etc.
-- Use 25-30 passages. Organize them into 5-7 thematic sections.
+- Use 10-15 of the MOST relevant passages. Organize them into 3-4 thematic sections. Quality over quantity — a focused article with the strongest passages is better than a long one with weaker filler.
 - Each section should have an <h3> heading and 2-3 sentences of context, then the passages.
 - Do NOT skip passages unless they are clearly duplicates or completely irrelevant to the question.
 - You may quote from the same book multiple times if the passages address different aspects of the question.
@@ -1008,7 +1016,7 @@ async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[
   if (!prompt) return "<p>No relevant passages found.</p>";
 
   try {
-    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 12000);
+    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 6000);
     console.log("[Synthesis] Gemini returned", text?.length || 0, "chars");
     if (!text) {
       console.error("[Synthesis] Gemini returned empty — using fallback");
@@ -1048,7 +1056,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
   }
 
   const parts: string[] = [];
-  const articleVerses = v.slice(0, 30);
+  const articleVerses = v.slice(0, 15);
   const bookNames = [...new Set(articleVerses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
 
   // Extract the core topic from the question for intro/conclusion
@@ -1106,16 +1114,16 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
   // Varied transition templates (expanded to 10)
   const transitions = [
-    (s: string, l: string) => `${s} states in ${l}:`,
-    (s: string, l: string) => `In ${l}, ${s} declares:`,
-    (s: string, l: string) => `This is further addressed in ${l}, where ${s} says:`,
-    (s: string, l: string) => `${s} instructs in ${l}:`,
-    (s: string, l: string) => `Another key teaching appears in ${l}:`,
-    (s: string, l: string) => `The instruction continues in ${l}, where ${s} reveals:`,
-    (s: string, l: string) => `${s} further illuminates this in ${l}:`,
-    (s: string, l: string) => `Drawing from ${l}, ${s} teaches:`,
-    (s: string, l: string) => `This truth is echoed in ${l}, where ${s} proclaims:`,
-    (s: string, l: string) => `${s} emphasizes in ${l}:`,
+    (s: string, ref: string) => `${s} states (${ref}):`,
+    (s: string, ref: string) => `In ${ref}, ${s} declares:`,
+    (s: string, ref: string) => `This is further addressed in ${ref}, where ${s} says:`,
+    (s: string, ref: string) => `${s} instructs (${ref}):`,
+    (s: string, ref: string) => `Another key teaching appears in ${ref}:`,
+    (s: string, ref: string) => `The instruction continues in ${ref}, where ${s} reveals:`,
+    (s: string, ref: string) => `${s} further illuminates this (${ref}):`,
+    (s: string, ref: string) => `Drawing from ${ref}, ${s} teaches:`,
+    (s: string, ref: string) => `This truth is echoed in ${ref}, where ${s} proclaims:`,
+    (s: string, ref: string) => `${s} emphasizes (${ref}):`,
   ];
 
   // Varied purport transition phrases
@@ -1132,24 +1140,24 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
   const renderSingleVerse = (idx: number, x: VerseHit) => {
     const ref = cleanRef(x);
     const url = x.vedabase_url || "";
-    const link = url
-      ? `<a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a>`
-      : `<span class="verse-label">[${ref}]</span>`;
+    const cite = url
+      ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a></div>`
+      : `<div class="cite-ref"><span class="verse-label">[${ref}]</span></div>`;
     const speaker = getSpeaker(ref, "translation");
 
-    parts.push(`<p>${transitions[idx % transitions.length](speaker, link)}</p>`);
+    // Transition sentence (NO citation here — citation goes inside quote blocks)
+    parts.push(`<p>${transitions[idx % transitions.length](speaker, ref)}</p>`);
 
+    // Translation with citation at end
     if (x.translation) {
-      parts.push(`<div class="verse-quote">"${x.translation}"</div>`);
+      parts.push(`<div class="verse-quote">"${x.translation}"${cite}</div>`);
     }
 
+    // Purport with same citation at end
     if (x.purport && x.purport.length > 10) {
       const excerpt = smartTruncate(x.purport, 600);
       parts.push(`<p>${purportTransitions[idx % purportTransitions.length]}</p>`);
-      parts.push(`<div class="purport-quote">"${excerpt}"</div>`);
-      if (url) {
-        parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a></p>`);
-      }
+      parts.push(`<div class="purport-quote">"${excerpt}"${cite}</div>`);
     }
   };
 
@@ -1185,15 +1193,12 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     const url = x.vedabase_url || "";
     const excerpt = smartTruncate(usableText, 500);
 
-    if (url) {
-      parts.push(`<p>In <a href="${url}" class="verse-link" target="_blank">${bookName}</a>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
-    } else {
-      parts.push(`<p>In <span class="verse-label">${bookName}</span>${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
-    }
-    parts.push(`<div class="prose-quote">"${excerpt}"</div>`);
-    if (url) {
-      parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">${bookName}</span></a></p>`);
-    }
+    const cite = url
+      ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${bookName}]</span></a></div>`
+      : `<div class="cite-ref"><span class="verse-label">[${bookName}]</span></div>`;
+
+    parts.push(`<p>In ${bookName}${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
+    parts.push(`<div class="prose-quote">"${excerpt}"${cite}</div>`);
     return true;
   };
 
@@ -1202,25 +1207,25 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     const bodyText = (x.body_text || "").trim();
     if (bodyText.length < 80 || isMostlySanskrit(bodyText)) return;
 
-    const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
-    const locationPart = x.location || "";
+    const year = x.date ? new Date(x.date).getFullYear().toString() : "";
+    const city = x.location || "";
     const url = x.vedabase_url || "";
     const excerpt = smartTruncate(bodyText, 500);
 
+    // Build short attribution
     let attribution = "In a lecture";
-    if (locationPart && datePart) attribution = `In a lecture at ${locationPart} on ${datePart}`;
-    else if (locationPart) attribution = `In a lecture at ${locationPart}`;
-    else if (datePart) attribution = `In a lecture on ${datePart}`;
+    if (city && year) attribution = `Speaking in ${city} (${year})`;
+    else if (city) attribution = `Speaking in ${city}`;
+    else if (year) attribution = `In a lecture (${year})`;
 
-    if (url) {
-      parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda said</a>:</p>`);
-    } else {
-      parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
-    }
-    parts.push(`<div class="lecture-quote">"${excerpt}"</div>`);
-    if (url) {
-      parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">View on Vedabase</span></a></p>`);
-    }
+    // Build citation: [Lecture · 1973 · Stockholm]
+    const citeLabel = ["Lecture", year, city].filter(Boolean).join(" · ");
+    const cite = url
+      ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
+      : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
+
+    parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
+    parts.push(`<div class="lecture-quote">"${excerpt}"${cite}</div>`);
   };
 
   /** Render a single letter passage */
@@ -1228,25 +1233,28 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     const bodyText = (x.body_text || "").trim();
     if (bodyText.length < 80) return;
 
-    const datePart = x.date ? new Date(x.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
+    const year = x.date ? new Date(x.date).getFullYear().toString() : "";
     const recipientPart = x.recipient || "";
     const url = x.vedabase_url || "";
     const excerpt = smartTruncate(bodyText, 500);
 
+    // Build short attribution
     let attribution = "In a letter";
-    if (recipientPart && datePart) attribution = `In a letter to ${recipientPart} on ${datePart}`;
-    else if (recipientPart) attribution = `In a letter to ${recipientPart}`;
-    else if (datePart) attribution = `In a letter on ${datePart}`;
+    if (recipientPart && year) attribution = `Writing to ${recipientPart} (${year})`;
+    else if (recipientPart) attribution = `Writing to ${recipientPart}`;
+    else if (year) attribution = `In a letter (${year})`;
 
-    if (url) {
-      parts.push(`<p>${attribution}, <a href="${url}" class="verse-link" target="_blank">Śrīla Prabhupāda wrote</a>:</p>`);
-    } else {
-      parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
-    }
-    parts.push(`<div class="letter-quote">"${excerpt}"</div>`);
-    if (url) {
-      parts.push(`<p style="text-align: right; margin-top: -8px;"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">View on Vedabase</span></a></p>`);
-    }
+    // Build citation: [Letter to Name · 1972]
+    const citeParts = ["Letter"];
+    if (recipientPart) citeParts.push(`to ${recipientPart}`);
+    if (year) citeParts.push(year);
+    const citeLabel = citeParts.join(" · ");
+    const cite = url
+      ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
+      : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
+
+    parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
+    parts.push(`<div class="letter-quote">"${excerpt}"${cite}</div>`);
   };
 
   // Build unified list of all items with scores, sort by relevance
@@ -1258,11 +1266,11 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
   const allItems: FBItem[] = [];
 
-  for (const x of v.slice(0, 30)) {
+  for (const x of v.slice(0, 15)) {
     allItems.push({ score: x.score || 0, type: 'verse', data: x });
   }
   const seenBookSlugs = new Set<string>();
-  for (const x of p.slice(0, 8)) {
+  for (const x of p.slice(0, 5)) {
     if (seenBookSlugs.has(x.book_slug)) continue;
     const bodyText = (x.body_text || "").trim();
     if (bodyText.length < 80) continue;
@@ -1270,12 +1278,12 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     seenBookSlugs.add(x.book_slug);
     allItems.push({ score: x.score || 0, type: 'prose', data: x });
   }
-  for (const x of t.slice(0, 6)) {
+  for (const x of t.slice(0, 4)) {
     const bodyText = (x.body_text || "").trim();
     if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
     allItems.push({ score: x.score || 0, type: 'lecture', data: x });
   }
-  for (const x of l.slice(0, 4)) {
+  for (const x of l.slice(0, 2)) {
     const bodyText = (x.body_text || "").trim();
     if (bodyText.length < 80) continue;
     allItems.push({ score: x.score || 0, type: 'letter', data: x });
@@ -1552,7 +1560,7 @@ export async function GET(request: NextRequest) {
             body: JSON.stringify({
               contents: [{ parts: [{ text: prompt }] }],
               generationConfig: {
-                maxOutputTokens: 12000,
+                maxOutputTokens: 6000,
                 temperature: 0.3,
               },
               safetySettings: [
