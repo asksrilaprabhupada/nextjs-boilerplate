@@ -842,12 +842,31 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
 
   if (!ctx.trim()) return "";
 
+  // Extract top 3 SUMMARY tags for a unique intro
+  const summaryTags: string[] = [];
+  const allTagSources = [...verses.slice(0, 5), ...prose.slice(0, 3), ...transcripts.slice(0, 3), ...letters.slice(0, 2)];
+  for (const item of allTagSources) {
+    const tags = (item as any).tags as string[] | undefined;
+    if (tags) {
+      const summary = tags.find((t: string) => t.startsWith("SUMMARY:"));
+      if (summary) {
+        summaryTags.push(summary.replace("SUMMARY:", "").trim());
+        if (summaryTags.length >= 3) break;
+      }
+    }
+  }
+  const topSummaries = summaryTags.length > 0
+    ? summaryTags.map((s, i) => `  Finding ${i + 1}: ${s}`).join('\n')
+    : '  (Write a thoughtful intro based on the passages below)';
+
   return `You are writing a short article answering a devotee's question: "${question}"
 
 Use ONLY the scripture passages provided below. Never invent philosophy.
 
 STRUCTURE YOUR ARTICLE LIKE THIS:
-1. Start with a <p> paragraph (2-3 sentences) that restates and frames the actual question "${question}" — explain why this question matters or how it is addressed in Śrīla Prabhupāda's books. Do NOT use generic filler like "The scriptures offer clear guidance."
+1. Start with a <p> paragraph (2-3 sentences) that is UNIQUE and SPECIFIC to this search. Here are the key findings from the top results to help you write a compelling intro:
+${topSummaries}
+Use these findings to write a specific intro — mention what the scriptures actually say, which speakers address this topic, or what the core teaching is. NEVER write generic filler like "The scriptures offer clear guidance" or "This is addressed extensively in Prabhupāda's books." Every intro must be different based on the actual content found.
 2. Organize the body by THEME, not just sequentially. Use <h3> headings for each thematic section. Make headings editorial (e.g., "The Rarity of Human Birth", "The Ultimate Goal"), NOT just scripture names.
 3. End with a <p> paragraph (2-3 sentences) that specifically summarizes what the scriptures teach about the question asked: "${question}". DO NOT use a generic conclusion about "the human form of life" — the conclusion must directly relate to the topic discussed in the article. End with a brief mention that full purports are available via Vedabase.io links above.
 
@@ -958,12 +977,42 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       ? `${bookNames[0]} and ${bookNames[1]}`
       : `${bookNames.slice(0, 2).join(", ")}, and ${bookNames.length > 3 ? "other texts" : bookNames[2]}`;
 
-  // Question-aware intro with correct grammar
-  const isPractical = /how (to|can|should|do)|what (should|can|to do)|practical|practice|daily/i.test(question);
-  if (isPractical) {
-    parts.push(`<p>Śrīla Prabhupāda addressed ${questionTopic} both through his personal example and his teachings. Drawing from ${bookListStr}, here is his guidance on this matter.</p>`);
+  // Extract summaries from top results for a unique intro
+  const introSummaries: string[] = [];
+  for (const item of [...v.slice(0, 3), ...p.slice(0, 2), ...t.slice(0, 2), ...l.slice(0, 1)]) {
+    const tags = (item as any).tags as string[] | undefined;
+    if (tags) {
+      const summary = tags.find((tag: string) => tag.startsWith("SUMMARY:"));
+      if (summary) {
+        introSummaries.push(summary.replace("SUMMARY:", "").trim());
+        if (introSummaries.length >= 2) break;
+      }
+    }
+  }
+
+  // Content-aware intro templates
+  if (introSummaries.length >= 2) {
+    parts.push(`<p>${introSummaries[0]}. ${introSummaries[1]}. Through ${bookListStr}, Śrīla Prabhupāda provides profound guidance on this subject.</p>`);
+  } else if (introSummaries.length === 1) {
+    parts.push(`<p>${introSummaries[0]}. Śrīla Prabhupāda addresses this topic through ${bookListStr}, offering both scriptural evidence and practical instruction.</p>`);
   } else {
-    parts.push(`<p>The question of ${questionTopic} is addressed extensively in Śrīla Prabhupāda's books. Through ${bookListStr}, the scriptures and Prabhupāda's purports provide direct and profound guidance.</p>`);
+    // No summaries available — use a question-aware intro
+    const isWho = /^who\b/i.test(question);
+    const isWhat = /^what\b/i.test(question);
+    const isHow = /^how\b/i.test(question);
+    const isWhy = /^why\b/i.test(question);
+
+    if (isHow) {
+      parts.push(`<p>Śrīla Prabhupāda gives clear practical guidance on ${questionTopic}. Drawing from ${bookListStr}, here are the specific instructions from the scriptures and his own teachings.</p>`);
+    } else if (isWhy) {
+      parts.push(`<p>The deeper reason behind ${questionTopic} is revealed through the scriptures. In ${bookListStr}, Śrīla Prabhupāda explains the spiritual significance with great clarity.</p>`);
+    } else if (isWho) {
+      parts.push(`<p>The identity and role of ${questionTopic} is described vividly in the scriptures. Through ${bookListStr}, Śrīla Prabhupāda illuminates this subject.</p>`);
+    } else if (isWhat) {
+      parts.push(`<p>Understanding ${questionTopic} requires scriptural knowledge. In ${bookListStr}, Śrīla Prabhupāda reveals what the Vedic literature teaches about this important subject.</p>`);
+    } else {
+      parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} in ${bookListStr}. Here is what the scriptures and his teachings reveal on this subject.</p>`);
+    }
   }
 
   // Varied transition templates (expanded to 10)
@@ -1140,8 +1189,12 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     itemIdx++;
   }
 
-  // Dynamic conclusion that relates to the actual question topic
-  parts.push(`<p>Through these teachings, Śrīla Prabhupāda provides clear guidance on ${questionTopic}. The consistent instruction is to engage the mind in the service of Lord Kṛṣṇa under the direction of the spiritual master — for this is the practical method recommended across all these scriptures. Full purports are available through the Vedabase.io links above.</p>`);
+  // Content-aware conclusion
+  if (introSummaries.length > 0) {
+    parts.push(`<p>Through these passages from ${bookListStr}, Śrīla Prabhupāda's teaching on ${questionTopic} is clear and consistent. Full purports with complete context are available through the Vedabase.io links above.</p>`);
+  } else {
+    parts.push(`<p>These teachings from ${bookListStr} offer Śrīla Prabhupāda's direct guidance on ${questionTopic}. Full purports are available through the Vedabase.io links above.</p>`);
+  }
 
   return parts.join("\n");
 }
