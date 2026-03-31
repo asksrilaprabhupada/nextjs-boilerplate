@@ -9,10 +9,6 @@
  *   npx tsx scripts/04-api-benchmark.ts                              # test against localhost:3000
  *   npx tsx scripts/04-api-benchmark.ts https://asksrilaprabhupada.com  # test against production
  *   npx tsx scripts/04-api-benchmark.ts --category=exact_reference     # test one category only
- *
- * Prerequisites:
- *   1. npm run dev (in another terminal) — unless testing production
- *   2. .env.local with SUPABASE_URL and SUPABASE_SERVICE_KEY
  */
 
 import { createClient } from "@supabase/supabase-js";
@@ -51,15 +47,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
-// First argument can be a URL to test against
 const args = process.argv.slice(2);
 const urlArg = args.find(a => a.startsWith("http"));
 const categoryArg = args.find(a => a.startsWith("--category="))?.split("=")[1] || null;
 
 const BASE_URL = urlArg || "http://localhost:3000";
 const SEARCH_ENDPOINT = `${BASE_URL}/api/search`;
-const DELAY_BETWEEN_QUERIES = 1500; // ms — don't hammer the server
-const TIMEOUT_MS = 30000; // 30 seconds per query
+const DELAY_BETWEEN_QUERIES = 2000;
+const TIMEOUT_MS = 30000;
 const REPORT_PATH = resolve(__dirname, "..", "benchmark-results.json");
 
 const startTime = Date.now();
@@ -72,8 +67,8 @@ interface BenchmarkQuery {
   query: string;
   category: string;
   difficulty: string;
-  expected_references: string[];  // e.g. ["BG 2.13", "BG 2.20"]
-  expected_books?: string[];       // e.g. ["bg", "sb"]
+  expected_references: string[];
+  expected_books?: string[];
   min_results?: number;
 }
 
@@ -89,6 +84,39 @@ interface QueryResult {
   totalResults: number;
   durationMs: number;
   error?: string;
+}
+
+// ─── Reference Normalization ────────────────────────────────────────────────
+
+/**
+ * Normalizes ANY reference format to a common format: "bg:2:13"
+ * Handles:
+ *   - Database format: "bg:2:13"
+ *   - API format: "BG 2.13"
+ *   - Mixed: "SB 1.2.3", "CC Madhya.8.128"
+ */
+function normalizeRef(ref: string): string {
+  let r = ref.trim().toLowerCase();
+  
+  // Remove brackets
+  r = r.replace(/[\[\]]/g, '');
+  
+  // Remove "text " prefix
+  r = r.replace(/text\s+/gi, '');
+  
+  // Replace dots and spaces with colons for uniform format
+  // "bg 2.13" → "bg:2:13"
+  // "sb 1.2.3" → "sb:1:2:3"
+  // "cc madhya.8.128" → "cc:madhya:8:128"
+  r = r.replace(/[\s.]+/g, ':');
+  
+  // Remove trailing colons
+  r = r.replace(/:+$/, '');
+  
+  // Collapse multiple colons
+  r = r.replace(/:+/g, ':');
+  
+  return r;
 }
 
 // ─── Fetch benchmark queries from Supabase ──────────────────────────────────
@@ -111,8 +139,7 @@ async function fetchBenchmarkQueries(): Promise<BenchmarkQuery[]> {
   }
 
   if (!data || data.length === 0) {
-    console.error("ERROR: No benchmark queries found in the table.");
-    if (categoryArg) console.error(`  (You filtered by category="${categoryArg}" — is that correct?)`);
+    console.error("ERROR: No benchmark queries found.");
     process.exit(1);
   }
 
@@ -134,7 +161,6 @@ async function callSearchAPI(query: string): Promise<{
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
-    // Use mode=references and stream=false for faster responses (skip Gemini synthesis)
     const url = `${SEARCH_ENDPOINT}?q=${encodeURIComponent(query)}&mode=references&stream=false`;
 
     const res = await fetch(url, {
@@ -157,7 +183,6 @@ async function callSearchAPI(query: string): Promise<{
     const data = await res.json();
     const durationMs = Date.now() - start;
 
-    // Extract all verse references from the response
     const references: string[] = [];
     const books: string[] = [];
 
@@ -165,24 +190,23 @@ async function callSearchAPI(query: string): Promise<{
       for (const book of data.books) {
         if (book.slug) books.push(book.slug.toLowerCase());
 
-        // Extract verse references
         if (book.verses && Array.isArray(book.verses)) {
           for (const v of book.verses) {
-            const scripture = v.scripture || "";
+            const scripture = (v.scripture || "").toLowerCase();
             const canto = v.canto_or_division || "";
             const chapter = v.chapter_number || "";
             const verse = (v.verse_number || "").replace(/^Text\s+/i, "");
 
+            // Build in colon format to match expected: "bg:2:13", "sb:1:2:3"
             let ref = scripture;
-            if (canto) ref += ` ${canto}`;
-            if (chapter) ref += `.${chapter}`;
-            if (verse) ref += `.${verse}`;
+            if (canto) ref += `:${canto}`;
+            if (chapter) ref += `:${chapter}`;
+            if (verse) ref += `:${verse}`;
 
-            references.push(ref.trim());
+            references.push(ref);
           }
         }
 
-        // Also note prose/transcript/letter presence
         if (book.prose?.length > 0) books.push(book.slug?.toLowerCase() || "");
         if (book.transcripts?.length > 0) books.push("lectures");
         if (book.letters?.length > 0) books.push("letters");
@@ -192,17 +216,17 @@ async function callSearchAPI(query: string): Promise<{
     // Also check overflow results
     if (data.overflowVerses && Array.isArray(data.overflowVerses)) {
       for (const v of data.overflowVerses) {
-        const scripture = v.scripture || "";
+        const scripture = (v.scripture || "").toLowerCase();
         const canto = v.canto_or_division || "";
         const chapter = v.chapter_number || "";
         const verse = (v.verse_number || "").replace(/^Text\s+/i, "");
 
         let ref = scripture;
-        if (canto) ref += ` ${canto}`;
-        if (chapter) ref += `.${chapter}`;
-        if (verse) ref += `.${verse}`;
+        if (canto) ref += `:${canto}`;
+        if (chapter) ref += `:${chapter}`;
+        if (verse) ref += `:${verse}`;
 
-        references.push(ref.trim());
+        references.push(ref);
       }
     }
 
@@ -225,18 +249,9 @@ async function callSearchAPI(query: string): Promise<{
 
 // ─── Check if expected references are found ─────────────────────────────────
 
-function normalizeRef(ref: string): string {
-  return ref
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, " ")
-    .replace(/TEXT\s+/i, "");
-}
-
 function checkResult(
   expected: string[],
   found: string[],
-  query: BenchmarkQuery,
 ): { passed: boolean; matched: string[]; missing: string[] } {
   if (!expected || expected.length === 0) {
     // No specific references expected — just check we got some results
@@ -254,16 +269,16 @@ function checkResult(
   for (const exp of expected) {
     const normalizedExp = normalizeRef(exp);
 
-    // Check for exact match
+    // Exact match
     if (normalizedFound.has(normalizedExp)) {
       matched.push(exp);
       continue;
     }
 
-    // Check for partial match (e.g., "BG 2" matches "BG 2.13")
-    // This handles cases where expected is a chapter reference
+    // Partial match — expected "bg:2" matches found "bg:2:13"
+    // Or expected "sb:7" matches found "sb:7:5:23"
     const partialMatch = [...normalizedFound].some(f =>
-      f.startsWith(normalizedExp) || normalizedExp.startsWith(f)
+      f.startsWith(normalizedExp + ':') || normalizedExp.startsWith(f + ':') || f === normalizedExp
     );
 
     if (partialMatch) {
@@ -274,7 +289,6 @@ function checkResult(
   }
 
   // Pass if at least half of expected references are found
-  // (some queries have multiple expected refs, finding most is OK)
   const passThreshold = Math.ceil(expected.length / 2);
   return {
     passed: matched.length >= passThreshold,
@@ -291,7 +305,13 @@ async function main() {
   if (categoryArg) console.log(`Category filter: ${categoryArg}`);
   console.log("");
 
-  // Step 1: Check if the server is reachable
+  // Quick sanity check: show how normalization works
+  console.log("Reference format check:");
+  console.log(`  Expected format: "${normalizeRef("bg:2:13")}"`);
+  console.log(`  API format:      "${normalizeRef("BG 2.13")}"`);
+  console.log(`  Match: ${normalizeRef("bg:2:13") === normalizeRef("BG 2.13") ? "YES" : "NO"}`);
+  console.log("");
+
   console.log("Checking if the server is running...");
   try {
     const healthCheck = await fetch(`${BASE_URL}/api/search?q=test&mode=references&stream=false`, {
@@ -299,7 +319,6 @@ async function main() {
     });
     if (!healthCheck.ok) {
       console.error(`ERROR: Server returned HTTP ${healthCheck.status}`);
-      console.error("Make sure your dev server is running (npm run dev) or check the URL.");
       process.exit(1);
     }
     console.log("Server is running. Starting benchmark.\n");
@@ -309,12 +328,10 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 2: Load benchmark queries
   console.log("Loading benchmark queries from Supabase...");
   const queries = await fetchBenchmarkQueries();
   console.log(`Loaded ${queries.length} queries.\n`);
 
-  // Step 3: Run each query
   const results: QueryResult[] = [];
   let passed = 0;
   let failed = 0;
@@ -344,7 +361,6 @@ async function main() {
       const check = checkResult(
         bq.expected_references || [],
         apiResult.references,
-        bq,
       );
 
       if (check.passed) passed++;
@@ -356,7 +372,7 @@ async function main() {
         difficulty: bq.difficulty,
         passed: check.passed,
         expected: bq.expected_references || [],
-        found: apiResult.references.slice(0, 20), // top 20 for readability
+        found: apiResult.references.slice(0, 20),
         matched: check.matched,
         missing: check.missing,
         totalResults: apiResult.totalResults,
@@ -364,30 +380,26 @@ async function main() {
       });
     }
 
-    // Progress update every 10 queries
     if ((i + 1) % 10 === 0 || i === queries.length - 1) {
       const total = i + 1;
       const pct = ((passed / total) * 100).toFixed(1);
       const avgMs = Math.round(results.reduce((s, r) => s + r.durationMs, 0) / total);
       console.log(
-        `  ${total}/${queries.length} | ✓ ${passed} | ✗ ${failed} | errors ${errors} | pass rate ${pct}% | avg ${avgMs}ms | ${elapsed()}`
+        `  ${total}/${queries.length} | pass ${passed} | fail ${failed} | errors ${errors} | rate ${pct}% | avg ${avgMs}ms | ${elapsed()}`
       );
     }
 
-    // Don't hammer the server
     if (i < queries.length - 1) {
       await new Promise(r => setTimeout(r, DELAY_BETWEEN_QUERIES));
     }
   }
 
-  // Step 4: Print score card
   console.log("\n");
-  console.log("═".repeat(65));
+  console.log("=".repeat(65));
   console.log("  BENCHMARK RESULTS");
-  console.log("═".repeat(65));
+  console.log("=".repeat(65));
   console.log("");
 
-  // Group by category
   const categories = new Map<string, { total: number; passed: number }>();
   for (const r of results) {
     if (!categories.has(r.category)) {
@@ -398,14 +410,13 @@ async function main() {
     if (r.passed) cat.passed++;
   }
 
-  // Print table
   console.log("  Category              | Total | Passed | Rate");
-  console.log("  " + "─".repeat(55));
+  console.log("  " + "-".repeat(55));
 
   const sortedCategories = [...categories.entries()].sort((a, b) => {
     const rateA = a[1].passed / a[1].total;
     const rateB = b[1].passed / b[1].total;
-    return rateA - rateB; // worst first
+    return rateA - rateB;
   });
 
   for (const [cat, data] of sortedCategories) {
@@ -416,14 +427,13 @@ async function main() {
     console.log(`  ${label} |${total} |${pass} | ${rate}%`);
   }
 
-  console.log("  " + "─".repeat(55));
+  console.log("  " + "-".repeat(55));
   const overallRate = ((passed / results.length) * 100).toFixed(1);
   console.log(`  ${"OVERALL".padEnd(22)} |${String(results.length).padStart(5)} |${String(passed).padStart(6)} | ${overallRate}%`);
   console.log("");
 
-  // Group by difficulty
   console.log("  Difficulty | Total | Passed | Rate");
-  console.log("  " + "─".repeat(42));
+  console.log("  " + "-".repeat(42));
   const difficulties = new Map<string, { total: number; passed: number }>();
   for (const r of results) {
     if (!difficulties.has(r.difficulty)) {
@@ -439,18 +449,18 @@ async function main() {
   }
   console.log("");
 
-  // Show failures
   const failures = results.filter(r => !r.passed);
   if (failures.length > 0) {
     console.log(`  ${failures.length} FAILURES:`);
-    console.log("  " + "─".repeat(55));
+    console.log("  " + "-".repeat(55));
     for (const f of failures.slice(0, 30)) {
-      console.log(`  ✗ [${f.category}/${f.difficulty}] "${f.query}"`);
+      console.log(`  X [${f.category}/${f.difficulty}] "${f.query}"`);
       if (f.error) {
         console.log(`    Error: ${f.error}`);
       } else {
         if (f.missing.length > 0) console.log(`    Missing: ${f.missing.join(", ")}`);
-        console.log(`    Found ${f.totalResults} results total`);
+        if (f.found.length > 0) console.log(`    Found: ${f.found.slice(0, 5).join(", ")}`);
+        console.log(`    Total results: ${f.totalResults}`);
       }
     }
     if (failures.length > 30) {
@@ -460,9 +470,8 @@ async function main() {
 
   console.log("");
   console.log(`  Time: ${elapsed()}`);
-  console.log("═".repeat(65));
+  console.log("=".repeat(65));
 
-  // Step 5: Save full report
   const report = {
     generated_at: new Date().toISOString(),
     target: BASE_URL,
