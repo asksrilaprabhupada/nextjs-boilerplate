@@ -687,3 +687,13 @@ body {
   padding: 2px 8px;
   border-radius: 6px;
 }
+
+/* Right-aligned citation links after quote blocks */
+.narrative-content .purport-quote + p[style*="text-align: right"],
+.narrative-content .prose-quote + p[style*="text-align: right"],
+.narrative-content .lecture-quote + p[style*="text-align: right"],
+.narrative-content .letter-quote + p[style*="text-align: right"] {
+  margin-top: -4px !important;
+  margin-bottom: 16px !important;
+  font-size: 12px !important;
+}

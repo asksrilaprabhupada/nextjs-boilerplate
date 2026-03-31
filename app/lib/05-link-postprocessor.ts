@@ -8,7 +8,7 @@
 // Matches references like [BG 2.20], [SB 1.2.3], [CC Madhya 8.128], BG 2.20, SB 1.2.3, etc.
 // Negative lookbehind ensures we don't match text already inside an <a> tag's inner text.
 const VERSE_REF_PATTERN =
-  /\[?\b(BG|SB|CC|NOI|ISO|BS)\s+((?:Adi|Madhya|Antya|[\d]+)\s*[.\s]\s*)?(\d+)[.\s](\d+(?:[–-]\d+)?)\]?/gi;
+  /\[?\b(BG|SB|CC|NOI|ISO|BS|NBS|MMS)\s+((?:Adi|Madhya|Antya|[\d]+)\s*[.\s]\s*)?(\d+)[.\s](\d+(?:[–-]\d+)?)\]?/gi;
 
 // Vedabase URL builder for known scriptures
 function buildVedabaseLink(
@@ -71,6 +71,12 @@ export function ensureVerseLinks(
             verseUrlMap.get(refText) ||
             verseUrlMap.get(`[${refText}]`) ||
             verseUrlMap.get(refText.replace(/\s+/g, " "));
+        }
+
+        // For books not on Vedabase, show as styled label instead of link
+        const noVedabaseScriptures = new Set(["NBS", "MMS"]);
+        if (noVedabaseScriptures.has(s)) {
+          return `<span class="verse-label">${displayRef}</span>`;
         }
 
         // Fall back to building the URL
