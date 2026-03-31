@@ -436,14 +436,14 @@ function QuoteTooltip() {
         style={{
           position: 'fixed',
           top: tooltip.y,
-          left: tooltip.cardLeft - 16,
+          left: tooltip.cardLeft - 12,
           transform: visible
             ? 'translateX(-100%) translateY(-50%) translateX(0) scale(1)'
             : 'translateX(-100%) translateY(-50%) translateX(12px) scale(0.88)',
           padding: '9px 16px 9px 12px',
           borderRadius: 12,
           fontFamily: "'DM Sans', sans-serif",
-          whiteSpace: 'nowrap',
+          whiteSpace: 'normal',
           color: tooltip.color,
           background: tooltip.bg,
           backdropFilter: 'blur(16px) saturate(1.3)',
@@ -458,7 +458,7 @@ function QuoteTooltip() {
           flexDirection: 'column',
           alignItems: 'flex-start',
           gap: 3,
-          maxWidth: 240,
+          maxWidth: Math.max(tooltip.cardLeft - 32, 120),
           overflow: 'hidden',
         }}
       >
@@ -501,7 +501,7 @@ function QuoteTooltip() {
             boxShadow: `0 0 6px ${tooltip.dotColor}44`,
             animation: visible ? 'tooltipDotPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both' : 'none',
           }} />
-          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.3 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.4 }}>
             {tooltip.text}
           </span>
         </div>
@@ -512,6 +512,7 @@ function QuoteTooltip() {
             opacity: 0.65,
             marginLeft: 15,
             lineHeight: 1.3,
+            whiteSpace: 'normal',
             position: 'relative',
             zIndex: 1,
           }}>
