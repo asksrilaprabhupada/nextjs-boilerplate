@@ -224,8 +224,40 @@ function rrfMerge<T extends { id: string; similarity?: number }>(
 // =====================================================
 // V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
 // =====================================================
-async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[] }> {
+async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
   const supabase = getSupabase();
+
+  // ── Direct verse lookup for exact references like "BG 18.66", "SB 1.1.1", "NOI verse 1" ──
+  let directVerse: VerseHit | undefined;
+  const isDirectRef = /^(BG|SB|CC|NOI|ISO|BS|NBS|MMS)\s+/i.test(query.trim());
+  if (isDirectRef) {
+    try {
+      const { data: dvData } = await supabase.rpc("direct_verse_lookup", { ref_query: query.trim() });
+      if (dvData && dvData.length > 0) {
+        const dv = dvData[0];
+        directVerse = {
+          id: dv.id,
+          scripture: dv.scripture,
+          verse_number: dv.verse_number,
+          sanskrit_devanagari: dv.sanskrit_devanagari || "",
+          transliteration: dv.transliteration || "",
+          translation: dv.translation || "",
+          purport: dv.purport || "",
+          chapter_id: dv.chapter_id,
+          chapter_number: String(dv.chapter_number || ""),
+          canto_or_division: dv.canto_or_division || "",
+          chapter_title: dv.chapter_title || "",
+          book_slug: dv.book_slug || dv.scripture?.toLowerCase(),
+          vedabase_url: dv.vedabase_url || "",
+          tags: dv.tags || [],
+          score: 999, // Highest possible score — this is THE verse they asked for
+        };
+      }
+    } catch (err) {
+      console.error("[direct_verse_lookup] Error:", err);
+    }
+  }
+
   const preprocessed = await preprocessQuery(query);
   const mainPhrase = preprocessed.searchPhrases[0];
 
@@ -363,13 +395,22 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   const allTranscripts = [...transcriptMap.values()].sort((a, b) => b.score - a.score);
   const allLetters = [...letterMap.values()].sort((a, b) => b.score - a.score);
 
-  return { verses: allVerses, prose: allProse, transcripts: allTranscripts, letters: allLetters };
+  // If we found a direct verse match, inject it at position #1 (deduplicate if already present)
+  if (directVerse) {
+    const existingIdx = allVerses.findIndex(v => v.id === directVerse!.id);
+    if (existingIdx >= 0) {
+      allVerses.splice(existingIdx, 1);
+    }
+    allVerses.unshift(directVerse as VerseHit & { score: number; similarity?: number });
+  }
+
+  return { verses: allVerses, prose: allProse, transcripts: allTranscripts, letters: allLetters, directVerse };
 }
 
 // =====================================================
 // HYBRID SEARCH: V2 with fallback to legacy V1
 // =====================================================
-async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[] }> {
+async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
   try {
     return await hybridSearchV2(query);
   } catch (err) {
@@ -1050,6 +1091,359 @@ function groupByTheme(verses: VerseHit[]): Map<string, VerseHit[]> {
   return groups;
 }
 
+// =====================================================
+// TEMPLATE ARTICLE BUILDER (Strategy A — zero AI calls)
+// =====================================================
+
+/**
+ * Groups passages into thematic sections using their topic tags.
+ * Returns a Map of heading → items, where heading is a clean human-readable title.
+ */
+function groupIntoThemes(
+  items: Array<{ type: 'verse' | 'prose' | 'lecture' | 'letter'; data: VerseHit | ProseHit | TranscriptHit | LetterHit; score: number }>,
+): Map<string, typeof items> {
+  const groups = new Map<string, typeof items>();
+  const assigned = new Set<number>();
+
+  // Pass 1: Group by the FIRST topic tag (most specific)
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const tags = (item.data as any).tags as string[] | undefined;
+    if (!tags) continue;
+
+    const topicTags = tags.filter(t =>
+      !t.startsWith("SUMMARY:") &&
+      !t.includes("?") &&
+      t.length > 2 &&
+      t.length < 50
+    );
+
+    if (topicTags.length === 0) continue;
+
+    // Use the first topic tag as the group key
+    const rawKey = topicTags[0].toLowerCase().trim();
+
+    if (!groups.has(rawKey)) groups.set(rawKey, []);
+    groups.get(rawKey)!.push(item);
+    assigned.add(i);
+  }
+
+  // Pass 2: Put unassigned items into "Additional Teachings"
+  for (let i = 0; i < items.length; i++) {
+    if (assigned.has(i)) continue;
+    const key = "additional teachings";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(items[i]);
+  }
+
+  // Merge small groups (1 item) into the nearest larger group or "Additional Teachings"
+  const merged = new Map<string, typeof items>();
+  const smallItems: typeof items = [];
+  for (const [key, group] of groups) {
+    if (group.length >= 2) {
+      merged.set(key, group);
+    } else {
+      smallItems.push(...group);
+    }
+  }
+  if (smallItems.length > 0) {
+    const key = merged.size > 0 ? "further insights" : "teachings";
+    merged.set(key, smallItems);
+  }
+
+  return merged;
+}
+
+/**
+ * Converts a raw tag key like "mind control difficulty" into a readable heading
+ * like "The Difficulty of Controlling the Mind".
+ */
+function tagToHeading(tag: string): string {
+  // Common heading transformations
+  const transforms: Record<string, string> = {
+    "mind control": "Controlling the Mind",
+    "mind control difficulty": "The Formidable Nature of the Mind",
+    "restless mind": "The Restless Nature of the Mind",
+    "devotional service": "The Path of Devotional Service",
+    "controlling senses": "Controlling the Senses",
+    "sense control": "Mastering the Senses",
+    "devotion": "The Power of Devotion",
+    "anger": "Overcoming Anger",
+    "lust": "The Enemy of Lust",
+    "soul": "The Nature of the Soul",
+    "death": "The Moment of Death",
+    "reincarnation": "The Cycle of Birth and Death",
+    "surrender": "The Path of Surrender",
+    "spiritual master": "The Role of the Spiritual Master",
+    "chanting": "The Power of Chanting",
+    "karma": "Understanding Karma",
+    "liberation": "The Goal of Liberation",
+    "material nature": "The Modes of Material Nature",
+    "further insights": "Further Insights",
+    "additional teachings": "Additional Teachings",
+    "teachings": "Key Teachings",
+  };
+
+  const lower = tag.toLowerCase();
+  if (transforms[lower]) return transforms[lower];
+
+  // Default: Title Case the tag
+  return tag
+    .split(/\s+/)
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+/**
+ * Builds a complete HTML article from search results using ONLY templates.
+ * Zero AI calls. 100% correct citations. Instant.
+ */
+function buildTemplateArticle(
+  question: string,
+  verses: VerseHit[],
+  prose: ProseHit[],
+  transcripts: TranscriptHit[] = [],
+  letters: LetterHit[] = [],
+): string {
+  if (verses.length === 0 && prose.length === 0 && transcripts.length === 0 && letters.length === 0) {
+    return "<p>No relevant passages found for this query.</p>";
+  }
+
+  const parts: string[] = [];
+
+  // ── Collect ALL items into a unified scored list ──
+  interface ArticleItem {
+    type: 'verse' | 'prose' | 'lecture' | 'letter';
+    data: VerseHit | ProseHit | TranscriptHit | LetterHit;
+    score: number;
+  }
+
+  const allItems: ArticleItem[] = [];
+
+  for (const v of verses.slice(0, 15)) {
+    if (!v.translation && !v.purport) continue;
+    if ((v.translation || "").trim().length < 10) continue;
+    allItems.push({ type: 'verse', data: v, score: v.score || 0 });
+  }
+
+  const seenBookSlugs = new Set<string>();
+  for (const p of prose.slice(0, 5)) {
+    const bodyText = (p.body_text || "").trim();
+    if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+    if (seenBookSlugs.has(p.book_slug)) continue;
+    seenBookSlugs.add(p.book_slug);
+    allItems.push({ type: 'prose', data: p, score: p.score || 0 });
+  }
+
+  for (const t of transcripts.slice(0, 4)) {
+    const bodyText = (t.body_text || "").trim();
+    if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+    allItems.push({ type: 'lecture', data: t, score: t.score || 0 });
+  }
+
+  for (const l of letters.slice(0, 2)) {
+    const bodyText = (l.body_text || "").trim();
+    if (bodyText.length < 80) continue;
+    allItems.push({ type: 'letter', data: l, score: l.score || 0 });
+  }
+
+  // Sort by score
+  allItems.sort((a, b) => b.score - a.score);
+
+  // ── INTRO: Build from SUMMARY tags ──
+  const summaries: string[] = [];
+  for (const item of allItems.slice(0, 5)) {
+    const tags = (item.data as any).tags as string[] | undefined;
+    if (!tags) continue;
+    const summary = tags.find(t => t.startsWith("SUMMARY:"));
+    if (summary) {
+      summaries.push(summary.replace("SUMMARY:", "").trim());
+      if (summaries.length >= 2) break;
+    }
+  }
+
+  const articleVerses = verses.slice(0, 15);
+  const bookNames = [...new Set(articleVerses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
+  const bookListStr = bookNames.length === 1
+    ? bookNames[0]
+    : bookNames.length === 2
+      ? `${bookNames[0]} and ${bookNames[1]}`
+      : `${bookNames.slice(0, 2).join(", ")}, and ${bookNames.length > 3 ? "other texts" : bookNames[2]}`;
+
+  // Get primary speaker for the first verse
+  const firstVerse = verses[0];
+  const firstRef = firstVerse ? cleanRef(firstVerse) : "";
+  const firstSpeaker = firstVerse ? getSpeaker(firstRef, "translation") : "";
+
+  if (summaries.length >= 2) {
+    parts.push(`<p>${summaries[0]} ${summaries[1]} Through ${bookListStr}, Śrīla Prabhupāda provides clear guidance on this subject.</p>`);
+  } else if (summaries.length === 1) {
+    parts.push(`<p>${summaries[0]} Śrīla Prabhupāda addresses this in ${bookListStr}, offering both scriptural evidence and practical instruction.</p>`);
+  } else if (firstSpeaker && firstSpeaker !== "the scripture") {
+    const questionTopic = question.replace(/\?$/, "").replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "").trim().toLowerCase() || question.replace(/\?$/, "").toLowerCase();
+    parts.push(`<p>${firstSpeaker} directly addresses ${questionTopic} in the scriptures. Through ${bookListStr}, Śrīla Prabhupāda illuminates this teaching with his purports.</p>`);
+  } else {
+    const questionTopic = question.replace(/\?$/, "").replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "").trim().toLowerCase() || question.replace(/\?$/, "").toLowerCase();
+    parts.push(`<p>Śrīla Prabhupāda gives clear guidance on ${questionTopic} through ${bookListStr}. Here is what the scriptures and his teachings reveal.</p>`);
+  }
+
+  // ── GROUP INTO THEMED SECTIONS with <h3> headings ──
+  const themes = groupIntoThemes(allItems);
+
+  // Transition templates
+  const transitions = [
+    (s: string, ref: string) => `${s} states (${ref}):`,
+    (s: string, ref: string) => `In ${ref}, ${s} declares:`,
+    (s: string, ref: string) => `${s} instructs (${ref}):`,
+    (s: string, ref: string) => `Drawing from ${ref}, ${s} teaches:`,
+    (s: string, ref: string) => `${s} further illuminates this (${ref}):`,
+    (s: string, ref: string) => `The instruction continues in ${ref}:`,
+    (s: string, ref: string) => `${s} emphasizes (${ref}):`,
+    (s: string, ref: string) => `This truth is addressed in ${ref}, where ${s} proclaims:`,
+  ];
+
+  const purportTransitions = [
+    "Śrīla Prabhupāda explains in his purport:",
+    "In his commentary, Śrīla Prabhupāda illuminates this point:",
+    "His Divine Grace further elaborates:",
+    "Śrīla Prabhupāda writes in the purport:",
+    "The significance is explained by Śrīla Prabhupāda:",
+    "In his purport, His Divine Grace clarifies:",
+  ];
+
+  let transIdx = 0;
+  let purportIdx = 0;
+
+  for (const [themeKey, themeItems] of themes) {
+    // Emit <h3> heading
+    parts.push(`<h3>${tagToHeading(themeKey)}</h3>`);
+
+    for (const item of themeItems) {
+      if (item.type === 'verse') {
+        const v = item.data as VerseHit;
+        const ref = cleanRef(v);
+        const url = v.vedabase_url || "";
+        const speaker = getSpeaker(ref, "translation");
+
+        const cite = url
+          ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a></div>`
+          : `<div class="cite-ref"><span class="verse-label">[${ref}]</span></div>`;
+
+        // Transition
+        parts.push(`<p>${transitions[transIdx % transitions.length](speaker, ref)}</p>`);
+        transIdx++;
+
+        // Translation
+        if (v.translation) {
+          parts.push(`<div class="verse-quote">"${v.translation}"${cite}</div>`);
+        }
+
+        // Purport (substantial excerpt only)
+        if (v.purport && v.purport.length > 50) {
+          const excerpt = smartTruncate(v.purport, 600);
+          parts.push(`<p>${purportTransitions[purportIdx % purportTransitions.length]}</p>`);
+          purportIdx++;
+          parts.push(`<div class="purport-quote">"${excerpt}"${cite}</div>`);
+        }
+
+      } else if (item.type === 'prose') {
+        const p = item.data as ProseHit;
+        let bodyText = (p.body_text || "").trim();
+        if (bodyText.length < 80) continue;
+
+        // Skip Sanskrit lines at the beginning
+        const lines = bodyText.split("\n");
+        let englishStart = 0;
+        for (let i = 0; i < lines.length; i++) {
+          if (!isMostlySanskrit(lines[i]) && lines[i].trim().length > 30) {
+            englishStart = i;
+            break;
+          }
+        }
+        bodyText = lines.slice(englishStart).join("\n").trim();
+        if (isMostlySanskrit(bodyText) || bodyText.length < 50) continue;
+
+        const bookName = getBookName(p.book_slug);
+        const url = p.vedabase_url || "";
+        const excerpt = smartTruncate(bodyText, 500);
+        const noVedabase = NO_VEDABASE_BOOKS.has(p.book_slug?.toLowerCase());
+
+        const cite = (!noVedabase && url)
+          ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${bookName}]</span></a></div>`
+          : `<div class="cite-ref"><span class="verse-label">[${bookName}]</span></div>`;
+
+        parts.push(`<p>In ${bookName}${p.chapter_title ? " (" + p.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
+        parts.push(`<div class="prose-quote">"${excerpt}"${cite}</div>`);
+
+      } else if (item.type === 'lecture') {
+        const t = item.data as TranscriptHit;
+        const bodyText = (t.body_text || "").trim();
+        if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
+
+        const year = t.date ? new Date(t.date).getFullYear().toString() : "";
+        const city = t.location || "";
+        const url = t.vedabase_url || "";
+        const excerpt = smartTruncate(bodyText, 500);
+
+        let attribution = "In a lecture";
+        if (city && year) attribution = `Speaking in ${city} (${year})`;
+        else if (city) attribution = `Speaking in ${city}`;
+        else if (year) attribution = `In a lecture (${year})`;
+
+        const citeLabel = ["Lecture", year, city].filter(Boolean).join(" · ");
+        const cite = url
+          ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
+          : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
+
+        parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
+        parts.push(`<div class="lecture-quote">"${excerpt}"${cite}</div>`);
+
+      } else if (item.type === 'letter') {
+        const l = item.data as LetterHit;
+        const bodyText = (l.body_text || "").trim();
+        if (bodyText.length < 80) continue;
+
+        const year = l.date ? new Date(l.date).getFullYear().toString() : "";
+        const recipientPart = l.recipient || "";
+        const url = l.vedabase_url || "";
+        const excerpt = smartTruncate(bodyText, 500);
+
+        let attribution = "In a letter";
+        if (recipientPart && year) attribution = `Writing to ${recipientPart} (${year})`;
+        else if (recipientPart) attribution = `Writing to ${recipientPart}`;
+        else if (year) attribution = `In a letter (${year})`;
+
+        const citeParts = ["Letter"];
+        if (recipientPart) citeParts.push(`to ${recipientPart}`);
+        if (year) citeParts.push(year);
+        const citeLabel = citeParts.join(" · ");
+        const cite = url
+          ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
+          : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
+
+        parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
+        parts.push(`<div class="letter-quote">"${excerpt}"${cite}</div>`);
+      }
+    }
+  }
+
+  // ── CONCLUSION ──
+  const questionTopic = question
+    .replace(/\?$/, "")
+    .replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "")
+    .replace(/^(srila\s+)?(prabhupada|prabhupāda)\s+(say|said|says|teach|teaches|explain|explains)\s+(about\s+)?/i, "")
+    .trim()
+    .toLowerCase() || question.replace(/\?$/, "").toLowerCase();
+
+  if (summaries.length > 0) {
+    parts.push(`<p>Through these passages from ${bookListStr}, Śrīla Prabhupāda's teaching on ${questionTopic} is clear and consistent. Full purports with complete context are available through the Vedabase.io links above.</p>`);
+  } else {
+    parts.push(`<p>These teachings from ${bookListStr} offer Śrīla Prabhupāda's direct guidance on ${questionTopic}. Full purports are available through the Vedabase.io links above.</p>`);
+  }
+
+  return parts.join("\n");
+}
+
 function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHit[] = [], l: LetterHit[] = []) {
   if (v.length === 0 && p.length === 0 && t.length === 0 && l.length === 0) {
     return "<p>No relevant passages found.</p>";
@@ -1527,113 +1921,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(result);
     }
 
-    if (!wantStream) {
-      const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap, narrativeTranscripts, narrativeLetters);
-      const result = { ...fullMetadata, narrative };
-      setCached(query, result);
-      return NextResponse.json(result);
-    }
-
-    const prompt = buildSynthesisPrompt(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
-    if (!prompt) {
-      const result = { ...fullMetadata, narrative: "<p>No relevant passages found.</p>" };
-      return NextResponse.json(result);
-    }
-
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        const send = (data: Record<string, unknown>) => {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-        };
-
-        send({ type: "metadata", ...fullMetadata });
-
-        try {
-          const streamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL_SYNTHESIS}:streamGenerateContent?alt=sse`;
-          const geminiRes = await fetch(streamUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-goog-api-key": geminiKey,
-            },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                maxOutputTokens: 6000,
-                temperature: 0.3,
-              },
-              safetySettings: [
-                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-              ],
-            }),
-          });
-
-          if (!geminiRes.ok || !geminiRes.body) {
-            console.error("[Streaming] Gemini streaming failed:", geminiRes.status, await geminiRes.text().catch(() => ""));
-            throw new Error(`Gemini streaming failed: ${geminiRes.status}`);
-          }
-
-          const reader = geminiRes.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = "";
-          let fullNarrative = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (!line.startsWith("data: ")) continue;
-              const jsonStr = line.slice(6).trim();
-              if (!jsonStr || jsonStr === "[DONE]") continue;
-
-              try {
-                const chunk = JSON.parse(jsonStr);
-                const text = chunk?.candidates?.[0]?.content?.parts?.[0]?.text;
-                if (text) {
-                  const processed = ensureVerseLinks(text, verseUrlMap);
-                  fullNarrative += processed;
-                  send({ type: "narrative_chunk", html: processed });
-                }
-              } catch {
-                // Skip malformed JSON chunks
-              }
-            }
-          }
-
-          const result = { ...fullMetadata, narrative: fullNarrative };
-          setCached(query, result);
-          send({ type: "done" });
-        } catch (streamErr) {
-          console.error("Streaming synthesis failed, falling back:", streamErr);
-          const narrative = await synthesize(query, narrativeVerses, narrativeProse, verseUrlMap, narrativeTranscripts, narrativeLetters);
-          send({ type: "narrative_chunk", html: narrative });
-
-          const result = { ...fullMetadata, narrative };
-          setCached(query, result);
-          send({ type: "done" });
-        }
-
-        controller.close();
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    // ── Strategy A: Template-built article (zero AI calls, instant) ──
+    const narrative = buildTemplateArticle(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
+    const result = { ...fullMetadata, narrative };
+    setCached(query, result);
+    return NextResponse.json(result);
   } catch (err) {
     console.error("Search error:", err);
     return NextResponse.json({ error: "An error occurred." }, { status: 500 });
