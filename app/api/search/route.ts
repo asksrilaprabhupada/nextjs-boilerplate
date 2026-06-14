@@ -6,7 +6,7 @@
  * The core backend that powers the entire search experience.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { getSupabaseAdmin } from "@/app/lib/01-supabase";
 import { embedQuery } from "@/app/lib/03-embed";
 import { getCached, setCached } from "@/app/lib/04-search-cache";
 import { ensureVerseLinks } from "@/app/lib/05-link-postprocessor";
@@ -14,13 +14,9 @@ import { preprocessQuery } from "@/app/lib/07-query-preprocessor";
 import { cohereRerank } from "@/app/lib/08-cohere-rerank";
 import { getSpeaker } from "@/app/api/generate-article/route";
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 const geminiKey = process.env.GEMINI_API_KEY || "";
 
 const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash";
-
-function getSupabase() { return createClient(supabaseUrl, supabaseKey); }
 
 const BOOK_NAMES: Record<string, string> = {
   bg: "Bhagavad-gītā As It Is",
@@ -225,7 +221,7 @@ function rrfMerge<T extends { id: string; similarity?: number }>(
 // V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
 // =====================================================
 async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   // ── Direct verse lookup for exact references like "BG 18.66", "SB 1.1.1", "NOI verse 1" ──
   let directVerse: VerseHit | undefined;
@@ -640,7 +636,7 @@ function reRankResults<T extends { score?: number; tags?: string[]; similarity?:
 }
 
 async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
 
   try {
     const [ftsVerses, ftsProse] = await Promise.all([
@@ -662,7 +658,7 @@ async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; pros
 }
 
 async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const terms = query.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3);
   if (terms.length === 0) return { verses: [], prose: [] };
 
@@ -687,7 +683,7 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
 // LEGACY ENRICH: Used by V1 fallback path only
 // =====================================================
 async function legacyEnrich(verses: VerseHit[], prose: ProseHit[]) {
-  const supabase = getSupabase();
+  const supabase = getSupabaseAdmin();
   const ids = [...new Set([...verses.map(v => v.chapter_id), ...prose.map(p => p.chapter_id)].filter(Boolean))];
 
   let cm = new Map<string, Record<string, unknown>>();
@@ -1763,7 +1759,7 @@ export async function GET(request: NextRequest) {
 
   try {
     // Fire search and spelling check in parallel
-    const spellingSupa = getSupabase();
+    const spellingSupa = getSupabaseAdmin();
     const [searchResults, spellResult] = await Promise.all([
       hybridSearch(query),
       spellingSupa.rpc('suggest_spelling', { raw_query: query }).then(res => res, () => ({ data: null })),

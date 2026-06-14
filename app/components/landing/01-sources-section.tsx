@@ -1,5 +1,5 @@
 /**
- * 00-sources-section.tsx — Sources Section
+ * 01-sources-section.tsx — Sources Section
  *
  * Landing page section showcasing the breadth of Srila Prabhupada's library
  * that is searchable through the platform. Displays stats for books, lectures,

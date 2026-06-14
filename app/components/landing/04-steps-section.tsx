@@ -1,5 +1,5 @@
 /**
- * 03-steps-section.tsx — Steps Section
+ * 04-steps-section.tsx — Steps Section
  *
  * Explains the three-step process: ask a question, AI searches the books, get a narrative answer.
  * Used on the /how-it-works page to guide new users.

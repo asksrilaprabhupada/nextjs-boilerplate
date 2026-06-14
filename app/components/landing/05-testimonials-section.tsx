@@ -1,5 +1,5 @@
 /**
- * 04-testimonials-section.tsx — Testimonials Section
+ * 05-testimonials-section.tsx — Testimonials Section
  *
  * Displays user testimonials and quotes about the platform.
  * Builds trust and credibility with new visitors on the landing page.
