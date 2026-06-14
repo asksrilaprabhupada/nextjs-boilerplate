@@ -1,5 +1,5 @@
 /**
- * 01-why-different.tsx — Why Different Section
+ * 02-why-different.tsx — Why Different Section
  *
  * Landing page section explaining what makes Ask Srila Prabhupada unique.
  * Communicates the key value propositions to new visitors.

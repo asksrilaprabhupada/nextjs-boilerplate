@@ -1,18 +1,11 @@
 /**
- * Cohere Rerank — Drop-in replacement for llmReRank
- * ===================================================
- * File: app/lib/06-cohere-rerank.ts
+ * 08-cohere-rerank.ts — Cohere Rerank
  *
- * This module replaces the Gemini-based llmReRank function with
- * Cohere's Rerank v3.5 cross-encoder. It takes candidates from
- * the RRF fusion step and returns them reordered by relevance.
+ * Reorders RRF-fused search candidates by relevance using Cohere's Rerank v3.5
+ * cross-encoder. Takes the candidates from the fusion step and returns them
+ * reordered by relevance. Requires the COHERE_API_KEY environment variable.
  *
- * Environment variable required:
- *   COHERE_API_KEY — your Cohere API key (add to Vercel env vars)
- *
- * Usage in search/route.ts:
- *   import { cohereRerank } from '@/app/lib/06-cohere-rerank';
- *   const reranked = await cohereRerank(query, candidates, 20);
+ * Usage: const reranked = await cohereRerank(query, candidates, 20);
  */
 
 // ─── Types ───────────────────────────────────────────────────

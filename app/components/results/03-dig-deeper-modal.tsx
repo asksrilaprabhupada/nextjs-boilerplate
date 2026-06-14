@@ -1,5 +1,5 @@
 /**
- * 07-dig-deeper-modal.tsx — Dig Deeper Modal
+ * 03-dig-deeper-modal.tsx — Dig Deeper Modal
  *
  * Full-screen modal showing ALL search results beyond the top 25. Features a compact
  * single-line filter bar with content-type toggle, group mode toggle, multi-select book

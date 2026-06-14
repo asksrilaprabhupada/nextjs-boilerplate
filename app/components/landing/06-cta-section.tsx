@@ -1,5 +1,5 @@
 /**
- * 05-cta-section.tsx — Call-to-Action Section
+ * 06-cta-section.tsx — Call-to-Action Section
  *
  * Renders a prominent call-to-action encouraging visitors to try searching.
  * Drives user engagement by prompting them to ask their first question.

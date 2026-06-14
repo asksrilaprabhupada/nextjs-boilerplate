@@ -1,5 +1,5 @@
 /**
- * 06-want-more-modal.tsx — Want More Modal
+ * 02-want-more-modal.tsx — Want More Modal
  *
  * Full-screen modal showing all verses and prose from a selected book for the current query.
  * Lets users explore the complete set of relevant passages from a specific scripture.
