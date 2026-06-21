@@ -5,10 +5,7 @@
  * Captures quality signals that help evaluate search relevance.
  */
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+import { getSupabaseAdmin } from "@/app/lib/01-supabase";
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,7 +15,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "searchLogId and vote (1 or -1) required" }, { status: 400 });
     }
 
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = getSupabaseAdmin();
 
     const { error } = await supabase.rpc("log_search_feedback", {
       p_search_log_id: searchLogId,

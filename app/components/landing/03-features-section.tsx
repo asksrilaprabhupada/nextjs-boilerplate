@@ -1,5 +1,5 @@
 /**
- * 02-features-section.tsx — Features Section
+ * 03-features-section.tsx — Features Section
  *
  * Showcases the main features of the platform with icons and descriptions.
  * Used on both the home page and the dedicated /features page.

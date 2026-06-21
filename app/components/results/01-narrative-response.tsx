@@ -9,9 +9,9 @@
 
 import { useState, useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
-import WantMoreModal from "./06-want-more-modal";
+import WantMoreModal from "./02-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
-import DigDeeperModal from "./07-dig-deeper-modal";
+import DigDeeperModal from "./03-dig-deeper-modal";
 
 export interface Citation {
   ref: string;
