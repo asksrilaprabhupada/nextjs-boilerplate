@@ -16,7 +16,7 @@ npm run build
 
 ### Tech Stack
 
-Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses, verse_chunks, prose_paragraphs, transcript_paragraphs, letter_paragraphs tables, 244,000+ searchable passages), Tailwind CSS 4, Framer Motion. AI: Google Gemini (query embeddings + narrative generation), Cohere Rerank v3.5 (relevance reranking). Image processing: sharp (HEIC → JPEG). Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
+Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses, verse_chunks, prose_paragraphs, transcript_paragraphs, letter_paragraphs tables, 244,000+ searchable passages), Tailwind CSS 4, Framer Motion. AI: Voyage AI (voyage-context-4 query embeddings, 1024-dim), Google Gemini (narrative generation + query preprocessing), Cohere Rerank v4.0 Pro (relevance reranking). Image processing: sharp (HEIC → JPEG). Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
 
 ### Environment Variables (in .env.local)
 
@@ -25,8 +25,9 @@ SUPABASE_URL=https://wzktlpjtqmjxvragwhqg.supabase.co
 SUPABASE_SERVICE_KEY=<service role key>
 NEXT_PUBLIC_SUPABASE_URL=https://wzktlpjtqmjxvragwhqg.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
-GEMINI_API_KEY=<google ai studio key>      # embeddings, query preprocessing, narrative generation
-COHERE_API_KEY=<cohere key>                # search result reranking
+VOYAGE_API_KEY=<voyage ai key>             # query embeddings (voyage-context-4, 1024-dim)
+GEMINI_API_KEY=<google ai studio key>      # query preprocessing, narrative generation
+COHERE_API_KEY=<cohere key>                # search result reranking (rerank-v4.0-pro)
 ```
 
 ### Design Direction
@@ -96,7 +97,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 05-link-postprocessor.ts   (citation linking)
 │   │   ├── 06-lockscreen-data.ts      (slideshow config + daily verses)
 │   │   ├── 07-query-preprocessor.ts   (search query extraction)
-│   │   ├── 08-cohere-rerank.ts        (Cohere Rerank v3.5 relevance reranking)
+│   │   ├── 08-cohere-rerank.ts        (Cohere Rerank v4.0 Pro relevance reranking)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/
@@ -126,7 +127,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 
 1. Go to https://supabase.com and open your project (URL: wzktlpjtqmjxvragwhqg.supabase.co).
 2. Go to Project Settings → API. Copy the anon public key and the service_role secret key.
-3. Create a `.env.local` file in the repo root with the environment variables listed above (Supabase keys plus `GEMINI_API_KEY` and `COHERE_API_KEY` for search).
+3. Create a `.env.local` file in the repo root with the environment variables listed above (Supabase keys plus `VOYAGE_API_KEY`, `GEMINI_API_KEY`, and `COHERE_API_KEY` for search).
 4. Make sure the `verses` table and `chapters` table exist with the correct schema.
 5. If deploying to Vercel, add these same environment variables in Vercel dashboard → Settings → Environment Variables.
 

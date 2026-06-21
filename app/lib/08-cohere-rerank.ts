@@ -1,7 +1,7 @@
 /**
  * 08-cohere-rerank.ts — Cohere Rerank
  *
- * Reorders RRF-fused search candidates by relevance using Cohere's Rerank v3.5
+ * Reorders RRF-fused search candidates by relevance using Cohere's Rerank v4.0 Pro
  * cross-encoder. Takes the candidates from the fusion step and returns them
  * reordered by relevance. Requires the COHERE_API_KEY environment variable.
  *
