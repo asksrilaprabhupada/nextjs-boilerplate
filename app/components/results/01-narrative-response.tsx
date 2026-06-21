@@ -12,6 +12,7 @@ import { motion } from "framer-motion";
 import WantMoreModal from "./02-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
 import DigDeeperModal from "./03-dig-deeper-modal";
+import { stripPurportBoilerplate, splitIntoParagraphs, paragraphsToHtml } from "@/app/lib/09-purport-format";
 
 export interface Citation {
   ref: string;
@@ -676,9 +677,46 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
     );
   }
 
-  // Handle "want more" clicks from the narrative HTML
+  // Handle clicks inside the narrative HTML (rendered via dangerouslySetInnerHTML)
   const handleNarrativeClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+
+    // "Read the full purport" — expand a truncated purport in place. The full
+    // text is already on the client in results.books; we never navigate away.
+    const expandBtn = target.closest(".purport-expand-btn");
+    if (expandBtn) {
+      const block = expandBtn.closest(".purport-block") as HTMLElement | null;
+      if (!block) return;
+      const verseId = block.getAttribute("data-verse-id");
+      const verse =
+        results.books.flatMap(b => b.verses).find(v => v.id === verseId) ||
+        (results.overflowVerses || []).find(v => v.id === verseId);
+      if (!verse?.purport) return;
+
+      const preview = block.querySelector(".purport-preview") as HTMLElement | null;
+      const existingFull = block.querySelector(".purport-full") as HTMLElement | null;
+
+      if (existingFull) {
+        // Collapse back to the preview.
+        existingFull.remove();
+        preview?.removeAttribute("hidden");
+        expandBtn.textContent = "Read the full purport →";
+        return;
+      }
+
+      // Expand — format the complete purport with the SAME helpers the server
+      // used for the preview, so the text and styling match exactly.
+      const full = document.createElement("div");
+      full.className = "purport-full";
+      full.innerHTML = paragraphsToHtml(splitIntoParagraphs(stripPurportBoilerplate(verse.purport)));
+      preview?.setAttribute("hidden", "");
+      block.insertBefore(full, expandBtn);
+      expandBtn.textContent = "Show less ↑";
+      requestAnimationFrame(() => full.classList.add("is-open"));
+      return;
+    }
+
+    // "Want more" book modal trigger (dormant in the current template, kept for safety)
     const trigger = target.closest(".want-more-trigger");
     if (trigger) {
       const bookSlug = trigger.getAttribute("data-book");
@@ -1200,6 +1238,32 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           border-left: 3px solid #7C3AED; padding: 12px 20px; border-radius: 0; margin: 16px 0;
           font-size: 15px; line-height: 1.8; color: #374151;
         }
+        /* Purport paragraphs (whole purports, previews, and inline-expanded full text) */
+        .narrative-content .pp { margin: 0 0 12px; font-size: 15px; line-height: 1.8; color: #374151; }
+        .narrative-content .pp:last-child { margin-bottom: 0; }
+        .narrative-content .pp-ellipsis {
+          color: #A78BFA; text-align: center; letter-spacing: 0.3em;
+          margin: 10px 0; user-select: none;
+        }
+        /* Long-purport preview: gently fade the last lines so a snippet never
+           looks like the complete teaching (background-independent text mask). */
+        .narrative-content .purport-block { position: relative; }
+        .narrative-content .purport-preview {
+          -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 52px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 calc(100% - 52px), transparent 100%);
+        }
+        .narrative-content .purport-preview[hidden] { display: none; }
+        .narrative-content .purport-expand-btn {
+          display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
+          padding: 4px 0; background: none; border: none; cursor: pointer;
+          font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; color: #7C3AED;
+        }
+        .narrative-content .purport-expand-btn:hover { color: #6D28D9; text-decoration: underline; }
+        .narrative-content .purport-full {
+          overflow: hidden; max-height: 0; opacity: 0;
+          transition: max-height 0.5s ease, opacity 0.4s ease;
+        }
+        .narrative-content .purport-full.is-open { max-height: 100000px; opacity: 1; }
         .narrative-content .prose-quote {
           background: transparent; border: none;
           border-left: 3px solid #6366F1; padding: 12px 20px; border-radius: 0; margin: 16px 0;

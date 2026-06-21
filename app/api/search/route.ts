@@ -12,6 +12,13 @@ import { getCached, setCached } from "@/app/lib/04-search-cache";
 import { ensureVerseLinks } from "@/app/lib/05-link-postprocessor";
 import { preprocessQuery } from "@/app/lib/07-query-preprocessor";
 import { cohereRerank } from "@/app/lib/08-cohere-rerank";
+import {
+  PURPORT_CUTOFF,
+  stripPurportBoilerplate,
+  splitIntoParagraphs,
+  paragraphsToHtml,
+  mapOffsetToParagraphRange,
+} from "@/app/lib/09-purport-format";
 import { getSpeaker } from "@/app/api/generate-article/route";
 
 const geminiKey = process.env.GEMINI_API_KEY || "";
@@ -174,7 +181,7 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 // TYPES
 // =====================================================
-interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
+interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; }
 interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; }
 interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
 interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
@@ -377,12 +384,19 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   );
 
   // Boost parent verses found via chunks — surfaces content buried deep in long purports
+  const bestChunkScore = new Map<string, number>(); // verse_id → best chunk score seen
   for (const chunk of chunkMap.values()) {
     if (!chunk.verse_id) continue;
     const existingVerse = verseMap.get(chunk.verse_id);
     if (existingVerse) {
       // Verse already found by direct search — give it a chunk boost
       existingVerse.score += chunk.score * 0.3;
+      // Remember the highest-scoring matched chunk so the article can show the
+      // section of a long purport that actually matched (not used for ranking).
+      if (chunk.score > (bestChunkScore.get(chunk.verse_id) ?? 0)) {
+        bestChunkScore.set(chunk.verse_id, chunk.score);
+        existingVerse.matchedChunkText = chunk.body_text;
+      }
     }
   }
 
@@ -1191,6 +1205,80 @@ function tagToHeading(tag: string): string {
 }
 
 /**
+ * Builds the purport preview shown inside the article.
+ *
+ * Short/medium purports (≤ PURPORT_CUTOFF) are shown WHOLE — never truncated.
+ * Long purports get a two-part preview: the opening (where Prabhupāda states
+ * his point) plus the matched section (the paragraphs around the chunk the
+ * search hit, which may be deep in the purport), with a "…" between them when
+ * they are not contiguous. Cuts only ever fall on whole-paragraph boundaries.
+ * The closing "Thus end the Bhaktivedanta purports…" footer is stripped from
+ * every preview. Returns { html, truncated } — `truncated` drives the inline
+ * "Read the full purport" expand UI on the client.
+ */
+function buildPurportPreview(v: VerseHit): { html: string; truncated: boolean } {
+  const clean = stripPurportBoilerplate(v.purport || "");
+  const paras = splitIntoParagraphs(clean);
+  if (paras.length === 0) return { html: "", truncated: false };
+
+  // Short/medium → whole purport.
+  if (clean.length <= PURPORT_CUTOFF) {
+    return { html: paragraphsToHtml(paras), truncated: false };
+  }
+
+  // Opening: whole paragraphs from the start until ~700 chars (at least one).
+  const OPENING_TARGET = 700;
+  let openingEndIdx = 0;
+  let acc = 0;
+  for (let i = 0; i < paras.length; i++) {
+    acc += paras[i].length;
+    openingEndIdx = i;
+    if (acc >= OPENING_TARGET) break;
+  }
+
+  // Matched section, if the search hit a specific chunk of this purport.
+  // Locate by the chunk's PREFIX: a chunk's tail can include the footer we
+  // already stripped from `clean`, so the full string may not be found.
+  const matched = (v.matchedChunkText || "").trim();
+  let matchIdx = -1;
+  if (matched) {
+    matchIdx = clean.indexOf(matched.slice(0, 160));
+    if (matchIdx === -1) matchIdx = clean.indexOf(matched.slice(0, 60));
+  }
+
+  if (matchIdx === -1) {
+    // No locatable matched chunk → opening-only preview.
+    return { html: paragraphsToHtml(paras.slice(0, openingEndIdx + 1)), truncated: true };
+  }
+
+  const matchEnd = Math.min(clean.length - 1, matchIdx + matched.length - 1);
+  const { startPara, endPara } = mapOffsetToParagraphRange(clean, matchIdx, matchEnd);
+
+  // Widen by ±1 neighbour, then shrink the tail while the section is too long
+  // (always keeping the paragraphs that actually contain the match).
+  const SECTION_CAP = 1000;
+  let secStart = Math.max(0, startPara - 1);
+  let secEnd = Math.min(paras.length - 1, endPara + 1);
+  const sectionLen = (a: number, b: number) =>
+    paras.slice(a, b + 1).reduce((n, p) => n + p.length, 0);
+  while (secEnd > endPara && sectionLen(secStart, secEnd) > SECTION_CAP) secEnd--;
+  while (secStart < startPara && sectionLen(secStart, secEnd) > SECTION_CAP) secStart++;
+
+  // If the matched section overlaps or directly follows the opening, merge the
+  // two (no ellipsis); otherwise show opening … matched section.
+  if (secStart <= openingEndIdx + 1) {
+    const merged = paras.slice(0, Math.max(openingEndIdx, secEnd) + 1);
+    return { html: paragraphsToHtml(merged), truncated: true };
+  }
+
+  const html =
+    paragraphsToHtml(paras.slice(0, openingEndIdx + 1)) +
+    `<p class="pp-ellipsis">…</p>` +
+    paragraphsToHtml(paras.slice(secStart, secEnd + 1));
+  return { html, truncated: true };
+}
+
+/**
  * Builds a complete HTML article from search results using ONLY templates.
  * Zero AI calls. 100% correct citations. Instant.
  */
@@ -1334,12 +1422,25 @@ function buildTemplateArticle(
           parts.push(`<div class="verse-quote">"${v.translation}"${cite}</div>`);
         }
 
-        // Purport (substantial excerpt only)
+        // Purport — show the WHOLE teaching (short/medium) or a faithful
+        // opening + matched-section preview (long) that expands inline.
         if (v.purport && v.purport.length > 50) {
-          const excerpt = smartTruncate(v.purport, 600);
-          parts.push(`<p>${purportTransitions[purportIdx % purportTransitions.length]}</p>`);
-          purportIdx++;
-          parts.push(`<div class="purport-quote">"${excerpt}"${cite}</div>`);
+          const { html, truncated } = buildPurportPreview(v);
+          if (html) {
+            parts.push(`<p>${purportTransitions[purportIdx % purportTransitions.length]}</p>`);
+            purportIdx++;
+            if (truncated) {
+              parts.push(
+                `<div class="purport-quote purport-block" data-verse-id="${v.id}">` +
+                  `<div class="purport-preview">${html}</div>` +
+                  `<button type="button" class="purport-expand-btn" data-verse-id="${v.id}">Read the full purport →</button>` +
+                  cite +
+                `</div>`,
+              );
+            } else {
+              parts.push(`<div class="purport-quote">${html}${cite}</div>`);
+            }
+          }
         }
 
       } else if (item.type === 'prose') {
@@ -1543,11 +1644,23 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       parts.push(`<div class="verse-quote">"${x.translation}"${cite}</div>`);
     }
 
-    // Purport with same citation at end
+    // Purport — whole teaching (short/medium) or opening + matched section (long).
     if (x.purport && x.purport.length > 10) {
-      const excerpt = smartTruncate(x.purport, 600);
-      parts.push(`<p>${purportTransitions[idx % purportTransitions.length]}</p>`);
-      parts.push(`<div class="purport-quote">"${excerpt}"${cite}</div>`);
+      const { html, truncated } = buildPurportPreview(x);
+      if (html) {
+        parts.push(`<p>${purportTransitions[idx % purportTransitions.length]}</p>`);
+        if (truncated) {
+          parts.push(
+            `<div class="purport-quote purport-block" data-verse-id="${x.id}">` +
+              `<div class="purport-preview">${html}</div>` +
+              `<button type="button" class="purport-expand-btn" data-verse-id="${x.id}">Read the full purport →</button>` +
+              cite +
+            `</div>`,
+          );
+        } else {
+          parts.push(`<div class="purport-quote">${html}${cite}</div>`);
+        }
+      }
     }
   };
 
