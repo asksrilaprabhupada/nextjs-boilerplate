@@ -305,7 +305,7 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   let semanticLettersData: LetterHit[] = [];
   let semanticChunksData: ChunkHit[] = [];
 
-  if (embedding.length === 1536) {
+  if (embedding.length === 1024) {
     const vectorStr = `[${embedding.join(",")}]`;
     const [semV, semP, semT, semL, semC] = await Promise.all([
       supabase.rpc("search_verses_semantic_v2", { query_embedding: vectorStr, match_count: 30 }),

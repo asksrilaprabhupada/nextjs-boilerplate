@@ -37,7 +37,7 @@ interface CohereRerankResponse {
 // ─── Configuration ───────────────────────────────────────────
 
 const COHERE_API_URL = 'https://api.cohere.com/v2/rerank';
-const COHERE_MODEL = 'rerank-v3.5';
+const COHERE_MODEL = 'rerank-v4.0-pro';
 const MAX_TOKENS_PER_DOC = 4096;
 const TIMEOUT_MS = 10000; // 10 second timeout
 
