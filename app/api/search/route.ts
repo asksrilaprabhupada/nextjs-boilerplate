@@ -1279,6 +1279,35 @@ function buildPurportPreview(v: VerseHit): { html: string; truncated: boolean } 
 }
 
 /**
+ * Builds the "section" shown for a prose / lecture / letter result: the matched
+ * paragraph plus its neighbouring paragraphs, so the key sentence in the
+ * paragraph just above or below is visible. The matched paragraph is always
+ * kept whole; a neighbour is dropped only if the section would exceed the
+ * cutoff. Cuts only ever fall on whole-paragraph boundaries — never mid-sentence.
+ */
+function buildSectionHtml(matchedBody: string, before?: string, after?: string): string {
+  const matched = (matchedBody || "").trim();
+  if (!matched) return "";
+
+  // Include a neighbour only if it is substantial and not mostly Sanskrit.
+  const beforeOk = before && before.trim().length > 40 && !isMostlySanskrit(before) ? before.trim() : "";
+  const afterOk = after && after.trim().length > 40 && !isMostlySanskrit(after) ? after.trim() : "";
+
+  let pieces = [beforeOk, matched, afterOk].filter(Boolean) as string[];
+  const total = (arr: string[]) => arr.reduce((n, s) => n + s.length, 0);
+  if (total(pieces) > PURPORT_CUTOFF && beforeOk && afterOk) {
+    // Drop the larger neighbour first.
+    pieces = beforeOk.length >= afterOk.length ? [matched, afterOk] : [beforeOk, matched];
+  }
+  if (total(pieces) > PURPORT_CUTOFF && pieces.length > 1) {
+    pieces = [matched];
+  }
+
+  const paras = pieces.flatMap((s) => splitIntoParagraphs(s));
+  return paragraphsToHtml(paras);
+}
+
+/**
  * Builds a complete HTML article from search results using ONLY templates.
  * Zero AI calls. 100% correct citations. Instant.
  */
@@ -1288,6 +1317,7 @@ function buildTemplateArticle(
   prose: ProseHit[],
   transcripts: TranscriptHit[] = [],
   letters: LetterHit[] = [],
+  neighbours: Map<string, { before?: string; after?: string }> = new Map(),
 ): string {
   if (verses.length === 0 && prose.length === 0 && transcripts.length === 0 && letters.length === 0) {
     return "<p>No relevant passages found for this query.</p>";
@@ -1462,7 +1492,8 @@ function buildTemplateArticle(
 
         const bookName = getBookName(p.book_slug);
         const url = p.vedabase_url || "";
-        const excerpt = smartTruncate(bodyText, 500);
+        const ctx = neighbours.get(p.id);
+        const sectionHtml = buildSectionHtml(bodyText, ctx?.before, ctx?.after);
         const noVedabase = NO_VEDABASE_BOOKS.has(p.book_slug?.toLowerCase());
 
         const cite = (!noVedabase && url)
@@ -1470,7 +1501,7 @@ function buildTemplateArticle(
           : `<div class="cite-ref"><span class="verse-label">[${bookName}]</span></div>`;
 
         parts.push(`<p>In ${bookName}${p.chapter_title ? " (" + p.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
-        parts.push(`<div class="prose-quote">"${excerpt}"${cite}</div>`);
+        parts.push(`<div class="prose-quote">${sectionHtml}${cite}</div>`);
 
       } else if (item.type === 'lecture') {
         const t = item.data as TranscriptHit;
@@ -1480,7 +1511,8 @@ function buildTemplateArticle(
         const year = t.date ? new Date(t.date).getFullYear().toString() : "";
         const city = t.location || "";
         const url = t.vedabase_url || "";
-        const excerpt = smartTruncate(bodyText, 500);
+        const ctx = neighbours.get(t.id);
+        const sectionHtml = buildSectionHtml(bodyText, ctx?.before, ctx?.after);
 
         let attribution = "In a lecture";
         if (city && year) attribution = `Speaking in ${city} (${year})`;
@@ -1493,7 +1525,7 @@ function buildTemplateArticle(
           : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
         parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
-        parts.push(`<div class="lecture-quote">"${excerpt}"${cite}</div>`);
+        parts.push(`<div class="lecture-quote">${sectionHtml}${cite}</div>`);
 
       } else if (item.type === 'letter') {
         const l = item.data as LetterHit;
@@ -1503,7 +1535,8 @@ function buildTemplateArticle(
         const year = l.date ? new Date(l.date).getFullYear().toString() : "";
         const recipientPart = l.recipient || "";
         const url = l.vedabase_url || "";
-        const excerpt = smartTruncate(bodyText, 500);
+        const ctx = neighbours.get(l.id);
+        const sectionHtml = buildSectionHtml(bodyText, ctx?.before, ctx?.after);
 
         let attribution = "In a letter";
         if (recipientPart && year) attribution = `Writing to ${recipientPart} (${year})`;
@@ -1519,7 +1552,7 @@ function buildTemplateArticle(
           : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
         parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
-        parts.push(`<div class="letter-quote">"${excerpt}"${cite}</div>`);
+        parts.push(`<div class="letter-quote">${sectionHtml}${cite}</div>`);
       }
     }
   }
@@ -1694,14 +1727,14 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
 
     const bookName = getBookName(x.book_slug);
     const url = x.vedabase_url || "";
-    const excerpt = smartTruncate(usableText, 500);
+    const sectionHtml = buildSectionHtml(usableText);
 
     const cite = url
       ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${bookName}]</span></a></div>`
       : `<div class="cite-ref"><span class="verse-label">[${bookName}]</span></div>`;
 
     parts.push(`<p>In ${bookName}${x.chapter_title ? " (" + x.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
-    parts.push(`<div class="prose-quote">"${excerpt}"${cite}</div>`);
+    parts.push(`<div class="prose-quote">${sectionHtml}${cite}</div>`);
     return true;
   };
 
@@ -1713,7 +1746,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     const year = x.date ? new Date(x.date).getFullYear().toString() : "";
     const city = x.location || "";
     const url = x.vedabase_url || "";
-    const excerpt = smartTruncate(bodyText, 500);
+    const sectionHtml = buildSectionHtml(bodyText);
 
     // Build short attribution
     let attribution = "In a lecture";
@@ -1728,7 +1761,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
     parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
-    parts.push(`<div class="lecture-quote">"${excerpt}"${cite}</div>`);
+    parts.push(`<div class="lecture-quote">${sectionHtml}${cite}</div>`);
   };
 
   /** Render a single letter passage */
@@ -1739,7 +1772,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     const year = x.date ? new Date(x.date).getFullYear().toString() : "";
     const recipientPart = x.recipient || "";
     const url = x.vedabase_url || "";
-    const excerpt = smartTruncate(bodyText, 500);
+    const sectionHtml = buildSectionHtml(bodyText);
 
     // Build short attribution
     let attribution = "In a letter";
@@ -1757,7 +1790,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
     parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
-    parts.push(`<div class="letter-quote">"${excerpt}"${cite}</div>`);
+    parts.push(`<div class="letter-quote">${sectionHtml}${cite}</div>`);
   };
 
   // Build unified list of all items with scores, sort by relevance
@@ -1854,6 +1887,67 @@ function buildMetadataAndCitations(query: string, verses: VerseHit[], prose: Pro
     citations,
     books: Object.values(books),
   };
+}
+
+// =====================================================
+// NEIGHBOUR PARAGRAPHS (for prose / lecture / letter "section" context)
+// =====================================================
+/**
+ * Fetches the paragraphs immediately before and after each matched
+ * prose / lecture / letter paragraph, so the article can show the matched
+ * paragraph in context. One batched query per table (by parent id +
+ * paragraph_number). Returns a Map keyed by the matched paragraph's id.
+ */
+async function fetchNeighbourMap(
+  prose: ProseHit[],
+  transcripts: TranscriptHit[],
+  letters: LetterHit[],
+): Promise<Map<string, { before?: string; after?: string }>> {
+  const supabase = getSupabaseAdmin();
+  const result = new Map<string, { before?: string; after?: string }>();
+
+  const load = async <T extends { id: string; paragraph_number: number }>(
+    table: string,
+    parentCol: keyof T & string,
+    items: T[],
+  ) => {
+    const valid = items.filter(
+      (it) => (it as Record<string, unknown>)[parentCol] && typeof it.paragraph_number === "number",
+    );
+    if (valid.length === 0) return;
+
+    const parentIds = [...new Set(valid.map((it) => (it as Record<string, unknown>)[parentCol] as string))];
+    const wantedNums = [
+      ...new Set(valid.flatMap((it) => [it.paragraph_number - 1, it.paragraph_number + 1])),
+    ];
+
+    // Dynamic table + column name — cast past the typed query builder.
+    const { data, error } = await (supabase.from(table) as any)
+      .select(`${parentCol}, paragraph_number, body_text`)
+      .in(parentCol, parentIds)
+      .in("paragraph_number", wantedNums);
+    if (error || !data) return;
+
+    const byKey = new Map<string, string>();
+    for (const row of data as Array<Record<string, unknown>>) {
+      byKey.set(`${row[parentCol]}:${row.paragraph_number}`, (row.body_text as string) || "");
+    }
+
+    for (const it of valid) {
+      const parent = (it as Record<string, unknown>)[parentCol] as string;
+      const before = byKey.get(`${parent}:${it.paragraph_number - 1}`);
+      const after = byKey.get(`${parent}:${it.paragraph_number + 1}`);
+      if (before || after) result.set(it.id, { before, after });
+    }
+  };
+
+  await Promise.all([
+    load<ProseHit>("prose_paragraphs", "chapter_id", prose),
+    load<TranscriptHit>("transcript_paragraphs", "transcript_id", transcripts),
+    load<LetterHit>("letter_paragraphs", "letter_id", letters),
+  ]);
+
+  return result;
 }
 
 // =====================================================
@@ -2031,7 +2125,10 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Strategy A: Template-built article (zero AI calls, instant) ──
-    const narrative = buildTemplateArticle(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
+    // Fetch neighbouring paragraphs so prose/lecture/letter results show the
+    // matched paragraph in context (the key sentence may be just above/below).
+    const neighbours = await fetchNeighbourMap(narrativeProse, narrativeTranscripts, narrativeLetters);
+    const narrative = buildTemplateArticle(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters, neighbours);
     const result = { ...fullMetadata, narrative };
     setCached(query, result);
     return NextResponse.json(result);
