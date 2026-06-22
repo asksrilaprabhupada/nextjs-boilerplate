@@ -19,6 +19,15 @@ import {
   paragraphsToHtml,
   mapOffsetToParagraphRange,
 } from "@/app/lib/09-purport-format";
+import {
+  MAIN_FLOW_COUNT,
+  extractQueryTerms,
+  buildFoldPreviewHtml,
+  buildFoldBlock,
+  highlightHtml,
+  keyLineFor,
+  type PassageType,
+} from "@/app/lib/10-passage-fold";
 import { getSpeaker } from "@/app/api/generate-article/route";
 
 const geminiKey = process.env.GEMINI_API_KEY || "";
@@ -182,9 +191,9 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // TYPES
 // =====================================================
 interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; }
-interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
-interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; }
+interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; }
+interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; }
 interface ChunkHit { id: string; verse_id: string; scripture: string; chapter_number?: number; verse_number: string; chunk_number: number; body_text: string; tags?: string[]; score?: number; similarity?: number; }
 
 // =====================================================
@@ -1317,7 +1326,7 @@ function buildTemplateArticle(
   prose: ProseHit[],
   transcripts: TranscriptHit[] = [],
   letters: LetterHit[] = [],
-  neighbours: Map<string, { before?: string; after?: string }> = new Map(),
+  queryTerms: string[] = [],
 ): string {
   if (verses.length === 0 && prose.length === 0 && transcripts.length === 0 && letters.length === 0) {
     return "<p>No relevant passages found for this query.</p>";
@@ -1334,28 +1343,28 @@ function buildTemplateArticle(
 
   const allItems: ArticleItem[] = [];
 
-  for (const v of verses.slice(0, 15)) {
+  // The main-flow passages are already selected upstream (top MAIN_FLOW_COUNT by
+  // rerank score, with the same admission filters); render exactly what we're
+  // handed, in unified score order. Light guards remain as defence only.
+  for (const v of verses) {
     if (!v.translation && !v.purport) continue;
     if ((v.translation || "").trim().length < 10) continue;
     allItems.push({ type: 'verse', data: v, score: v.score || 0 });
   }
 
-  const seenBookSlugs = new Set<string>();
-  for (const p of prose.slice(0, 5)) {
+  for (const p of prose) {
     const bodyText = (p.body_text || "").trim();
     if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
-    if (seenBookSlugs.has(p.book_slug)) continue;
-    seenBookSlugs.add(p.book_slug);
     allItems.push({ type: 'prose', data: p, score: p.score || 0 });
   }
 
-  for (const t of transcripts.slice(0, 4)) {
+  for (const t of transcripts) {
     const bodyText = (t.body_text || "").trim();
     if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
     allItems.push({ type: 'lecture', data: t, score: t.score || 0 });
   }
 
-  for (const l of letters.slice(0, 2)) {
+  for (const l of letters) {
     const bodyText = (l.body_text || "").trim();
     if (bodyText.length < 80) continue;
     allItems.push({ type: 'letter', data: l, score: l.score || 0 });
@@ -1376,7 +1385,7 @@ function buildTemplateArticle(
     }
   }
 
-  const articleVerses = verses.slice(0, 15);
+  const articleVerses = verses;
   const bookNames = [...new Set(articleVerses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
   const bookListStr = bookNames.length === 1
     ? bookNames[0]
@@ -1447,29 +1456,33 @@ function buildTemplateArticle(
         parts.push(`<p>${transitions[transIdx % transitions.length](speaker, ref)}</p>`);
         transIdx++;
 
-        // Translation
-        if (v.translation) {
-          parts.push(`<div class="verse-quote">"${v.translation}"${cite}</div>`);
+        // Translation — folds only if unusually long; the verse anchor lives here.
+        const tText = (v.translation || "").trim();
+        if (tText) {
+          const tFold = buildFoldPreviewHtml({ type: 'verse', text: tText, queryTerms });
+          const inner = tFold.truncated
+            ? `"${tFold.previewHtml}"`
+            : `"${highlightHtml(tText, null, queryTerms)}"`;
+          parts.push(buildFoldBlock({
+            type: 'verse', id: v.id, previewHtml: inner, truncated: tFold.truncated,
+            citeHtml: cite, expandLabel: "Read the full translation →",
+          }));
         }
 
-        // Purport — show the WHOLE teaching (short/medium) or a faithful
-        // opening + matched-section preview (long) that expands inline.
+        // Purport — preview leads with the matched line; expand reveals the whole
+        // purport (incl. the opening). The verse anchor is on the translation, so
+        // the purport block carries no source id (anchorId: null).
         if (v.purport && v.purport.length > 50) {
-          const { html, truncated } = buildPurportPreview(v);
-          if (html) {
+          const pFold = buildFoldPreviewHtml({
+            type: 'purport', text: v.purport, matchedChunkText: v.matchedChunkText, queryTerms,
+          });
+          if (pFold.previewHtml) {
             parts.push(`<p>${purportTransitions[purportIdx % purportTransitions.length]}</p>`);
             purportIdx++;
-            if (truncated) {
-              parts.push(
-                `<div class="purport-quote purport-block" data-verse-id="${v.id}">` +
-                  `<div class="purport-preview">${html}</div>` +
-                  `<button type="button" class="purport-expand-btn" data-verse-id="${v.id}">Read the full purport →</button>` +
-                  cite +
-                `</div>`,
-              );
-            } else {
-              parts.push(`<div class="purport-quote">${html}${cite}</div>`);
-            }
+            parts.push(buildFoldBlock({
+              type: 'purport', id: v.id, anchorId: null, previewHtml: pFold.previewHtml,
+              truncated: pFold.truncated, citeHtml: cite, expandLabel: "Read the full purport →",
+            }));
           }
         }
 
@@ -1492,16 +1505,18 @@ function buildTemplateArticle(
 
         const bookName = getBookName(p.book_slug);
         const url = p.vedabase_url || "";
-        const ctx = neighbours.get(p.id);
-        const sectionHtml = buildSectionHtml(bodyText, ctx?.before, ctx?.after);
         const noVedabase = NO_VEDABASE_BOOKS.has(p.book_slug?.toLowerCase());
 
         const cite = (!noVedabase && url)
           ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${bookName}]</span></a></div>`
           : `<div class="cite-ref"><span class="verse-label">[${bookName}]</span></div>`;
 
+        const fold = buildFoldPreviewHtml({ type: 'prose', text: bodyText, queryTerms });
         parts.push(`<p>In ${bookName}${p.chapter_title ? " (" + p.chapter_title + ")" : ""}, Śrīla Prabhupāda writes:</p>`);
-        parts.push(`<div class="prose-quote">${sectionHtml}${cite}</div>`);
+        parts.push(buildFoldBlock({
+          type: 'prose', id: p.id, previewHtml: fold.previewHtml, truncated: fold.truncated,
+          citeHtml: cite, expandLabel: "Read in context →",
+        }));
 
       } else if (item.type === 'lecture') {
         const t = item.data as TranscriptHit;
@@ -1511,8 +1526,6 @@ function buildTemplateArticle(
         const year = t.date ? new Date(t.date).getFullYear().toString() : "";
         const city = t.location || "";
         const url = t.vedabase_url || "";
-        const ctx = neighbours.get(t.id);
-        const sectionHtml = buildSectionHtml(bodyText, ctx?.before, ctx?.after);
 
         let attribution = "In a lecture";
         if (city && year) attribution = `Speaking in ${city} (${year})`;
@@ -1524,8 +1537,12 @@ function buildTemplateArticle(
           ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
           : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
+        const fold = buildFoldPreviewHtml({ type: 'lecture', text: bodyText, queryTerms });
         parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
-        parts.push(`<div class="lecture-quote">${sectionHtml}${cite}</div>`);
+        parts.push(buildFoldBlock({
+          type: 'lecture', id: t.id, previewHtml: fold.previewHtml, truncated: fold.truncated,
+          citeHtml: cite, expandLabel: "Read in context →",
+        }));
 
       } else if (item.type === 'letter') {
         const l = item.data as LetterHit;
@@ -1535,8 +1552,6 @@ function buildTemplateArticle(
         const year = l.date ? new Date(l.date).getFullYear().toString() : "";
         const recipientPart = l.recipient || "";
         const url = l.vedabase_url || "";
-        const ctx = neighbours.get(l.id);
-        const sectionHtml = buildSectionHtml(bodyText, ctx?.before, ctx?.after);
 
         let attribution = "In a letter";
         if (recipientPart && year) attribution = `Writing to ${recipientPart} (${year})`;
@@ -1551,8 +1566,12 @@ function buildTemplateArticle(
           ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
           : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
+        const fold = buildFoldPreviewHtml({ type: 'letter', text: bodyText, queryTerms });
         parts.push(`<p>${attribution}, Śrīla Prabhupāda wrote:</p>`);
-        parts.push(`<div class="letter-quote">${sectionHtml}${cite}</div>`);
+        parts.push(buildFoldBlock({
+          type: 'letter', id: l.id, previewHtml: fold.previewHtml, truncated: fold.truncated,
+          citeHtml: cite, expandLabel: "Read in context →",
+        }));
       }
     }
   }
@@ -1951,6 +1970,74 @@ async function fetchNeighbourMap(
 }
 
 // =====================================================
+// MAIN-FLOW SELECTION (top N across all types) + VERBATIM KEY ANSWERS
+// =====================================================
+interface MainItem { type: PassageType; data: VerseHit | ProseHit | TranscriptHit | LetterHit; score: number; }
+
+/**
+ * Selects the top MAIN_FLOW_COUNT passages across ALL types by rerank score, for
+ * the woven Article. References / sidebar / Dig Deeper keep the full relevant set
+ * — only the main flow is shortened. Applies the SAME admission filters the
+ * article uses, so what's selected is exactly what can render (Article == its keys).
+ */
+function selectMainFlow(verses: VerseHit[], prose: ProseHit[], transcripts: TranscriptHit[], letters: LetterHit[]) {
+  const pool: MainItem[] = [];
+  for (const v of verses) {
+    if ((v.translation || "").trim().length < 10 && (v.purport || "").trim().length < 50) continue;
+    pool.push({ type: "verse", data: v, score: v.score || 0 });
+  }
+  const seenBook = new Set<string>();
+  for (const p of prose) {
+    const b = (p.body_text || "").trim();
+    if (b.length < 80 || isMostlySanskrit(b)) continue;
+    if (seenBook.has(p.book_slug)) continue; // one prose per book, matching the article
+    seenBook.add(p.book_slug);
+    pool.push({ type: "prose", data: p, score: p.score || 0 });
+  }
+  for (const t of transcripts) {
+    const b = (t.body_text || "").trim();
+    if (b.length < 80 || isMostlySanskrit(b)) continue;
+    pool.push({ type: "lecture", data: t, score: t.score || 0 });
+  }
+  for (const l of letters) {
+    const b = (l.body_text || "").trim();
+    if (b.length < 80) continue;
+    pool.push({ type: "letter", data: l, score: l.score || 0 });
+  }
+  pool.sort((a, b) => b.score - a.score);
+  const items = pool.slice(0, MAIN_FLOW_COUNT);
+  return {
+    items,
+    verses: items.filter(i => i.type === "verse").map(i => i.data as VerseHit),
+    prose: items.filter(i => i.type === "prose").map(i => i.data as ProseHit),
+    transcripts: items.filter(i => i.type === "lecture").map(i => i.data as TranscriptHit),
+    letters: items.filter(i => i.type === "letter").map(i => i.data as LetterHit),
+  };
+}
+
+/** Builds a verbatim key-answer line + anchor id for one main-flow passage. */
+function buildKeyAnswer(item: MainItem, queryTerms: string[]): { id: string; ref: string; line: string } {
+  if (item.type === "verse") {
+    const v = item.data as VerseHit;
+    return { id: v.id, ref: cleanRef(v), line: keyLineFor({ type: "verse", translation: v.translation, queryTerms }) };
+  }
+  if (item.type === "prose") {
+    const p = item.data as ProseHit;
+    return { id: p.id, ref: getBookName(p.book_slug), line: keyLineFor({ type: "prose", body: p.body_text, matchedChunkText: undefined, queryTerms }) };
+  }
+  if (item.type === "lecture") {
+    const t = item.data as TranscriptHit;
+    const year = t.date ? new Date(t.date).getFullYear().toString() : "";
+    const ref = ["Lecture", year, t.location].filter(Boolean).join(" · ");
+    return { id: t.id, ref, line: keyLineFor({ type: "lecture", body: t.body_text, queryTerms }) };
+  }
+  const l = item.data as LetterHit;
+  const year = l.date ? new Date(l.date).getFullYear().toString() : "";
+  const ref = ["Letter", l.recipient ? `to ${l.recipient}` : "", year].filter(Boolean).join(" · ");
+  return { id: l.id, ref, line: keyLineFor({ type: "letter", body: l.body_text, queryTerms }) };
+}
+
+// =====================================================
 // STREAMING HANDLER
 // =====================================================
 export async function GET(request: NextRequest) {
@@ -2097,11 +2184,37 @@ export async function GET(request: NextRequest) {
       console.log(`[Relevance] Filtered ${rankedOverflow.totalFiltered} low-relevance overflow results`);
     }
 
+    // Salient query terms for diacritic-insensitive matched-line highlighting
+    // (computed once; threaded into the server Article and sent to the client so
+    // References highlights identically).
+    const queryTerms = extractQueryTerms(query);
+
+    // Fetch neighbouring paragraphs for the relevant prose/lecture/letter set and
+    // attach them to the hits, so the fold can expand to the full section (matched
+    // paragraph + neighbours) on the client — in BOTH the Article and References.
+    const neighbours = await fetchNeighbourMap(narrativeProse, narrativeTranscripts, narrativeLetters);
+    const attachNeighbours = <T extends { id: string; before?: string; after?: string }>(items: T[]) => {
+      for (const it of items) {
+        const ctx = neighbours.get(it.id);
+        if (ctx) { it.before = ctx.before; it.after = ctx.after; }
+      }
+    };
+    attachNeighbours(narrativeProse);
+    attachNeighbours(narrativeTranscripts);
+    attachNeighbours(narrativeLetters);
+
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);
     const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
 
-    // Add overflow data to metadata — include article verse IDs for frontend badges
-    const articleVerseIds = narrativeVerses.map(v => v.id);
+    // Main flow = top MAIN_FLOW_COUNT passages across ALL types by rerank score.
+    // References keeps the full relevant set above; only the Article is shortened.
+    const mainFlow = selectMainFlow(narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
+
+    // Verbatim key answers for the woven main-flow passages (no AI; never paraphrased).
+    const keyAnswers = mainFlow.items.map(it => buildKeyAnswer(it, queryTerms));
+
+    // Article verse IDs = the woven verses (drives Dig Deeper "In article" badges).
+    const articleVerseIds = mainFlow.verses.map(v => v.id);
     const fullMetadata = {
       ...metadata,
       suggestion,
@@ -2115,6 +2228,8 @@ export async function GET(request: NextRequest) {
       totalTranscripts: transcripts.length,
       totalLetters: letters.length,
       articleVerseIds,
+      queryTerms,
+      keyAnswers,
     };
 
     // References mode: skip Gemini synthesis, return metadata with empty narrative
@@ -2125,10 +2240,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Strategy A: Template-built article (zero AI calls, instant) ──
-    // Fetch neighbouring paragraphs so prose/lecture/letter results show the
-    // matched paragraph in context (the key sentence may be just above/below).
-    const neighbours = await fetchNeighbourMap(narrativeProse, narrativeTranscripts, narrativeLetters);
-    const narrative = buildTemplateArticle(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters, neighbours);
+    const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms);
     const result = { ...fullMetadata, narrative };
     setCached(query, result);
     return NextResponse.json(result);

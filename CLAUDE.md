@@ -48,7 +48,6 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   └── log/route.ts           (search query logging)
 │   │   ├── feedback/route.ts          (contact/feature request forms)
 │   │   ├── generate-article/route.ts  (AI narrative article generation; exports getSpeaker helper)
-│   │   ├── generate-summary/route.ts  (one-line key-answer summaries for the sidebar)
 │   │   ├── lockscreen-images/
 │   │   │   ├── route.ts               (image list endpoint)
 │   │   │   └── heic/route.ts          (HEIC-to-JPEG conversion via sharp)
@@ -98,6 +97,8 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 06-lockscreen-data.ts      (slideshow config + daily verses)
 │   │   ├── 07-query-preprocessor.ts   (search query extraction)
 │   │   ├── 08-cohere-rerank.ts        (Cohere Rerank v4.0 Pro relevance reranking)
+│   │   ├── 09-purport-format.ts       (shared purport paragraph/footer helpers)
+│   │   ├── 10-passage-fold.ts         (shared fold preview + matched-line highlight + verbatim key line)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/

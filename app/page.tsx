@@ -195,6 +195,8 @@ export default function Home() {
           articleVerseIds: jsonResults.articleVerseIds || [],
           suggestion: jsonResults.suggestion || null,
           suggestionDisplay: jsonResults.suggestionDisplay || null,
+          queryTerms: jsonResults.queryTerms || [],
+          keyAnswers: jsonResults.keyAnswers || [],
         };
 
         setSearchResults(finalResults);
@@ -229,33 +231,53 @@ export default function Home() {
         // Merge and deduplicate books/citations
         const seenVerses = new Set<string>();
         const seenProse = new Set<string>();
+        const seenTranscripts = new Set<string>();
+        const seenLetters = new Set<string>();
+        const seenKeyAnswers = new Set<string>();
         const mergedBooks: Record<string, any> = {};
         const mergedCitations: any[] = [];
         const mergedOverflowVerses: any[] = [];
         const mergedOverflowProse: any[] = [];
+        const mergedOverflowTranscripts: any[] = [];
+        const mergedOverflowLetters: any[] = [];
+        const mergedArticleVerseIds: string[] = [];
+        const mergedKeyAnswers: any[] = [];
         let mergedKeywords: string[] = [];
         let mergedSynonyms: string[] = [];
         let mergedRelatedConcepts: string[] = [];
+        let mergedQueryTerms: string[] = [];
         let totalVerses = 0;
         let totalProse = 0;
+        let totalTranscripts = 0;
+        let totalLetters = 0;
 
         for (const meta of allMetadata) {
           if (!meta) continue;
           mergedKeywords = [...mergedKeywords, ...(meta.keywords || [])];
           mergedSynonyms = [...mergedSynonyms, ...(meta.synonyms || [])];
           mergedRelatedConcepts = [...mergedRelatedConcepts, ...(meta.relatedConcepts || [])];
+          mergedQueryTerms = [...mergedQueryTerms, ...(meta.queryTerms || [])];
+          mergedArticleVerseIds.push(...(meta.articleVerseIds || []));
           totalVerses += meta.totalVerses || 0;
           totalProse += meta.totalProse || 0;
+          totalTranscripts += meta.totalTranscripts || 0;
+          totalLetters += meta.totalLetters || 0;
 
           for (const book of (meta.books || [])) {
             if (!mergedBooks[book.slug]) {
-              mergedBooks[book.slug] = { slug: book.slug, name: book.name, verses: [], prose: [] };
+              mergedBooks[book.slug] = { slug: book.slug, name: book.name, verses: [], prose: [], transcripts: [], letters: [] };
             }
             for (const v of book.verses) {
               if (!seenVerses.has(v.id)) { seenVerses.add(v.id); mergedBooks[book.slug].verses.push(v); }
             }
             for (const p of book.prose) {
               if (!seenProse.has(p.id)) { seenProse.add(p.id); mergedBooks[book.slug].prose.push(p); }
+            }
+            for (const t of (book.transcripts || [])) {
+              if (!seenTranscripts.has(t.id)) { seenTranscripts.add(t.id); mergedBooks[book.slug].transcripts.push(t); }
+            }
+            for (const l of (book.letters || [])) {
+              if (!seenLetters.has(l.id)) { seenLetters.add(l.id); mergedBooks[book.slug].letters.push(l); }
             }
           }
 
@@ -269,10 +291,19 @@ export default function Home() {
           for (const p of (meta.overflowProse || [])) {
             if (!seenProse.has(p.id)) { seenProse.add(p.id); mergedOverflowProse.push(p); }
           }
+          for (const t of (meta.overflowTranscripts || [])) {
+            if (!seenTranscripts.has(t.id)) { seenTranscripts.add(t.id); mergedOverflowTranscripts.push(t); }
+          }
+          for (const l of (meta.overflowLetters || [])) {
+            if (!seenLetters.has(l.id)) { seenLetters.add(l.id); mergedOverflowLetters.push(l); }
+          }
+          for (const k of (meta.keyAnswers || [])) {
+            if (!seenKeyAnswers.has(k.id)) { seenKeyAnswers.add(k.id); mergedKeyAnswers.push(k); }
+          }
         }
 
         const mergedBooksArr = Object.values(mergedBooks);
-        const totalResults = mergedBooksArr.reduce((sum: number, b: any) => sum + b.verses.length + b.prose.length, 0);
+        const totalResults = mergedBooksArr.reduce((sum: number, b: any) => sum + b.verses.length + b.prose.length + (b.transcripts?.length || 0) + (b.letters?.length || 0), 0);
         const mergedNarrative = allNarratives.filter(Boolean).join("\n<hr/>\n");
 
         const finalResults: SearchResults = {
@@ -286,8 +317,15 @@ export default function Home() {
           books: mergedBooksArr as any,
           overflowVerses: mergedOverflowVerses,
           overflowProse: mergedOverflowProse,
+          overflowTranscripts: mergedOverflowTranscripts,
+          overflowLetters: mergedOverflowLetters,
           totalVerses,
           totalProse,
+          totalTranscripts,
+          totalLetters,
+          articleVerseIds: mergedArticleVerseIds,
+          queryTerms: [...new Set(mergedQueryTerms)],
+          keyAnswers: mergedKeyAnswers,
         };
 
         setSearchResults(finalResults);
