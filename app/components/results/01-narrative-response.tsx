@@ -12,7 +12,13 @@ import { motion } from "framer-motion";
 import WantMoreModal from "./02-want-more-modal";
 import SearchFeedback from "../search/06-search-feedback";
 import DigDeeperModal from "./03-dig-deeper-modal";
-import { stripPurportBoilerplate, splitIntoParagraphs, paragraphsToHtml } from "@/app/lib/09-purport-format";
+import {
+  buildFoldPreviewHtml,
+  buildFoldBlock,
+  highlightParagraphsHtml,
+  buildSectionText,
+  type PassageType,
+} from "@/app/lib/10-passage-fold";
 
 export interface Citation {
   ref: string;
@@ -27,28 +33,30 @@ export interface VerseHit {
   transliteration: string; translation: string; purport: string;
   chapter_number?: string; canto_or_division?: string; chapter_title?: string;
   book_slug?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number;
+  score?: number; similarity?: number; matchedChunkText?: string;
 }
 
 export interface ProseHit {
   id: string; book_slug: string; paragraph_number: number; body_text: string;
   chapter_title?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number;
+  score?: number; similarity?: number; before?: string; after?: string;
 }
 
 export interface TranscriptHit {
   id: string; transcript_id?: string; paragraph_number: number; body_text: string;
   content_type?: string; title?: string; date?: string; location?: string;
   occasion?: string; scripture_ref?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number;
+  tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
 }
 
 export interface LetterHit {
   id: string; letter_id?: string; paragraph_number: number; body_text: string;
   content_type?: string; title?: string; date?: string; location?: string;
   recipient?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number;
+  tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
 }
+
+export interface KeyAnswer { id: string; ref: string; line: string; }
 
 export interface BookGroup {
   slug: string; name: string; verses: VerseHit[]; prose: ProseHit[];
@@ -75,6 +83,8 @@ export interface SearchResults {
   articleVerseIds?: string[];
   suggestion?: string | null;
   suggestionDisplay?: string | null;
+  queryTerms?: string[];
+  keyAnswers?: KeyAnswer[];
 }
 
 /* ─── Per-book color system (ONLY for tags and left borders) ─── */
@@ -99,12 +109,6 @@ function scrollToSource(ref: string) {
   document.getElementById(`source-${ref}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-/* ─── Summary item type ─── */
-interface SummaryItem {
-  summary: string;
-  reference: string;
-}
-
 /* ─── Mobile Summary Bottom-Sheet Popup ─── */
 function SummaryPopup({
   isOpen,
@@ -114,7 +118,7 @@ function SummaryPopup({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  summaries: SummaryItem[];
+  summaries: KeyAnswer[];
   totalSources: number;
 }) {
   if (!isOpen) return null;
@@ -157,8 +161,8 @@ function SummaryPopup({
         <div style={{ padding: "0 20px 24px" }}>
           {summaries.map((item, i) => (
             <div
-              key={i}
-              onClick={() => { onClose(); setTimeout(() => scrollToSource(item.reference), 300); }}
+              key={item.id || i}
+              onClick={() => { onClose(); setTimeout(() => scrollToSource(item.id), 300); }}
               style={{
                 display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 0",
                 borderBottom: i < summaries.length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none",
@@ -171,9 +175,9 @@ function SummaryPopup({
                 display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
               }}>{i + 1}</span>
               <div>
-                <p className="font-body" style={{ fontSize: 14, fontWeight: 500, margin: "0 0 4px", lineHeight: 1.5 }}>{item.summary}</p>
+                <p className="font-body" style={{ fontSize: 14, fontWeight: 500, margin: "0 0 4px", lineHeight: 1.5 }}>{item.line}</p>
                 <span className="font-body" style={{ fontSize: 11, color: "#534AB7", background: "#EEEDFE", padding: "1px 8px", borderRadius: 4 }}>
-                  {item.reference}
+                  {item.ref}
                 </span>
               </div>
             </div>
@@ -181,28 +185,6 @@ function SummaryPopup({
         </div>
       </div>
     </>
-  );
-}
-
-/* ─── Expandable Reference Card ─── */
-function ExpandableReferenceCard({ children, preview, fullText }: {
-  children: React.ReactNode;
-  preview: string;
-  fullText: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div onClick={() => setExpanded(!expanded)} style={{ cursor: "pointer" }}>
-      {children}
-      <p className="reference-card__purport" style={{ marginTop: 8 }}>
-        {expanded ? fullText : preview}
-        {fullText.length > 200 && (
-          <span style={{ color: "#534AB7", fontWeight: 500, marginLeft: 4, fontSize: 12 }}>
-            {expanded ? " Show less" : " ...Read more"}
-          </span>
-        )}
-      </p>
-    </div>
   );
 }
 
@@ -603,55 +585,18 @@ interface Props {
 export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId, viewMode, onViewModeChange }: Props) {
   const [modalBook, setModalBook] = useState<BookGroup | null>(null);
   const [digDeeperOpen, setDigDeeperOpen] = useState(false);
-  const [summaries, setSummaries] = useState<SummaryItem[]>([]);
   const [showSummaryPopup, setShowSummaryPopup] = useState(false);
 
   // Reset states when results change
   useEffect(() => {
     setDigDeeperOpen(false);
-    setSummaries([]);
     setShowSummaryPopup(false);
   }, [results?.query]);
 
-  // Fetch AI-generated summaries when search results arrive
-  useEffect(() => {
-    if (!results || results.totalResults === 0) return;
-
-    // Build passage list from citations and books
-    const passages: { reference: string; text: string }[] = [];
-    for (const book of results.books) {
-      for (const v of book.verses) {
-        const ref = `${v.scripture || ""} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`;
-        passages.push({ reference: ref.trim(), text: v.translation || v.purport || "" });
-      }
-      for (const p of book.prose) {
-        passages.push({ reference: p.chapter_title || `${p.book_slug} #${p.paragraph_number}`, text: p.body_text || "" });
-      }
-    }
-
-    const top10 = passages.slice(0, 10);
-    if (top10.length === 0) return;
-
-    fetch("/api/generate-summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passages: top10 }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.summaries && Array.isArray(data.summaries)) {
-          setSummaries(
-            data.summaries.map((s: string, i: number) => ({
-              summary: s,
-              reference: top10[i]?.reference || "",
-            }))
-          );
-        }
-      })
-      .catch(() => {
-        // Silently fail — sidebar just won't show summaries
-      });
-  }, [results]);
+  // Key answers are VERBATIM lines computed by the server (verse → translation;
+  // prose/lecture/letter → the matched sentence) — no AI, never paraphrased.
+  const summaries: KeyAnswer[] = results?.keyAnswers || [];
+  const queryTerms: string[] = results?.queryTerms || [];
 
   // Follow-up suggestions — extract themes from search results
   const followUps = useMemo(() => {
@@ -677,39 +622,88 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
     );
   }
 
-  // Handle clicks inside the narrative HTML (rendered via dangerouslySetInnerHTML)
-  const handleNarrativeClick = (e: React.MouseEvent) => {
+  // The expand label a folded block returns to when collapsed.
+  const foldCollapsedLabel = (type: string) =>
+    type === "purport" ? "Read the full purport →"
+      : type === "verse" ? "Read the full translation →"
+        : "Read in context →";
+
+  // Reconstruct the COMPLETE, faithful text of any folded passage from data already
+  // on the client (lossless — nothing is fetched). Verses use the full purport /
+  // translation; prose/lecture/letter use the matched paragraph + its neighbours.
+  // The matched line + query words are highlighted with the SAME shared helper.
+  const buildFullHtml = (type: string, id: string): string => {
+    if (type === "verse" || type === "purport") {
+      const v = results.books.flatMap(b => b.verses).find(x => x.id === id)
+        || (results.overflowVerses || []).find(x => x.id === id);
+      if (!v) return "";
+      return type === "purport"
+        ? highlightParagraphsHtml(v.purport || "", v.matchedChunkText, queryTerms)
+        : highlightParagraphsHtml(v.translation || "", undefined, queryTerms);
+    }
+    if (type === "prose") {
+      const p = results.books.flatMap(b => b.prose).find(x => x.id === id)
+        || (results.overflowProse || []).find(x => x.id === id);
+      if (!p) return "";
+      return highlightParagraphsHtml(buildSectionText(p.body_text || "", p.before, p.after), undefined, queryTerms);
+    }
+    if (type === "lecture") {
+      const t = results.books.flatMap(b => b.transcripts || []).find(x => x.id === id)
+        || (results.overflowTranscripts || []).find(x => x.id === id);
+      if (!t) return "";
+      return highlightParagraphsHtml(buildSectionText(t.body_text || "", t.before, t.after), undefined, queryTerms);
+    }
+    const l = results.books.flatMap(b => b.letters || []).find(x => x.id === id)
+      || (results.overflowLetters || []).find(x => x.id === id);
+    if (!l) return "";
+    return highlightParagraphsHtml(buildSectionText(l.body_text || "", l.before, l.after), undefined, queryTerms);
+  };
+
+  // Builds the unified fold-block HTML for a References passage with the SAME
+  // helper the server uses for the Article — one fold + highlight mechanism.
+  const foldHtmlFor = (
+    type: PassageType,
+    id: string,
+    text: string,
+    opts?: { matchedChunkText?: string; anchorId?: string | null; expandLabel?: string },
+  ): string => {
+    const fp = buildFoldPreviewHtml({ type, text: text || "", matchedChunkText: opts?.matchedChunkText, queryTerms });
+    return buildFoldBlock({
+      type, id, anchorId: opts?.anchorId,
+      previewHtml: fp.previewHtml, truncated: fp.truncated, expandLabel: opts?.expandLabel,
+    });
+  };
+
+  // Unified click handler for ALL folded passages (Article AND References), rendered
+  // via dangerouslySetInnerHTML. One mechanism — never navigate away.
+  const handleFoldClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
 
-    // "Read the full purport" — expand a truncated purport in place. The full
-    // text is already on the client in results.books; we never navigate away.
-    const expandBtn = target.closest(".purport-expand-btn");
+    const expandBtn = target.closest(".fold-expand-btn");
     if (expandBtn) {
-      const block = expandBtn.closest(".purport-block") as HTMLElement | null;
+      const block = expandBtn.closest(".fold-block") as HTMLElement | null;
       if (!block) return;
-      const verseId = block.getAttribute("data-verse-id");
-      const verse =
-        results.books.flatMap(b => b.verses).find(v => v.id === verseId) ||
-        (results.overflowVerses || []).find(v => v.id === verseId);
-      if (!verse?.purport) return;
+      const id = block.getAttribute("data-passage-id") || "";
+      const type = block.getAttribute("data-passage-type") || "";
 
-      const preview = block.querySelector(".purport-preview") as HTMLElement | null;
-      const existingFull = block.querySelector(".purport-full") as HTMLElement | null;
+      const preview = block.querySelector(".fold-preview") as HTMLElement | null;
+      const existingFull = block.querySelector(".fold-full") as HTMLElement | null;
 
       if (existingFull) {
-        // Collapse back to the preview.
         existingFull.remove();
         preview?.removeAttribute("hidden");
-        expandBtn.textContent = "Read the full purport →";
+        block.classList.add("is-folded");
+        expandBtn.textContent = foldCollapsedLabel(type);
         return;
       }
 
-      // Expand — format the complete purport with the SAME helpers the server
-      // used for the preview, so the text and styling match exactly.
+      const fullHtml = buildFullHtml(type, id);
+      if (!fullHtml) return;
       const full = document.createElement("div");
-      full.className = "purport-full";
-      full.innerHTML = paragraphsToHtml(splitIntoParagraphs(stripPurportBoilerplate(verse.purport)));
+      full.className = "fold-full";
+      full.innerHTML = fullHtml;
       preview?.setAttribute("hidden", "");
+      block.classList.remove("is-folded");
       block.insertBefore(full, expandBtn);
       expandBtn.textContent = "Show less ↑";
       requestAnimationFrame(() => full.classList.add("is-open"));
@@ -805,7 +799,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                   <div
                     className="narrative-content font-body"
                     dangerouslySetInnerHTML={{ __html: results.narrative }}
-                    onClick={handleNarrativeClick}
+                    onClick={handleFoldClick}
                     style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
                   />
                 </div>
@@ -860,7 +854,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
             {/* ─── References Mode ─── */}
             {viewMode === "references" && (
-              <div style={{ opacity: 1, transform: "translateY(0)", transition: "opacity 0.2s ease, transform 0.2s ease" }}>
+              <div onClick={handleFoldClick} style={{ opacity: 1, transform: "translateY(0)", transition: "opacity 0.2s ease, transform 0.2s ease" }}>
                 {results.books.filter(b => b.verses.length > 0 || b.prose.length > 0 || (b.transcripts?.length || 0) > 0 || (b.letters?.length || 0) > 0).map(book => {
                   const bookColor = getBookColor(book.slug.toUpperCase());
                   const tCount = book.transcripts?.length || 0;
@@ -882,7 +876,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                         const ref = `${v.scripture || ""} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`.trim();
                         const vColor = getBookColor(ref);
                         return (
-                          <div key={v.id} className="reference-card" id={`source-${ref}`} style={{ borderLeft: `3px solid ${vColor.border}` }}>
+                          <div key={v.id} className="reference-card" style={{ borderLeft: `3px solid ${vColor.border}` }}>
                             <span style={{
                               display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
                               borderRadius: 8, background: vColor.bg, color: vColor.text,
@@ -890,15 +884,10 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                               [{ref}]
                             </span>
                             {v.translation && (
-                              <p className="reference-card__translation">{v.translation}</p>
+                              <div className="reference-fold" dangerouslySetInnerHTML={{ __html: foldHtmlFor("verse", v.id, v.translation, { expandLabel: "Read the full translation →" }) }} />
                             )}
                             {v.purport && (
-                              <ExpandableReferenceCard
-                                preview={v.purport.length > 200 ? v.purport.slice(0, 200) + "…" : v.purport}
-                                fullText={v.purport}
-                              >
-                                <span />
-                              </ExpandableReferenceCard>
+                              <div className="reference-fold" dangerouslySetInnerHTML={{ __html: foldHtmlFor("purport", v.id, v.purport, { matchedChunkText: v.matchedChunkText, anchorId: null, expandLabel: "Read the full purport →" }) }} />
                             )}
                             <div className="reference-card__links">
                               <a href={`/verse/${v.id}`} style={{ color: "#534AB7" }}>
@@ -915,7 +904,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                       })}
 
                       {book.prose.map(p => (
-                        <div key={p.id} className="reference-card" id={`source-${p.chapter_title || `${p.book_slug} #${p.paragraph_number}`}`} style={{ borderLeft: `3px solid ${bookColor.border}` }}>
+                        <div key={p.id} className="reference-card" style={{ borderLeft: `3px solid ${bookColor.border}` }}>
                           {p.chapter_title && (
                             <span style={{
                               display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
@@ -924,12 +913,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                               {p.chapter_title}
                             </span>
                           )}
-                          <ExpandableReferenceCard
-                            preview={p.body_text.length > 250 ? p.body_text.slice(0, 250) + "…" : p.body_text}
-                            fullText={p.body_text}
-                          >
-                            <span />
-                          </ExpandableReferenceCard>
+                          <div className="reference-fold" dangerouslySetInnerHTML={{ __html: foldHtmlFor("prose", p.id, p.body_text, { expandLabel: "Read in context →" }) }} />
                           <div className="reference-card__links">
                             <span />
                             {p.vedabase_url && (
@@ -956,12 +940,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                             <p style={{ fontSize: 12, color: "#666", margin: "4px 0 2px", fontStyle: "italic" }}>
                               {label}
                             </p>
-                            <ExpandableReferenceCard
-                              preview={t.body_text.length > 250 ? t.body_text.slice(0, 250) + "…" : t.body_text}
-                              fullText={t.body_text}
-                            >
-                              <span />
-                            </ExpandableReferenceCard>
+                            <div className="reference-fold" dangerouslySetInnerHTML={{ __html: foldHtmlFor("lecture", t.id, t.body_text, { expandLabel: "Read in context →" }) }} />
                             <div className="reference-card__links">
                               <span />
                               {t.vedabase_url && (
@@ -989,12 +968,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                             <p style={{ fontSize: 12, color: "#666", margin: "4px 0 2px", fontStyle: "italic" }}>
                               {label}
                             </p>
-                            <ExpandableReferenceCard
-                              preview={l.body_text.length > 250 ? l.body_text.slice(0, 250) + "…" : l.body_text}
-                              fullText={l.body_text}
-                            >
-                              <span />
-                            </ExpandableReferenceCard>
+                            <div className="reference-fold" dangerouslySetInnerHTML={{ __html: foldHtmlFor("letter", l.id, l.body_text, { expandLabel: "Read in context →" }) }} />
                             <div className="reference-card__links">
                               <span />
                               {l.vedabase_url && (
@@ -1049,8 +1023,8 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                 </div>
                 {summaries.map((item, i) => (
                   <div
-                    key={i}
-                    onClick={() => scrollToSource(item.reference)}
+                    key={item.id || i}
+                    onClick={() => scrollToSource(item.id)}
                     style={{
                       display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12,
                       animation: `sidebarItemIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.08}s both`,
@@ -1062,22 +1036,12 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
                       animation: `badgePop 0.35s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.08 + 0.1}s both`,
                     }}>{i + 1}</span>
                     <div>
-                      <p className="font-body" style={{ fontSize: 12, margin: "0 0 2px", lineHeight: 1.5 }}>{item.summary}</p>
-                      <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{item.reference}</span>
+                      <p className="font-body" style={{ fontSize: 12, margin: "0 0 2px", lineHeight: 1.5 }}>{item.line}</p>
+                      <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{item.ref}</span>
                     </div>
                   </div>
                 ))}
               </>
-            )}
-
-            {/* Loading state for summaries */}
-            {summaries.length === 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-                <svg width="14" height="14" viewBox="0 0 14 14">
-                  <path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z" fill="#7F77DD" stroke="none" />
-                </svg>
-                <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#888" }}>Generating key answers...</span>
-              </div>
             )}
 
             {/* Divider */}
@@ -1102,7 +1066,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         isOpen={showSummaryPopup}
         onClose={() => setShowSummaryPopup(false)}
         summaries={summaries}
-        totalSources={results.totalResults}
+        totalSources={(results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)}
       />
 
       {/* Want More Modal */}
@@ -1238,32 +1202,68 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           border-left: 3px solid #7C3AED; padding: 12px 20px; border-radius: 0; margin: 16px 0;
           font-size: 15px; line-height: 1.8; color: #374151;
         }
-        /* Purport paragraphs (whole purports, previews, and inline-expanded full text) */
-        .narrative-content .pp { margin: 0 0 12px; font-size: 15px; line-height: 1.8; color: #374151; }
-        .narrative-content .pp:last-child { margin-bottom: 0; }
-        .narrative-content .pp-ellipsis {
+        /* Paragraphs in whole passages, previews, and inline-expanded full text. */
+        .pp { margin: 0 0 12px; font-size: 15px; line-height: 1.8; color: #374151; }
+        .pp:last-child { margin-bottom: 0; }
+        .pp-ellipsis {
           color: #A78BFA; text-align: center; letter-spacing: 0.3em;
           margin: 10px 0; user-select: none;
         }
-        /* Long-purport preview: gently fade the last lines so a snippet never
-           looks like the complete teaching (background-independent text mask). */
-        .narrative-content .purport-block { position: relative; }
-        .narrative-content .purport-preview {
-          -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 52px), transparent 100%);
-          mask-image: linear-gradient(to bottom, #000 calc(100% - 52px), transparent 100%);
+
+        /* ─── Unified fold (shared by the Article AND References) ─── */
+        .fold-block { position: relative; }
+        .fold-preview { position: relative; }
+        /* Folded preview: clamp to a few lines and gently fade the last line so a
+           snippet never looks like the whole teaching. Line-clamp makes the box
+           EXACTLY N lines (no empty dead-zone below the text); the mask fades the
+           text itself, so it is background-independent and ends at the last line. */
+        .fold-block.is-folded .fold-preview {
+          display: -webkit-box;
+          -webkit-box-orient: vertical;
+          -webkit-line-clamp: var(--fold-preview-lines, 3);
+          line-clamp: var(--fold-preview-lines, 3);
+          overflow: hidden;
+          -webkit-mask-image: linear-gradient(to bottom, #000 56%, rgba(0,0,0,0.4) 82%, transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 56%, rgba(0,0,0,0.4) 82%, transparent 100%);
         }
-        .narrative-content .purport-preview[hidden] { display: none; }
-        .narrative-content .purport-expand-btn {
+        /* Inside a folded box, paragraphs must flow inline for line-clamp to apply. */
+        .fold-block.is-folded .fold-preview .pp { display: inline; margin: 0; }
+        .fold-preview[hidden] { display: none; }
+        .fold-expand-btn {
           display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
           padding: 4px 0; background: none; border: none; cursor: pointer;
           font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; color: #7C3AED;
         }
-        .narrative-content .purport-expand-btn:hover { color: #6D28D9; text-decoration: underline; }
-        .narrative-content .purport-full {
+        .fold-expand-btn:hover { color: #6D28D9; text-decoration: underline; }
+        .fold-full {
           overflow: hidden; max-height: 0; opacity: 0;
-          transition: max-height 0.5s ease, opacity 0.4s ease;
+          transition: max-height 0.6s ease, opacity 0.45s ease;
         }
-        .narrative-content .purport-full.is-open { max-height: 100000px; opacity: 1; }
+        .fold-full.is-open { max-height: 100000px; opacity: 1; }
+
+        /* ─── Matched-line highlight: true + calm, in the lavender–violet palette
+           (never a flat yellow block). Layer 1 = matched sentence; layer 2 = query
+           words. Browser-default <mark> yellow is overridden by these classes. ─── */
+        mark.hl-sentence, mark.hl-word { color: inherit; }
+        .hl-sentence {
+          background: linear-gradient(180deg, rgba(167,139,250,0.15), rgba(139,92,246,0.12));
+          border-radius: 5px;
+          padding: 1px 3px;
+          box-shadow: 0 1px 9px rgba(139,92,246,0.13);
+          -webkit-box-decoration-break: clone;
+          box-decoration-break: clone;
+        }
+        .hl-word {
+          background: rgba(139,92,246,0.22);
+          color: #4C1D95;
+          border-radius: 3px;
+          padding: 0 1px;
+          font-weight: 600;
+        }
+
+        /* References folds reuse the same mechanism; give them a little breathing room. */
+        .reference-fold { margin: 8px 0; }
+        .reference-fold .fold-block { margin: 0; }
         .narrative-content .prose-quote {
           background: transparent; border: none;
           border-left: 3px solid #6366F1; padding: 12px 20px; border-radius: 0; margin: 16px 0;
