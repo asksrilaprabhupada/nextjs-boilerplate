@@ -1326,7 +1326,6 @@ function buildTemplateArticle(
   prose: ProseHit[],
   transcripts: TranscriptHit[] = [],
   letters: LetterHit[] = [],
-  neighbours: Map<string, { before?: string; after?: string }> = new Map(),
   queryTerms: string[] = [],
 ): string {
   if (verses.length === 0 && prose.length === 0 && transcripts.length === 0 && letters.length === 0) {
@@ -2241,7 +2240,7 @@ export async function GET(request: NextRequest) {
     }
 
     // ── Strategy A: Template-built article (zero AI calls, instant) ──
-    const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, neighbours, queryTerms);
+    const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms);
     const result = { ...fullMetadata, narrative };
     setCached(query, result);
     return NextResponse.json(result);
