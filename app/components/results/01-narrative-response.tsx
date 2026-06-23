@@ -790,7 +790,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
       <div className="results-grid-container">
         {/* ─── Content Column ─── */}
         <div>
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.45, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}>
 
             {/* ─── Article Mode ─── */}
             {viewMode === "article" && (
@@ -1169,16 +1169,37 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           }
         }
 
-        /* Verse and purport blocks animate in when they appear during streaming */
-        .narrative-content .verse-quote,
-        .narrative-content .purport-quote,
-        .narrative-content .prose-quote {
-          animation: verseBorderGrow 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+        /* ─── Cinematic compose-in: the answer assembles itself, top to bottom.
+           The intro appears, then each block (heading, transition, source) rises in
+           gently, one after another. Pure CSS, so it runs the moment the injected
+           article HTML mounts (re-runs on each new search) and degrades to instant
+           under reduced motion. Supersedes the old per-type entrance. ─── */
+        .narrative-content > * {
+          animation: composeIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
+        @keyframes composeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .narrative-content > *:nth-child(1) { animation-delay: 0.02s; }
+        .narrative-content > *:nth-child(2) { animation-delay: 0.08s; }
+        .narrative-content > *:nth-child(3) { animation-delay: 0.14s; }
+        .narrative-content > *:nth-child(4) { animation-delay: 0.20s; }
+        .narrative-content > *:nth-child(5) { animation-delay: 0.26s; }
+        .narrative-content > *:nth-child(6) { animation-delay: 0.32s; }
+        .narrative-content > *:nth-child(7) { animation-delay: 0.38s; }
+        .narrative-content > *:nth-child(8) { animation-delay: 0.44s; }
+        .narrative-content > *:nth-child(9) { animation-delay: 0.50s; }
+        .narrative-content > *:nth-child(10) { animation-delay: 0.56s; }
+        .narrative-content > *:nth-child(n+11) { animation-delay: 0.62s; }
 
-        /* Stagger h3 headings in the narrative */
-        .narrative-content h3 {
-          animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+        /* References cards rise in gently too (calmer — no per-card cascade). */
+        .reference-card { animation: composeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+        /* Reduced motion: the global rule squashes duration; also drop the stagger
+           delays so nothing is held invisible while its delay elapses. */
+        @media (prefers-reduced-motion: reduce) {
+          .narrative-content > *, .reference-card { animation-delay: 0s !important; }
         }
 
         /* Narrative content styles */
