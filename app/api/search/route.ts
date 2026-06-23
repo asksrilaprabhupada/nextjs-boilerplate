@@ -1982,10 +1982,19 @@ function selectMainFlow(verses: VerseHit[], prose: ProseHit[], transcripts: Tran
   // substantially the same (normalized prefix), keep the best-ranked (pool is sorted
   // desc by score), and let the dropped twin remain available in References / overflow.
   const sigOf = (it: MainItem): string => {
-    const text = it.type === "verse"
-      ? `${(it.data as VerseHit).translation || ""} ${(it.data as VerseHit).purport || ""}`
-      : ((it.data as ProseHit | TranscriptHit | LetterHit).body_text || "");
-    return normalizeForMatch(text.slice(0, 600)).slice(0, 200);
+    let text: string;
+    if (it.type === "verse") {
+      const v = it.data as VerseHit;
+      const purport = (v.purport || "").trim();
+      // Dedupe verses on the PURPORT when present (the "same purport text under two
+      // book names" case); fall back to the translation when there is no purport.
+      text = purport.length > 80 ? purport : (v.translation || "");
+    } else {
+      text = (it.data as ProseHit | TranscriptHit | LetterHit).body_text || "";
+    }
+    // A long normalized prefix: exact/near-exact twins collide, while distinct
+    // passages that merely share a formulaic opening diverge before the window ends.
+    return normalizeForMatch(text.slice(0, 1200)).slice(0, 400);
   };
   const seenSig = new Set<string>();
   const items: MainItem[] = [];
