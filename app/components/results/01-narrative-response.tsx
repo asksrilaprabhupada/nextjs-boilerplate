@@ -1245,20 +1245,36 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
            (never a flat yellow block). Layer 1 = matched sentence; layer 2 = query
            words. Browser-default <mark> yellow is overridden by these classes. ─── */
         mark.hl-sentence, mark.hl-word { color: inherit; }
+        /* Layer 1 — the matched sentence: a soft, graded violet glow with faded
+           left/right edges (a horizontal gradient that stops short of full height),
+           so the line looks gently LIT, not painted into a hard rectangle. On first
+           appearance it blooms left→right once (hlBloom, ~1s ease-out) then settles
+           into this quiet, steady tint. One-time — never loops. */
         .hl-sentence {
-          background: linear-gradient(180deg, rgba(167,139,250,0.15), rgba(139,92,246,0.12));
-          border-radius: 5px;
-          padding: 1px 3px;
-          box-shadow: 0 1px 9px rgba(139,92,246,0.13);
+          background-image: linear-gradient(90deg,
+            rgba(167,139,250,0) 0%, rgba(167,139,250,0.16) 9%,
+            rgba(139,92,246,0.16) 91%, rgba(139,92,246,0) 100%);
+          background-repeat: no-repeat;
+          background-position: left center;
+          background-size: 100% 76%;
+          border-radius: 7px;
+          padding: 0.04em 0.32em;
+          box-shadow: 0 1px 12px rgba(139,92,246,0.10);
           -webkit-box-decoration-break: clone;
           box-decoration-break: clone;
+          animation: hlBloom 1.05s cubic-bezier(0.22, 1, 0.36, 1) both;
         }
+        @keyframes hlBloom {
+          from { background-size: 0% 76%; box-shadow: 0 1px 12px rgba(139,92,246,0); }
+          to   { background-size: 100% 76%; box-shadow: 0 1px 12px rgba(139,92,246,0.10); }
+        }
+        /* Layer 2 — query words: a subtle violet marker-underline, not a hard fill. */
         .hl-word {
-          background: rgba(139,92,246,0.22);
-          color: #4C1D95;
-          border-radius: 3px;
-          padding: 0 1px;
-          font-weight: 600;
+          background-image: linear-gradient(transparent 58%, rgba(139,92,246,0.22) 58%);
+          border-radius: 1px;
+          padding: 0 0.5px;
+          font-weight: 500;
+          color: #5B21B6;
         }
 
         /* References folds reuse the same mechanism; give them a little breathing room. */
