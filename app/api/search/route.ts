@@ -1015,11 +1015,11 @@ Use ONLY the scripture passages provided below. Never invent philosophy.
 STRUCTURE YOUR ARTICLE LIKE THIS:
 1. Start with a <p> paragraph (2-3 sentences) that is UNIQUE and SPECIFIC to this search. Here are the key findings from the top results to help you write a compelling intro:
 ${topSummaries}
-Use these findings to write a specific intro — mention what the scriptures actually say, which speakers address this topic, or what the core teaching is. NEVER write generic filler like "The scriptures offer clear guidance" or "This is addressed extensively in Prabhupāda's books." Every intro must be different based on the actual content found.
+Use these findings ONLY to orient the reader — name the topic, which books/lectures/letters address it, and which speakers appear. Do NOT state any spiritual teaching in your own voice (never write "the purpose of life is…", "one should…", or "the core teaching is…"); the teachings must come SOLELY from the attributed verbatim quotes below. Avoid generic filler; vary the framing based on the actual sources found.
 2. Organize the body by THEME, not just sequentially. Use <h3> headings for each thematic section. Make headings editorial (e.g., "The Rarity of Human Birth", "The Ultimate Goal"), NOT just scripture names.
-3. End with a <p> paragraph (2-3 sentences) that specifically summarizes what the scriptures teach about the question asked: "${question}". DO NOT use a generic conclusion about "the human form of life" — the conclusion must directly relate to the topic discussed in the article. End with a brief mention that full purports are available via Vedabase.io links above.
+3. End with a <p> paragraph (1-2 sentences) that FRAMES the collection — name the topic "${question}" and the sources drawn upon — WITHOUT asserting any teaching in your own voice (no "the scriptures teach that…", no "one should…"). End with a brief mention that full purports are available via Vedabase.io links above.
 
-PRACTICAL TAKEAWAY: If the passages contain specific practical instructions (chant, serve, follow the spiritual master, wake early, etc.), end the article by briefly listing what a devotee should actually DO based on these teachings. Use a short paragraph, not a bullet list. Frame it as: "Based on these teachings, the practical steps are..."
+PRACTICAL TAKEAWAY: Do NOT compose practical instructions in your own voice. If a passage states a practical instruction (chant, serve, follow the spiritual master, etc.), it may appear ONLY as that passage's attributed verbatim quote — never paraphrased, summarized, or synthesized as the narrator's advice.
 
 THEMATIC STRUCTURE: Do NOT just list verses sequentially. Instead, organize by theme or argument flow. For example, if the question is about the goal of human life:
 - First group: Why human life is rare and valuable
@@ -1374,41 +1374,49 @@ function buildTemplateArticle(
   // Sort by score
   allItems.sort((a, b) => b.score - a.score);
 
-  // ── INTRO: Build from SUMMARY tags ──
-  const summaries: string[] = [];
-  for (const item of allItems.slice(0, 5)) {
-    const tags = (item.data as any).tags as string[] | undefined;
-    if (!tags) continue;
-    const summary = tags.find(t => t.startsWith("SUMMARY:"));
-    if (summary) {
-      summaries.push(summary.replace("SUMMARY:", "").trim());
-      if (summaries.length >= 2) break;
-    }
-  }
+  // ── INTRO: framing ONLY ──
+  // Name the topic, the sources, and the speakers — never state a teaching in the
+  // narrator's voice (Hard Rule 1). The doctrine is carried solely by the attributed
+  // verbatim passages below, not by this orientation.
+  const questionTopic = question
+    .replace(/\?$/, "")
+    .replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "")
+    .replace(/^(srila\s+)?(prabhupada|prabhupāda)\s+(say|said|says|teach|teaches|explain|explains)\s+(about\s+)?/i, "")
+    .trim()
+    .toLowerCase() || question.replace(/\?$/, "").toLowerCase();
 
-  const articleVerses = verses;
-  const bookNames = [...new Set(articleVerses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")))];
+  const bookNames = [...new Set([
+    ...verses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")),
+    ...prose.map(x => getBookName(x.book_slug || "")),
+  ].filter(Boolean))];
   const bookListStr = bookNames.length === 1
     ? bookNames[0]
     : bookNames.length === 2
       ? `${bookNames[0]} and ${bookNames[1]}`
       : `${bookNames.slice(0, 2).join(", ")}, and ${bookNames.length > 3 ? "other texts" : bookNames[2]}`;
 
-  // Get primary speaker for the first verse
+  // The kinds of sources present, named for orientation (books + lectures + letters).
+  const sourceKinds: string[] = [];
+  if (bookNames.length > 0) sourceKinds.push(bookListStr);
+  if (transcripts.length > 0) sourceKinds.push("his recorded lectures");
+  if (letters.length > 0) sourceKinds.push("his letters");
+  const sourcesStr = sourceKinds.length === 0
+    ? "his books, lectures, and letters"
+    : sourceKinds.length === 1
+      ? sourceKinds[0]
+      : sourceKinds.length === 2
+        ? `${sourceKinds[0]} and ${sourceKinds[1]}`
+        : `${sourceKinds.slice(0, -1).join(", ")}, and ${sourceKinds[sourceKinds.length - 1]}`;
+
+  // Primary speaker among the verses (attribution only — naming who speaks).
   const firstVerse = verses[0];
   const firstRef = firstVerse ? cleanRef(firstVerse) : "";
   const firstSpeaker = firstVerse ? getSpeaker(firstRef, "translation") : "";
 
-  if (summaries.length >= 2) {
-    parts.push(`<p>${summaries[0]} ${summaries[1]} Through ${bookListStr}, Śrīla Prabhupāda provides clear guidance on this subject.</p>`);
-  } else if (summaries.length === 1) {
-    parts.push(`<p>${summaries[0]} Śrīla Prabhupāda addresses this in ${bookListStr}, offering both scriptural evidence and practical instruction.</p>`);
-  } else if (firstSpeaker && firstSpeaker !== "the scripture") {
-    const questionTopic = question.replace(/\?$/, "").replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "").trim().toLowerCase() || question.replace(/\?$/, "").toLowerCase();
-    parts.push(`<p>${firstSpeaker} directly addresses ${questionTopic} in the scriptures. Through ${bookListStr}, Śrīla Prabhupāda illuminates this teaching with his purports.</p>`);
+  if (firstSpeaker && firstSpeaker !== "the scripture") {
+    parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}, including verses spoken by ${firstSpeaker}. Here is what he teaches on this subject, in his own words and purports.</p>`);
   } else {
-    const questionTopic = question.replace(/\?$/, "").replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "").trim().toLowerCase() || question.replace(/\?$/, "").toLowerCase();
-    parts.push(`<p>Śrīla Prabhupāda gives clear guidance on ${questionTopic} through ${bookListStr}. Here is what the scriptures and his teachings reveal.</p>`);
+    parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.</p>`);
   }
 
   // ── GROUP INTO THEMED SECTIONS with <h3> headings ──
@@ -1577,19 +1585,8 @@ function buildTemplateArticle(
     }
   }
 
-  // ── CONCLUSION ──
-  const questionTopic = question
-    .replace(/\?$/, "")
-    .replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "")
-    .replace(/^(srila\s+)?(prabhupada|prabhupāda)\s+(say|said|says|teach|teaches|explain|explains)\s+(about\s+)?/i, "")
-    .trim()
-    .toLowerCase() || question.replace(/\?$/, "").toLowerCase();
-
-  if (summaries.length > 0) {
-    parts.push(`<p>Through these passages from ${bookListStr}, Śrīla Prabhupāda's teaching on ${questionTopic} is clear and consistent. Full purports with complete context are available through the Vedabase.io links above.</p>`);
-  } else {
-    parts.push(`<p>These teachings from ${bookListStr} offer Śrīla Prabhupāda's direct guidance on ${questionTopic}. Full purports are available through the Vedabase.io links above.</p>`);
-  }
+  // ── CONCLUSION: framing only (orientation + where to read more) ──
+  parts.push(`<p>These passages gather Śrīla Prabhupāda's words on ${questionTopic} from ${sourcesStr}. The complete purports, with full context, are available through the Vedabase.io links above.</p>`);
 
   return parts.join("\n");
 }
@@ -1618,43 +1615,20 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       ? `${bookNames[0]} and ${bookNames[1]}`
       : `${bookNames.slice(0, 2).join(", ")}, and ${bookNames.length > 3 ? "other texts" : bookNames[2]}`;
 
-  // Extract summaries from top results for a unique intro
-  const introSummaries: string[] = [];
-  for (const item of [...v.slice(0, 3), ...p.slice(0, 2), ...t.slice(0, 2), ...l.slice(0, 1)]) {
-    const tags = (item as any).tags as string[] | undefined;
-    if (tags) {
-      const summary = tags.find((tag: string) => tag.startsWith("SUMMARY:"));
-      if (summary) {
-        introSummaries.push(summary.replace("SUMMARY:", "").trim());
-        if (introSummaries.length >= 2) break;
-      }
-    }
-  }
-
-  // Content-aware intro templates
-  if (introSummaries.length >= 2) {
-    parts.push(`<p>${introSummaries[0]}. ${introSummaries[1]}. Through ${bookListStr}, Śrīla Prabhupāda provides profound guidance on this subject.</p>`);
-  } else if (introSummaries.length === 1) {
-    parts.push(`<p>${introSummaries[0]}. Śrīla Prabhupāda addresses this topic through ${bookListStr}, offering both scriptural evidence and practical instruction.</p>`);
-  } else {
-    // No summaries available — use a question-aware intro
-    const isWho = /^who\b/i.test(question);
-    const isWhat = /^what\b/i.test(question);
-    const isHow = /^how\b/i.test(question);
-    const isWhy = /^why\b/i.test(question);
-
-    if (isHow) {
-      parts.push(`<p>Śrīla Prabhupāda gives clear practical guidance on ${questionTopic}. Drawing from ${bookListStr}, here are the specific instructions from the scriptures and his own teachings.</p>`);
-    } else if (isWhy) {
-      parts.push(`<p>The deeper reason behind ${questionTopic} is revealed through the scriptures. In ${bookListStr}, Śrīla Prabhupāda explains the spiritual significance with great clarity.</p>`);
-    } else if (isWho) {
-      parts.push(`<p>The identity and role of ${questionTopic} is described vividly in the scriptures. Through ${bookListStr}, Śrīla Prabhupāda illuminates this subject.</p>`);
-    } else if (isWhat) {
-      parts.push(`<p>Understanding ${questionTopic} requires scriptural knowledge. In ${bookListStr}, Śrīla Prabhupāda reveals what the Vedic literature teaches about this important subject.</p>`);
-    } else {
-      parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} in ${bookListStr}. Here is what the scriptures and his teachings reveal on this subject.</p>`);
-    }
-  }
+  // Intro — framing ONLY: name the topic and the sources; never state a teaching in
+  // the narrator's voice (Hard Rule 1). Doctrine is carried by the attributed quotes.
+  const fbSourceKinds: string[] = [];
+  if (bookNames.length > 0) fbSourceKinds.push(bookListStr);
+  if (t.length > 0) fbSourceKinds.push("his recorded lectures");
+  if (l.length > 0) fbSourceKinds.push("his letters");
+  const fbSourcesStr = fbSourceKinds.length === 0
+    ? "his books, lectures, and letters"
+    : fbSourceKinds.length === 1
+      ? fbSourceKinds[0]
+      : fbSourceKinds.length === 2
+        ? `${fbSourceKinds[0]} and ${fbSourceKinds[1]}`
+        : `${fbSourceKinds.slice(0, -1).join(", ")}, and ${fbSourceKinds[fbSourceKinds.length - 1]}`;
+  parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${fbSourcesStr}. Here is what he teaches on this subject, in his own words and purports.</p>`);
 
   // Varied transition templates (expanded to 10)
   const transitions = [
@@ -1868,12 +1842,8 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     itemIdx++;
   }
 
-  // Content-aware conclusion
-  if (introSummaries.length > 0) {
-    parts.push(`<p>Through these passages from ${bookListStr}, Śrīla Prabhupāda's teaching on ${questionTopic} is clear and consistent. Full purports with complete context are available through the Vedabase.io links above.</p>`);
-  } else {
-    parts.push(`<p>These teachings from ${bookListStr} offer Śrīla Prabhupāda's direct guidance on ${questionTopic}. Full purports are available through the Vedabase.io links above.</p>`);
-  }
+  // Conclusion — framing only (orientation + where to read more)
+  parts.push(`<p>These passages gather Śrīla Prabhupāda's words on ${questionTopic} from ${fbSourcesStr}. The complete purports, with full context, are available through the Vedabase.io links above.</p>`);
 
   return parts.join("\n");
 }
