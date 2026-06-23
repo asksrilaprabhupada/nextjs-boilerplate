@@ -22,6 +22,7 @@ import {
 import {
   MAIN_FLOW_COUNT,
   extractQueryTerms,
+  normalizeForMatch,
   buildFoldPreviewHtml,
   buildFoldBlock,
   highlightHtml,
@@ -2005,7 +2006,26 @@ function selectMainFlow(verses: VerseHit[], prose: ProseHit[], transcripts: Tran
     pool.push({ type: "letter", data: l, score: l.score || 0 });
   }
   pool.sort((a, b) => b.score - a.score);
-  const items = pool.slice(0, MAIN_FLOW_COUNT);
+
+  // Drop near-identical twins from the main flow (e.g. the same purport text under
+  // two book names). Mechanical only — match on the DISPLAYED text being
+  // substantially the same (normalized prefix), keep the best-ranked (pool is sorted
+  // desc by score), and let the dropped twin remain available in References / overflow.
+  const sigOf = (it: MainItem): string => {
+    const text = it.type === "verse"
+      ? `${(it.data as VerseHit).translation || ""} ${(it.data as VerseHit).purport || ""}`
+      : ((it.data as ProseHit | TranscriptHit | LetterHit).body_text || "");
+    return normalizeForMatch(text.slice(0, 600)).slice(0, 200);
+  };
+  const seenSig = new Set<string>();
+  const items: MainItem[] = [];
+  for (const it of pool) {
+    const sig = sigOf(it);
+    if (sig && seenSig.has(sig)) continue;
+    if (sig) seenSig.add(sig);
+    items.push(it);
+    if (items.length >= MAIN_FLOW_COUNT) break;
+  }
   return {
     items,
     verses: items.filter(i => i.type === "verse").map(i => i.data as VerseHit),
@@ -2211,7 +2231,17 @@ export async function GET(request: NextRequest) {
     const mainFlow = selectMainFlow(narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
 
     // Verbatim key answers for the woven main-flow passages (no AI; never paraphrased).
-    const keyAnswers = mainFlow.items.map(it => buildKeyAnswer(it, queryTerms));
+    // Dedupe the same way — two distinct passages can surface the same matched line,
+    // and the list must never repeat a line.
+    const keyAnswers: { id: string; ref: string; line: string }[] = [];
+    const seenKeyLine = new Set<string>();
+    for (const it of mainFlow.items) {
+      const ka = buildKeyAnswer(it, queryTerms);
+      const norm = normalizeForMatch(ka.line || "").slice(0, 200);
+      if (norm && seenKeyLine.has(norm)) continue;
+      if (norm) seenKeyLine.add(norm);
+      keyAnswers.push(ka);
+    }
 
     // Article verse IDs = the woven verses (drives Dig Deeper "In article" badges).
     const articleVerseIds = mainFlow.verses.map(v => v.id);
