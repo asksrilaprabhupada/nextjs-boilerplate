@@ -1432,6 +1432,13 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
             padding: 10px 16px;
             font-size: 14px;
           }
+          /* Phone-first: give reference text more width, and keep the matched-line
+             glow gentle where sentences wrap across more lines on narrow screens. */
+          .reference-card { padding: 14px 16px; }
+          .hl-sentence { box-shadow: 0 1px 9px rgba(139, 92, 246, 0.09); }
+        }
+        @media (max-width: 480px) {
+          .reference-card { padding: 12px 14px; }
         }
 
         /* Quote block cursor */

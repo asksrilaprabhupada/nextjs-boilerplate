@@ -82,6 +82,9 @@ export default function SearchProgress({ isSearching }: SearchProgressProps) {
           from { opacity: 0; }
           to   { opacity: 0.9; }
         }
+        @media (max-width: 480px) {
+          .settling-orb { width: 46px; height: 46px; }
+        }
         @media (prefers-reduced-motion: reduce) {
           .settling-orb { animation: none; opacity: 0.85; }
           .settling-line { animation: none; }
