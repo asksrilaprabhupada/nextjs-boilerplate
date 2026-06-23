@@ -31,6 +31,28 @@ export function stripPurportBoilerplate(text: string): string {
   return stripped.length < 5 ? text : stripped;
 }
 
+/**
+ * Strips MECHANICAL artifacts from displayed text — a leaked leading paragraph
+ * number at the start of a line (a stray "42)" / "42." / "42]") and broken
+ * intra-line whitespace — without touching wording. Works line by line and
+ * PRESERVES the "\n" boundaries and line count, so character offsets computed
+ * against the cleaned string stay valid for matched-line highlighting. This is
+ * cleanup ONLY: it never drops, reorders, hides, or judges a passage. Parenthesised
+ * list markers like "(1)" are left intact (only bare leading enumerators are stray).
+ */
+export function cleanDisplayText(text: string): string {
+  if (!text) return "";
+  return text
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^(\s*)\d{1,4}[)\].]\s+/, "$1") // leaked leading enumerator
+        .replace(/[ \t]{2,}/g, " ")              // collapse broken whitespace
+        .replace(/[ \t]+$/g, ""),                // trailing whitespace
+    )
+    .join("\n");
+}
+
 /** Splits text into trimmed, non-empty paragraphs on single "\n" boundaries. */
 export function splitIntoParagraphs(text: string): string[] {
   if (!text) return [];
