@@ -26,7 +26,15 @@ export type PassageType = "verse" | "purport" | "prose" | "lecture" | "letter";
 /** Number of passages woven into the main-flow Article (the rest go to References / Dig Deeper). */
 export const MAIN_FLOW_COUNT = 10;
 
-/** Approximate length of a folded preview, in characters (~3 lines). Single tunable knob. */
+/**
+ * Fold decision knob: passages at or below this length render WHOLE (no fold, no
+ * fade); only genuinely long passages fold into a preview. Aligned with the
+ * long-purport cutoff (09-purport-format PURPORT_CUTOFF = 2800) so short AND
+ * medium passages are shown in full — lower this if the Article reads too long.
+ */
+export const FOLD_CUTOFF_CHARS = 2800;
+
+/** Size of a folded preview window, in characters (~3 lines), for genuinely long passages. */
 export const PREVIEW_CHAR_TARGET = 300;
 
 /** Visual line-clamp height of a folded preview (CSS var fallback). */
@@ -329,11 +337,12 @@ export function buildSectionText(body: string, before?: string, after?: string, 
 export interface FoldPreview { previewHtml: string; truncated: boolean; matched: MatchRange | null }
 
 /**
- * Builds the folded preview for a passage. The preview is a SINGLE block that
- * leads with the matched sentence (so the devotee instantly sees why the result
- * is relevant), ~PREVIEW_CHAR_TARGET characters, cut on a whole-sentence boundary.
- * `truncated=false` when the whole passage already fits — short passages render
- * whole (the preview would just equal the full text), with no fade and no button.
+ * Builds the folded preview for a passage. Short AND medium passages (≤
+ * FOLD_CUTOFF_CHARS) render WHOLE — `truncated=false`, no fade, no button — so the
+ * eye is never interrupted by a fade every few lines. Only genuinely long passages
+ * fold into a SINGLE preview block that leads with the matched sentence (so the
+ * devotee instantly sees why the result is relevant), ~PREVIEW_CHAR_TARGET
+ * characters, cut on a whole-sentence boundary.
  */
 export function buildFoldPreviewHtml(opts: {
   type: PassageType;
@@ -346,8 +355,8 @@ export function buildFoldPreviewHtml(opts: {
 
   const matched = locateMatchedSentence(clean, opts.matchedChunkText, opts.queryTerms);
 
-  // Whole short passage → render in full (paragraphs), no fold.
-  if (clean.length <= PREVIEW_CHAR_TARGET) {
+  // Short/medium passage → render in full (paragraphs), no fold, no fade.
+  if (clean.length <= FOLD_CUTOFF_CHARS) {
     return {
       previewHtml: highlightParagraphsHtml(clean, opts.matchedChunkText, opts.queryTerms),
       truncated: false,
