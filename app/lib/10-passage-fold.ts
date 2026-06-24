@@ -19,14 +19,22 @@
  *   - Derive a VERBATIM "key answer" line for a passage (never paraphrased).
  */
 
-import { escapeHtml, splitIntoParagraphs, stripPurportBoilerplate } from "./09-purport-format";
+import { cleanDisplayText, escapeHtml, splitIntoParagraphs, stripPurportBoilerplate } from "./09-purport-format";
 
 export type PassageType = "verse" | "purport" | "prose" | "lecture" | "letter";
 
 /** Number of passages woven into the main-flow Article (the rest go to References / Dig Deeper). */
 export const MAIN_FLOW_COUNT = 10;
 
-/** Approximate length of a folded preview, in characters (~3 lines). Single tunable knob. */
+/**
+ * Fold decision knob: passages at or below this length render WHOLE (no fold, no
+ * fade); only genuinely long passages fold into a preview. Aligned with the
+ * long-purport cutoff (09-purport-format PURPORT_CUTOFF = 2800) so short AND
+ * medium passages are shown in full — lower this if the Article reads too long.
+ */
+export const FOLD_CUTOFF_CHARS = 2800;
+
+/** Size of a folded preview window, in characters (~3 lines), for genuinely long passages. */
 export const PREVIEW_CHAR_TARGET = 300;
 
 /** Visual line-clamp height of a folded preview (CSS var fallback). */
@@ -270,7 +278,7 @@ export function highlightParagraphsHtml(
   matchedChunkText: string | undefined,
   queryTerms: string[],
 ): string {
-  const clean = stripPurportBoilerplate(text || "");
+  const clean = cleanDisplayText(stripPurportBoilerplate(text || ""));
   const paras = splitIntoParagraphs(clean);
   if (paras.length === 0) return "";
   const matched = locateMatchedSentence(clean, matchedChunkText, queryTerms);
@@ -311,10 +319,10 @@ function isMostlySanskritLite(text: string): boolean {
  * only on whole-paragraph boundaries — never mid-sentence.
  */
 export function buildSectionText(body: string, before?: string, after?: string, cap = 2800): string {
-  const matched = (body || "").trim();
+  const matched = cleanDisplayText(body || "").trim();
   if (!matched) return "";
-  const beforeOk = before && before.trim().length > 40 && !isMostlySanskritLite(before) ? before.trim() : "";
-  const afterOk = after && after.trim().length > 40 && !isMostlySanskritLite(after) ? after.trim() : "";
+  const beforeOk = before && before.trim().length > 40 && !isMostlySanskritLite(before) ? cleanDisplayText(before).trim() : "";
+  const afterOk = after && after.trim().length > 40 && !isMostlySanskritLite(after) ? cleanDisplayText(after).trim() : "";
   let pieces = [beforeOk, matched, afterOk].filter(Boolean) as string[];
   const total = (arr: string[]) => arr.reduce((n, s) => n + s.length, 0);
   if (total(pieces) > cap && beforeOk && afterOk) {
@@ -329,11 +337,12 @@ export function buildSectionText(body: string, before?: string, after?: string, 
 export interface FoldPreview { previewHtml: string; truncated: boolean; matched: MatchRange | null }
 
 /**
- * Builds the folded preview for a passage. The preview is a SINGLE block that
- * leads with the matched sentence (so the devotee instantly sees why the result
- * is relevant), ~PREVIEW_CHAR_TARGET characters, cut on a whole-sentence boundary.
- * `truncated=false` when the whole passage already fits — short passages render
- * whole (the preview would just equal the full text), with no fade and no button.
+ * Builds the folded preview for a passage. Short AND medium passages (≤
+ * FOLD_CUTOFF_CHARS) render WHOLE — `truncated=false`, no fade, no button — so the
+ * eye is never interrupted by a fade every few lines. Only genuinely long passages
+ * fold into a SINGLE preview block that leads with the matched sentence (so the
+ * devotee instantly sees why the result is relevant), ~PREVIEW_CHAR_TARGET
+ * characters, cut on a whole-sentence boundary.
  */
 export function buildFoldPreviewHtml(opts: {
   type: PassageType;
@@ -341,13 +350,13 @@ export function buildFoldPreviewHtml(opts: {
   matchedChunkText?: string;
   queryTerms: string[];
 }): FoldPreview {
-  const clean = (opts.type === "purport" ? stripPurportBoilerplate(opts.text || "") : (opts.text || "")).trim();
+  const clean = cleanDisplayText(opts.type === "purport" ? stripPurportBoilerplate(opts.text || "") : (opts.text || "")).trim();
   if (!clean) return { previewHtml: "", truncated: false, matched: null };
 
   const matched = locateMatchedSentence(clean, opts.matchedChunkText, opts.queryTerms);
 
-  // Whole short passage → render in full (paragraphs), no fold.
-  if (clean.length <= PREVIEW_CHAR_TARGET) {
+  // Short/medium passage → render in full (paragraphs), no fold, no fade.
+  if (clean.length <= FOLD_CUTOFF_CHARS) {
     return {
       previewHtml: highlightParagraphsHtml(clean, opts.matchedChunkText, opts.queryTerms),
       truncated: false,
@@ -440,8 +449,8 @@ export function keyLineFor(opts: {
   matchedChunkText?: string;
   queryTerms: string[];
 }): string {
-  if (opts.type === "verse") return (opts.translation || "").trim();
-  const text = (opts.body || "").trim();
+  if (opts.type === "verse") return cleanDisplayText(opts.translation || "").trim();
+  const text = cleanDisplayText(opts.body || "").trim();
   if (!text) return "";
   const matched = locateMatchedSentence(text, opts.matchedChunkText, opts.queryTerms);
   if (matched) return text.slice(matched.start, matched.end).trim();

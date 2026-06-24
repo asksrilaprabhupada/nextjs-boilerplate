@@ -790,7 +790,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
       <div className="results-grid-container">
         {/* ─── Content Column ─── */}
         <div>
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.45, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}>
 
             {/* ─── Article Mode ─── */}
             {viewMode === "article" && (
@@ -1169,16 +1169,37 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           }
         }
 
-        /* Verse and purport blocks animate in when they appear during streaming */
-        .narrative-content .verse-quote,
-        .narrative-content .purport-quote,
-        .narrative-content .prose-quote {
-          animation: verseBorderGrow 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+        /* ─── Cinematic compose-in: the answer assembles itself, top to bottom.
+           The intro appears, then each block (heading, transition, source) rises in
+           gently, one after another. Pure CSS, so it runs the moment the injected
+           article HTML mounts (re-runs on each new search) and degrades to instant
+           under reduced motion. Supersedes the old per-type entrance. ─── */
+        .narrative-content > * {
+          animation: composeIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
         }
+        @keyframes composeIn {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .narrative-content > *:nth-child(1) { animation-delay: 0.02s; }
+        .narrative-content > *:nth-child(2) { animation-delay: 0.08s; }
+        .narrative-content > *:nth-child(3) { animation-delay: 0.14s; }
+        .narrative-content > *:nth-child(4) { animation-delay: 0.20s; }
+        .narrative-content > *:nth-child(5) { animation-delay: 0.26s; }
+        .narrative-content > *:nth-child(6) { animation-delay: 0.32s; }
+        .narrative-content > *:nth-child(7) { animation-delay: 0.38s; }
+        .narrative-content > *:nth-child(8) { animation-delay: 0.44s; }
+        .narrative-content > *:nth-child(9) { animation-delay: 0.50s; }
+        .narrative-content > *:nth-child(10) { animation-delay: 0.56s; }
+        .narrative-content > *:nth-child(n+11) { animation-delay: 0.62s; }
 
-        /* Stagger h3 headings in the narrative */
-        .narrative-content h3 {
-          animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+        /* References cards rise in gently too (calmer — no per-card cascade). */
+        .reference-card { animation: composeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+        /* Reduced motion: the global rule squashes duration; also drop the stagger
+           delays so nothing is held invisible while its delay elapses. */
+        @media (prefers-reduced-motion: reduce) {
+          .narrative-content > *, .reference-card { animation-delay: 0s !important; }
         }
 
         /* Narrative content styles */
@@ -1245,20 +1266,36 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
            (never a flat yellow block). Layer 1 = matched sentence; layer 2 = query
            words. Browser-default <mark> yellow is overridden by these classes. ─── */
         mark.hl-sentence, mark.hl-word { color: inherit; }
+        /* Layer 1 — the matched sentence: a soft, graded violet glow with faded
+           left/right edges (a horizontal gradient that stops short of full height),
+           so the line looks gently LIT, not painted into a hard rectangle. On first
+           appearance it blooms left→right once (hlBloom, ~1s ease-out) then settles
+           into this quiet, steady tint. One-time — never loops. */
         .hl-sentence {
-          background: linear-gradient(180deg, rgba(167,139,250,0.15), rgba(139,92,246,0.12));
-          border-radius: 5px;
-          padding: 1px 3px;
-          box-shadow: 0 1px 9px rgba(139,92,246,0.13);
+          background-image: linear-gradient(90deg,
+            rgba(167,139,250,0) 0%, rgba(167,139,250,0.16) 9%,
+            rgba(139,92,246,0.16) 91%, rgba(139,92,246,0) 100%);
+          background-repeat: no-repeat;
+          background-position: left center;
+          background-size: 100% 76%;
+          border-radius: 7px;
+          padding: 0.04em 0.32em;
+          box-shadow: 0 1px 12px rgba(139,92,246,0.10);
           -webkit-box-decoration-break: clone;
           box-decoration-break: clone;
+          animation: hlBloom 1.05s cubic-bezier(0.22, 1, 0.36, 1) both;
         }
+        @keyframes hlBloom {
+          from { background-size: 0% 76%; box-shadow: 0 1px 12px rgba(139,92,246,0); }
+          to   { background-size: 100% 76%; box-shadow: 0 1px 12px rgba(139,92,246,0.10); }
+        }
+        /* Layer 2 — query words: a subtle violet marker-underline, not a hard fill. */
         .hl-word {
-          background: rgba(139,92,246,0.22);
-          color: #4C1D95;
-          border-radius: 3px;
-          padding: 0 1px;
-          font-weight: 600;
+          background-image: linear-gradient(transparent 58%, rgba(139,92,246,0.22) 58%);
+          border-radius: 1px;
+          padding: 0 0.5px;
+          font-weight: 500;
+          color: #5B21B6;
         }
 
         /* References folds reuse the same mechanism; give them a little breathing room. */
@@ -1395,6 +1432,13 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
             padding: 10px 16px;
             font-size: 14px;
           }
+          /* Phone-first: give reference text more width, and keep the matched-line
+             glow gentle where sentences wrap across more lines on narrow screens. */
+          .reference-card { padding: 14px 16px; }
+          .hl-sentence { box-shadow: 0 1px 9px rgba(139, 92, 246, 0.09); }
+        }
+        @media (max-width: 480px) {
+          .reference-card { padding: 12px 14px; }
         }
 
         /* Quote block cursor */
