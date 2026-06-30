@@ -26,6 +26,7 @@ import {
   buildFoldPreviewHtml,
   buildFoldBlock,
   highlightHtml,
+  locateMatchedSentence,
   keyLineFor,
   type PassageType,
 } from "@/app/lib/10-passage-fold";
@@ -1471,7 +1472,7 @@ function buildTemplateArticle(
           const tFold = buildFoldPreviewHtml({ type: 'verse', text: tText, queryTerms });
           const inner = tFold.truncated
             ? `"${tFold.previewHtml}"`
-            : `"${highlightHtml(tText, null, queryTerms)}"`;
+            : `"${highlightHtml(tText, locateMatchedSentence(tText, undefined, queryTerms), queryTerms)}"`;
           parts.push(buildFoldBlock({
             type: 'verse', id: v.id, previewHtml: inner, truncated: tFold.truncated,
             citeHtml: cite, expandLabel: "Read the full translation →",
@@ -2216,7 +2217,8 @@ export async function GET(request: NextRequest) {
     const seenKeyLine = new Set<string>();
     for (const it of mainFlow.items) {
       const ka = buildKeyAnswer(it, queryTerms);
-      const norm = normalizeForMatch(ka.line || "").slice(0, 200);
+      if (!ka.line || !ka.line.trim()) continue; // skip empty / non-substantive lines — never a bare fragment
+      const norm = normalizeForMatch(ka.line).slice(0, 200);
       if (norm && seenKeyLine.has(norm)) continue;
       if (norm) seenKeyLine.add(norm);
       keyAnswers.push(ka);
