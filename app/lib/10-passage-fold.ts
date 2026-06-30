@@ -98,6 +98,10 @@ export function extractQueryTerms(query: string): string[] {
     if (STOPWORDS.has(tok)) continue;
     const norm = normalizeForMatch(tok);
     if (!norm || norm.length < 3) continue;
+    // Also drop stopwords whose diacritic form slipped past the raw check — e.g.
+    // "Prabhupāda" → "prabhupada" — so the speaker's own name never becomes a
+    // search term that matches every "Prabhupāda:" dialogue label.
+    if (STOPWORDS.has(norm)) continue;
     if (seen.has(norm)) continue;
     seen.add(norm);
     out.push(tok);
@@ -161,6 +165,58 @@ function overlapScore(text: string, start: number, end: number, terms: Set<strin
   return hit.size;
 }
 
+/* ─────────────────────────── Substantive-sentence guard ─────────────────────────── */
+
+/**
+ * Acknowledgments / filler that carry no teaching on their own — bare dialogue
+ * turns and interjections ("Yes", "That's all right", "I see"). A sentence built
+ * only from these (plus stopwords) must NEVER be emphasized or surfaced as a key
+ * answer. Diacritic-insensitive via normalizeForMatch, like STOPWORDS.
+ */
+const ACK_WORDS = new Set([
+  "yes", "no", "ok", "okay", "alright", "allright", "right", "indeed", "exactly",
+  "certainly", "precisely", "surely", "true", "false", "correct", "sure", "fine",
+  "hmm", "hm", "mm", "uh", "um", "oh", "ah", "na", "well", "please", "thanks",
+]);
+
+/**
+ * A leading speaker label in a dialogue turn ("Prabhupāda: ", "Devotee (1): ").
+ * Conservative: up to 40 label chars (letters/marks/digits/space/.-'()), then a
+ * colon (ASCII or fullwidth) and REQUIRED whitespace — so a mid-sentence colon in
+ * real prose is never eaten. Used only to judge substance; the label stays in the
+ * displayed/highlighted text.
+ */
+const SPEAKER_LABEL_RE = /^[\p{L}\p{M}\p{N}.\-'() ]{1,40}?\s*[:：]\s+/u;
+
+/** Letter/combining-mark tokens (no apostrophe/digits) for content-word counting. */
+function contentTokens(text: string): string[] {
+  return text.match(/[\p{L}̀-ͯ]+/gu) || [];
+}
+
+/**
+ * True when a sentence carries real teaching content — not a bare acknowledgment
+ * ("Yes", "That's all right"), a one-word dialogue turn, a citation/heading line,
+ * or an empty fragment. After stripping a leading speaker label, it counts DISTINCT
+ * content words (≥3 normalized chars, not a stopword, not an acknowledgment), and
+ * requires at least two. The floor is deliberately low (2) so genuine short
+ * teachings survive ("Always chant Hare Kṛṣṇa."); the relevance/selection layer,
+ * not this predicate, is what keeps emphasis off off-topic lines. This is the guard
+ * that keeps both the emphasis and the key answer on a substantive line.
+ */
+export function isSubstantiveSentence(sentence: string): boolean {
+  const stripped = (sentence || "").replace(SPEAKER_LABEL_RE, "").trim();
+  if (stripped.length < 3) return false;
+  const content = new Set<string>();
+  for (const tok of contentTokens(stripped.toLowerCase())) {
+    const n = normalizeForMatch(tok);
+    if (n.length < 3) continue;
+    if (STOPWORDS.has(tok) || STOPWORDS.has(n)) continue;
+    if (ACK_WORDS.has(tok) || ACK_WORDS.has(n)) continue;
+    content.add(n);
+  }
+  return content.size >= 2;
+}
+
 /* ─────────────────────────── Locate the genuinely matched sentence ─────────────────────────── */
 
 export interface MatchRange { start: number; end: number }
@@ -206,18 +262,31 @@ export function locateMatchedSentence(
   const inWindow = sentences.filter((s) => s.end > winStart && s.start < winEnd);
   const pool = inWindow.length > 0 ? inWindow : sentences;
 
-  // Pick the highest query-overlap sentence in the pool.
+  // Prefer SUBSTANTIVE sentences — drop acknowledgments / bare turns / fragments
+  // from contention so an empty "Prabhupāda: Yes." can never win even when it sits
+  // beside a query word. If a window happens to have none substantive, fall back to
+  // the full pool so a genuine query-overlap sentence is never suppressed.
+  const substantive = pool.filter((s) => isSubstantiveSentence(clean.slice(s.start, s.end)));
+  const scorePool = substantive.length > 0 ? substantive : pool;
+
+  // Pick the highest query-overlap sentence (earliest on ties — reads top-down).
   let best: Span | null = null;
   let bestScore = 0;
-  for (const s of pool) {
+  for (const s of scorePool) {
     const sc = overlapScore(clean, s.start, s.end, terms);
     if (sc > bestScore) { bestScore = sc; best = s; }
   }
   if (best && bestScore > 0) return { start: best.start, end: best.end };
 
-  // No query overlap. If we have a located chunk, the chunk itself is the genuine
-  // match — emphasize its first in-window sentence (truthful). Otherwise null.
+  // No query overlap. For a genuinely matched purport chunk, emphasize its first
+  // SUBSTANTIVE in-window sentence (truthful lead — never a bare acknowledgment);
+  // if none is substantive, the chunk is still the hit, so lead with its first
+  // sentence. For prose/lecture/letter (no chunk) we emphasize NOTHING rather than
+  // guess — a wrong emphasis on a pure semantic match is worse than none.
   if (matchedChunkText && matchedChunkText.trim() && inWindow.length > 0) {
+    for (const s of inWindow) {
+      if (isSubstantiveSentence(clean.slice(s.start, s.end))) return { start: s.start, end: s.end };
+    }
     return { start: inWindow[0].start, end: inWindow[0].end };
   }
   return null;
@@ -228,11 +297,13 @@ export function locateMatchedSentence(
 interface Marker { pos: number; kind: "so" | "sc" | "wo" | "wc" }
 
 /**
- * Escapes `text` and wraps the matched sentence in <mark class="hl-sentence"> and
- * each query-term word in <mark class="hl-word">. Query words always nest cleanly
- * inside or outside the sentence span. Marks are inserted around spans of the
- * trusted passage text only — query terms are never themselves injected — so the
- * output is XSS-safe and the escaping stays correct around & < >.
+ * Escapes `text` and wraps the matched sentence in <mark class="hl-sentence"> and,
+ * INSIDE that sentence only, each query-term word in <mark class="hl-word">. Query
+ * words are never painted across the rest of the passage (no keyword spray): with
+ * no matched sentence, nothing is marked at all — we emphasize one relevant line
+ * or nothing. Marks are inserted around spans of the trusted passage text only —
+ * query terms are never themselves injected — so the output is XSS-safe and the
+ * escaping stays correct around & < >.
  */
 export function highlightHtml(text: string, matched: MatchRange | null, queryTerms: string[]): string {
   const clean = text || "";
@@ -243,12 +314,15 @@ export function highlightHtml(text: string, matched: MatchRange | null, queryTer
   if (matched && matched.end > matched.start) {
     markers.push({ pos: matched.start, kind: "so" });
     markers.push({ pos: matched.end, kind: "sc" });
-  }
-  if (terms.size > 0) {
-    for (const tok of wordTokens(clean)) {
-      if (terms.has(normalizeForMatch(tok.text))) {
-        markers.push({ pos: tok.start, kind: "wo" });
-        markers.push({ pos: tok.end, kind: "wc" });
+    // Layer 2 lives ONLY within the matched sentence — query words elsewhere are
+    // left plain so a query word is never sprayed across the whole passage.
+    if (terms.size > 0) {
+      for (const tok of wordTokens(clean)) {
+        if (tok.start < matched.start || tok.end > matched.end) continue;
+        if (terms.has(normalizeForMatch(tok.text))) {
+          markers.push({ pos: tok.start, kind: "wo" });
+          markers.push({ pos: tok.end, kind: "wc" });
+        }
       }
     }
   }
@@ -371,8 +445,13 @@ export function buildFoldPreviewHtml(opts: {
   if (matched) {
     startIdx = sentences.findIndex((s) => s.start <= matched.start && s.end >= matched.start);
     if (startIdx < 0) startIdx = 0;
-    // Keep one short sentence of lead-in context when it's brief, for readability.
-    if (startIdx > 0 && sentences[startIdx - 1].text.length <= 90) startIdx -= 1;
+    // Keep ONE lead-in sentence only when it is short AND substantive, so an
+    // off-topic adjacent turn ("What is that?") is never prepended to the match.
+    if (startIdx > 0
+        && sentences[startIdx - 1].text.length <= 90
+        && isSubstantiveSentence(sentences[startIdx - 1].text)) {
+      startIdx -= 1;
+    }
   }
   let acc = 0;
   let endIdx = startIdx;
@@ -437,10 +516,14 @@ function escapeAttr(s: string): string {
 /* ─────────────────────────── Verbatim key line ─────────────────────────── */
 
 /**
- * The VERBATIM "key answer" line for a passage — never paraphrased.
- *   verse  → its translation (the natural single faithful statement)
- *   others → the matched sentence (same line highlighted in the passage), or the
- *            first sentence of the matched paragraph when no sentence can be located.
+ * The VERBATIM "key answer" line for a passage — never paraphrased, and always the
+ * SAME substantive sentence emphasized in the passage (Move A), so the sidebar and
+ * the highlight agree.
+ *   verse  → the matched line within its translation (so a long verse list surfaces
+ *            the relevant line, not the whole list); the whole translation when no
+ *            line stands out — the natural single faithful statement.
+ *   others → the matched sentence; else the first SUBSTANTIVE sentence; else "" so
+ *            the caller can skip it — never a bare turn like "Prabhupāda: Yes."
  */
 export function keyLineFor(opts: {
   type: PassageType;
@@ -449,11 +532,21 @@ export function keyLineFor(opts: {
   matchedChunkText?: string;
   queryTerms: string[];
 }): string {
-  if (opts.type === "verse") return cleanDisplayText(opts.translation || "").trim();
+  if (opts.type === "verse") {
+    const t = cleanDisplayText(opts.translation || "").trim();
+    if (!t) return "";
+    const m = locateMatchedSentence(t, undefined, opts.queryTerms);
+    return m ? t.slice(m.start, m.end).trim() : t;
+  }
   const text = cleanDisplayText(opts.body || "").trim();
   if (!text) return "";
   const matched = locateMatchedSentence(text, opts.matchedChunkText, opts.queryTerms);
-  if (matched) return text.slice(matched.start, matched.end).trim();
-  const sentences = sentenceSpans(text);
-  return sentences.length > 0 ? sentences[0].text : text;
+  if (matched) {
+    const line = text.slice(matched.start, matched.end).trim();
+    if (line) return line;
+  }
+  for (const s of sentenceSpans(text)) {
+    if (isSubstantiveSentence(s.text)) return s.text.trim();
+  }
+  return "";
 }
