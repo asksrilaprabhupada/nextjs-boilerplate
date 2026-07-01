@@ -1,14 +1,14 @@
 /**
- * generate-article/route.ts — Article Mode Generation
+ * generate-article/route.ts — Speaker attribution helper (+ disabled AI endpoint)
  *
- * Accepts questions and scripture passages, returns a flowing article where
- * AI writes ONLY filler/transition sentences and all scripture is verbatim.
- * Uses Gemini 2.5 Flash Lite (cheapest model — fillers are simple tasks).
+ * The live search now builds the woven essay from a deterministic, verbatim-only
+ * template (see buildTemplateArticle in api/search/route.ts). The former AI
+ * article generator has been QUARANTINED: the POST endpoint is disabled so no
+ * AI-authored narrative can ever be produced (Hard Rule 1 — never generate
+ * Prabhupāda's philosophy). This module now exists only to export getSpeaker,
+ * the neutral speaker-attribution helper the search route imports.
  */
 import { NextResponse } from "next/server";
-
-const geminiKey = process.env.GEMINI_API_KEY || "";
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
 
 /* ─── Speaker attribution map ─── */
 const SPEAKERS: Record<string, string> = {
@@ -91,84 +91,14 @@ function getSpeaker(ref: string, type: string): string {
 
 export { getSpeaker };
 
-async function callGemini(prompt: string, systemPrompt: string): Promise<string> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-goog-api-key": geminiKey,
-      },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        generationConfig: {
-          maxOutputTokens: 4000,
-          temperature: 0.3,
-        },
-        safetySettings: [
-          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      console.error("Gemini article API error:", res.status, await res.text());
-      return "";
-    }
-    const data = await res.json();
-    return data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  } catch (err) {
-    console.error("Gemini article call failed:", err);
-    return "";
-  }
-}
-
-export async function POST(request: Request) {
-  try {
-    const { questions, passages } = await request.json();
-
-    if (!passages || !Array.isArray(passages) || passages.length === 0) {
-      return NextResponse.json({ article: "" });
-    }
-
-    const systemPrompt = `You are an editor for a Vaishnava scripture website.
-YOUR ONLY JOB: Write short filler sentences (1-2 each) connecting scripture passages.
-WHAT FILLERS CAN DO:
-- Identify speaker: "Lord Krsna instructs Uddhava...", "Sukadeva Gosvami narrates..."
-- Provide context: "In the following verse..."
-- Transition: "On a related note..."
-- Distinguish translation from purport: "Srila Prabhupada explains in his purport..."
-STRICT RULES:
-- NEVER generate spiritual content
-- NEVER paraphrase scripture
-- Use passages EXACTLY as given
-- Every passage in blockquote with reference: > "passage text" — [REFERENCE]
-- Fillers are plain text. No headings. No numbered sections.
-- Weave multiple questions together naturally
-- 1-2 sentence intro, 1-2 sentence conclusion
-OUTPUT: Only the article. No preamble.`;
-
-    const userContent = `Questions: ${(questions || []).join(" ")}\n\nPassages:\n${
-      passages
-        .map(
-          (p: { reference: string; type: string; speaker: string; text: string }, i: number) =>
-            `--- ${i + 1} ---\nRef: ${p.reference}\nType: ${p.type}\nSpeaker: ${p.speaker}\nText: "${p.text}"`
-        )
-        .join("\n\n")
-    }\n\nArrange into a flowing article using EVERY passage exactly as given.`;
-
-    const article = await callGemini(userContent, systemPrompt);
-
-    return NextResponse.json({ article });
-  } catch (error) {
-    console.error("Article generation failed:", error);
-    return NextResponse.json(
-      { article: "", error: "Failed to generate article" },
-      { status: 500 }
-    );
-  }
+/**
+ * QUARANTINED. AI narrative generation is permanently disabled: the woven essay
+ * is built exclusively from the deterministic, verbatim-only template. This
+ * endpoint never calls a model and never returns generated prose.
+ */
+export async function POST() {
+  return NextResponse.json(
+    { article: "", disabled: "AI article generation is disabled; the essay is built from verbatim passages only." },
+    { status: 410 },
+  );
 }

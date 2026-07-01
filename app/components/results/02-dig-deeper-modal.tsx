@@ -1,10 +1,12 @@
 /**
- * 03-dig-deeper-modal.tsx — Dig Deeper Modal
+ * 02-dig-deeper-modal.tsx — Dig Deeper Sheet
  *
- * Full-screen modal showing ALL search results beyond the top 25. Features a compact
- * single-line filter bar with content-type toggle, group mode toggle, multi-select book
- * dropdown, and color-coded scripture cards. Now includes tag summary subtitles,
- * "In article" badges, topic grouping, and staggered card animations.
+ * Overflow browser showing ALL search results beyond the top 25. Presented as a
+ * right-side drawer on desktop and a bottom sheet on mobile (sacred-minimalism:
+ * warm neutrals, one soft-violet accent, no per-source colors). Features a compact
+ * single-line filter bar with content-type toggle, group mode toggle, and multi-select
+ * book dropdown, plus tag summary subtitles, "In article" badges, topic grouping,
+ * and staggered card animations.
  */
 "use client";
 
@@ -27,25 +29,17 @@ const BOOK_NAMES: Record<string, string> = {
   rkd: "Rāmāyaṇa", mbk: "Mahābhārata",
 };
 
-/* ─── Book color-coding system ─── */
-const BOOK_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  SB:      { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
-  NOI:     { bg: "#E1F5EE", text: "#0F6E56", border: "#9FE1CB" },
-  CC:      { bg: "#FAECE7", text: "#993C1D", border: "#F0997B" },
-  SPL:     { bg: "#FBEAF0", text: "#993556", border: "#ED93B1" },
-  BG:       { bg: "#FAEEDA", text: "#854F0B", border: "#FAC775" },
-  LECTURES: { bg: "#FFF7ED", text: "#C2410C", border: "#FB923C" },
-  LETTERS:  { bg: "#F0FDF4", text: "#15803D", border: "#4ADE80" },
-  default:  { bg: "#F1EFE8", text: "#5F5E5A", border: "#B4B2A9" },
-};
+/* ─── Neutral chip styling (sacred minimalism — no per-book color) ─── */
+const NEUTRAL_CHIP = {
+  bg: "var(--accent-tint)",
+  text: "var(--accent-strong)",
+  border: "var(--border-hair)",
+} as const;
 
-function getBookSlugPrefix(slug: string): string {
-  return slug?.toUpperCase() || "default";
-}
-
-function getBookColor(slug: string) {
-  const prefix = getBookSlugPrefix(slug);
-  return BOOK_COLORS[prefix] || BOOK_COLORS["default"];
+// Every card/tag uses the single soft-violet accent chip regardless of source.
+function getBookColor(_slug?: string) {
+  void _slug;
+  return NEUTRAL_CHIP;
 }
 
 function getBookName(slug: string): string {
@@ -117,7 +111,7 @@ function SegmentedToggle<T extends string>({ options, value, onChange }: {
   onChange: (t: T) => void;
 }) {
   return (
-    <div style={{ display: "inline-flex", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, overflow: "hidden" }}>
+    <div style={{ display: "inline-flex", border: "1px solid var(--border-hair)", borderRadius: "var(--radius-sm)", overflow: "hidden" }}>
       {options.map((opt, i) => (
         <button
           key={opt.key}
@@ -125,9 +119,9 @@ function SegmentedToggle<T extends string>({ options, value, onChange }: {
           className="font-body"
           style={{
             padding: "6px 12px", fontSize: 12, fontWeight: 500, border: "none",
-            borderLeft: i > 0 ? "1px solid rgba(0,0,0,0.12)" : "none",
-            background: value === opt.key ? "#534AB7" : "transparent",
-            color: value === opt.key ? "white" : "#666",
+            borderLeft: i > 0 ? "1px solid var(--border-hair)" : "none",
+            background: value === opt.key ? "var(--accent)" : "transparent",
+            color: value === opt.key ? "var(--surface-raised)" : "var(--ink-muted)",
             cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease",
           }}
         >
@@ -170,8 +164,8 @@ function BookDropdown({ books, selectedBooks, onSelectionChange }: {
         onClick={() => setIsOpen(!isOpen)}
         className="font-body"
         style={{
-          padding: "6px 12px", fontSize: 13, color: "#1a1a1a", background: "transparent",
-          border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, cursor: "pointer",
+          padding: "6px 12px", fontSize: 13, color: "var(--ink)", background: "transparent",
+          border: "1px solid var(--border-hair)", borderRadius: "var(--radius-sm)", cursor: "pointer",
           display: "flex", alignItems: "center", gap: 6, minWidth: 180, justifyContent: "space-between",
         }}
       >
@@ -184,23 +178,23 @@ function BookDropdown({ books, selectedBooks, onSelectionChange }: {
       {isOpen && (
         <div style={{
           position: "absolute", top: "calc(100% + 4px)", left: 0, minWidth: 280,
-          background: "white", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, zIndex: 10,
+          background: "var(--surface-raised)", border: "1px solid var(--border-hair)", borderRadius: "var(--radius-sm)", zIndex: 10,
           maxHeight: 280, overflowY: "auto", transformOrigin: "top",
           animation: "dropdownIn 0.15s ease-out",
-          boxShadow: "0 8px 24px rgba(0,0,0,0.1)",
+          boxShadow: "var(--shadow-soft)",
         }}>
           {/* All books option */}
           <div
             onClick={() => { onSelectionChange(new Set()); setIsOpen(false); }}
             className="font-body"
             style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
-            onMouseEnter={e => { e.currentTarget.style.background = "#F8F8F8"; }}
+            onMouseEnter={e => { e.currentTarget.style.background = "var(--accent-tint)"; }}
             onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
           >
             <span style={{ fontWeight: selectedBooks.size === 0 ? 600 : 400 }}>All books</span>
-            <span style={{ fontSize: 12, color: "#999" }}>{totalCount}</span>
+            <span style={{ fontSize: 12, color: "var(--ink-subtle)" }}>{totalCount}</span>
           </div>
-          <div style={{ height: 1, background: "rgba(0,0,0,0.08)", margin: "4px 0" }} />
+          <div style={{ height: 1, background: "var(--border-hair)", margin: "4px 0" }} />
 
           {books.map(book => {
             const isSelected = selectedBooks.has(book.name);
@@ -210,23 +204,23 @@ function BookDropdown({ books, selectedBooks, onSelectionChange }: {
                 onClick={() => toggleBook(book.name)}
                 className="font-body"
                 style={{ padding: "8px 12px", fontSize: 13, cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", transition: "background 0.1s ease" }}
-                onMouseEnter={e => { e.currentTarget.style.background = "#F8F8F8"; }}
+                onMouseEnter={e => { e.currentTarget.style.background = "var(--accent-tint)"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
               >
                 <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <svg width="14" height="14" viewBox="0 0 14 14">
                     {isSelected ? (
                       <>
-                        <rect width="14" height="14" rx="3" fill="#534AB7" />
-                        <path d="M4 7l2 2 4-4" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
+                        <rect width="14" height="14" rx="3" fill="var(--accent)" />
+                        <path d="M4 7l2 2 4-4" fill="none" stroke="var(--surface-raised)" strokeWidth="1.5" strokeLinecap="round" />
                       </>
                     ) : (
-                      <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="none" stroke="#ccc" />
+                      <rect x="0.5" y="0.5" width="13" height="13" rx="3" fill="none" stroke="var(--border-hair)" />
                     )}
                   </svg>
                   {book.name}
                 </span>
-                <span style={{ fontSize: 12, color: "#999" }}>{book.count}</span>
+                <span style={{ fontSize: 12, color: "var(--ink-subtle)" }}>{book.count}</span>
               </div>
             );
           })}
@@ -252,21 +246,21 @@ function VerseCard({ v, index, articleVerseIds }: { v: VerseHit; index: number; 
       style={{ marginBottom: 20 }}
     >
       <div style={{
-        padding: "16px 20px", background: "#FAFAFA",
+        padding: "16px 20px", background: "var(--surface-raised)",
         borderLeft: `3px solid ${colors.border}`,
-        borderRadius: "0 8px 8px 0",
+        borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
           <span className="font-body" style={{
             display: "inline-block", fontSize: 11, fontWeight: 500,
-            padding: "2px 8px", borderRadius: 8,
+            padding: "2px 8px", borderRadius: "var(--radius-sm)",
             background: colors.bg, color: colors.text,
           }}>
             {ref}
           </span>
           {inArticle && (
             <span className="font-body" style={{
-              fontSize: 10, color: "#7C3AED", background: "rgba(139,92,246,0.08)",
+              fontSize: 10, color: "var(--accent-strong)", background: "var(--accent-tint)",
               padding: "2px 8px", borderRadius: 6,
             }}>
               In article
@@ -276,13 +270,13 @@ function VerseCard({ v, index, articleVerseIds }: { v: VerseHit; index: number; 
         <p style={{
           fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
           fontFamily: "Georgia, 'Times New Roman', serif",
-          color: "#1a1a1a", margin: "0 0 8px",
+          color: "var(--ink)", margin: "0 0 8px",
         }}>
           &ldquo;{truncate(v.translation, 200)}&rdquo;
         </p>
         {summary && (
           <p className="font-body" style={{
-            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontSize: 12, color: "var(--ink-muted)", marginTop: 4, marginBottom: 8,
             fontStyle: "italic", lineHeight: 1.5,
           }}>
             {summary}
@@ -290,10 +284,10 @@ function VerseCard({ v, index, articleVerseIds }: { v: VerseHit; index: number; 
         )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           {v.chapter_title && (
-            <p className="font-body" style={{ fontSize: 12, color: "#888", margin: 0 }}>{v.chapter_title}</p>
+            <p className="font-body" style={{ fontSize: 12, color: "var(--ink-muted)", margin: 0 }}>{v.chapter_title}</p>
           )}
           {v.vedabase_url && (
-            <a href={v.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#534AB7", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
+            <a href={v.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "var(--accent-strong)", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
               onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
               onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
             >
@@ -320,13 +314,13 @@ function ProseCard({ p, index }: { p: ProseHit; index: number }) {
       style={{ marginBottom: 20 }}
     >
       <div style={{
-        padding: "16px 20px", background: "#FAFAFA",
+        padding: "16px 20px", background: "var(--surface-raised)",
         borderLeft: `3px solid ${colors.border}`,
-        borderRadius: "0 8px 8px 0",
+        borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
       }}>
         <span className="font-body" style={{
           display: "inline-block", fontSize: 11, fontWeight: 500,
-          padding: "2px 8px", borderRadius: 8, marginBottom: 8,
+          padding: "2px 8px", borderRadius: "var(--radius-sm)", marginBottom: 8,
           background: colors.bg, color: colors.text,
         }}>
           {getBookName(p.book_slug)}
@@ -334,13 +328,13 @@ function ProseCard({ p, index }: { p: ProseHit; index: number }) {
         <p style={{
           fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
           fontFamily: "Georgia, 'Times New Roman', serif",
-          color: "#1a1a1a", margin: "0 0 8px",
+          color: "var(--ink)", margin: "0 0 8px",
         }}>
           {truncate(p.body_text, 200)}
         </p>
         {summary && (
           <p className="font-body" style={{
-            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontSize: 12, color: "var(--ink-muted)", marginTop: 4, marginBottom: 8,
             fontStyle: "italic", lineHeight: 1.5,
           }}>
             {summary}
@@ -348,10 +342,10 @@ function ProseCard({ p, index }: { p: ProseHit; index: number }) {
         )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           {p.chapter_title && (
-            <p className="font-body" style={{ fontSize: 12, color: "#888", margin: 0 }}>{p.chapter_title}</p>
+            <p className="font-body" style={{ fontSize: 12, color: "var(--ink-muted)", margin: 0 }}>{p.chapter_title}</p>
           )}
           {p.vedabase_url && (
-            <a href={p.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#534AB7", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
+            <a href={p.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "var(--accent-strong)", textDecoration: "none", fontWeight: 500, marginLeft: "auto" }}
               onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
               onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
             >
@@ -366,7 +360,7 @@ function ProseCard({ p, index }: { p: ProseHit; index: number }) {
 
 /* ─── Single transcript (lecture) card ─── */
 function TranscriptCard({ t, index }: { t: TranscriptHit; index: number }) {
-  const colors = BOOK_COLORS["LECTURES"];
+  const colors = getBookColor();
   const summary = getTagSummary(t.tags);
   const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
   const label = t.title || [datePart, t.location].filter(Boolean).join(" — ") || "Lecture";
@@ -379,28 +373,28 @@ function TranscriptCard({ t, index }: { t: TranscriptHit; index: number }) {
       style={{ marginBottom: 20 }}
     >
       <div style={{
-        padding: "16px 20px", background: "#FAFAFA",
+        padding: "16px 20px", background: "var(--surface-raised)",
         borderLeft: `3px solid ${colors.border}`,
-        borderRadius: "0 8px 8px 0",
+        borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
       }}>
         <span className="font-body" style={{
           display: "inline-block", fontSize: 11, fontWeight: 500,
-          padding: "2px 8px", borderRadius: 8, marginBottom: 8,
+          padding: "2px 8px", borderRadius: "var(--radius-sm)", marginBottom: 8,
           background: colors.bg, color: colors.text,
         }}>
           Lecture
         </span>
-        <p className="font-body" style={{ fontSize: 12, color: "#666", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
+        <p className="font-body" style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
         <p style={{
           fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
           fontFamily: "Georgia, 'Times New Roman', serif",
-          color: "#1a1a1a", margin: "0 0 8px",
+          color: "var(--ink)", margin: "0 0 8px",
         }}>
           {truncate(t.body_text, 200)}
         </p>
         {summary && (
           <p className="font-body" style={{
-            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontSize: 12, color: "var(--ink-muted)", marginTop: 4, marginBottom: 8,
             fontStyle: "italic", lineHeight: 1.5,
           }}>
             {summary}
@@ -408,7 +402,7 @@ function TranscriptCard({ t, index }: { t: TranscriptHit; index: number }) {
         )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
           {t.vedabase_url && (
-            <a href={t.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#C2410C", textDecoration: "none", fontWeight: 500 }}
+            <a href={t.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "var(--accent-strong)", textDecoration: "none", fontWeight: 500 }}
               onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
               onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
             >
@@ -423,7 +417,7 @@ function TranscriptCard({ t, index }: { t: TranscriptHit; index: number }) {
 
 /* ─── Single letter card ─── */
 function LetterCard({ l, index }: { l: LetterHit; index: number }) {
-  const colors = BOOK_COLORS["LETTERS"];
+  const colors = getBookColor();
   const summary = getTagSummary(l.tags);
   const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
   const label = [l.recipient ? `To ${l.recipient}` : "", datePart].filter(Boolean).join(" — ") || "Letter";
@@ -436,28 +430,28 @@ function LetterCard({ l, index }: { l: LetterHit; index: number }) {
       style={{ marginBottom: 20 }}
     >
       <div style={{
-        padding: "16px 20px", background: "#FAFAFA",
+        padding: "16px 20px", background: "var(--surface-raised)",
         borderLeft: `3px solid ${colors.border}`,
-        borderRadius: "0 8px 8px 0",
+        borderRadius: "0 var(--radius-sm) var(--radius-sm) 0",
       }}>
         <span className="font-body" style={{
           display: "inline-block", fontSize: 11, fontWeight: 500,
-          padding: "2px 8px", borderRadius: 8, marginBottom: 8,
+          padding: "2px 8px", borderRadius: "var(--radius-sm)", marginBottom: 8,
           background: colors.bg, color: colors.text,
         }}>
           Letter
         </span>
-        <p className="font-body" style={{ fontSize: 12, color: "#666", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
+        <p className="font-body" style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
         <p style={{
           fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
           fontFamily: "Georgia, 'Times New Roman', serif",
-          color: "#1a1a1a", margin: "0 0 8px",
+          color: "var(--ink)", margin: "0 0 8px",
         }}>
           {truncate(l.body_text, 200)}
         </p>
         {summary && (
           <p className="font-body" style={{
-            fontSize: 12, color: "#666", marginTop: 4, marginBottom: 8,
+            fontSize: 12, color: "var(--ink-muted)", marginTop: 4, marginBottom: 8,
             fontStyle: "italic", lineHeight: 1.5,
           }}>
             {summary}
@@ -465,7 +459,7 @@ function LetterCard({ l, index }: { l: LetterHit; index: number }) {
         )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
           {l.vedabase_url && (
-            <a href={l.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "#15803D", textDecoration: "none", fontWeight: 500 }}
+            <a href={l.vedabase_url} target="_blank" rel="noopener noreferrer" className="font-body" style={{ fontSize: 12, color: "var(--accent-strong)", textDecoration: "none", fontWeight: 500 }}
               onMouseEnter={e => { e.currentTarget.style.textDecoration = "underline"; }}
               onMouseLeave={e => { e.currentTarget.style.textDecoration = "none"; }}
             >
@@ -489,15 +483,15 @@ function CollapsibleGroup({ title, count, children }: { title: string; count: nu
         style={{
           display: "flex", alignItems: "center", gap: 8, width: "100%",
           padding: "10px 0", background: "transparent", border: "none",
-          cursor: "pointer", fontSize: 14, fontWeight: 600, color: "#1E1B4B",
-          borderBottom: "1px solid rgba(0,0,0,0.06)",
+          cursor: "pointer", fontSize: 14, fontWeight: 600, color: "var(--ink)",
+          borderBottom: "1px solid var(--border-hair)",
         }}
       >
         <svg width="12" height="12" viewBox="0 0 12 12" style={{ transition: "transform 0.2s ease", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>
-          <path d="M4 2l5 4-5 4" fill="none" stroke="#534AB7" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M4 2l5 4-5 4" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
         {title}
-        <span style={{ fontSize: 11, color: "#888", fontWeight: 400 }}>({count})</span>
+        <span style={{ fontSize: 11, color: "var(--ink-muted)", fontWeight: 400 }}>({count})</span>
       </button>
       <AnimatePresence>
         {isOpen && (
@@ -520,6 +514,16 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
   const [selectedBooks, setSelectedBooks] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<ContentType>("all");
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
+
+  /* Track viewport to switch between right-side drawer (desktop) and bottom sheet (mobile). */
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
   const handleKey = useCallback((e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }, [onClose]);
   useEffect(() => {
@@ -586,39 +590,56 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
   const transcriptCount = filteredTranscripts.length;
   const letterCount = filteredLetters.length;
 
+  /* Panel geometry differs by breakpoint:
+     desktop → right-side drawer (slides in on x); mobile → bottom sheet (slides up on y). */
+  const panelInitial = isMobile ? { opacity: 0, y: 32 } : { opacity: 0, x: 32 };
+  const panelAnimate = isMobile ? { opacity: 1, y: 0 } : { opacity: 1, x: 0 };
+  const panelExit = isMobile ? { opacity: 0, y: 32 } : { opacity: 0, x: 32 };
+
+  const panelStyle: React.CSSProperties = isMobile
+    ? {
+        position: "fixed", left: 0, right: 0, bottom: 0,
+        width: "100%", maxHeight: "88vh",
+        borderRadius: "var(--radius-lg) var(--radius-lg) 0 0",
+        display: "flex", flexDirection: "column",
+        background: "var(--surface-raised)",
+        boxShadow: "var(--shadow-soft)", border: "1px solid var(--border-hair)",
+      }
+    : {
+        position: "fixed", top: 0, right: 0, bottom: 0,
+        height: "100vh", width: "min(560px, 92vw)",
+        display: "flex", flexDirection: "column",
+        background: "var(--surface-raised)",
+        boxShadow: "var(--shadow-soft)", border: "1px solid var(--border-hair)",
+      };
+
   return (
     <AnimatePresence>
       <motion.div
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         transition={{ duration: 0.25 }}
         onClick={onClose}
-        style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(30,27,75,0.25)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+        style={{ position: "fixed", inset: 0, zIndex: 300, background: "color-mix(in srgb, var(--ink-strong) 32%, transparent)", backdropFilter: "blur(8px)", display: "flex", alignItems: isMobile ? "flex-end" : "stretch", justifyContent: isMobile ? "center" : "flex-end" }}
       >
         <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20 }}
-          transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+          initial={panelInitial} animate={panelAnimate} exit={panelExit}
+          transition={{ duration: 0.35, ease: [0.2, 0, 0, 1] }}
           onClick={e => e.stopPropagation()}
-          style={{
-            width: "95vw", maxWidth: 820, maxHeight: "85vh", display: "flex", flexDirection: "column",
-            background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)",
-            borderRadius: 12,
-            boxShadow: "0 24px 80px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)",
-            position: "relative",
-          }}
+          style={panelStyle}
         >
           {/* Close button */}
-          <button onClick={onClose} style={{ position: "absolute", top: 12, right: 12, width: 40, height: 40, borderRadius: 10, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, zIndex: 2 }}>&#10005;</button>
+          <button onClick={onClose} style={{ position: "absolute", top: 12, right: 12, width: 40, height: 40, borderRadius: "var(--radius-sm)", border: "1px solid var(--border-hair)", background: "var(--surface-raised)", color: "var(--ink-muted)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, zIndex: 2 }}>&#10005;</button>
 
           {/* Header */}
           <div style={{ padding: "clamp(20px, 4vw, 28px) 24px 0", flexShrink: 0 }}>
             <div style={{ marginBottom: 12 }}>
-              <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: "#7C3AED", marginBottom: 4 }}>
+              <p className="font-body" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.12em", color: "var(--accent-strong)", marginBottom: 4 }}>
                 Explore All Sources
               </p>
-              <h2 className="font-display" style={{ fontSize: "1.4rem", fontWeight: 600, color: "#1E1B4B", marginRight: 48 }}>
+              <h2 className="font-display" style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--ink)", marginRight: 48 }}>
                 Dig Deeper
               </h2>
-              <p className="font-body" style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>
+              <p className="font-body" style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 4 }}>
                 {[
                   verseCount > 0 && `${verseCount} verse${verseCount !== 1 ? "s" : ""}`,
                   proseCount > 0 && `${proseCount} prose passage${proseCount !== 1 ? "s" : ""}`,
@@ -630,7 +651,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
 
             {/* ─── Compact filter bar ─── */}
             <div style={{
-              padding: "12px 0", borderBottom: "1px solid rgba(0,0,0,0.08)",
+              padding: "12px 0", borderBottom: "1px solid var(--border-hair)",
               display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
             }}>
               {/* Content type toggle */}
@@ -647,7 +668,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
               />
 
               {/* Divider */}
-              <div style={{ width: 1, height: 24, background: "rgba(0,0,0,0.12)" }} />
+              <div style={{ width: 1, height: 24, background: "var(--border-hair)" }} />
 
               {/* Group mode toggle */}
               <SegmentedToggle<GroupMode>
@@ -661,7 +682,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
               />
 
               {/* Divider */}
-              <div style={{ width: 1, height: 24, background: "rgba(0,0,0,0.12)" }} />
+              <div style={{ width: 1, height: 24, background: "var(--border-hair)" }} />
 
               {/* Book dropdown */}
               {books.length > 0 && (
@@ -682,15 +703,15 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
                       className="font-body"
                       style={{
                         display: "inline-flex", alignItems: "center", gap: 4,
-                        padding: "3px 8px", fontSize: 11, background: "#EEEDFE", color: "#3C3489",
-                        borderRadius: 8, cursor: "pointer", transition: "background 0.15s ease",
+                        padding: "3px 8px", fontSize: 11, background: "var(--accent-tint)", color: "var(--accent-strong)",
+                        borderRadius: "var(--radius-sm)", cursor: "pointer", transition: "background 0.15s ease",
                       }}
-                      onMouseEnter={e => { e.currentTarget.style.background = "#CECBF6"; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = "#EEEDFE"; }}
+                      onMouseEnter={e => { e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 22%, transparent)"; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "var(--accent-tint)"; }}
                     >
                       {bookName.split(" ").slice(0, 2).join(" ")}
                       <svg width="10" height="10" viewBox="0 0 10 10">
-                        <path d="M3 3l4 4M7 3l-4 4" stroke="#3C3489" strokeWidth="1.2" strokeLinecap="round" />
+                        <path d="M3 3l4 4M7 3l-4 4" stroke="var(--accent-strong)" strokeWidth="1.2" strokeLinecap="round" />
                       </svg>
                     </span>
                   ))}
@@ -700,10 +721,10 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
           </div>
 
           {/* Scrollable results */}
-          <div style={{ overflowY: "auto", padding: "20px 24px", flex: 1, maxHeight: "60vh" }}>
+          <div style={{ overflowY: "auto", padding: "20px 24px", flex: 1, minHeight: 0 }}>
             {!hasResults && (
               <div style={{ textAlign: "center", padding: "48px 20px" }}>
-                <p className="font-body" style={{ fontSize: 14, color: "#6B7280" }}>
+                <p className="font-body" style={{ fontSize: 14, color: "var(--ink-muted)" }}>
                   No results match your filters. Try selecting different books.
                 </p>
               </div>

@@ -197,6 +197,9 @@ export default function Home() {
           suggestionDisplay: jsonResults.suggestionDisplay || null,
           queryTerms: jsonResults.queryTerms || [],
           keyAnswers: jsonResults.keyAnswers || [],
+          mainFlowItems: jsonResults.mainFlowItems || [],
+          intro: jsonResults.intro || "",
+          conclusion: jsonResults.conclusion || "",
         };
 
         setSearchResults(finalResults);
@@ -242,6 +245,8 @@ export default function Home() {
         const mergedOverflowLetters: any[] = [];
         const mergedArticleVerseIds: string[] = [];
         const mergedKeyAnswers: any[] = [];
+        const mergedMainFlowItems: any[] = [];
+        const seenMainFlow = new Set<string>();
         let mergedKeywords: string[] = [];
         let mergedSynonyms: string[] = [];
         let mergedRelatedConcepts: string[] = [];
@@ -300,6 +305,9 @@ export default function Home() {
           for (const k of (meta.keyAnswers || [])) {
             if (!seenKeyAnswers.has(k.id)) { seenKeyAnswers.add(k.id); mergedKeyAnswers.push(k); }
           }
+          for (const n of (meta.mainFlowItems || [])) {
+            if (!seenMainFlow.has(n.id)) { seenMainFlow.add(n.id); mergedMainFlowItems.push(n); }
+          }
         }
 
         const mergedBooksArr = Object.values(mergedBooks);
@@ -326,6 +334,9 @@ export default function Home() {
           articleVerseIds: mergedArticleVerseIds,
           queryTerms: [...new Set(mergedQueryTerms)],
           keyAnswers: mergedKeyAnswers,
+          mainFlowItems: mergedMainFlowItems,
+          intro: allMetadata.find((m: any) => m?.intro)?.intro || "",
+          conclusion: allMetadata.find((m: any) => m?.conclusion)?.conclusion || "",
         };
 
         setSearchResults(finalResults);
@@ -374,26 +385,26 @@ export default function Home() {
                 maxWidth: 1100, margin: '8px auto 0', padding: '0 20px',
               }}>
                 <div style={{
-                  padding: '12px 20px', borderRadius: 12,
-                  background: 'rgba(139,92,246,0.06)',
-                  border: '1px solid rgba(196,181,253,0.3)',
+                  padding: '12px 20px', borderRadius: 'var(--radius-md)',
+                  background: 'color-mix(in srgb, var(--accent) 6%, transparent)',
+                  border: '1px solid var(--border-hair)',
                   display: 'flex', alignItems: 'center', gap: 8,
                 }}>
-                  <span className="font-body" style={{ fontSize: 14, color: '#6B7280' }}>
+                  <span className="font-body" style={{ fontSize: 14, color: 'var(--ink-muted)' }}>
                     Did you mean:
                   </span>
                   <button
                     onClick={() => handleSearch(searchResults.suggestion!)}
                     className="font-body"
                     style={{
-                      fontSize: 14, fontWeight: 600, color: '#7C3AED',
+                      fontSize: 14, fontWeight: 600, color: 'var(--accent-strong)',
                       background: 'none', border: 'none', cursor: 'pointer',
                       textDecoration: 'underline', padding: 0,
                     }}
                   >
                     {searchResults.suggestionDisplay || searchResults.suggestion}
                   </button>
-                  <span className="font-body" style={{ fontSize: 14, color: '#6B7280' }}>?</span>
+                  <span className="font-body" style={{ fontSize: 14, color: 'var(--ink-muted)' }}>?</span>
                 </div>
               </div>
             )}
