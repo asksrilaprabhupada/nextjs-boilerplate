@@ -136,38 +136,57 @@ export default function LockScreen({ onDismiss }: { onDismiss: () => void }) {
   const nextImage = slideshowImages[nextImageIndex] ?? currentImage;
   const kenBurns = (dir: string) => dir === "pan-left" ? "kenBurnsPanLeft" : dir === "pan-right" ? "kenBurnsPanRight" : "kenBurnsZoomIn";
 
+  const dismiss = (e: React.MouseEvent) => { e.stopPropagation(); handleDismiss(); };
+
   return (
-    <div role="button" tabIndex={0} aria-label="Click to enter" onClick={handleDismiss}
-      style={{ position: "fixed", inset: 0, zIndex: 1000, backgroundColor: "#0B1021", cursor: "pointer",
+    <div role="button" tabIndex={0} aria-label="Enter the site" onClick={handleDismiss}
+      style={{ position: "fixed", inset: 0, zIndex: 1000, background: "var(--surface)", cursor: "pointer",
         transform: visible ? "translateY(0)" : "translateY(-100%)", opacity: visible ? 1 : 0,
-        transition: "transform 0.9s cubic-bezier(0.16,1,0.3,1), opacity 0.6s ease", overflow: "hidden" }}>
+        transition: "transform 0.9s var(--ease-standard), opacity 0.6s ease", overflow: "hidden" }}>
+
+      {/* Faint backdrop: any admin-uploaded photos remain, gently, under a warm wash. */}
       {lockscreenVideo ? (
-        <video autoPlay muted loop playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }}>
+        <video autoPlay muted loop playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.24 }}>
           <source src={lockscreenVideo} type="video/mp4" />
         </video>
       ) : (
-        <>
-          <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${currentImage.url})`, backgroundSize: "cover", backgroundPosition: "center", animation: `${kenBurns(currentImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`, opacity: transitioning ? 0 : 1, transition: `opacity ${TRANSITION_MS}ms ease` }} />
-          <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${nextImage.url})`, backgroundSize: "cover", backgroundPosition: "center", animation: `${kenBurns(nextImage.kenBurnsDirection)} 10s ease-in-out infinite alternate`, opacity: transitioning ? 1 : 0, transition: `opacity ${TRANSITION_MS}ms ease` }} />
-        </>
+        <div style={{ position: "absolute", inset: 0, opacity: 0.22 }}>
+          <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${currentImage.url})`, backgroundSize: "cover", backgroundPosition: "center", animation: `${kenBurns(currentImage.kenBurnsDirection)} 12s ease-in-out infinite alternate`, opacity: transitioning ? 0 : 1, transition: `opacity ${TRANSITION_MS}ms ease` }} />
+          <div style={{ position: "absolute", inset: 0, backgroundImage: `url(${nextImage.url})`, backgroundSize: "cover", backgroundPosition: "center", animation: `${kenBurns(nextImage.kenBurnsDirection)} 12s ease-in-out infinite alternate`, opacity: transitioning ? 1 : 0, transition: `opacity ${TRANSITION_MS}ms ease` }} />
+        </div>
       )}
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(30,27,75,0.85) 0%, rgba(30,27,75,0.5) 30%, rgba(139,92,246,0.15) 55%, rgba(196,181,253,0.10) 100%)" }} />
-      <svg viewBox="0 0 400 400" style={{ position: "absolute", top: "50%", left: "50%", width: "min(75vw,550px)", height: "min(75vw,550px)", opacity: 0.06, animation: "rotate-mandala 120s linear infinite", pointerEvents: "none", color: "#C4B5FD", transform: "translate(-50%,-50%)" }}>
+
+      {/* Warm near-white wash */}
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, color-mix(in srgb, var(--surface) 80%, transparent), color-mix(in srgb, var(--surface) 92%, transparent))" }} />
+
+      {/* Soft aura blooming */}
+      <div aria-hidden="true" style={{ position: "absolute", top: "42%", left: "50%", width: "min(92vw,640px)", height: "min(92vw,640px)", borderRadius: "50%", background: "radial-gradient(circle, color-mix(in srgb, var(--p-lavender) 20%, transparent) 0%, color-mix(in srgb, var(--accent) 7%, transparent) 46%, transparent 72%)", filter: "blur(24px)", pointerEvents: "none", opacity: entered ? 1 : 0, transform: entered ? "translate(-50%,-50%) scale(1)" : "translate(-50%,-50%) scale(0.86)", transition: "opacity 1.6s ease, transform 1.6s cubic-bezier(0,0,0.2,1)" }} />
+
+      {/* Faint, very-low-opacity mandala */}
+      <svg viewBox="0 0 400 400" style={{ position: "absolute", top: "42%", left: "50%", width: "min(78vw,560px)", height: "min(78vw,560px)", opacity: 0.05, animation: "rotate-mandala 140s linear infinite", pointerEvents: "none", color: "var(--accent)", transform: "translate(-50%,-50%)" }}>
         {[...Array(12)].map((_, i) => (<g key={i} transform={`rotate(${i*30} 200 200)`}><ellipse cx="200" cy="120" rx="18" ry="40" fill="none" stroke="currentColor" strokeWidth="0.5" /><ellipse cx="200" cy="100" rx="10" ry="24" fill="none" stroke="currentColor" strokeWidth="0.3" /></g>))}
         <circle cx="200" cy="200" r="60" fill="none" stroke="currentColor" strokeWidth="0.4" />
         <circle cx="200" cy="200" r="90" fill="none" stroke="currentColor" strokeWidth="0.3" />
         <circle cx="200" cy="200" r="130" fill="none" stroke="currentColor" strokeWidth="0.2" />
       </svg>
-      <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", paddingBottom: "clamp(60px,12vh,120px)", opacity: entered ? 1 : 0, transform: entered ? "translateY(0)" : "translateY(24px)", transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)" }}>
-        <div className="font-display" style={{ fontSize: "clamp(0.95rem,2vw,1.28rem)", fontWeight: 400, fontStyle: "italic", color: "rgba(255,255,255,0.8)", maxWidth: 500, textAlign: "center", lineHeight: 1.75, padding: "0 24px" }}>
+
+      {/* Obvious skip (top-right) */}
+      <button onClick={dismiss} className="font-body" aria-label="Skip intro"
+        style={{ position: "absolute", top: 16, right: 18, zIndex: 3, background: "none", border: "none", color: "var(--ink-subtle)", fontSize: 13, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer" }}>
+        Skip
+      </button>
+
+      {/* Centered: title fades up, then the verse cross-fades in beneath. */}
+      <div style={{ position: "relative", zIndex: 1, height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 24px", textAlign: "center" }}>
+        <h1 className="font-display" style={{ fontSize: "clamp(2rem,6vw,3.4rem)", fontWeight: 600, color: "var(--ink-strong)", letterSpacing: "-0.02em", margin: 0, opacity: entered ? 1 : 0, transform: entered ? "translateY(0)" : "translateY(14px)", transition: "opacity 0.5s cubic-bezier(0,0,0.2,1), transform 0.5s cubic-bezier(0,0,0.2,1)" }}>
+          Ask Śrīla Prabhupāda
+        </h1>
+        <p className="font-display" style={{ maxWidth: 520, marginTop: 24, fontSize: "clamp(0.95rem,2vw,1.2rem)", fontStyle: "italic", color: "var(--ink-muted)", lineHeight: 1.7, opacity: entered ? 1 : 0, transform: entered ? "translateY(0)" : "translateY(10px)", transition: "opacity 0.7s ease 0.35s, transform 0.7s cubic-bezier(0,0,0.2,1) 0.35s" }}>
           &ldquo;{verse.text}&rdquo;
-        </div>
-        <div className="font-body" style={{ fontSize: "clamp(11px, 2vw, 13px)", fontWeight: 500, color: "rgba(196,181,253,0.8)", marginTop: 14, letterSpacing: "0.04em" }}>— {verse.citation}</div>
-        <div style={{ marginTop: 44, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 36, height: 36, borderRadius: "50%", border: "1px solid rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", animation: "pulse-arrow 3s ease-in-out infinite" }}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style={{ transform: "rotate(180deg)" }}><path d="M8 12V4M4 8l4-4 4 4" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </div>
-          <span className="font-body" style={{ fontSize: 11, fontWeight: 500, textTransform: "uppercase", letterSpacing: "0.14em", color: "rgba(255,255,255,0.3)" }}>Click anywhere to enter</span>
+        </p>
+        <span className="font-body" style={{ marginTop: 12, fontSize: 13, fontWeight: 500, color: "var(--accent-strong)", letterSpacing: "0.04em", opacity: entered ? 1 : 0, transition: "opacity 0.7s ease 0.5s" }}>— {verse.citation}</span>
+        <div style={{ marginTop: 40, opacity: entered ? 1 : 0, transform: entered ? "translateY(0)" : "translateY(8px)", transition: "opacity 0.7s ease 0.65s, transform 0.7s cubic-bezier(0,0,0.2,1) 0.65s" }}>
+          <button onClick={dismiss} className="btn-primary" aria-label="Enter"><span>Enter ↵</span></button>
         </div>
       </div>
     </div>

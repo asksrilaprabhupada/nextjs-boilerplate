@@ -520,10 +520,21 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
   if (!results) return null;
 
   if (results.totalResults === 0) {
+    const examples = ["What is the soul?", "How to chant with attention", "Overcoming anger"];
     return (
-      <div className="zero-state">
-        <p className="font-display zero-title">No passages found for that phrasing.</p>
-        <p className="font-body zero-hint">Try a simpler question, or a different spelling (e.g. Krishna / Kṛṣṇa).</p>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "clamp(48px,10vw,80px) 24px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+        <p className="font-display" style={{ fontSize: "1.4rem", color: "var(--ink)", margin: 0 }}>No passages found for that phrasing.</p>
+        <p className="font-body" style={{ fontSize: "0.95rem", color: "var(--ink-muted)", maxWidth: 440, lineHeight: 1.6, margin: 0 }}>
+          Try rephrasing your question — or a different spelling (Krsna, Krishna, and Kṛṣṇa all work).
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", marginTop: 8 }}>
+          {examples.map((q) => (
+            <button key={q} className="font-body" onClick={() => onSearch(q)}
+              style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--accent-strong)", background: "var(--accent-tint)", border: "1px solid transparent", borderRadius: "var(--radius-full)", padding: "8px 16px", cursor: "pointer" }}>
+              {q}
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
