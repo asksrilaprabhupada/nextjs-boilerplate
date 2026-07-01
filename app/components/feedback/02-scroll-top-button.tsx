@@ -41,12 +41,12 @@ export default function ScrollTopButton() {
             borderRadius: 12,
             border: "none",
             cursor: "pointer",
-            background: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
-            boxShadow: "0 6px 20px rgba(139,92,246,0.30)",
+            background: "linear-gradient(135deg, var(--accent), var(--accent-strong))",
+            boxShadow: "0 6px 20px color-mix(in srgb, var(--accent) 30%, transparent)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#fff",
+            color: "var(--on-accent)",
           }}
         >
           <motion.svg

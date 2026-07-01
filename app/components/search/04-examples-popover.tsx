@@ -84,7 +84,7 @@ function ExamplesModal({
             position: "fixed",
             inset: 0,
             zIndex: 9999,
-            background: "rgba(30, 27, 75, 0.2)",
+            background: "color-mix(in srgb, var(--ink-strong) 20%, transparent)",
             backdropFilter: "blur(10px)",
             WebkitBackdropFilter: "blur(10px)",
             display: "flex",
@@ -97,21 +97,21 @@ function ExamplesModal({
             initial={{ opacity: 0, y: 20, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.96 }}
-            transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+            transition={{ duration: 0.35, ease: [0.2, 0, 0, 1] }}
             onClick={(e) => e.stopPropagation()}
             style={{
               width: "100%",
               maxWidth: 480,
               maxHeight: "75vh",
               overflowY: "auto",
-              background: "rgba(255, 255, 255, 0.92)",
+              background: "var(--surface-raised)",
               backdropFilter: "blur(24px)",
               WebkitBackdropFilter: "blur(24px)",
               borderRadius: 22,
               padding: "28px 24px",
               boxShadow:
-                "0 24px 80px rgba(139, 92, 246, 0.15), 0 8px 32px rgba(0,0,0,0.08)",
-              border: "1px solid rgba(255, 255, 255, 0.7)",
+                "0 24px 80px color-mix(in srgb, var(--accent) 15%, transparent), 0 8px 32px color-mix(in srgb, var(--ink-strong) 8%, transparent)",
+              border: "1px solid var(--border-hair)",
             }}
           >
             {/* Header */}
@@ -131,7 +131,7 @@ function ExamplesModal({
                     fontWeight: 600,
                     textTransform: "uppercase",
                     letterSpacing: "0.12em",
-                    color: "#7C3AED",
+                    color: "var(--accent-strong)",
                     marginBottom: 4,
                   }}
                 >
@@ -139,7 +139,7 @@ function ExamplesModal({
                 </p>
                 <p
                   className="font-body"
-                  style={{ fontSize: 13, color: "#6B7280" }}
+                  style={{ fontSize: 13, color: "var(--ink-muted)" }}
                 >
                   Tap any question to fill the search bar
                 </p>
@@ -151,9 +151,9 @@ function ExamplesModal({
                   width: 32,
                   height: 32,
                   borderRadius: 9,
-                  border: "1px solid rgba(196, 181, 253, 0.25)",
-                  background: "rgba(255, 255, 255, 0.6)",
-                  color: "#6B7280",
+                  border: "1px solid var(--border-hair)",
+                  background: "var(--surface-raised)",
+                  color: "var(--ink-muted)",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
@@ -163,12 +163,12 @@ function ExamplesModal({
                   transition: "all 0.2s ease",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(139,92,246,0.08)";
-                  e.currentTarget.style.color = "#1E1B4B";
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 8%, transparent)";
+                  e.currentTarget.style.color = "var(--ink)";
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(255,255,255,0.6)";
-                  e.currentTarget.style.color = "#6B7280";
+                  e.currentTarget.style.background = "var(--surface-raised)";
+                  e.currentTarget.style.color = "var(--ink-muted)";
                 }}
               >
                 ✕
@@ -191,27 +191,27 @@ function ExamplesModal({
                     gap: 12,
                     padding: "12px 16px",
                     borderRadius: 14,
-                    border: "1px solid rgba(196, 181, 253, 0.15)",
-                    background: "rgba(255, 255, 255, 0.5)",
+                    border: "1px solid var(--border-hair)",
+                    background: "var(--surface-raised)",
                     fontSize: 15,
                     fontWeight: 400,
-                    color: "#374151",
+                    color: "var(--ink)",
                     cursor: "pointer",
                     textAlign: "left",
-                    transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
+                    transition: "all 0.3s var(--ease-standard)",
                     width: "100%",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(139,92,246,0.07)";
-                    e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)";
-                    e.currentTarget.style.color = "#7C3AED";
+                    e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 7%, transparent)";
+                    e.currentTarget.style.borderColor = "var(--accent-tint)";
+                    e.currentTarget.style.color = "var(--accent-strong)";
                     e.currentTarget.style.transform = "translateX(4px)";
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.5)";
+                    e.currentTarget.style.background = "var(--surface-raised)";
                     e.currentTarget.style.borderColor =
-                      "rgba(196,181,253,0.15)";
-                    e.currentTarget.style.color = "#374151";
+                      "var(--border-hair)";
+                    e.currentTarget.style.color = "var(--ink)";
                     e.currentTarget.style.transform = "translateX(0)";
                   }}
                 >
@@ -263,7 +263,7 @@ export default function ExamplesPopover({ onSelect }: ExamplesPopoverProps) {
             transition={{
               delay: 0.55 + i * 0.08,
               duration: 0.5,
-              ease: [0.16, 1, 0.3, 1],
+              ease: [0.2, 0, 0, 1],
             }}
             onClick={() => onSelect(q.text)}
             className="font-body"
@@ -273,29 +273,29 @@ export default function ExamplesPopover({ onSelect }: ExamplesPopoverProps) {
               gap: 6,
               padding: "7px 14px",
               borderRadius: 100,
-              border: "1px solid rgba(196, 181, 253, 0.3)",
-              background: "rgba(255, 255, 255, 0.55)",
+              border: "1px solid var(--border-hair)",
+              background: "var(--surface-raised)",
               backdropFilter: "blur(8px)",
               WebkitBackdropFilter: "blur(8px)",
               fontSize: 13,
               fontWeight: 400,
-              color: "#374151",
+              color: "var(--ink)",
               cursor: "pointer",
-              transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)",
+              transition: "all 0.35s var(--ease-standard)",
               whiteSpace: "nowrap",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = "rgba(139,92,246,0.1)";
-              e.currentTarget.style.borderColor = "rgba(139,92,246,0.35)";
-              e.currentTarget.style.color = "#7C3AED";
+              e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 10%, transparent)";
+              e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 35%, transparent)";
+              e.currentTarget.style.color = "var(--accent-strong)";
               e.currentTarget.style.transform = "translateY(-2px)";
               e.currentTarget.style.boxShadow =
-                "0 4px 16px rgba(139,92,246,0.12)";
+                "0 4px 16px color-mix(in srgb, var(--accent) 12%, transparent)";
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = "rgba(255,255,255,0.55)";
-              e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)";
-              e.currentTarget.style.color = "#374151";
+              e.currentTarget.style.background = "var(--surface-raised)";
+              e.currentTarget.style.borderColor = "var(--border-hair)";
+              e.currentTarget.style.color = "var(--ink)";
               e.currentTarget.style.transform = "translateY(0)";
               e.currentTarget.style.boxShadow = "none";
             }}
@@ -314,7 +314,7 @@ export default function ExamplesPopover({ onSelect }: ExamplesPopoverProps) {
             width: 3,
             height: 3,
             borderRadius: "50%",
-            background: "#C4B5FD",
+            background: "var(--accent-tint)",
             flexShrink: 0,
           }}
         />
@@ -326,7 +326,7 @@ export default function ExamplesPopover({ onSelect }: ExamplesPopoverProps) {
           transition={{
             delay: 0.55 + VISIBLE_EXAMPLES.length * 0.08,
             duration: 0.5,
-            ease: [0.16, 1, 0.3, 1],
+            ease: [0.2, 0, 0, 1],
           }}
           onClick={() => setModalOpen(true)}
           className="font-body"
@@ -336,25 +336,25 @@ export default function ExamplesPopover({ onSelect }: ExamplesPopoverProps) {
             gap: 5,
             padding: "7px 14px",
             borderRadius: 100,
-            border: "1px dashed rgba(139, 92, 246, 0.3)",
-            background: "rgba(139, 92, 246, 0.04)",
+            border: "1px dashed color-mix(in srgb, var(--accent) 30%, transparent)",
+            background: "color-mix(in srgb, var(--accent) 4%, transparent)",
             fontSize: 13,
             fontWeight: 500,
-            color: "#7C3AED",
+            color: "var(--accent-strong)",
             cursor: "pointer",
-            transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)",
+            transition: "all 0.35s var(--ease-standard)",
             whiteSpace: "nowrap",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(139,92,246,0.12)";
-            e.currentTarget.style.borderColor = "#8B5CF6";
+            e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 12%, transparent)";
+            e.currentTarget.style.borderColor = "var(--accent)";
             e.currentTarget.style.transform = "translateY(-2px)";
             e.currentTarget.style.boxShadow =
-              "0 4px 16px rgba(139,92,246,0.15)";
+              "0 4px 16px color-mix(in srgb, var(--accent) 15%, transparent)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.background = "rgba(139,92,246,0.04)";
-            e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)";
+            e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 4%, transparent)";
+            e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 30%, transparent)";
             e.currentTarget.style.transform = "translateY(0)";
             e.currentTarget.style.boxShadow = "none";
           }}

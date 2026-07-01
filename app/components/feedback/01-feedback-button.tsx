@@ -61,16 +61,16 @@ export default function FeedbackButton({ currentQuery }: Props) {
         style={{
           position: "fixed", bottom: 16, right: 16, zIndex: 90,
           width: 44, height: 44, borderRadius: 14,
-          background: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
+          background: "linear-gradient(135deg, var(--accent), var(--accent-strong))",
           border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-          boxShadow: "0 8px 24px rgba(139,92,246,0.3)", transition: "transform 0.3s ease, box-shadow 0.3s ease",
+          boxShadow: "0 8px 24px color-mix(in srgb, var(--accent) 30%, transparent)", transition: "transform 0.3s ease, box-shadow 0.3s ease",
         }}
-        onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 12px 32px rgba(139,92,246,0.4)"; }}
-        onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "0 8px 24px rgba(139,92,246,0.3)"; }}
+        onMouseEnter={e => { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 12px 32px color-mix(in srgb, var(--accent) 40%, transparent)"; }}
+        onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = "0 8px 24px color-mix(in srgb, var(--accent) 30%, transparent)"; }}
         aria-label="Give feedback"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke="var(--on-accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
 
@@ -81,30 +81,30 @@ export default function FeedbackButton({ currentQuery }: Props) {
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={() => setOpen(false)}
-            style={{ position: "fixed", inset: 0, zIndex: 250, background: "rgba(30,27,75,0.15)", backdropFilter: "blur(6px)" }}
+            style={{ position: "fixed", inset: 0, zIndex: 250, background: "color-mix(in srgb, var(--ink-strong) 15%, transparent)", backdropFilter: "blur(6px)" }}
           >
             <motion.div
               initial={{ opacity: 0, y: 20, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20, scale: 0.95 }}
-              transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+              transition={{ duration: 0.3, ease: [0.2, 0, 0, 1] }}
               onClick={e => e.stopPropagation()}
               style={{
                 position: "fixed", bottom: 16, right: 16, width: 380, maxWidth: "calc(100vw - 32px)",
-                background: "rgba(255,255,255,0.92)", backdropFilter: "blur(24px)", borderRadius: 20,
-                padding: "clamp(16px, 4vw, 24px) clamp(14px, 3.5vw, 20px)", boxShadow: "0 20px 60px rgba(139,92,246,0.15)", border: "1px solid rgba(255,255,255,0.7)",
+                background: "var(--surface-raised)", backdropFilter: "blur(24px)", borderRadius: 20,
+                padding: "clamp(16px, 4vw, 24px) clamp(14px, 3.5vw, 20px)", boxShadow: "0 20px 60px color-mix(in srgb, var(--accent) 15%, transparent)", border: "1px solid var(--border-hair)",
               }}
             >
               {submitted ? (
                 <div style={{ textAlign: "center", padding: "20px 0" }}>
                   <div style={{ fontSize: 32, marginBottom: 8 }}>🙏</div>
-                  <p className="font-display" style={{ fontSize: "1.1rem", color: "#1E1B4B", fontWeight: 600 }}>Thank you!</p>
-                  <p className="font-body" style={{ fontSize: 13, color: "#6B7280", marginTop: 4 }}>Your {typeLabels[type].label.toLowerCase()} has been recorded.</p>
+                  <p className="font-display" style={{ fontSize: "1.1rem", color: "var(--ink)", fontWeight: 600 }}>Thank you!</p>
+                  <p className="font-body" style={{ fontSize: 13, color: "var(--ink-muted)", marginTop: 4 }}>Your {typeLabels[type].label.toLowerCase()} has been recorded.</p>
                 </div>
               ) : (
                 <>
                   {/* Header */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-                    <p className="font-body" style={{ fontSize: 14, fontWeight: 600, color: "#1E1B4B" }}>Share your thoughts</p>
-                    <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid rgba(196,181,253,0.25)", background: "transparent", color: "#6B7280", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>✕</button>
+                    <p className="font-body" style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}>Share your thoughts</p>
+                    <button onClick={() => setOpen(false)} style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid color-mix(in srgb, var(--accent-tint) 25%, transparent)", background: "transparent", color: "var(--ink-muted)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14 }}>✕</button>
                   </div>
 
                   {/* Type selector */}
@@ -116,9 +116,9 @@ export default function FeedbackButton({ currentQuery }: Props) {
                         className="font-body"
                         style={{
                           flex: 1, padding: "8px 6px", borderRadius: 10, fontSize: 12, fontWeight: 500,
-                          border: type === t ? "1px solid #8B5CF6" : "1px solid rgba(196,181,253,0.25)",
-                          background: type === t ? "rgba(139,92,246,0.08)" : "transparent",
-                          color: type === t ? "#7C3AED" : "#6B7280",
+                          border: type === t ? "1px solid var(--accent)" : "1px solid color-mix(in srgb, var(--accent-tint) 25%, transparent)",
+                          background: type === t ? "color-mix(in srgb, var(--accent) 8%, transparent)" : "transparent",
+                          color: type === t ? "var(--accent-strong)" : "var(--ink-muted)",
                           cursor: "pointer", transition: "all 0.2s",
                         }}
                       >
@@ -136,12 +136,12 @@ export default function FeedbackButton({ currentQuery }: Props) {
                     rows={4}
                     style={{
                       width: "100%", padding: "12px 14px", borderRadius: 12,
-                      border: "1px solid rgba(196,181,253,0.3)", background: "rgba(255,255,255,0.6)",
-                      fontSize: 14, color: "#1E1B4B", outline: "none", resize: "vertical", minHeight: 80,
+                      border: "1px solid color-mix(in srgb, var(--accent-tint) 30%, transparent)", background: "color-mix(in srgb, var(--surface-raised) 60%, transparent)",
+                      fontSize: 14, color: "var(--ink)", outline: "none", resize: "vertical", minHeight: 80,
                       transition: "border-color 0.3s",
                     }}
-                    onFocus={e => { e.currentTarget.style.borderColor = "#8B5CF6"; }}
-                    onBlur={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)"; }}
+                    onFocus={e => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+                    onBlur={e => { e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-tint) 30%, transparent)"; }}
                   />
 
                   {/* Email (optional) */}
@@ -153,8 +153,8 @@ export default function FeedbackButton({ currentQuery }: Props) {
                     className="font-body"
                     style={{
                       width: "100%", padding: "10px 14px", borderRadius: 10, marginTop: 8,
-                      border: "1px solid rgba(196,181,253,0.3)", background: "rgba(255,255,255,0.6)",
-                      fontSize: 13, color: "#1E1B4B", outline: "none",
+                      border: "1px solid color-mix(in srgb, var(--accent-tint) 30%, transparent)", background: "color-mix(in srgb, var(--surface-raised) 60%, transparent)",
+                      fontSize: 13, color: "var(--ink)", outline: "none",
                     }}
                   />
 
@@ -165,8 +165,8 @@ export default function FeedbackButton({ currentQuery }: Props) {
                     className="font-body"
                     style={{
                       width: "100%", marginTop: 12, padding: "10px 16px", borderRadius: 10,
-                      background: message.trim() ? "linear-gradient(135deg, #8B5CF6, #7C3AED)" : "rgba(196,181,253,0.2)",
-                      color: message.trim() ? "#fff" : "#6B7280",
+                      background: message.trim() ? "linear-gradient(135deg, var(--accent), var(--accent-strong))" : "color-mix(in srgb, var(--accent-tint) 20%, transparent)",
+                      color: message.trim() ? "var(--on-accent)" : "var(--ink-muted)",
                       border: "none", fontSize: 14, fontWeight: 500, cursor: message.trim() ? "pointer" : "default",
                       transition: "all 0.3s",
                     }}
