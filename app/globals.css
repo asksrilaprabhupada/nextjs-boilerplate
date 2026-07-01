@@ -546,8 +546,13 @@ body {
 }
 
 .btn-primary:hover {
-  transform: translateY(-2px);
+  transform: translateY(-2px) scale(1.02);
   box-shadow: 0 8px 26px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.btn-primary:active,
+.btn-ghost:active {
+  transform: scale(0.97);
 }
 
 .btn-primary:hover::before {

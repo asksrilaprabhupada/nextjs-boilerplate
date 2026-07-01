@@ -26,7 +26,7 @@ import {
   type PassageType,
 } from "@/app/lib/10-passage-fold";
 import { stripPurportBoilerplate } from "@/app/lib/09-purport-format";
-import { EASE } from "@/app/lib/11-motion";
+import { EASE, SPRING_SETTLE } from "@/app/lib/11-motion";
 
 /* ─────────────────────────── Data contract (unchanged) ─────────────────────────── */
 
@@ -135,6 +135,44 @@ function scrollToSource(id: string) {
   document.getElementById(`source-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
+/* ─────────────────────────── Copy button (icon morphs to a check) ─────────────────────────── */
+
+function CopyButton({ onCopy, label = "Copy" }: { onCopy: () => void; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handle = () => {
+    onCopy();
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
+  return (
+    <motion.button
+      type="button"
+      className="copy-chip"
+      onClick={handle}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.97 }}
+      aria-label="Copy passage with reference"
+    >
+      <span className="copy-ico" aria-hidden>
+        <AnimatePresence mode="wait" initial={false}>
+          {copied ? (
+            <motion.svg key="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+              initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.4, opacity: 0 }} transition={SPRING_SETTLE}>
+              <path d="M20 6 9 17l-5-5" />
+            </motion.svg>
+          ) : (
+            <motion.svg key="copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ duration: 0.16 }}>
+              <rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </motion.svg>
+          )}
+        </AnimatePresence>
+      </span>
+      {copied ? "Copied" : label}
+    </motion.button>
+  );
+}
+
 /* ─────────────────────────── One passage card ─────────────────────────── */
 
 type AnyHit = VerseHit | ProseHit | TranscriptHit | LetterHit;
@@ -157,16 +195,11 @@ function PassageCard({
 
   const foot = (
     <div className="passage-foot">
-      <button className="cite-chip" onClick={() => onOpenPreview(node)} aria-label={`Preview ${formatCiteRef(node.ref)}`}>
+      <motion.button className="cite-chip" onClick={() => onOpenPreview(node)} whileTap={{ scale: 0.97 }} aria-label={`Preview ${formatCiteRef(node.ref)}`}>
         <span className="cite-dot" data-type={node.type} aria-hidden />
         {formatCiteRef(node.ref)}
-      </button>
-      <button className="copy-chip" onClick={() => onCopy(node)} aria-label="Copy passage with reference">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" />
-        </svg>
-        Copy
-      </button>
+      </motion.button>
+      <CopyButton onCopy={() => onCopy(node)} />
     </div>
   );
 
@@ -306,7 +339,7 @@ function PreviewSheet({
         </div>
         <div className="preview-body passage-body" dangerouslySetInnerHTML={{ __html: html }} />
         <div className="preview-actions">
-          <button className="copy-chip" onClick={() => onCopy(node)}>Copy with reference</button>
+          <CopyButton onCopy={() => onCopy(node)} label="Copy with reference" />
           <span className="preview-links">
             {node.type === "verse" && (
               <Link className="vedabase-link" href={`/verse/${node.id}`}>Read this verse →</Link>
@@ -716,6 +749,9 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .cite-dot[data-type="letter"] { background: #8AA48F; }
         .copy-chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 500; color: var(--ink-muted); background: none; border: none; cursor: pointer; transition: color var(--dur-2) var(--ease-standard); }
         .copy-chip:hover { color: var(--accent-strong); }
+        .copy-ico { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; }
+        .cite-chip, .copy-chip { min-height: 30px; }
+        .fold-expand-btn:active, .dig-deeper-btn:active, .view-mode-toggle button:active { transform: scale(0.985); }
 
         .ref-book { margin-bottom: var(--space-7); }
         .ref-book h3 { font-size: 1.3rem; font-weight: 600; color: var(--ink-strong); margin: 0 0 var(--space-2); }
@@ -752,7 +788,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .preview-sheet { position: fixed; z-index: 201; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(640px, 92vw); max-height: 82vh; overflow-y: auto; background: var(--surface-raised); border: 1px solid var(--border-hair); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); padding: var(--space-5); }
         .preview-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
         .preview-head .cite-chip { cursor: default; }
-        .sheet-close { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border-hair); background: transparent; color: var(--ink-muted); font-size: 18px; cursor: pointer; line-height: 1; }
+        .sheet-close { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-hair); background: transparent; color: var(--ink-muted); font-size: 20px; cursor: pointer; line-height: 1; }
         .preview-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border-hair); }
         .preview-actions .copy-chip { font-size: 0.85rem; }
         .vedabase-link { font-size: 0.85rem; font-weight: 600; color: var(--accent-strong); text-decoration: none; }
@@ -763,7 +799,8 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         }
 
         /* ── Mobile "next strong quote" floating button ── */
-        .next-quote-btn { position: fixed; right: 16px; bottom: 20px; z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-hair); background: var(--surface-raised); color: var(--accent-strong); box-shadow: var(--shadow-soft); cursor: pointer; display: none; align-items: center; justify-content: center; }
+        .next-quote-btn { position: fixed; right: 16px; bottom: 20px; z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-hair); background: var(--surface-raised); color: var(--accent-strong); box-shadow: var(--shadow-soft); cursor: pointer; display: none; align-items: center; justify-content: center; transition: transform var(--dur-2) var(--ease-standard); }
+        .next-quote-btn:active { transform: scale(0.94); }
         @media (max-width: 900px) { .next-quote-btn { display: flex; } }
 
         .copy-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 210; background: var(--ink-strong); color: var(--surface-raised); font-size: 0.85rem; padding: 10px 18px; border-radius: var(--radius-full); box-shadow: var(--shadow-soft); }
