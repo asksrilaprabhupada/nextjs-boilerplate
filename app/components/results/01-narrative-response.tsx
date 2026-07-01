@@ -488,7 +488,7 @@ function QuoteTooltip() {
             : 'translateX(-100%) translateY(-50%) translateX(12px) scale(0.88)',
           padding: '9px 16px 9px 12px',
           borderRadius: 12,
-          fontFamily: "'DM Sans', sans-serif",
+          fontFamily: "var(--font-body), 'DM Sans', sans-serif",
           whiteSpace: 'normal',
           color: tooltip.color,
           background: tooltip.bg,
@@ -1204,7 +1204,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
 
         /* Narrative content styles */
         .narrative-content h3 {
-          font-family: 'Cormorant Garamond', serif;
+          font-family: var(--font-display), 'Cormorant Garamond', serif;
           font-size: 1.2rem; font-weight: 600; color: #1E1B4B;
           margin: 28px 0 12px; padding-bottom: 8px;
           border-bottom: 1px solid rgba(196,181,253,0.2);
@@ -1253,7 +1253,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
         .fold-expand-btn {
           display: inline-flex; align-items: center; gap: 6px; margin-top: 10px;
           padding: 4px 0; background: none; border: none; cursor: pointer;
-          font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; color: #7C3AED;
+          font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 13px; font-weight: 600; color: #7C3AED;
         }
         .fold-expand-btn:hover { color: #6D28D9; text-decoration: underline; }
         .fold-full {
@@ -1317,7 +1317,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           font-size: 15px; line-height: 1.8; color: #374151;
         }
         .narrative-content .verse-ref {
-          font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
+          font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
           color: #8B5CF6; font-style: normal;
         }
         .narrative-content .verse-link { text-decoration: none; color: #8B5CF6; }
@@ -1375,7 +1375,7 @@ export default function NarrativeResponse({ results, isLoading, isStreaming, str
           margin-bottom: 32px;
         }
         .references-book-group h3 {
-          font-family: 'Cormorant Garamond', serif;
+          font-family: var(--font-display), 'Cormorant Garamond', serif;
           font-size: 1.15rem;
           font-weight: 600;
           color: #1E1B4B;

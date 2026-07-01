@@ -36,7 +36,7 @@ export default function ContactOverlay() {
   const inputStyle: React.CSSProperties = {
     width: "100%", padding: "12px 16px", borderRadius: 12,
     border: "1px solid rgba(196, 181, 253, 0.3)", background: "rgba(255, 255, 255, 0.6)",
-    color: "#1E1B4B", fontSize: 15, fontFamily: "'DM Sans', sans-serif", fontWeight: 400, outline: "none",
+    color: "#1E1B4B", fontSize: 15, fontFamily: "var(--font-body), 'DM Sans', sans-serif", fontWeight: 400, outline: "none",
     transition: "border-color 0.3s ease, box-shadow 0.3s ease",
   };
 

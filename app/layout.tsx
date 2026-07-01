@@ -5,7 +5,35 @@
  * Wraps every page with consistent styling and SEO configuration.
  */
 import type { Metadata } from "next";
+import { Cormorant_Garamond, DM_Sans, Noto_Serif_Devanagari } from "next/font/google";
 import "./globals.css";
+
+/*
+ * Fonts are loaded via next/font (self-hosted, no render-blocking @import, no CLS).
+ * Each exposes a CSS variable consumed by the .font-* classes in globals.css.
+ * latin-ext covers IAST diacritics (ā, ṛ, ṣ, ṁ, ñ); devanagari covers Sanskrit.
+ */
+const fontDisplay = Cormorant_Garamond({
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "600", "700"],
+  style: ["normal", "italic"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const fontBody = DM_Sans({
+  subsets: ["latin", "latin-ext"],
+  weight: ["300", "400", "500", "600"],
+  variable: "--font-body",
+  display: "swap",
+});
+
+const fontDeva = Noto_Serif_Devanagari({
+  subsets: ["devanagari", "latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-deva",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
@@ -59,7 +87,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      className={`${fontDisplay.variable} ${fontBody.variable} ${fontDeva.variable}`}
+    >
       <body>
         {/* Garden Wash Background */}
         <div

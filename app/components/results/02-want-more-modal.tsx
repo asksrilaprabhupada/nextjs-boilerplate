@@ -72,7 +72,7 @@ export default function WantMoreModal({ book, onClose }: Props) {
               <div key={v.id} style={{ marginBottom: 16 }}>
                 <div style={{ background: "rgba(245,240,255,0.5)", border: "1px solid rgba(196,181,253,0.25)", borderLeft: "3px solid #8B5CF6", padding: "16px 20px", borderRadius: 14 }}>
                   {v.sanskrit_devanagari && (
-                    <p style={{ fontFamily: "'Noto Serif Devanagari', serif", fontSize: "0.95rem", lineHeight: 1.8, color: "#1E1B4B", marginBottom: 8 }}>{v.sanskrit_devanagari}</p>
+                    <p style={{ fontFamily: "var(--font-deva), 'Noto Serif Devanagari', serif", fontSize: "0.95rem", lineHeight: 1.8, color: "#1E1B4B", marginBottom: 8 }}>{v.sanskrit_devanagari}</p>
                   )}
                   <p className="font-display" style={{ fontSize: "1rem", fontStyle: "italic", lineHeight: 1.7, color: "#1E1B4B" }}>
                     &ldquo;{v.translation}&rdquo;

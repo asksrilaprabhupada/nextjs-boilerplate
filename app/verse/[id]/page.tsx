@@ -234,7 +234,7 @@ export default function VerseDetailPage() {
             >
               <p
                 style={{
-                  fontFamily: "'Noto Serif Devanagari', serif",
+                  fontFamily: "var(--font-deva), 'Noto Serif Devanagari', serif",
                   fontSize: "1.15rem",
                   lineHeight: 1.9,
                   fontWeight: 500,
@@ -278,7 +278,7 @@ export default function VerseDetailPage() {
                   <div key={i} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
                     <span
                       style={{
-                        fontFamily: "'Noto Serif Devanagari', serif",
+                        fontFamily: "var(--font-deva), 'Noto Serif Devanagari', serif",
                         fontSize: "0.88rem",
                         fontWeight: 600,
                         color: "#1E1B4B",
