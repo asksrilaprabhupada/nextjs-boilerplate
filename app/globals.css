@@ -50,6 +50,7 @@
   --accent-tint:     var(--p-violet-tint);
   --border-hair:     var(--p-border);
   --border-firm:     var(--p-border-strong);
+  --on-accent:       #FFFFFF; /* readable text/icon on a filled accent surface */
 
   /* Emphasis (the bloom): lavender→gold, low-opacity, paper-like */
   --emphasis-from:   color-mix(in srgb, var(--p-lavender) 16%, transparent);
@@ -142,6 +143,7 @@
   --p-lavender:      #A78BFA;
   --p-border:        #2C2836;
   --p-border-strong: #3A3547;
+  --on-accent:       #16141C; /* dark ink reads on the lightened dark-mode accent */
   --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.30), 0 12px 34px rgba(0, 0, 0, 0.40);
 }
 
@@ -549,7 +551,7 @@ body {
   align-items: center;
   gap: 8px;
   background: linear-gradient(135deg, var(--garden-violet), var(--garden-deep-violet));
-  color: white;
+  color: var(--on-accent);
   border: none;
   border-radius: 100px;
   padding: 12px 28px;

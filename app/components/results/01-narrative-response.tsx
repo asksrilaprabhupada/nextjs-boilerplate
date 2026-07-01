@@ -711,7 +711,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .view-toggle-row { display: flex; justify-content: flex-end; margin-bottom: var(--space-5); }
         .view-mode-toggle { display: inline-flex; border: 1px solid var(--border-hair); border-radius: var(--radius-full); overflow: hidden; background: var(--surface-raised); }
         .view-mode-toggle button { padding: 7px 16px; font-size: var(--type-label-size); font-weight: 500; border: none; cursor: pointer; background: transparent; color: var(--ink-muted); transition: background var(--dur-2) var(--ease-standard), color var(--dur-2) var(--ease-standard); }
-        .view-mode-toggle button.active { background: var(--accent); color: #fff; }
+        .view-mode-toggle button.active { background: var(--accent); color: var(--on-accent); }
 
         /* Neutral AI framing — visually subordinate so it can never read as scripture. */
         .framing-note { font-size: 0.95rem; line-height: 1.6; color: var(--framing); max-width: var(--measure); }
