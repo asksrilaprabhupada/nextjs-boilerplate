@@ -7,6 +7,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { motion, MotionConfig } from "framer-motion";
+import { EASE } from "@/app/lib/11-motion";
 import TypewriterPlaceholder from "./02-typewriter-placeholder";
 import SearchProgress from "./05-search-progress";
 import VoiceInput from "./03-voice-input";
@@ -80,6 +82,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
   const inputRightPadding = showClearBtn ? "clamp(140px, 20vw, 160px)" : "clamp(100px, 16vw, 120px)";
 
   return (
+    <MotionConfig reducedMotion="user">
     <section style={{
       minHeight: heroVisible ? "100vh" : "auto",
       display: "flex", flexDirection: "column", alignItems: "center",
@@ -98,12 +101,16 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
           <p className="font-body tagline-gradient" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 500, textAlign: "center", letterSpacing: "0.03em", marginBottom: 22, lineHeight: 1.65 }}>Nothing Added, Nothing Invented.</p>
         )}
 
-        {/* Search form */}
-        <form
+        {/* Search form — a single element that TRAVELS from the centered hero to
+            a slim sticky bar when results arrive (Framer layout, no duplication). */}
+        <motion.form
+          layout="position"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: animatedIn ? 1 : 0 }}
+          transition={{ duration: 0.55, ease: EASE.standard }}
           onSubmit={handleSubmit}
           className="hero-search-form"
           style={{
-            ...stagger(2),
             width: "100%",
             maxWidth: 680,
             position: "relative",
@@ -260,7 +267,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
               background: "linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 50%, transparent), color-mix(in srgb, var(--accent) 30%, transparent), transparent)",
             }} />
           )}
-        </form>
+        </motion.form>
 
         {/* Example pills — visible below search bar */}
         {heroVisible && (
@@ -277,5 +284,6 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
         </div>
       )}
     </section>
+    </MotionConfig>
   );
 }

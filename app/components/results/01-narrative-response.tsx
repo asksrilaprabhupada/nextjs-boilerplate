@@ -15,6 +15,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import Link from "next/link";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import SearchFeedback from "../search/06-search-feedback";
 import DigDeeperModal from "./02-dig-deeper-modal";
@@ -306,9 +307,14 @@ function PreviewSheet({
         <div className="preview-body passage-body" dangerouslySetInnerHTML={{ __html: html }} />
         <div className="preview-actions">
           <button className="copy-chip" onClick={() => onCopy(node)}>Copy with reference</button>
-          {node.url && (
-            <a className="vedabase-link" href={node.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
-          )}
+          <span className="preview-links">
+            {node.type === "verse" && (
+              <Link className="vedabase-link" href={`/verse/${node.id}`}>Read this verse →</Link>
+            )}
+            {node.url && (
+              <a className="vedabase-link" href={node.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
+            )}
+          </span>
         </div>
       </motion.div>
     </>
@@ -751,6 +757,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .preview-actions .copy-chip { font-size: 0.85rem; }
         .vedabase-link { font-size: 0.85rem; font-weight: 600; color: var(--accent-strong); text-decoration: none; }
         .vedabase-link:hover { text-decoration: underline; }
+        .preview-links { display: flex; gap: var(--space-4); align-items: center; }
         @media (max-width: 640px) {
           .preview-sheet { left: 0; right: 0; bottom: 0; top: auto; transform: none; width: 100%; max-height: 85vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
         }
