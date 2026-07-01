@@ -52,7 +52,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── route.ts               (image list endpoint)
 │   │   │   └── heic/route.ts          (HEIC-to-JPEG conversion via sharp)
 │   │   ├── search/route.ts            (hybrid search + RRF + Cohere rerank + deterministic verbatim-only woven-essay template)
-│   │   └── verse/route.ts             (single verse lookup)
+│   │   └── verse/route.ts             (single verse lookup by id, or by textual cross-reference)
 │   ├── components/
 │   │   ├── feedback/                  # Floating widgets
 │   │   │   ├── 01-feedback-button.tsx (floating widget)
@@ -83,8 +83,10 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │       ├── 02-typewriter-placeholder.tsx
 │   │       ├── 03-voice-input.tsx     (microphone button)
 │   │       ├── 04-examples-popover.tsx
-│   │       ├── 05-search-progress.tsx (multi-step loader)
+│   │       ├── 05-search-progress.tsx (meditative loader: aura + skeleton cards)
 │   │       └── 06-search-feedback.tsx (thumbs voting)
+│   │   └── verse/                     # Verse detail
+│   │       └── 01-verse-view.tsx      (interactive reader: toggleable layers, swipe, cross-ref preview)
 │   ├── hooks/
 │   │   └── 01-use-search-behavior-tracker.ts
 │   ├── lib/
@@ -103,7 +105,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/
 │   │   └── 01-speech.d.ts            (Web Speech API types)
-│   ├── verse/[id]/page.tsx            (verse detail page)
+│   ├── verse/[id]/page.tsx            (verse detail page — server-rendered; delegates interaction to components/verse/01-verse-view)
 │   ├── features/page.tsx
 │   ├── how-it-works/page.tsx
 │   ├── globals.css                    (complete light theme)

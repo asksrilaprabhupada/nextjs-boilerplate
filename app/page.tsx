@@ -363,6 +363,19 @@ export default function Home() {
     }
   }, [scrollToProgress, scrollToResults, fetchSingleSearch]);
 
+  // Deep-linkable search: a ?q= param (e.g. from a synonym term link) auto-runs
+  // the search once and skips the lock screen.
+  const didInitialQ = useRef(false);
+  useEffect(() => {
+    if (didInitialQ.current) return;
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (q && q.trim()) {
+      didInitialQ.current = true;
+      setLockScreenVisible(false);
+      handleSearch(q.trim());
+    }
+  }, [handleSearch]);
+
   return (
     <>
       {lockScreenVisible && <LockScreen onDismiss={() => setLockScreenVisible(false)} />}
