@@ -9,6 +9,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { CSSProperties, useEffect, useRef, useState } from "react";
+import ThemeToggle from "./03-theme-toggle";
 
 interface HeaderProps {
   onMoreItemSelect?: (item: "About" | "Donate" | "Contact" | "Feature Request") => void;
@@ -91,6 +92,7 @@ export default function Header({ onMoreItemSelect, onSearchClick }: HeaderProps)
             </div>
           )}
         </div>
+        <ThemeToggle />
       </nav>
       <button className="mobile-menu-btn" onClick={() => setMobileMenuOpen(p => !p)} aria-label="Toggle menu"
         style={{ display: "none", width: 40, height: 40, borderRadius: 10, border: "none", background: "transparent", color: "var(--ink-muted)", cursor: "pointer", alignItems: "center", justifyContent: "center" }}>
@@ -109,6 +111,7 @@ export default function Header({ onMoreItemSelect, onSearchClick }: HeaderProps)
               {moreItems.map(item => <button key={item} onClick={() => handleMoreItemClick(item)} className="font-body" style={{ border: "none", background: "transparent", color: "var(--ink-muted)", padding: "10px 10px", textAlign: "left", borderRadius: 8, fontSize: 14, cursor: "pointer" }}>{item}</button>)}
             </div>
           )}
+          <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border-hair)" }}><ThemeToggle /></div>
         </div>
       )}
     </header>

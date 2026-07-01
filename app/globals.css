@@ -119,6 +119,33 @@
 }
 
 /* ============================================================
+   WARM EVENING (dark mode) — opt-in; overrides ONLY the primitive
+   layer, so every token, utility, and component re-skins automatically.
+   Deep warm indigo / near-black surfaces, gold-tinted text, one soft
+   violet accent (lightened for contrast). NOT pure black, NOT inverted.
+   The light theme above is untouched.
+   ============================================================ */
+.dark {
+  color-scheme: dark;
+  --p-paper:         #16141C;  /* deep warm indigo-charcoal (never #000) */
+  --p-paper-raised:  #201C2A;  /* lifted cards */
+  --p-paper-sunken:  #100E16;  /* wells */
+  --p-ink:           #ECE5D5;  /* warm, gold-tinted parchment (never #FFF) */
+  --p-ink-strong:    #F6EFDF;
+  --p-ink-muted:     #B4AA94;
+  --p-ink-subtle:    #857C6D;
+  --p-framing:       #A69B84;
+  --p-violet:        #A78BFA;  /* accent — fills / icons */
+  --p-violet-strong: #C7B8FB;  /* accent — text / links (light for contrast) */
+  --p-violet-tint:   #292340;  /* accent chip background */
+  --p-gold:          #D9B76A;
+  --p-lavender:      #A78BFA;
+  --p-border:        #2C2836;
+  --p-border-strong: #3A3547;
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.30), 0 12px 34px rgba(0, 0, 0, 0.40);
+}
+
+/* ============================================================
    GARDEN DESIGN SYSTEM — Lavender Fields + Tulip Gardens
    Light theme with glassmorphism
    (Phase 2 re-points these legacy aliases at the tokens above.)

@@ -92,6 +92,12 @@ export default function RootLayout({
       className={`${fontDisplay.variable} ${fontBody.variable} ${fontDeva.variable}`}
     >
       <body>
+        {/* Apply a saved warm-evening theme before paint (no flash). Defaults to light. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`,
+          }}
+        />
         {/* Garden Wash Background */}
         <div
           style={{
