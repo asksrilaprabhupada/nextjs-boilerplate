@@ -15,7 +15,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import SearchFeedback from "../search/06-search-feedback";
 import DigDeeperModal from "./02-dig-deeper-modal";
 import {
@@ -139,17 +139,20 @@ function scrollToSource(id: string) {
 type AnyHit = VerseHit | ProseHit | TranscriptHit | LetterHit;
 
 function PassageCard({
-  node, data, hero, line, queryTerms, onCopy, onOpenPreview,
+  node, data, hero, line, index = 0, queryTerms, onCopy, onOpenPreview,
 }: {
   node: MainFlowNode;
   data: AnyHit;
   hero?: boolean;
   line?: string;
+  index?: number;
   queryTerms: string[];
   onCopy: (node: MainFlowNode) => void;
   onOpenPreview: (node: MainFlowNode) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Compose-in: only the first ~10 passages stagger; the rest appear at once.
+  const entranceDelay = index < 10 ? index * 0.07 : 0;
 
   const foot = (
     <div className="passage-foot">
@@ -240,10 +243,17 @@ function PassageCard({
   }
 
   return (
-    <article id={`source-${node.id}`} className={`passage${hero ? " passage-hero" : ""}`} data-passage-type={node.type}>
+    <motion.article
+      id={`source-${node.id}`}
+      className={`passage${hero ? " passage-hero" : ""}`}
+      data-passage-type={node.type}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: EASE.decelerate, delay: entranceDelay }}
+    >
       {content}
       {foot}
-    </article>
+    </motion.article>
   );
 }
 
@@ -323,6 +333,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
   const [previewNode, setPreviewNode] = useState<MainFlowNode | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const nextIdxRef = useRef(0);
+  const shellRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setDigDeeperOpen(false); setPreviewNode(null); }, [results?.query]);
   useEffect(() => {
@@ -330,6 +341,57 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
     const t = setTimeout(() => setToast(null), 2200);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // The bloom: each emphasized sentence glows in ONCE when it scrolls into view,
+  // one at a time (a small serial queue), then settles to a calm resting tint.
+  // A MutationObserver picks up sentences revealed by expanding a passage.
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell || !results) return;
+    const reduce = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const queue: HTMLElement[] = [];
+    let busy = false;
+    let timer: number | undefined;
+
+    const runNext = () => {
+      if (busy) return;
+      const el = queue.shift();
+      if (!el) return;
+      busy = true;
+      el.classList.add("bloom");
+      timer = window.setTimeout(() => { busy = false; runNext(); }, reduce ? 0 : 780);
+    };
+
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const el = e.target as HTMLElement;
+        io.unobserve(el);
+        if (el.dataset.bloomed) continue;
+        el.dataset.bloomed = "1";
+        if (reduce) { el.classList.add("bloom"); continue; }
+        queue.push(el);
+        runNext();
+      }
+    }, { threshold: 0.6 });
+
+    const observe = (el: HTMLElement) => { if (!el.dataset.bloomed) io.observe(el); };
+    shell.querySelectorAll<HTMLElement>(".hl-sentence").forEach(observe);
+
+    const mo = new MutationObserver((muts) => {
+      for (const m of muts) {
+        m.addedNodes.forEach((n) => {
+          if (n.nodeType !== 1) return;
+          const el = n as HTMLElement;
+          if (el.matches(".hl-sentence")) observe(el);
+          el.querySelectorAll<HTMLElement>(".hl-sentence").forEach(observe);
+        });
+      }
+    });
+    mo.observe(shell, { childList: true, subtree: true });
+
+    return () => { io.disconnect(); mo.disconnect(); if (timer) window.clearTimeout(timer); };
+  }, [results]);
 
   const queryTerms = results?.queryTerms || [];
 
@@ -446,8 +508,8 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
   );
 
   return (
-    <>
-      <div className="results-shell">
+    <MotionConfig reducedMotion="user">
+      <div className="results-shell" ref={shellRef}>
         {/* View toggle — quiet, right-aligned */}
         <div className="view-toggle-row">
           <div className="view-mode-toggle" role="tablist" aria-label="Result view">
@@ -478,13 +540,13 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
             {/* Hero passages */}
             {heroes.length > 0 && (
               <div className="hero-stack">
-                {heroes.map(h => {
+                {heroes.map((h, hi) => {
                   const d = dataFor(h.node);
                   if (!d) return null;
                   return (
                     <PassageCard
                       key={`${results.query}:${h.node.id}`}
-                      node={h.node} data={d} hero line={h.line}
+                      node={h.node} data={d} hero line={h.line} index={hi}
                       queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
                     />
                   );
@@ -494,13 +556,13 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
 
             {/* Woven essay — the remaining main-flow passages, most-important-first */}
             <div className="essay-flow">
-              {essayNodes.map(node => {
+              {essayNodes.map((node, j) => {
                 const d = dataFor(node);
                 if (!d) return null;
                 return (
                   <PassageCard
                     key={`${results.query}:${node.id}`}
-                    node={node} data={d}
+                    node={node} data={d} index={heroes.length + j}
                     queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
                   />
                 );
@@ -664,12 +726,19 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         mark.hl-sentence, mark.hl-word { color: inherit; }
         .hl-sentence {
           background-image: linear-gradient(90deg, transparent 0%, var(--emphasis-from) 9%, var(--emphasis-to) 91%, transparent 100%);
-          background-repeat: no-repeat; background-position: left center; background-size: 100% 76%;
+          background-repeat: no-repeat; background-position: left center;
+          background-size: 0% 76%; /* dormant until it enters the viewport */
           border-radius: 7px; padding: 0.04em 0.32em;
           -webkit-box-decoration-break: clone; box-decoration-break: clone;
-          animation: hlBloom 1.05s var(--ease-decelerate) both;
         }
-        @keyframes hlBloom { from { background-size: 0% 76%; } to { background-size: 100% 76%; } }
+        /* Blooms once, left→right, holds ~600ms, then eases down to a calm resting tint. */
+        .hl-sentence.bloom { animation: hlBloom 1.25s var(--ease-decelerate) forwards; }
+        @keyframes hlBloom {
+          0%   { background-size: 0% 76%;   box-shadow: 0 1px 12px color-mix(in srgb, var(--accent) 0%, transparent); }
+          48%  { background-size: 100% 76%; box-shadow: 0 1px 16px color-mix(in srgb, var(--accent) 20%, transparent); }
+          70%  { background-size: 100% 76%; box-shadow: 0 1px 16px color-mix(in srgb, var(--accent) 20%, transparent); }
+          100% { background-size: 100% 76%; box-shadow: 0 1px 9px color-mix(in srgb, var(--accent) 6%, transparent); }
+        }
         .hl-word { background-image: linear-gradient(transparent 58%, color-mix(in srgb, var(--accent) 22%, transparent) 58%); border-radius: 1px; padding: 0 0.5px; font-weight: 500; color: var(--accent-strong); }
 
         /* ── Citation preview sheet + scrim ── */
@@ -693,7 +762,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .copy-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 210; background: var(--ink-strong); color: var(--surface-raised); font-size: 0.85rem; padding: 10px 18px; border-radius: var(--radius-full); box-shadow: var(--shadow-soft); }
 
         @media (prefers-reduced-motion: reduce) {
-          .hl-sentence { animation-duration: 0.01ms; }
+          .hl-sentence.bloom { animation-duration: 0.01ms; }
         }
 
         @media (max-width: 768px) {
@@ -701,6 +770,6 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
           .passage-hero { padding: var(--space-5); }
         }
       `}</style>
-    </>
+    </MotionConfig>
   );
 }
