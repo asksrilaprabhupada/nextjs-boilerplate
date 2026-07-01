@@ -71,7 +71,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
   const stagger = (i: number) => ({
     opacity: animatedIn ? 1 : 0,
     transform: animatedIn ? "translateY(0)" : "translateY(32px)",
-    transition: `opacity 0.8s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms, transform 0.8s cubic-bezier(0.16,1,0.3,1) ${i * 100}ms`,
+    transition: `opacity 0.8s var(--ease-standard) ${i * 100}ms, transform 0.8s var(--ease-standard) ${i * 100}ms`,
   });
 
   // When clear button is visible we need more right padding to avoid text collision
@@ -88,11 +88,11 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
       position: "relative", transition: "min-height 0.7s var(--ease-out-expo), padding 0.5s var(--ease-out-expo) 0.1s", overflow: "hidden",
     }}>
       {/* Background orb */}
-      {heroVisible && <div style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, rgba(167,139,250,0.26) 0%, rgba(244,114,182,0.12) 42%, rgba(251,191,36,0.09) 72%, transparent 100%)", filter: "blur(72px)", animation: "floatOrb 20s ease-in-out infinite", pointerEvents: "none" }} />}
+      {heroVisible && <div style={{ position: "absolute", top: "25%", left: "50%", transform: "translateX(-50%)", width: 600, height: 600, borderRadius: "50%", background: "radial-gradient(circle, color-mix(in srgb, var(--p-lavender) 22%, transparent) 0%, color-mix(in srgb, var(--accent) 8%, transparent) 46%, transparent 100%)", filter: "blur(72px)", animation: "floatOrb 20s ease-in-out infinite", pointerEvents: "none" }} />}
 
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", width: "100%", maxWidth: 700 }}>
         {/* Title */}
-        {heroVisible && <h1 className="font-display" style={{ ...stagger(0), fontSize: "clamp(38px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 16, color: "#1E1B4B", overflowWrap: "break-word" }}>Ask<br /><span style={{ background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
+        {heroVisible && <h1 className="font-display" style={{ ...stagger(0), fontSize: "clamp(38px, 7vw, 88px)", fontWeight: 600, textAlign: "center", letterSpacing: "-0.03em", lineHeight: 1.05, marginBottom: 16, color: "var(--ink)", overflowWrap: "break-word" }}>Ask<br /><span style={{ background: "linear-gradient(135deg, var(--p-gold), var(--accent))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Śrīla Prabhupāda</span></h1>}
 
         {heroVisible && (
           <p className="font-body tagline-gradient" style={{ ...stagger(2), fontSize: "clamp(15px, 1.6vw, 17px)", fontWeight: 500, textAlign: "center", letterSpacing: "0.03em", marginBottom: 22, lineHeight: 1.65 }}>Nothing Added, Nothing Invented.</p>
@@ -129,15 +129,13 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                 fontWeight: 400,
                 border: "none",
                 borderRadius: 18,
-                background: "rgba(255,255,255,0.85)",
-                backdropFilter: "blur(24px)",
-                WebkitBackdropFilter: "blur(24px)",
-                color: "#1E1B4B",
+                background: "var(--surface-raised)",
+                color: "var(--ink)",
                 outline: "none",
                 transition: "box-shadow 0.3s",
                 boxShadow: isFocused
-                  ? "0 0 0 3px rgba(139,92,246,0.12), 0 4px 24px rgba(139,92,246,0.08)"
-                  : "0 8px 32px rgba(111,74,177,0.14), 0 0 60px rgba(139,92,246,0.04)",
+                  ? "0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent), 0 4px 24px color-mix(in srgb, var(--accent) 8%, transparent)"
+                  : "var(--shadow-soft)",
                 resize: "none",
                 overflow: "hidden",
                 lineHeight: "1.5",
@@ -159,7 +157,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                   top: 20,
                   right: 100,
                   fontSize: "clamp(15px, 2.8vw, 17px)",
-                  color: "#C4B5FD",
+                  color: "var(--ink-subtle)",
                   pointerEvents: "none",
                   lineHeight: "1.5",
                   overflow: "hidden",
@@ -185,17 +183,17 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                   width: 32,
                   height: 32,
                   borderRadius: 8,
-                  background: "rgba(139,92,246,0.08)",
-                  border: "1px solid rgba(196,181,253,0.3)",
+                  background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+                  border: "1px solid var(--border-hair)",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
                   transition: "all 0.2s ease",
-                  color: "#6B7280",
+                  color: "var(--ink-muted)",
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.15)"; e.currentTarget.style.color = "#7C3AED"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.08)"; e.currentTarget.style.color = "#6B7280"; }}
+                onMouseEnter={e => { e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 15%, transparent)"; e.currentTarget.style.color = "var(--accent)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 8%, transparent)"; e.currentTarget.style.color = "var(--ink-muted)"; }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                   <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -225,18 +223,18 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
                 width: 42,
                 height: 42,
                 borderRadius: 12,
-                background: "linear-gradient(135deg, #7C3AED, #6D28D9)",
+                background: "linear-gradient(135deg, var(--accent), var(--accent-strong))",
                 border: "none",
                 cursor: query.trim() ? "pointer" : "default",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 opacity: query.trim() ? 1 : 0.4,
-                transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
-                boxShadow: query.trim() ? "0 4px 14px rgba(139,92,246,0.3)" : "none",
+                transition: "all 0.3s var(--ease-standard)",
+                boxShadow: query.trim() ? "0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent)" : "none",
               }}
-              onMouseEnter={e => { if (query.trim()) { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 20px rgba(139,92,246,0.4)"; } }}
-              onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = query.trim() ? "0 4px 14px rgba(139,92,246,0.3)" : "none"; }}
+              onMouseEnter={e => { if (query.trim()) { e.currentTarget.style.transform = "scale(1.08)"; e.currentTarget.style.boxShadow = "0 6px 20px color-mix(in srgb, var(--accent) 40%, transparent)"; } }}
+              onMouseLeave={e => { e.currentTarget.style.transform = "scale(1)"; e.currentTarget.style.boxShadow = query.trim() ? "0 4px 14px color-mix(in srgb, var(--accent) 30%, transparent)" : "none"; }}
             >
               {isSearching ? (
                 <svg width="18" height="18" viewBox="0 0 24 24" style={{ animation: "spin 0.8s linear infinite" }}>
@@ -259,7 +257,7 @@ export default function HeroSearch({ onSearch, onClear, isSearching, hasResults,
               right: "10%",
               height: 2,
               borderRadius: 1,
-              background: "linear-gradient(90deg, transparent, rgba(139,92,246,0.3), rgba(196,181,253,0.5), rgba(139,92,246,0.3), transparent)",
+              background: "linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 30%, transparent), color-mix(in srgb, var(--accent) 50%, transparent), color-mix(in srgb, var(--accent) 30%, transparent), transparent)",
             }} />
           )}
         </form>

@@ -125,54 +125,58 @@
    ============================================================ */
 
 :root {
-  /* === Backgrounds (warm whites + lavender tints) === */
-  --bg-deep: #FFF8FC;
-  --bg-surface: #F6EEFF;
-  --bg-card: rgba(255, 255, 255, 0.72);
-  --bg-card-hover: rgba(255, 255, 255, 0.84);
-  --bg-input: rgba(255, 255, 255, 0.8);
+  /* Legacy names re-pointed at the sacred-minimalism tokens above. Every
+     component that already reads var(--garden-*) / var(--text-*) etc. re-skins
+     with zero edits; remaining inline hex literals migrate file-by-file. */
 
-  /* === Garden palette === */
-  --garden-lavender: #D6C3FF;
-  --garden-violet: #8B5CF6;
-  --garden-deep-violet: #7C3AED;
-  --garden-rose: #FFB5C1;
-  --garden-blush: #FBCFE8;
-  --garden-sage: #BBF7D0;
-  --garden-gold: #FDE68A;
+  /* === Backgrounds === */
+  --bg-deep: var(--surface);
+  --bg-surface: var(--surface-sunken);
+  --bg-card: var(--surface-raised);
+  --bg-card-hover: color-mix(in srgb, var(--accent) 4%, var(--surface-raised));
+  --bg-input: var(--surface-raised);
 
-  /* === Legacy aurora aliases (for components that reference them) === */
-  --aurora-violet: #8B5CF6;
-  --aurora-purple: #7C3AED;
-  --aurora-fuchsia: #A855F7;
-  --aurora-pink: #F9A8D4;
-  --aurora-teal: #7C3AED;
-  --aurora-cyan: #818CF8;
-  --aurora-indigo: #6366F1;
+  /* === Garden palette → single soft-violet accent + warm neutrals === */
+  --garden-lavender: var(--accent-tint);
+  --garden-violet: var(--accent);
+  --garden-deep-violet: var(--accent-strong);
+  --garden-rose: color-mix(in srgb, var(--p-gold) 55%, var(--p-lavender));
+  --garden-blush: var(--accent-tint);
+  --garden-sage: var(--accent-tint);
+  --garden-gold: var(--p-gold);
 
-  /* === Text (dark on light) === */
-  --text-primary: #1F1A4D;
-  --text-secondary: #475569;
-  --text-muted: #64748B;
+  /* === Aurora aliases → collapse the rainbow to one accent === */
+  --aurora-violet: var(--accent);
+  --aurora-purple: var(--accent-strong);
+  --aurora-fuchsia: var(--accent);
+  --aurora-pink: var(--accent-tint);
+  --aurora-teal: var(--accent-strong);
+  --aurora-cyan: var(--accent);
+  --aurora-indigo: var(--accent);
+
+  /* === Text === */
+  --text-primary: var(--ink);
+  --text-secondary: var(--ink-muted);
+  --text-muted: var(--ink-subtle);
 
   /* === Borders === */
-  --border-subtle: rgba(196, 181, 253, 0.42);
-  --border-glow: rgba(139, 92, 246, 0.28);
+  --border-subtle: var(--border-hair);
+  --border-glow: color-mix(in srgb, var(--accent) 24%, transparent);
 
-  /* === Semantic === */
+  /* === Semantic (functional states) === */
   --success: #10B981;
   --warning: #F59E0B;
   --error: #EF4444;
-  --info: #6366F1;
+  --info: var(--accent);
 
-  /* === Glassmorphism === */
-  --glass-bg: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(247, 240, 255, 0.76) 55%, rgba(255, 247, 237, 0.76));
-  --glass-border: rgba(255, 255, 255, 0.82);
+  /* === Glassmorphism → calm paper on reading surfaces === */
+  --glass-bg: var(--surface-raised);
+  --glass-border: var(--border-hair);
   --glass-blur: 16px;
-  --glass-shadow: 0 16px 40px rgba(111, 74, 177, 0.12);
+  --glass-shadow: var(--shadow-soft);
 
   /* === Transitions === */
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-expo: var(--ease-standard);
 }
 
 * {
@@ -187,17 +191,24 @@ html {
 
 body {
   font-family: var(--font-body), 'DM Sans', system-ui, sans-serif;
+  font-size: var(--type-body-size);
+  line-height: var(--type-body-lh);
+  /* Warm off-white paper with one faint lavender wash near the top — reverence
+     is space, not ornament. (Layered decorative gradients live in layout.tsx.) */
   background:
-    radial-gradient(circle at 16% 12%, rgba(196, 181, 253, 0.5) 0%, rgba(196, 181, 253, 0) 38%),
-    radial-gradient(circle at 84% 14%, rgba(253, 164, 175, 0.26) 0%, rgba(253, 164, 175, 0) 34%),
-    radial-gradient(circle at 50% 76%, rgba(226, 232, 255, 0.36) 0%, rgba(226, 232, 255, 0) 44%),
-    linear-gradient(180deg, #fbf6ff 0%, #f4ecff 44%, #fff7ee 100%);
+    radial-gradient(1200px 620px at 50% -8%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 70%),
+    var(--surface);
   background-attachment: fixed;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
 }
+
+/* Reading helpers */
+.reading-measure { max-width: var(--measure); }
+/* IAST transliteration is set in italic (the "voice" convention). */
+.iast { font-style: italic; }
 
 /* Font families — consume the next/font CSS variables with graceful fallbacks */
 .font-display {
@@ -228,25 +239,25 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: linear-gradient(180deg, #C4B5FD, #A78BFA, #8B5CF6);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 45%, var(--surface)), var(--accent));
   border-radius: 12px;
   border: 3px solid rgba(245, 240, 255, 0.5);
   transition: background 0.3s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: linear-gradient(180deg, #A78BFA, #8B5CF6, #7C3AED);
+  background: linear-gradient(180deg, var(--accent), var(--accent-strong));
   border: 3px solid rgba(245, 240, 255, 0.3);
 }
 
 ::-webkit-scrollbar-thumb:active {
-  background: linear-gradient(180deg, #8B5CF6, #7C3AED, #6D28D9);
+  background: var(--accent-strong);
 }
 
 /* Firefox scrollbar */
 * {
   scrollbar-width: auto;
-  scrollbar-color: #A78BFA rgba(245, 240, 255, 0.5);
+  scrollbar-color: var(--accent) color-mix(in srgb, var(--surface-sunken) 60%, transparent);
 }
 
 /* Hide custom scrollbar on tablets and mobile — use native */
@@ -435,47 +446,27 @@ body {
   100% { background-color: transparent; }
 }
 
-@keyframes borderRotate {
-  0% { --border-angle: 0deg; }
-  100% { --border-angle: 360deg; }
-}
-
-/* Animated gradient border for search bar */
+/* Calm soft-violet→gold gradient border for the search bar (no rotation —
+   motion should orient, not decorate). Deepens gently on focus. */
 .hero-search-wrapper {
   position: relative;
-  border-radius: 20px;
-  padding: 2px;
-  background: conic-gradient(
-    from var(--border-angle, 0deg),
-    rgba(139,92,246,0.7),
-    rgba(244,114,182,0.55),
-    rgba(251,191,36,0.5),
-    rgba(139,92,246,0.7),
-    rgba(139,92,246,0.7)
-  );
-  animation: borderRotate 5s linear infinite;
-}
-
-@property --border-angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
+  border-radius: var(--radius-lg);
+  padding: 1.5px;
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 42%, transparent),
+    color-mix(in srgb, var(--p-gold) 28%, transparent));
+  transition: background var(--dur-3) var(--ease-standard);
 }
 
 .hero-search-wrapper .hero-search-input {
   border: none !important;
-  border-radius: 18px !important;
+  border-radius: calc(var(--radius-lg) - 2px) !important;
 }
 
 .hero-search-wrapper:focus-within {
-  background: conic-gradient(
-    from var(--border-angle, 0deg),
-    rgba(139,92,246,0.9),
-    rgba(244,114,182,0.75),
-    rgba(251,191,36,0.7),
-    rgba(139,92,246,0.9),
-    rgba(139,92,246,0.9)
-  );
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--accent) 68%, transparent),
+    color-mix(in srgb, var(--p-gold) 42%, transparent));
 }
 
 /* ============================================================
@@ -484,16 +475,16 @@ body {
 
 .aurora-card,
 .glass-card {
-  background: var(--glass-bg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.1);
-  border: 1px solid var(--glass-border);
-  border-radius: 24px;
-  padding: 32px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-hair);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
   position: relative;
   overflow: hidden;
-  box-shadow: var(--glass-shadow);
-  transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: var(--shadow-soft);
+  transition: box-shadow var(--dur-4) var(--ease-standard),
+    transform var(--dur-4) var(--ease-standard),
+    border-color var(--dur-4) var(--ease-standard);
 }
 
 .aurora-card::before,
@@ -512,9 +503,9 @@ body {
 .aurora-card:hover,
 .glass-card:hover {
   background: var(--bg-card-hover);
-  border-color: var(--border-glow);
-  box-shadow: 0 18px 48px rgba(111, 74, 177, 0.16);
-  transform: translateY(-3px);
+  border-color: var(--border-firm);
+  box-shadow: 0 2px 4px rgba(43, 37, 25, 0.05), 0 16px 40px rgba(43, 37, 25, 0.09);
+  transform: translateY(-2px);
 }
 
 .aurora-card:hover::before,
@@ -556,7 +547,7 @@ body {
 
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 30px rgba(139, 92, 246, 0.25);
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .btn-primary:hover::before {
@@ -572,25 +563,26 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--surface-raised);
   color: var(--text-primary);
-  border: 1px solid var(--border-glow);
-  border-radius: 100px;
+  border: 1px solid var(--border-firm);
+  border-radius: var(--radius-full);
   padding: 12px 28px;
   font-family: var(--font-body), 'DM Sans', sans-serif;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: border-color var(--dur-4) var(--ease-standard),
+    background var(--dur-4) var(--ease-standard),
+    transform var(--dur-4) var(--ease-standard),
+    box-shadow var(--dur-4) var(--ease-standard);
 }
 
 .btn-ghost:hover {
-  border-color: var(--garden-violet);
-  background: rgba(139, 92, 246, 0.08);
+  border-color: var(--accent);
+  background: var(--accent-tint);
   transform: translateY(-2px);
-  box-shadow: 0 4px 20px rgba(139, 92, 246, 0.1);
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 /* ============================================================
@@ -612,7 +604,7 @@ body {
    ============================================================ */
 
 .gradient-text {
-  background: linear-gradient(135deg, var(--garden-violet) 0%, #6366F1 40%, var(--garden-deep-violet) 70%, #818CF8 100%);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -621,7 +613,7 @@ body {
 }
 
 .tagline-gradient {
-  background: linear-gradient(90deg, #D4760A, #993556, #7C3AED);
+  background: linear-gradient(90deg, var(--p-gold), var(--accent));
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -795,9 +787,9 @@ body {
   font-family: var(--font-body), 'DM Sans', sans-serif;
   font-size: 12px;
   font-weight: 600;
-  color: #6366F1;
+  color: var(--accent-strong);
   font-style: normal;
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--accent-tint);
   padding: 2px 8px;
   border-radius: 6px;
 }
@@ -813,7 +805,7 @@ body {
 .narrative-content .cite-ref .verse-ref {
   font-size: 12px;
   font-weight: 600;
-  color: #8B5CF6;
+  color: var(--accent-strong);
   font-style: normal;
   letter-spacing: 0.01em;
 }
@@ -821,21 +813,21 @@ body {
 .narrative-content .cite-ref .verse-label {
   font-size: 12px;
   font-weight: 600;
-  color: #6366F1;
+  color: var(--accent-strong);
   font-style: normal;
-  background: rgba(99, 102, 241, 0.08);
+  background: var(--accent-tint);
   padding: 2px 8px;
   border-radius: 6px;
 }
 
 .narrative-content .cite-ref .verse-link {
   text-decoration: none;
-  color: #8B5CF6;
-  transition: color 0.2s ease;
+  color: var(--accent-strong);
+  transition: color var(--dur-2) var(--ease-standard);
 }
 
 .narrative-content .cite-ref .verse-link:hover {
-  color: #7C3AED;
+  color: var(--accent);
   text-decoration: underline;
 }
 

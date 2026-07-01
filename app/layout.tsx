@@ -107,14 +107,10 @@ export default function RootLayout({
               position: "absolute",
               inset: "-10%",
               background: `
-                radial-gradient(ellipse 1200px 400px at 15% 10%, rgba(196,181,253,0.18), transparent),
-                radial-gradient(ellipse 1000px 350px at 75% 8%, rgba(253,164,175,0.12), transparent),
-                radial-gradient(ellipse 900px 500px at 50% 45%, rgba(196,181,253,0.10), transparent),
-                radial-gradient(ellipse 800px 300px at 80% 60%, rgba(251,207,232,0.10), transparent),
-                radial-gradient(ellipse 1100px 400px at 20% 75%, rgba(187,247,208,0.06), transparent),
-                radial-gradient(ellipse 700px 350px at 60% 85%, rgba(253,230,138,0.06), transparent)
+                radial-gradient(ellipse 1100px 460px at 22% 8%, color-mix(in srgb, var(--p-lavender) 12%, transparent), transparent),
+                radial-gradient(ellipse 900px 420px at 80% 88%, color-mix(in srgb, var(--p-gold) 8%, transparent), transparent)
               `,
-              animation: "gardenDrift 30s ease-in-out infinite",
+              animation: "gardenDrift 40s ease-in-out infinite",
             }}
           />
           <div
@@ -122,7 +118,7 @@ export default function RootLayout({
               position: "absolute",
               inset: 0,
               background:
-                "radial-gradient(ellipse at 50% 30%, transparent 60%, rgba(245,240,255,0.4) 100%)",
+                "radial-gradient(ellipse at 50% 30%, transparent 62%, color-mix(in srgb, var(--surface) 55%, transparent) 100%)",
             }}
           />
         </div>
