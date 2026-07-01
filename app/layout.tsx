@@ -5,7 +5,35 @@
  * Wraps every page with consistent styling and SEO configuration.
  */
 import type { Metadata } from "next";
+import { Cormorant_Garamond, DM_Sans, Noto_Serif_Devanagari } from "next/font/google";
 import "./globals.css";
+
+/*
+ * Fonts are loaded via next/font (self-hosted, no render-blocking @import, no CLS).
+ * Each exposes a CSS variable consumed by the .font-* classes in globals.css.
+ * latin-ext covers IAST diacritics (ā, ṛ, ṣ, ṁ, ñ); devanagari covers Sanskrit.
+ */
+const fontDisplay = Cormorant_Garamond({
+  subsets: ["latin", "latin-ext"],
+  weight: ["400", "500", "600", "700"],
+  style: ["normal", "italic"],
+  variable: "--font-display",
+  display: "swap",
+});
+
+const fontBody = DM_Sans({
+  subsets: ["latin", "latin-ext"],
+  weight: ["300", "400", "500", "600"],
+  variable: "--font-body",
+  display: "swap",
+});
+
+const fontDeva = Noto_Serif_Devanagari({
+  subsets: ["devanagari", "latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-deva",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
@@ -59,8 +87,17 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      className={`${fontDisplay.variable} ${fontBody.variable} ${fontDeva.variable}`}
+    >
       <body>
+        {/* Apply a saved warm-evening theme before paint (no flash). Defaults to light. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`,
+          }}
+        />
         {/* Garden Wash Background */}
         <div
           style={{
@@ -76,14 +113,10 @@ export default function RootLayout({
               position: "absolute",
               inset: "-10%",
               background: `
-                radial-gradient(ellipse 1200px 400px at 15% 10%, rgba(196,181,253,0.18), transparent),
-                radial-gradient(ellipse 1000px 350px at 75% 8%, rgba(253,164,175,0.12), transparent),
-                radial-gradient(ellipse 900px 500px at 50% 45%, rgba(196,181,253,0.10), transparent),
-                radial-gradient(ellipse 800px 300px at 80% 60%, rgba(251,207,232,0.10), transparent),
-                radial-gradient(ellipse 1100px 400px at 20% 75%, rgba(187,247,208,0.06), transparent),
-                radial-gradient(ellipse 700px 350px at 60% 85%, rgba(253,230,138,0.06), transparent)
+                radial-gradient(ellipse 1100px 460px at 22% 8%, color-mix(in srgb, var(--p-lavender) 12%, transparent), transparent),
+                radial-gradient(ellipse 900px 420px at 80% 88%, color-mix(in srgb, var(--p-gold) 8%, transparent), transparent)
               `,
-              animation: "gardenDrift 30s ease-in-out infinite",
+              animation: "gardenDrift 40s ease-in-out infinite",
             }}
           />
           <div
@@ -91,7 +124,7 @@ export default function RootLayout({
               position: "absolute",
               inset: 0,
               background:
-                "radial-gradient(ellipse at 50% 30%, transparent 60%, rgba(245,240,255,0.4) 100%)",
+                "radial-gradient(ellipse at 50% 30%, transparent 62%, color-mix(in srgb, var(--surface) 55%, transparent) 100%)",
             }}
           />
         </div>

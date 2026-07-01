@@ -87,7 +87,7 @@ const sources = [
     suffix: "",
     label: "Books",
     description: "Bhagavad Gita, Srimad Bhagavatam, Caitanya Caritamrita, Nectar of Devotion, Krishna Book, and 30+ more titles.",
-    color: "#8B5CF6",
+    color: "var(--accent)",
   },
   {
     icon: (
@@ -102,7 +102,7 @@ const sources = [
     suffix: "+",
     label: "Lectures",
     description: "Transcribed lectures, conversations, morning walks, and room conversations spanning decades of teaching.",
-    color: "#7C3AED",
+    color: "var(--accent)",
   },
   {
     icon: (
@@ -116,7 +116,7 @@ const sources = [
     suffix: "+",
     label: "Letters",
     description: "Personal correspondence and instructions to disciples, friends, and world leaders.",
-    color: "#6366F1",
+    color: "var(--accent)",
   },
 ];
 
@@ -156,12 +156,12 @@ export default function SourcesSection() {
             fontWeight: 600,
             lineHeight: 1.15,
             letterSpacing: "-0.02em",
-            color: "#1E1B4B",
+            color: "var(--ink)",
           }}
         >
           <span
             style={{
-              background: "linear-gradient(135deg, #E8891C, #F5A623, #D4760A)",
+              background: "linear-gradient(135deg, var(--p-gold), var(--p-gold))",
               backgroundClip: "text",
               WebkitBackgroundClip: "text",
               WebkitTextFillColor: "transparent",
@@ -184,7 +184,7 @@ export default function SourcesSection() {
                 width: 44,
                 height: 44,
                 borderRadius: 12,
-                background: "rgba(139,92,246,0.08)",
+                background: "color-mix(in srgb, var(--accent) 8%, transparent)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -200,10 +200,10 @@ export default function SourcesSection() {
               color={source.color}
               isVisible={isVisible}
             />
-            <h3 className="font-body" style={{ fontSize: 18, fontWeight: 600, color: "#1E1B4B", marginBottom: 10 }}>
+            <h3 className="font-body" style={{ fontSize: 18, fontWeight: 600, color: "var(--ink)", marginBottom: 10 }}>
               {source.label}
             </h3>
-            <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "#374151" }}>
+            <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "var(--ink-muted)" }}>
               {source.description}
             </p>
           </div>

@@ -1071,24 +1071,14 @@ ${ctx}`;
 }
 
 // =====================================================
-// NON-STREAMING SYNTHESIS (fallback)
+// NON-STREAMING SYNTHESIS — QUARANTINED
+// The live GET path builds the essay from buildTemplateArticle (deterministic,
+// verbatim-only). AI synthesis is disabled here so no code path — present or
+// future — can produce an AI-authored narrative (Hard Rule 1). Left inert (not
+// deleted) so the intent is explicit; it now returns the deterministic template.
 // =====================================================
-async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[], verseUrlMap: Map<string, string>, transcripts: TranscriptHit[] = [], letters: LetterHit[] = []) {
-  const prompt = buildSynthesisPrompt(question, verses, prose, transcripts, letters);
-  if (!prompt) return "<p>No relevant passages found.</p>";
-
-  try {
-    const text = await callGemini(prompt, GEMINI_MODEL_SYNTHESIS, 6000);
-    console.log("[Synthesis] Gemini returned", text?.length || 0, "chars");
-    if (!text) {
-      console.error("[Synthesis] Gemini returned empty — using fallback");
-      return buildFB(question, verses, prose, transcripts, letters);
-    }
-    return ensureVerseLinks(text, verseUrlMap);
-  } catch (err) {
-    console.error("[Synthesis] Gemini call failed:", err);
-    return buildFB(question, verses, prose, transcripts, letters);
-  }
+async function synthesize(question: string, verses: VerseHit[], prose: ProseHit[], _verseUrlMap: Map<string, string>, transcripts: TranscriptHit[] = [], letters: LetterHit[] = []) {
+  return buildFB(question, verses, prose, transcripts, letters);
 }
 
 /** Group verses by their primary topic tag for thematic sections */
@@ -2015,6 +2005,81 @@ function selectMainFlow(verses: VerseHit[], prose: ProseHit[], transcripts: Tran
   };
 }
 
+/**
+ * Neutral framing text for the woven essay (Hard Rule 1): names the topic, the
+ * sources, and the speaker — never states a teaching in the narrator's voice.
+ * Single source for both the structured `intro`/`conclusion` fields and the
+ * legacy narrative HTML string.
+ */
+function computeFraming(
+  question: string,
+  verses: VerseHit[],
+  prose: ProseHit[],
+  transcripts: TranscriptHit[] = [],
+  letters: LetterHit[] = [],
+): { intro: string; conclusion: string } {
+  const questionTopic = question
+    .replace(/\?$/, "")
+    .replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "")
+    .replace(/^(srila\s+)?(prabhupada|prabhupāda)\s+(say|said|says|teach|teaches|explain|explains)\s+(about\s+)?/i, "")
+    .trim()
+    .toLowerCase() || question.replace(/\?$/, "").toLowerCase();
+
+  const bookNames = [...new Set([
+    ...verses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")),
+    ...prose.map(x => getBookName(x.book_slug || "")),
+  ].filter(Boolean))];
+  const bookListStr = bookNames.length === 1
+    ? bookNames[0]
+    : bookNames.length === 2
+      ? `${bookNames[0]} and ${bookNames[1]}`
+      : `${bookNames.slice(0, 2).join(", ")}, and ${bookNames.length > 3 ? "other texts" : bookNames[2]}`;
+
+  const sourceKinds: string[] = [];
+  if (bookNames.length > 0) sourceKinds.push(bookListStr);
+  if (transcripts.length > 0) sourceKinds.push("his recorded lectures");
+  if (letters.length > 0) sourceKinds.push("his letters");
+  const sourcesStr = sourceKinds.length === 0
+    ? "his books, lectures, and letters"
+    : sourceKinds.length === 1
+      ? sourceKinds[0]
+      : sourceKinds.length === 2
+        ? `${sourceKinds[0]} and ${sourceKinds[1]}`
+        : `${sourceKinds.slice(0, -1).join(", ")}, and ${sourceKinds[sourceKinds.length - 1]}`;
+
+  const firstVerse = verses[0];
+  const firstSpeaker = firstVerse ? getSpeaker(cleanRef(firstVerse), "translation") : "";
+
+  const intro = (firstSpeaker && firstSpeaker !== "the scripture")
+    ? `Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}, including verses spoken by ${firstSpeaker}. Here is what he teaches on this subject, in his own words and purports.`
+    : `Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.`;
+  const conclusion = `These passages gather Śrīla Prabhupāda's words on ${questionTopic} from ${sourcesStr}. The complete purports, with full context, are available through the Vedabase.io links on each passage.`;
+  return { intro, conclusion };
+}
+
+/** Ordered, structured descriptor of one woven-essay passage for the client. */
+function buildMainFlowNode(item: MainItem): { type: "verse" | "prose" | "lecture" | "letter"; id: string; ref: string; url: string } {
+  if (item.type === "verse") {
+    const v = item.data as VerseHit;
+    return { type: "verse", id: v.id, ref: cleanRef(v), url: v.vedabase_url || "" };
+  }
+  if (item.type === "prose") {
+    const p = item.data as ProseHit;
+    const noVedabase = NO_VEDABASE_BOOKS.has(p.book_slug?.toLowerCase());
+    return { type: "prose", id: p.id, ref: getBookName(p.book_slug), url: noVedabase ? "" : (p.vedabase_url || "") };
+  }
+  if (item.type === "lecture") {
+    const t = item.data as TranscriptHit;
+    const year = t.date ? new Date(t.date).getFullYear().toString() : "";
+    const ref = ["Lecture", year, t.location].filter(Boolean).join(" · ");
+    return { type: "lecture", id: t.id, ref, url: t.vedabase_url || "" };
+  }
+  const l = item.data as LetterHit;
+  const year = l.date ? new Date(l.date).getFullYear().toString() : "";
+  const ref = ["Letter", l.recipient ? `to ${l.recipient}` : "", year].filter(Boolean).join(" · ");
+  return { type: "letter", id: l.id, ref, url: l.vedabase_url || "" };
+}
+
 /** Builds a verbatim key-answer line + anchor id for one main-flow passage. */
 function buildKeyAnswer(item: MainItem, queryTerms: string[]): { id: string; ref: string; line: string } {
   if (item.type === "verse") {
@@ -2226,6 +2291,13 @@ export async function GET(request: NextRequest) {
 
     // Article verse IDs = the woven verses (drives Dig Deeper "In article" badges).
     const articleVerseIds = mainFlow.verses.map(v => v.id);
+
+    // Ordered structured descriptors for the woven essay (the client renders these
+    // as passage cards, in most-important-first order, reusing the shared fold
+    // helpers for the verbatim bodies). Neutral framing sent separately.
+    const mainFlowItems = mainFlow.items.map(buildMainFlowNode);
+    const { intro, conclusion } = computeFraming(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters);
+
     const fullMetadata = {
       ...metadata,
       suggestion,
@@ -2241,6 +2313,9 @@ export async function GET(request: NextRequest) {
       articleVerseIds,
       queryTerms,
       keyAnswers,
+      mainFlowItems,
+      intro,
+      conclusion,
     };
 
     // References mode: skip Gemini synthesis, return metadata with empty narrative

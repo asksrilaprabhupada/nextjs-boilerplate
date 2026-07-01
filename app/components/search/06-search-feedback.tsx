@@ -61,7 +61,7 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
       gap: 12, padding: "20px 0 4px", marginTop: 8,
-      borderTop: "1px solid rgba(196,181,253,0.15)",
+      borderTop: "1px solid var(--border-hair)",
     }}>
       <AnimatePresence mode="wait">
         {submitted ? (
@@ -75,7 +75,7 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
           >
             <span style={{ fontSize: 16 }}>🙏</span>
             <span className="font-body" style={{
-              fontSize: 13, fontWeight: 500, color: "#7C3AED",
+              fontSize: 13, fontWeight: 500, color: "var(--accent-strong)",
             }}>
               Thank you for your feedback
             </span>
@@ -93,7 +93,7 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
             }}
           >
             <p className="font-body" style={{
-              fontSize: 13, color: "#6B7280", textAlign: "center",
+              fontSize: 13, color: "var(--ink-muted)", textAlign: "center",
             }}>
               What could be improved?
             </p>
@@ -105,13 +105,13 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
               rows={3}
               style={{
                 width: "100%", padding: "10px 14px", borderRadius: 12,
-                border: "1px solid rgba(196,181,253,0.3)",
-                background: "rgba(255,255,255,0.6)", fontSize: 13,
-                color: "#1E1B4B", outline: "none", resize: "vertical",
+                border: "1px solid var(--border-hair)",
+                background: "var(--surface-raised)", fontSize: 13,
+                color: "var(--ink)", outline: "none", resize: "vertical",
                 minHeight: 60, transition: "border-color 0.3s",
               }}
-              onFocus={e => { e.currentTarget.style.borderColor = "#8B5CF6"; }}
-              onBlur={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)"; }}
+              onFocus={e => { e.currentTarget.style.borderColor = "var(--accent)"; }}
+              onBlur={e => { e.currentTarget.style.borderColor = "var(--border-hair)"; }}
             />
             <div style={{ display: "flex", gap: 8 }}>
               <button
@@ -120,8 +120,8 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
                 className="font-body"
                 style={{
                   padding: "7px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                  background: "linear-gradient(135deg, #8B5CF6, #7C3AED)",
-                  color: "#fff", border: "none", cursor: "pointer",
+                  background: "linear-gradient(135deg, var(--accent), var(--accent-strong))",
+                  color: "var(--on-accent)", border: "none", cursor: "pointer",
                   transition: "opacity 0.2s",
                   opacity: sending ? 0.6 : 1,
                 }}
@@ -134,8 +134,8 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
                 className="font-body"
                 style={{
                   padding: "7px 18px", borderRadius: 8, fontSize: 12, fontWeight: 500,
-                  background: "transparent", color: "#6B7280",
-                  border: "1px solid rgba(196,181,253,0.3)", cursor: "pointer",
+                  background: "transparent", color: "var(--ink-muted)",
+                  border: "1px solid var(--border-hair)", cursor: "pointer",
                   transition: "all 0.2s",
                 }}
               >
@@ -153,7 +153,7 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
             style={{ display: "flex", alignItems: "center", gap: 12 }}
           >
             <span className="font-body" style={{
-              fontSize: 12, color: "#6B7280", fontWeight: 500,
+              fontSize: 12, color: "var(--ink-muted)", fontWeight: 500,
             }}>
               Was this helpful?
             </span>
@@ -165,11 +165,11 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
               aria-label="Thumbs up"
               style={{
                 width: 36, height: 36, borderRadius: 10,
-                border: "1px solid rgba(196,181,253,0.3)",
-                background: vote === 1 ? "rgba(16,185,129,0.1)" : "rgba(255,255,255,0.6)",
+                border: "1px solid var(--border-hair)",
+                background: vote === 1 ? "rgba(16,185,129,0.1)" : "var(--surface-raised)",
                 cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
-                color: vote === 1 ? "#059669" : "#6B7280",
+                transition: "all 0.3s var(--ease-standard)",
+                color: vote === 1 ? "#059669" : "var(--ink-muted)",
               }}
               onMouseEnter={e => {
                 if (!vote) {
@@ -181,9 +181,9 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
               }}
               onMouseLeave={e => {
                 if (!vote) {
-                  e.currentTarget.style.background = "rgba(255,255,255,0.6)";
-                  e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)";
-                  e.currentTarget.style.color = "#6B7280";
+                  e.currentTarget.style.background = "var(--surface-raised)";
+                  e.currentTarget.style.borderColor = "var(--border-hair)";
+                  e.currentTarget.style.color = "var(--ink-muted)";
                   e.currentTarget.style.transform = "translateY(0)";
                 }
               }}
@@ -201,11 +201,11 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
               aria-label="Thumbs down"
               style={{
                 width: 36, height: 36, borderRadius: 10,
-                border: "1px solid rgba(196,181,253,0.3)",
-                background: vote === -1 ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.6)",
+                border: "1px solid var(--border-hair)",
+                background: vote === -1 ? "rgba(239,68,68,0.08)" : "var(--surface-raised)",
                 cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
-                color: vote === -1 ? "#DC2626" : "#6B7280",
+                transition: "all 0.3s var(--ease-standard)",
+                color: vote === -1 ? "#DC2626" : "var(--ink-muted)",
               }}
               onMouseEnter={e => {
                 if (!vote) {
@@ -217,9 +217,9 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
               }}
               onMouseLeave={e => {
                 if (!vote) {
-                  e.currentTarget.style.background = "rgba(255,255,255,0.6)";
-                  e.currentTarget.style.borderColor = "rgba(196,181,253,0.3)";
-                  e.currentTarget.style.color = "#6B7280";
+                  e.currentTarget.style.background = "var(--surface-raised)";
+                  e.currentTarget.style.borderColor = "var(--border-hair)";
+                  e.currentTarget.style.color = "var(--ink-muted)";
                   e.currentTarget.style.transform = "translateY(0)";
                 }
               }}

@@ -47,12 +47,12 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── feedback/route.ts      (thumbs up/down votes)
 │   │   │   └── log/route.ts           (search query logging)
 │   │   ├── feedback/route.ts          (contact/feature request forms)
-│   │   ├── generate-article/route.ts  (AI narrative article generation; exports getSpeaker helper)
+│   │   ├── generate-article/route.ts  (exports getSpeaker helper; AI generation quarantined/disabled)
 │   │   ├── lockscreen-images/
 │   │   │   ├── route.ts               (image list endpoint)
 │   │   │   └── heic/route.ts          (HEIC-to-JPEG conversion via sharp)
-│   │   ├── search/route.ts            (hybrid search + RRF + Cohere rerank + AI narrative)
-│   │   └── verse/route.ts             (single verse lookup)
+│   │   ├── search/route.ts            (hybrid search + RRF + Cohere rerank + deterministic verbatim-only woven-essay template)
+│   │   └── verse/route.ts             (single verse lookup by id, or by textual cross-reference)
 │   ├── components/
 │   │   ├── feedback/                  # Floating widgets
 │   │   │   ├── 01-feedback-button.tsx (floating widget)
@@ -76,16 +76,17 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── 04-contact-overlay.tsx
 │   │   │   └── 05-feature-request-overlay.tsx
 │   │   ├── results/                   # Search results display
-│   │   │   ├── 01-narrative-response.tsx (2-column layout: content + summary sidebar)
-│   │   │   ├── 02-want-more-modal.tsx (expanded book results)
-│   │   │   └── 03-dig-deeper-modal.tsx (full results modal)
+│   │   │   ├── 01-narrative-response.tsx (woven essay: neutral framing + hero passages + per-passage cards, citation chips, copy-with-reference, expand-in-place)
+│   │   │   └── 02-dig-deeper-modal.tsx (overflow sources — bottom sheet / side drawer)
 │   │   └── search/                    # Search input and progress
 │   │       ├── 01-hero-search.tsx     (main search bar)
 │   │       ├── 02-typewriter-placeholder.tsx
 │   │       ├── 03-voice-input.tsx     (microphone button)
 │   │       ├── 04-examples-popover.tsx
-│   │       ├── 05-search-progress.tsx (multi-step loader)
+│   │       ├── 05-search-progress.tsx (meditative loader: aura + skeleton cards)
 │   │       └── 06-search-feedback.tsx (thumbs voting)
+│   │   └── verse/                     # Verse detail
+│   │       └── 01-verse-view.tsx      (interactive reader: toggleable layers, swipe, cross-ref preview)
 │   ├── hooks/
 │   │   └── 01-use-search-behavior-tracker.ts
 │   ├── lib/
@@ -99,11 +100,12 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 08-cohere-rerank.ts        (Cohere Rerank v4.0 Pro relevance reranking)
 │   │   ├── 09-purport-format.ts       (shared purport paragraph/footer helpers)
 │   │   ├── 10-passage-fold.ts         (shared fold preview + matched-line highlight + verbatim key line)
+│   │   ├── 11-motion.ts               (shared Framer Motion tokens: durations, easings, settling spring)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/
 │   │   └── 01-speech.d.ts            (Web Speech API types)
-│   ├── verse/[id]/page.tsx            (verse detail page)
+│   ├── verse/[id]/page.tsx            (verse detail page — server-rendered; delegates interaction to components/verse/01-verse-view)
 │   ├── features/page.tsx
 │   ├── how-it-works/page.tsx
 │   ├── globals.css                    (complete light theme)

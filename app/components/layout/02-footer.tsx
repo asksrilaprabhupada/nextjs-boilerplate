@@ -10,7 +10,7 @@ export default function FooterSection() {
   return (
     <footer
       style={{
-        borderTop: "1px solid rgba(196, 181, 253, 0.2)",
+        borderTop: "1px solid var(--border-hair)",
         padding: "20px clamp(20px, 5vw, 80px)",
         maxWidth: 1200,
         margin: "0 auto",
@@ -25,7 +25,7 @@ export default function FooterSection() {
         className="font-body"
         style={{
           fontSize: 13,
-          color: "#6B7280",
+          color: "var(--ink-muted)",
         }}
       >
         &copy; {new Date().getFullYear()} All rights reserved
@@ -38,15 +38,15 @@ export default function FooterSection() {
         className="font-body"
         style={{
           fontSize: 13,
-          color: "#6B7280",
+          color: "var(--ink-muted)",
           textDecoration: "none",
           transition: "color 0.3s ease",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.color = "#7C3AED";
+          e.currentTarget.style.color = "var(--accent)";
         }}
         onMouseLeave={(e) => {
-          e.currentTarget.style.color = "#6B7280";
+          e.currentTarget.style.color = "var(--ink-muted)";
         }}
       >
         GitHub
