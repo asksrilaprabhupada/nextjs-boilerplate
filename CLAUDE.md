@@ -47,7 +47,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── feedback/route.ts      (thumbs up/down votes)
 │   │   │   └── log/route.ts           (search query logging)
 │   │   ├── feedback/route.ts          (contact/feature request forms)
-│   │   ├── generate-article/route.ts  (exports getSpeaker helper; AI generation quarantined/disabled)
+│   │   ├── generate-article/route.ts  (AI generation quarantined/disabled)
 │   │   ├── lockscreen-images/
 │   │   │   ├── route.ts               (image list endpoint)
 │   │   │   └── heic/route.ts          (HEIC-to-JPEG conversion via sharp)
@@ -103,6 +103,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 11-motion.ts               (shared Framer Motion tokens: durations, easings, settling spring)
 │   │   ├── 12-provenance.ts           (authorship truth table: HIS / NOT-HIS / MIXED-VERIFY, canonical book registry, SB completion rule, provenance notes)
 │   │   ├── 13-passage-label.ts        (quiet TYPE · SOURCE · SPEAKER attribution line above every passage)
+│   │   ├── 14-verse-speaker.ts        (story speaker from uvāca markers; BG dialogue defaults; per-chapter carry-forward; never guesses)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/

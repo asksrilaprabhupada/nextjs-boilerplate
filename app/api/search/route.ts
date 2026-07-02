@@ -30,7 +30,7 @@ import {
   keyLineFor,
   type PassageType,
 } from "@/app/lib/10-passage-fold";
-import { getSpeaker } from "@/app/api/generate-article/route";
+import { chapterSpeakerWalk, type SpeakerState } from "@/app/lib/14-verse-speaker";
 import {
   type Authorship,
   getBookName,
@@ -163,7 +163,7 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 // TYPES
 // =====================================================
-interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; authorship?: Authorship; provenanceNote?: string; }
+interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; authorship?: Authorship; provenanceNote?: string; speaker?: string; speakerTo?: string; }
 interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
 interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
 interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
@@ -1370,30 +1370,30 @@ function buildTemplateArticle(
         ? `${sourceKinds[0]} and ${sourceKinds[1]}`
         : `${sourceKinds.slice(0, -1).join(", ")}, and ${sourceKinds[sourceKinds.length - 1]}`;
 
-  // Primary speaker among the verses (attribution only — naming who speaks).
-  const firstVerse = verses[0];
-  const firstRef = firstVerse ? cleanRef(firstVerse) : "";
-  const firstSpeaker = firstVerse ? getSpeaker(firstRef, "translation") : "";
-
-  if (firstSpeaker && firstSpeaker !== "the scripture") {
-    parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}, including verses spoken by ${firstSpeaker}. Here is what he teaches on this subject, in his own words and purports.</p>`);
-  } else {
-    parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.</p>`);
-  }
+  // FRAMING INVARIANT: framing may name ONLY Śrīla Prabhupāda, book titles
+  // from the registry, and source types — never a per-verse speaker.
+  parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.</p>`);
 
   // ── GROUP INTO THEMED SECTIONS with <h3> headings ──
   const themes = groupIntoThemes(allItems);
 
-  // Transition templates
-  const transitions = [
+  // Transition templates. Speaker forms are used ONLY when the verse carries a
+  // confident uvāca-derived speaker (14-verse-speaker); otherwise the neutral
+  // ref-only forms — a speaker is never guessed.
+  const speakerTransitions = [
     (s: string, ref: string) => `${s} states (${ref}):`,
     (s: string, ref: string) => `In ${ref}, ${s} declares:`,
     (s: string, ref: string) => `${s} instructs (${ref}):`,
     (s: string, ref: string) => `Drawing from ${ref}, ${s} teaches:`,
     (s: string, ref: string) => `${s} further illuminates this (${ref}):`,
-    (s: string, ref: string) => `The instruction continues in ${ref}:`,
     (s: string, ref: string) => `${s} emphasizes (${ref}):`,
-    (s: string, ref: string) => `This truth is addressed in ${ref}, where ${s} proclaims:`,
+  ];
+  const neutralTransitions = [
+    (ref: string) => `As stated in ${ref}:`,
+    (ref: string) => `In ${ref}:`,
+    (ref: string) => `The instruction continues in ${ref}:`,
+    (ref: string) => `Another key teaching appears in ${ref}:`,
+    (ref: string) => `This truth is addressed in ${ref}:`,
   ];
 
   const purportTransitions = [
@@ -1417,14 +1417,16 @@ function buildTemplateArticle(
         const v = item.data as VerseHit;
         const ref = cleanRef(v);
         const url = v.vedabase_url || "";
-        const speaker = getSpeaker(ref, "translation");
+        const speaker = v.speaker ? (v.speakerTo ? `${v.speaker} to ${v.speakerTo}` : v.speaker) : "";
 
         const cite = url
           ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a></div>`
           : `<div class="cite-ref"><span class="verse-label">[${ref}]</span></div>`;
 
-        // Transition
-        parts.push(`<p>${transitions[transIdx % transitions.length](speaker, ref)}</p>`);
+        // Transition — speaker form only with a confident uvāca speaker
+        parts.push(`<p>${speaker
+          ? speakerTransitions[transIdx % speakerTransitions.length](speaker, ref)
+          : neutralTransitions[transIdx % neutralTransitions.length](ref)}</p>`);
         transIdx++;
 
         // Translation — folds only if unusually long; the verse anchor lives here.
@@ -1592,18 +1594,16 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
         : `${fbSourceKinds.slice(0, -1).join(", ")}, and ${fbSourceKinds[fbSourceKinds.length - 1]}`;
   parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${fbSourcesStr}. Here is what he teaches on this subject, in his own words and purports.</p>`);
 
-  // Varied transition templates (expanded to 10)
+  // Varied transition templates — neutral ref-only forms (a speaker is never
+  // guessed; the coarse per-canto speaker map is gone).
   const transitions = [
-    (s: string, ref: string) => `${s} states (${ref}):`,
-    (s: string, ref: string) => `In ${ref}, ${s} declares:`,
-    (s: string, ref: string) => `This is further addressed in ${ref}, where ${s} says:`,
-    (s: string, ref: string) => `${s} instructs (${ref}):`,
-    (s: string, ref: string) => `Another key teaching appears in ${ref}:`,
-    (s: string, ref: string) => `The instruction continues in ${ref}, where ${s} reveals:`,
-    (s: string, ref: string) => `${s} further illuminates this (${ref}):`,
-    (s: string, ref: string) => `Drawing from ${ref}, ${s} teaches:`,
-    (s: string, ref: string) => `This truth is echoed in ${ref}, where ${s} proclaims:`,
-    (s: string, ref: string) => `${s} emphasizes (${ref}):`,
+    (ref: string) => `As stated in ${ref}:`,
+    (ref: string) => `In ${ref}:`,
+    (ref: string) => `This is further addressed in ${ref}:`,
+    (ref: string) => `Another key teaching appears in ${ref}:`,
+    (ref: string) => `The instruction continues in ${ref}:`,
+    (ref: string) => `Drawing from ${ref}:`,
+    (ref: string) => `This truth is echoed in ${ref}:`,
   ];
 
   // Varied purport transition phrases
@@ -1623,10 +1623,9 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     const cite = url
       ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${ref}]</span></a></div>`
       : `<div class="cite-ref"><span class="verse-label">[${ref}]</span></div>`;
-    const speaker = getSpeaker(ref, "translation");
 
     // Transition sentence (NO citation here — citation goes inside quote blocks)
-    parts.push(`<p>${transitions[idx % transitions.length](speaker, ref)}</p>`);
+    parts.push(`<p>${transitions[idx % transitions.length](ref)}</p>`);
 
     // Translation with citation at end
     if (x.translation) {
@@ -2018,12 +2017,10 @@ function computeFraming(
         ? `${sourceKinds[0]} and ${sourceKinds[1]}`
         : `${sourceKinds.slice(0, -1).join(", ")}, and ${sourceKinds[sourceKinds.length - 1]}`;
 
-  const firstVerse = verses[0];
-  const firstSpeaker = firstVerse ? getSpeaker(cleanRef(firstVerse), "translation") : "";
-
-  const intro = (firstSpeaker && firstSpeaker !== "the scripture")
-    ? `Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}, including verses spoken by ${firstSpeaker}. Here is what he teaches on this subject, in his own words and purports.`
-    : `Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.`;
+  // FRAMING INVARIANT: intro/conclusion may name ONLY Śrīla Prabhupāda, book
+  // titles from the registry, and source types. Never a per-verse speaker,
+  // never a name scraped from transcript text, never invented honorifics.
+  const intro = `Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.`;
   const conclusion = `These passages gather Śrīla Prabhupāda's words on ${questionTopic} from ${sourcesStr}. The complete purports, with full context, are available through the Vedabase.io links on each passage.`;
   return { intro, conclusion };
 }
@@ -2077,16 +2074,72 @@ function buildKeyAnswer(item: MainItem, queryTerms: string[]): { id: string; ref
 // PROVENANCE ANNOTATION
 // =====================================================
 /**
+ * Story-speaker maps computed per chapter from uvāca markers (14-verse-speaker).
+ * The corpus is fixed, so chapters are memoized for the life of the instance.
+ */
+const chapterSpeakerCache = new Map<string, Map<string, SpeakerState>>();
+
+/**
+ * Batched lookup of confident story speakers for the given BG/SB verse hits:
+ * one query fetches every uncached chapter's verses (id, verse_number,
+ * transliteration), then chapterSpeakerWalk carries the most recent uvāca
+ * speaker forward within each chapter. Verses without a confident speaker are
+ * simply absent from the returned map — never guessed.
+ */
+async function fetchVerseSpeakerMap(verses: VerseHit[]): Promise<Map<string, SpeakerState>> {
+  const result = new Map<string, SpeakerState>();
+  const wanted = verses.filter(v =>
+    v.chapter_id && ["BG", "SB"].includes((v.scripture || "").toUpperCase()),
+  );
+  if (wanted.length === 0) return result;
+
+  const missing = [...new Set(wanted.map(v => v.chapter_id))].filter(id => !chapterSpeakerCache.has(id));
+  if (missing.length > 0) {
+    try {
+      const supabase = getSupabaseAdmin();
+      const { data, error } = await supabase
+        .from("verses")
+        .select("id, chapter_id, scripture, verse_number, transliteration")
+        .in("chapter_id", missing);
+      if (error) throw error;
+      const byChapter = new Map<string, { id: string; scripture: string; verse_number: string; transliteration: string | null }[]>();
+      for (const row of data || []) {
+        const list = byChapter.get(row.chapter_id) || [];
+        list.push(row);
+        byChapter.set(row.chapter_id, list);
+      }
+      for (const [chapterId, rows] of byChapter) {
+        chapterSpeakerCache.set(chapterId, chapterSpeakerWalk(rows, rows[0]?.scripture || ""));
+      }
+      for (const id of missing) {
+        if (!chapterSpeakerCache.has(id)) chapterSpeakerCache.set(id, new Map());
+      }
+    } catch (err) {
+      console.error("[fetchVerseSpeakerMap] Error:", err);
+      return result; // no speakers is always a safe outcome
+    }
+  }
+
+  for (const v of wanted) {
+    const s = chapterSpeakerCache.get(v.chapter_id)?.get(v.id);
+    if (s) result.set(v.id, s);
+  }
+  return result;
+}
+
+/**
  * Stamp every outgoing hit with its authorship (HIS / NOT_HIS / MIXED_VERIFY)
  * and a plain-language provenance note, derived in app code (12-provenance) —
  * never from books.author. Covers narrative AND overflow sets so every
  * surface (essay, references, dig deeper, preview sheets) can label passages.
+ * Confident uvāca story speakers are attached to verses from speakerMap.
  */
 function annotateProvenance(
   verses: VerseHit[],
   prose: ProseHit[],
   transcripts: TranscriptHit[],
   letters: LetterHit[],
+  speakerMap?: Map<string, SpeakerState>,
 ): void {
   for (const v of verses) {
     const slug = (v.book_slug || v.scripture || "").toLowerCase();
@@ -2098,6 +2151,11 @@ function annotateProvenance(
       chapter: v.chapter_number,
     });
     v.provenanceNote = provenanceNoteFor(slug, v.authorship);
+    const s = speakerMap?.get(v.id);
+    if (s) {
+      v.speaker = s.speaker;
+      v.speakerTo = s.speakerTo;
+    }
   }
   for (const p of prose) {
     p.authorship = authorshipFor({ kind: "prose", bookSlug: p.book_slug });
@@ -2268,7 +2326,10 @@ export async function GET(request: NextRequest) {
     // Fetch neighbouring paragraphs for the relevant prose/lecture/letter set and
     // attach them to the hits, so the fold can expand to the full section (matched
     // paragraph + neighbours) on the client — in BOTH the Article and References.
-    const neighbours = await fetchNeighbourMap(narrativeProse, narrativeTranscripts, narrativeLetters);
+    const [neighbours, speakerMap] = await Promise.all([
+      fetchNeighbourMap(narrativeProse, narrativeTranscripts, narrativeLetters),
+      fetchVerseSpeakerMap([...narrativeVerses, ...overflowVerses]),
+    ]);
     const attachNeighbours = <T extends { id: string; before?: string; after?: string }>(items: T[]) => {
       for (const it of items) {
         const ctx = neighbours.get(it.id);
@@ -2286,6 +2347,7 @@ export async function GET(request: NextRequest) {
       [...narrativeProse, ...overflowProse],
       [...narrativeTranscripts, ...overflowTranscripts],
       [...narrativeLetters, ...overflowLetters],
+      speakerMap,
     );
 
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);

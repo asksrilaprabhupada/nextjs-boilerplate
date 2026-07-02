@@ -43,13 +43,15 @@ interface Props {
   scriptureName: string;
   authorship?: Authorship;
   provenanceNote?: string;
+  speaker?: string;
+  speakerTo?: string;
 }
 
 const REF_RE = /\[?\b(BG|SB|CC|NOI|ISO|BS)\s+((?:Ādi|Adi|Madhya|Antya|\d+)[.\s])?(\d+)[.\s](\d+(?:[–-]\d+)?)\]?/g;
 
 type Layer = "deva" | "syn" | "trans" | "purport";
 
-export default function VerseView({ verse, prevId, nextId, scriptureName, authorship, provenanceNote }: Props) {
+export default function VerseView({ verse, prevId, nextId, scriptureName, authorship, provenanceNote, speaker, speakerTo }: Props) {
   const router = useRouter();
   const [layers, setLayers] = useState<Record<Layer, boolean>>({ deva: true, syn: true, trans: true, purport: true });
   const [xref, setXref] = useState<{ loading: boolean; verse: VerseData | null; ref: string } | null>(null);
@@ -169,7 +171,7 @@ export default function VerseView({ verse, prevId, nextId, scriptureName, author
 
           {layers.trans && verse.translation && (
             <section className="verse-section">
-              <SectionLabel text="Translation" />
+              <SectionLabel text={speaker ? `Translation · ${speakerTo ? `${speaker} to ${speakerTo}` : speaker}` : "Translation"} />
               <p className="verse-translation">{withRefs(verse.translation)}</p>
             </section>
           )}
