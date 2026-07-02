@@ -39,6 +39,7 @@ import {
   NO_VEDABASE_BOOKS,
   authorshipFor,
   provenanceNoteFor,
+  PROVENANCE_POLICY,
 } from "@/app/lib/12-provenance";
 
 const geminiKey = process.env.GEMINI_API_KEY || "";
@@ -49,7 +50,7 @@ const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash";
  * Bumped whenever the response shape or content policy changes, so the 24h
  * in-memory cache can never serve a response built by older code.
  */
-const RESPONSE_VERSION = "p1";
+const RESPONSE_VERSION = "p6";
 const cacheKey = (query: string) => `${RESPONSE_VERSION}:${query}`;
 
 /**
@@ -2215,7 +2216,7 @@ export async function GET(request: NextRequest) {
       spellingSupa.rpc('suggest_spelling', { raw_query: query }).then(res => res, () => ({ data: null })),
     ]);
 
-    const { verses, prose, transcripts, letters } = searchResults;
+    const { verses, prose, transcripts, letters, directVerse } = searchResults;
 
     // "Did you mean?" — extract spelling suggestion
     let suggestion: string | null = null;
@@ -2330,11 +2331,50 @@ export async function GET(request: NextRequest) {
       ];
     }
 
+    // ── Provenance policy: only Śrīla Prabhupāda's own words reach heroes, the
+    // woven essay, citations, and framing. NOT-HIS / MIXED-VERIFY passages
+    // (spl/rkd/mbk, bs, nbs/mms, SB ≥ 10.14) are routed to Dig Deeper with
+    // plain-language labels — never silently deleted, fully reversible via
+    // PROVENANCE_POLICY. Exception: a verse the user explicitly looked up by
+    // reference stays in the main flow, labeled.
+    const policyRoutedVerses: VerseHit[] = [];
+    const policyRoutedProse: ProseHit[] = [];
+    if (PROVENANCE_POLICY.restrictedToDigDeeperOnly) {
+      const keepVerses: VerseHit[] = [];
+      for (const v of narrativeVerses) {
+        const a = authorshipFor({
+          kind: "verse",
+          bookSlug: (v.book_slug || v.scripture || "").toLowerCase(),
+          vedabaseUrl: v.vedabase_url,
+          canto: v.canto_or_division,
+          chapter: v.chapter_number,
+        });
+        if (a === "HIS" || v.id === directVerse?.id) keepVerses.push(v);
+        else policyRoutedVerses.push(v);
+      }
+      narrativeVerses = keepVerses;
+
+      const keepProse: ProseHit[] = [];
+      for (const p of narrativeProse) {
+        if (authorshipFor({ kind: "prose", bookSlug: p.book_slug }) === "HIS") keepProse.push(p);
+        else policyRoutedProse.push(p);
+      }
+      narrativeProse = keepProse;
+    }
+
     // Overflow for "dig deeper" modal — apply multi-signal relevance pipeline
     const rankedOverflow = rankAndFilterOverflow(query, rawOverflowVerses, rawOverflowProse);
 
-    const overflowVerses = rankedOverflow.verses;
-    const overflowProse = rankedOverflow.prose;
+    // Policy-routed passages join Dig Deeper AFTER the relevance filter runs —
+    // they bypass it by design so exclusion from the essay never becomes
+    // silent deletion. Merged by score, deduped by id.
+    const mergeByScore = <T extends { id: string; score?: number }>(base: T[], extra: T[]): T[] => {
+      const seen = new Set(base.map(x => x.id));
+      return [...base, ...extra.filter(x => !seen.has(x.id))]
+        .sort((a, b) => (b.score || 0) - (a.score || 0));
+    };
+    const overflowVerses = mergeByScore(rankedOverflow.verses, policyRoutedVerses);
+    const overflowProse = mergeByScore(rankedOverflow.prose, policyRoutedProse);
 
     if (rankedOverflow.totalFiltered > 0) {
       console.log(`[Relevance] Filtered ${rankedOverflow.totalFiltered} low-relevance overflow results`);
