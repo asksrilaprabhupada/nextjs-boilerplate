@@ -25,8 +25,18 @@ import {
   buildSectionText,
   type PassageType,
 } from "@/app/lib/10-passage-fold";
-import { stripPurportBoilerplate } from "@/app/lib/09-purport-format";
+import { stripPurportBoilerplate, escapeHtml } from "@/app/lib/09-purport-format";
 import { EASE, SPRING_SETTLE } from "@/app/lib/11-motion";
+import type { Authorship } from "@/app/lib/12-provenance";
+import {
+  type PassageLabel,
+  formatLabel,
+  labelForVerse,
+  labelForPurport,
+  labelForProse,
+  labelForTranscript,
+  labelForLetter,
+} from "@/app/lib/13-passage-label";
 
 /* ─────────────────────────── Data contract (unchanged) ─────────────────────────── */
 
@@ -44,12 +54,14 @@ export interface VerseHit {
   chapter_number?: string; canto_or_division?: string; chapter_title?: string;
   book_slug?: string; vedabase_url?: string; tags?: string[];
   score?: number; similarity?: number; matchedChunkText?: string;
+  authorship?: Authorship; provenanceNote?: string; speaker?: string; speakerTo?: string;
 }
 
 export interface ProseHit {
   id: string; book_slug: string; paragraph_number: number; body_text: string;
   chapter_title?: string; vedabase_url?: string; tags?: string[];
   score?: number; similarity?: number; before?: string; after?: string;
+  authorship?: Authorship; provenanceNote?: string;
 }
 
 export interface TranscriptHit {
@@ -57,6 +69,7 @@ export interface TranscriptHit {
   content_type?: string; title?: string; date?: string; location?: string;
   occasion?: string; scripture_ref?: string; vedabase_url?: string;
   tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
+  authorship?: Authorship; provenanceNote?: string; speaker?: string;
 }
 
 export interface LetterHit {
@@ -64,6 +77,7 @@ export interface LetterHit {
   content_type?: string; title?: string; date?: string; location?: string;
   recipient?: string; vedabase_url?: string;
   tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
+  authorship?: Authorship; provenanceNote?: string;
 }
 
 export interface KeyAnswer { id: string; ref: string; line: string; }
@@ -173,9 +187,34 @@ function CopyButton({ onCopy, label = "Copy" }: { onCopy: () => void; label?: st
   );
 }
 
-/* ─────────────────────────── One passage card ─────────────────────────── */
+/* ─────────────────────────── Attribution label line ─────────────────────────── */
 
 type AnyHit = VerseHit | ProseHit | TranscriptHit | LetterHit;
+
+// TYPE + SOURCE + SPEAKER metadata, computed from the hit itself (13-passage-label)
+// so the essay, references mode, and preview sheet all label identically.
+function labelFor(type: MainFlowNode["type"], data: AnyHit): PassageLabel {
+  switch (type) {
+    case "verse": return labelForVerse(data as VerseHit);
+    case "prose": return labelForProse(data as ProseHit);
+    case "lecture": return labelForTranscript(data as TranscriptHit);
+    case "letter": return labelForLetter(data as LetterHit);
+  }
+}
+
+function LabelLine({ type, data }: { type: MainFlowNode["type"]; data: AnyHit }) {
+  const label = labelFor(type, data);
+  const text = formatLabel(label);
+  if (!text && !label.provenanceNote) return null;
+  return (
+    <div className="passage-label">
+      {text && <span>{text}</span>}
+      {label.provenanceNote && <span className="passage-label-note">{label.provenanceNote}</span>}
+    </div>
+  );
+}
+
+/* ─────────────────────────── One passage card ─────────────────────────── */
 
 function PassageCard({
   node, data, hero, line, index = 0, queryTerms, onCopy, onOpenPreview,
@@ -233,6 +272,9 @@ function PassageCard({
         <div className={hero ? "verse-translation hero" : "verse-translation"} dangerouslySetInnerHTML={{ __html: translationHtml }} />
         {preview && preview.previewHtml && (
           <div className="purport-block">
+            <div className="passage-label">
+              <span>{formatLabel(labelForPurport(v))}</span>
+            </div>
             {!open && <div className="passage-body" dangerouslySetInnerHTML={{ __html: preview.previewHtml }} />}
             {full(purportFull)}
             {preview.truncated && (
@@ -285,6 +327,7 @@ function PassageCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: EASE.decelerate, delay: entranceDelay }}
     >
+      <LabelLine type={node.type} data={data} />
       {content}
       {foot}
     </motion.article>
@@ -312,7 +355,10 @@ function PreviewSheet({
     const v = data as VerseHit;
     const parts: string[] = [];
     if (v.translation?.trim()) parts.push(highlightParagraphsHtml(v.translation, undefined, []));
-    if ((v.purport || "").trim()) parts.push(highlightParagraphsHtml(v.purport, undefined, []));
+    if ((v.purport || "").trim()) {
+      parts.push(`<div class="passage-label">${escapeHtml(formatLabel(labelForPurport(v)))}</div>`);
+      parts.push(highlightParagraphsHtml(v.purport, undefined, []));
+    }
     html = parts.join("");
   } else {
     const d = data as ProseHit | TranscriptHit | LetterHit;
@@ -337,6 +383,7 @@ function PreviewSheet({
           <span className="cite-chip" aria-hidden><span className="cite-dot" data-type={node.type} />{formatCiteRef(node.ref)}</span>
           <button className="sheet-close" onClick={onClose} aria-label="Close preview">&times;</button>
         </div>
+        <LabelLine type={node.type} data={data} />
         <div className="preview-body passage-body" dangerouslySetInnerHTML={{ __html: html }} />
         <div className="preview-actions">
           <CopyButton onCopy={() => onCopy(node)} label="Copy with reference" />

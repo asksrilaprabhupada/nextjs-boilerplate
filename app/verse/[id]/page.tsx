@@ -8,6 +8,7 @@
  */
 import Link from "next/link";
 import { getSupabaseAdmin } from "@/app/lib/01-supabase";
+import { authorshipFor, provenanceNoteFor } from "@/app/lib/12-provenance";
 import VerseView, { type VerseData } from "@/app/components/verse/01-verse-view";
 
 export const dynamic = "force-dynamic";
@@ -54,5 +55,25 @@ export default async function VerseDetailPage({ params }: { params: Promise<{ id
 
   const scriptureName = scriptureNames[verse.scripture] || verse.scripture;
 
-  return <VerseView verse={verse as VerseData} prevId={prevId} nextId={nextId} scriptureName={scriptureName} />;
+  // Authorship derived in app code (12-provenance), never from books.author.
+  const slug = (verse.scripture || "").toLowerCase();
+  const authorship = authorshipFor({
+    kind: "verse",
+    bookSlug: slug,
+    vedabaseUrl: verse.vedabase_url,
+    canto: verse.chapters?.canto_or_division,
+    chapter: verse.chapters?.chapter_number,
+  });
+  const provenanceNote = provenanceNoteFor(slug, authorship);
+
+  return (
+    <VerseView
+      verse={verse as VerseData}
+      prevId={prevId}
+      nextId={nextId}
+      scriptureName={scriptureName}
+      authorship={authorship}
+      provenanceNote={provenanceNote}
+    />
+  );
 }

@@ -102,6 +102,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 10-passage-fold.ts         (shared fold preview + matched-line highlight + verbatim key line)
 │   │   ├── 11-motion.ts               (shared Framer Motion tokens: durations, easings, settling spring)
 │   │   ├── 12-provenance.ts           (authorship truth table: HIS / NOT-HIS / MIXED-VERIFY, canonical book registry, SB completion rule, provenance notes)
+│   │   ├── 13-passage-label.ts        (quiet TYPE · SOURCE · SPEAKER attribution line above every passage)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/
