@@ -8,6 +8,8 @@
  */
 import Link from "next/link";
 import { getSupabaseAdmin } from "@/app/lib/01-supabase";
+import { authorshipFor, provenanceNoteFor } from "@/app/lib/12-provenance";
+import { chapterSpeakerWalk } from "@/app/lib/14-verse-speaker";
 import VerseView, { type VerseData } from "@/app/components/verse/01-verse-view";
 
 export const dynamic = "force-dynamic";
@@ -40,19 +42,49 @@ export default async function VerseDetailPage({ params }: { params: Promise<{ id
   }
 
   // Previous / next within the same chapter, ordered by the numeric verse number.
+  // The same sibling fetch feeds the uvāca story-speaker walk (14-verse-speaker).
   let prevId: string | null = null;
   let nextId: string | null = null;
+  let speaker: string | undefined;
+  let speakerTo: string | undefined;
   if (verse.chapter_id) {
-    const { data: siblings } = await supabase.from("verses").select("id, verse_number").eq("chapter_id", verse.chapter_id);
+    const { data: siblings } = await supabase.from("verses").select("id, verse_number, transliteration").eq("chapter_id", verse.chapter_id);
     if (siblings && siblings.length > 1) {
       const sorted = [...siblings].sort((a, b) => leadingInt(a.verse_number) - leadingInt(b.verse_number));
       const idx = sorted.findIndex((v) => v.id === id);
       if (idx > 0) prevId = sorted[idx - 1].id;
       if (idx >= 0 && idx < sorted.length - 1) nextId = sorted[idx + 1].id;
     }
+    const speakerState = chapterSpeakerWalk(siblings || [], verse.scripture || "").get(id);
+    if (speakerState) {
+      speaker = speakerState.speaker;
+      speakerTo = speakerState.speakerTo;
+    }
   }
 
   const scriptureName = scriptureNames[verse.scripture] || verse.scripture;
 
-  return <VerseView verse={verse as VerseData} prevId={prevId} nextId={nextId} scriptureName={scriptureName} />;
+  // Authorship derived in app code (12-provenance), never from books.author.
+  const slug = (verse.scripture || "").toLowerCase();
+  const authorship = authorshipFor({
+    kind: "verse",
+    bookSlug: slug,
+    vedabaseUrl: verse.vedabase_url,
+    canto: verse.chapters?.canto_or_division,
+    chapter: verse.chapters?.chapter_number,
+  });
+  const provenanceNote = provenanceNoteFor(slug, authorship);
+
+  return (
+    <VerseView
+      verse={verse as VerseData}
+      prevId={prevId}
+      nextId={nextId}
+      scriptureName={scriptureName}
+      authorship={authorship}
+      provenanceNote={provenanceNote}
+      speaker={speaker}
+      speakerTo={speakerTo}
+    />
+  );
 }

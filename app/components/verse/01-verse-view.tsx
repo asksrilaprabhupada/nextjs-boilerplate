@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { EASE } from "@/app/lib/11-motion";
+import { type Authorship, authorshipFor, provenanceNoteFor } from "@/app/lib/12-provenance";
 
 export interface VerseData {
   id: string;
@@ -40,13 +41,17 @@ interface Props {
   prevId: string | null;
   nextId: string | null;
   scriptureName: string;
+  authorship?: Authorship;
+  provenanceNote?: string;
+  speaker?: string;
+  speakerTo?: string;
 }
 
 const REF_RE = /\[?\b(BG|SB|CC|NOI|ISO|BS)\s+((?:Ādi|Adi|Madhya|Antya|\d+)[.\s])?(\d+)[.\s](\d+(?:[–-]\d+)?)\]?/g;
 
 type Layer = "deva" | "syn" | "trans" | "purport";
 
-export default function VerseView({ verse, prevId, nextId, scriptureName }: Props) {
+export default function VerseView({ verse, prevId, nextId, scriptureName, authorship, provenanceNote, speaker, speakerTo }: Props) {
   const router = useRouter();
   const [layers, setLayers] = useState<Record<Layer, boolean>>({ deva: true, syn: true, trans: true, purport: true });
   const [xref, setXref] = useState<{ loading: boolean; verse: VerseData | null; ref: string } | null>(null);
@@ -139,6 +144,7 @@ export default function VerseView({ verse, prevId, nextId, scriptureName }: Prop
           <div className="verse-scripture">{scriptureName}</div>
           <h1 className="verse-citation">Chapter {cantoPrefix}{chapterNum}, Verse {verse.verse_number}</h1>
           {chapterTitle && <p className="verse-chapter-title">{chapterTitle}</p>}
+          {provenanceNote && <p className="verse-provenance">{provenanceNote}</p>}
 
           {layers.deva && verse.sanskrit_devanagari && (
             <p className="verse-deva font-deva">{verse.sanskrit_devanagari}</p>
@@ -165,14 +171,14 @@ export default function VerseView({ verse, prevId, nextId, scriptureName }: Prop
 
           {layers.trans && verse.translation && (
             <section className="verse-section">
-              <SectionLabel text="Translation" />
+              <SectionLabel text={speaker ? `Translation · ${speakerTo ? `${speaker} to ${speakerTo}` : speaker}` : "Translation"} />
               <p className="verse-translation">{withRefs(verse.translation)}</p>
             </section>
           )}
 
           {layers.purport && verse.purport && (
             <section className="verse-section">
-              <SectionLabel text="Purport" />
+              <SectionLabel text={authorship === "HIS" ? "Purport · Śrīla Prabhupāda" : "Purport"} />
               <div className="verse-purport">
                 {verse.purport.split("\n").map((para, i) =>
                   para.trim() ? <p key={i}>{withRefs(para)}</p> : null,
@@ -208,6 +214,7 @@ export default function VerseView({ verse, prevId, nextId, scriptureName }: Prop
                 <p className="xref-muted">Loading…</p>
               ) : xref.verse ? (
                 <>
+                  <XrefLabel verse={xref.verse} />
                   {xref.verse.translation && <p className="xref-translation">{xref.verse.translation}</p>}
                   <div className="xref-actions">
                     <Link className="verse-vedabase" href={`/verse/${xref.verse.id}`} onClick={() => setXref(null)}>Read this verse →</Link>
@@ -242,6 +249,7 @@ export default function VerseView({ verse, prevId, nextId, scriptureName }: Prop
         .verse-scripture { font-family: var(--font-body), sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-subtle); text-align: center; margin-bottom: 10px; }
         .verse-citation { font-family: var(--font-display), Georgia, serif; font-size: clamp(1.5rem, 3.4vw, 1.9rem); font-weight: 600; color: var(--ink-strong); text-align: center; letter-spacing: -0.01em; margin: 0; }
         .verse-chapter-title { font-family: var(--font-display), Georgia, serif; font-size: 1.05rem; font-style: italic; color: var(--ink-muted); text-align: center; margin: 6px 0 0; }
+        .verse-provenance { font-family: var(--font-body), sans-serif; font-size: 12px; font-style: italic; color: var(--ink-subtle); text-align: center; margin: 8px 0 0; }
 
         .verse-deva { font-size: 1.2rem; line-height: 2; font-weight: 500; color: var(--ink-strong); text-align: center; margin: 28px 0 0; }
         .verse-translit { font-family: var(--font-display), Georgia, serif; font-size: 1.05rem; color: var(--ink-muted); line-height: 1.8; text-align: center; margin: 12px 0 0; }
@@ -282,6 +290,25 @@ export default function VerseView({ verse, prevId, nextId, scriptureName }: Prop
           .xref-sheet { left: 0; right: 0; bottom: 0; top: auto; transform: none; width: 100%; max-height: 85vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
         }
       `}</style>
+    </div>
+  );
+}
+
+/** Quiet TYPE + provenance line for the cross-reference preview sheet. */
+function XrefLabel({ verse }: { verse: VerseData }) {
+  const slug = (verse.scripture || "").toLowerCase();
+  const authorship = authorshipFor({
+    kind: "verse",
+    bookSlug: slug,
+    vedabaseUrl: verse.vedabase_url,
+    canto: verse.chapters?.canto_or_division,
+    chapter: verse.chapters?.chapter_number,
+  });
+  const note = provenanceNoteFor(slug, authorship);
+  return (
+    <div className="passage-label" style={{ marginBottom: 10 }}>
+      <span>Translation</span>
+      {note && <span className="passage-label-note">{note}</span>}
     </div>
   );
 }

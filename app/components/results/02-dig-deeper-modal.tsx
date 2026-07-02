@@ -13,21 +13,28 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { VerseHit, ProseHit, TranscriptHit, LetterHit } from "./01-narrative-response";
+import { getBookName } from "@/app/lib/12-provenance";
+import {
+  type PassageLabel,
+  labelForVerse,
+  labelForProse,
+  labelForTranscript,
+} from "@/app/lib/13-passage-label";
 
-const BOOK_NAMES: Record<string, string> = {
-  bg: "Bhagavad Gītā As It Is", sb: "Śrīmad Bhāgavatam", cc: "Śrī Caitanya Caritāmṛta",
-  noi: "Nectar of Instruction", iso: "Śrī Īśopaniṣad", bs: "Śrī Brahma-saṁhitā",
-  lob: "Light of the Bhāgavata", kb: "Kṛṣṇa Book", nod: "The Nectar of Devotion",
-  ssr: "The Science of Self-Realization", tlc: "Teachings of Lord Caitanya",
-  tlk: "Teachings of Lord Kapila", tqk: "Teachings of Queen Kuntī",
-  sc: "A Second Chance", bbd: "Beyond Birth and Death",
-  bhakti: "Bhakti: The Art of Eternal Love", cat: "Civilization and Transcendence",
-  josd: "The Journey of Self-Discovery", owk: "On the Way to Kṛṣṇa",
-  pop: "The Path of Perfection", poy: "The Perfection of Yoga",
-  pqpa: "Perfect Questions, Perfect Answers", rv: "Rāja-vidyā: The King of Knowledge",
-  cabh: "Chant and Be Happy", spl: "Śrīla Prabhupāda-līlāmṛta",
-  rkd: "Rāmāyaṇa", mbk: "Mahābhārata",
-};
+/**
+ * Quiet TYPE/SPEAKER + provenance line under a card's ref chip. The chip
+ * already names the source, so the source segment (parts[0]) is dropped.
+ */
+function ProvenanceLine({ label }: { label: PassageLabel }) {
+  const text = label.parts.slice(1).filter(Boolean).join(" · ");
+  if (!text && !label.provenanceNote) return null;
+  return (
+    <div className="passage-label" style={{ marginBottom: 6 }}>
+      {text && <span>{text}</span>}
+      {label.provenanceNote && <span className="passage-label-note">{label.provenanceNote}</span>}
+    </div>
+  );
+}
 
 /* ─── Neutral chip styling (sacred minimalism — no per-book color) ─── */
 const NEUTRAL_CHIP = {
@@ -40,10 +47,6 @@ const NEUTRAL_CHIP = {
 function getBookColor(_slug?: string) {
   void _slug;
   return NEUTRAL_CHIP;
-}
-
-function getBookName(slug: string): string {
-  return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown";
 }
 
 function truncate(text: string, max: number): string {
@@ -267,6 +270,7 @@ function VerseCard({ v, index, articleVerseIds }: { v: VerseHit; index: number; 
             </span>
           )}
         </div>
+        <ProvenanceLine label={labelForVerse(v)} />
         <p style={{
           fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
           fontFamily: "Georgia, 'Times New Roman', serif",
@@ -325,6 +329,7 @@ function ProseCard({ p, index }: { p: ProseHit; index: number }) {
         }}>
           {getBookName(p.book_slug)}
         </span>
+        <ProvenanceLine label={labelForProse(p)} />
         <p style={{
           fontSize: 16, lineHeight: 1.8, fontStyle: "italic",
           fontFamily: "Georgia, 'Times New Roman', serif",
@@ -363,7 +368,8 @@ function TranscriptCard({ t, index }: { t: TranscriptHit; index: number }) {
   const colors = getBookColor();
   const summary = getTagSummary(t.tags);
   const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
-  const label = t.title || [datePart, t.location].filter(Boolean).join(" — ") || "Lecture";
+  const kind = labelForTranscript(t).parts[0];
+  const label = t.title || [datePart, t.location].filter(Boolean).join(" — ") || kind;
 
   return (
     <motion.div
@@ -382,7 +388,7 @@ function TranscriptCard({ t, index }: { t: TranscriptHit; index: number }) {
           padding: "2px 8px", borderRadius: "var(--radius-sm)", marginBottom: 8,
           background: colors.bg, color: colors.text,
         }}>
-          Lecture
+          {kind}
         </span>
         <p className="font-body" style={{ fontSize: 12, color: "var(--ink-muted)", marginBottom: 6, fontStyle: "italic" }}>{label}</p>
         <p style={{

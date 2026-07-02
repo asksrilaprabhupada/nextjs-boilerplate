@@ -634,6 +634,45 @@ body {
 }
 
 /* ============================================================
+   PASSAGE ATTRIBUTION LABEL
+   The quiet TYPE + SOURCE + SPEAKER line above every rendered
+   passage. Typography only — no colored bars, no legend.
+   ============================================================ */
+
+.passage-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 10px;
+  row-gap: 2px;
+  font-family: var(--font-body), 'DM Sans', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+  margin-bottom: 10px;
+}
+
+.passage-label .passage-label-note {
+  font-weight: 500;
+  font-style: italic;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--ink-muted);
+}
+
+/* Dialogue-turn prefix ("Prabhupāda:", "Pradyumna:") inside lecture/conversation
+   passages — quiet typographic distinction only, verbatim text unchanged. */
+.speaker-label {
+  font-family: var(--font-body), 'DM Sans', sans-serif;
+  font-size: 0.86em;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--ink-subtle);
+}
+
+/* ============================================================
    GRADIENT TEXT
    ============================================================ */
 
