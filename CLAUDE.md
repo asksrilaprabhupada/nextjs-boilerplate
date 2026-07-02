@@ -104,6 +104,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 12-provenance.ts           (authorship truth table: HIS / NOT-HIS / MIXED-VERIFY, canonical book registry, SB completion rule, provenance notes)
 │   │   ├── 13-passage-label.ts        (quiet TYPE · SOURCE · SPEAKER attribution line above every passage)
 │   │   ├── 14-verse-speaker.ts        (story speaker from uvāca markers; BG dialogue defaults; per-chapter carry-forward; never guesses)
+│   │   ├── 15-transcript-speakers.ts  (Name: prefix segmentation; Prabhupāda-only emphasis ranges for lecture/conversation passages)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/

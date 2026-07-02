@@ -290,7 +290,7 @@ function PassageCard({
     const d = data as ProseHit | TranscriptHit | LetterHit;
     const body = d.body_text || "";
     const preview = buildFoldPreviewHtml({ type: node.type as PassageType, text: body, queryTerms });
-    const sectionFull = highlightParagraphsHtml(buildSectionText(body, d.before, d.after), undefined, queryTerms);
+    const sectionFull = highlightParagraphsHtml(buildSectionText(body, d.before, d.after), undefined, queryTerms, node.type as PassageType);
     if (hero) {
       content = (
         <>
@@ -362,7 +362,7 @@ function PreviewSheet({
     html = parts.join("");
   } else {
     const d = data as ProseHit | TranscriptHit | LetterHit;
-    html = highlightParagraphsHtml(buildSectionText(d.body_text || "", d.before, d.after), undefined, []);
+    html = highlightParagraphsHtml(buildSectionText(d.body_text || "", d.before, d.after), undefined, [], node.type as PassageType);
   }
 
   return (

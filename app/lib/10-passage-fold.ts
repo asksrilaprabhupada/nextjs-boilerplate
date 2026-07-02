@@ -20,6 +20,7 @@
  */
 
 import { cleanDisplayText, escapeHtml, splitIntoParagraphs, stripPurportBoilerplate } from "./09-purport-format";
+import { allowedEmphasisRanges, SPEAKER_LINE_RE as TRANSCRIPT_SPEAKER_RE } from "./15-transcript-speakers";
 
 export type PassageType = "verse" | "purport" | "prose" | "lecture" | "letter";
 
@@ -231,16 +232,24 @@ export interface MatchRange { start: number; end: number }
  * - Prose/lecture/letter: no chunk — the matched unit is the paragraph. We return
  *   the highest query-overlap sentence, or NULL when nothing overlaps (a semantic
  *   match with no literal query word). We NEVER fabricate a guessed sentence.
+ * - `allowedRanges` (lecture/conversation passages): when given, ONLY sentences
+ *   fully inside an allowed range compete — a sentence spoken by someone other
+ *   than Śrīla Prabhupāda is never emphasized. With no candidate, null:
+ *   emphasize nothing rather than another speaker's line.
  */
 export function locateMatchedSentence(
   text: string,
   matchedChunkText: string | undefined,
   queryTerms: string[],
+  allowedRanges?: MatchRange[] | null,
 ): MatchRange | null {
   const clean = text || "";
   if (!clean) return null;
   const terms = normalizedTermSet(queryTerms);
-  const sentences = sentenceSpans(clean);
+  let sentences = sentenceSpans(clean);
+  if (allowedRanges != null) {
+    sentences = sentences.filter(s => allowedRanges.some(r => s.start >= r.start && s.end <= r.end));
+  }
   if (sentences.length === 0) return null;
 
   // Determine the search window: the matched chunk's range (purports) or the whole text.
@@ -346,16 +355,40 @@ export function highlightHtml(text: string, matched: MatchRange | null, queryTer
   return out;
 }
 
-/** Renders whole paragraphs as <p class="pp">…</p>, highlighting the matched line + query words. */
+/**
+ * Wraps a leading dialogue-turn prefix ("Prabhupāda:", "Pradyumna:") of an
+ * already-escaped paragraph in a quiet <span class="speaker-label">, whether
+ * the paragraph starts plain or inside the matched-sentence mark. Display
+ * typography only — the verbatim text is unchanged.
+ */
+function wrapSpeakerLabelHtml(html: string): string {
+  const openMark = '<mark class="hl-sentence">';
+  const prefix = html.startsWith(openMark) ? openMark : "";
+  const rest = html.slice(prefix.length);
+  const m = rest.match(TRANSCRIPT_SPEAKER_RE);
+  if (!m) return html;
+  const label = m[0];
+  return `${prefix}<span class="speaker-label">${label}</span>${rest.slice(label.length)}`;
+}
+
+/**
+ * Renders whole paragraphs as <p class="pp">…</p>, highlighting the matched line
+ * + query words. For lecture/conversation passages (`type === "lecture"`), the
+ * highlight is restricted to sentences Śrīla Prabhupāda himself speaks, and
+ * `Name:` dialogue prefixes get a quiet speaker-label span.
+ */
 export function highlightParagraphsHtml(
   text: string,
   matchedChunkText: string | undefined,
   queryTerms: string[],
+  type?: PassageType,
 ): string {
   const clean = cleanDisplayText(stripPurportBoilerplate(text || ""));
   const paras = splitIntoParagraphs(clean);
   if (paras.length === 0) return "";
-  const matched = locateMatchedSentence(clean, matchedChunkText, queryTerms);
+  const isLecture = type === "lecture";
+  const allowed = isLecture ? allowedEmphasisRanges(clean) : undefined;
+  const matched = locateMatchedSentence(clean, matchedChunkText, queryTerms, allowed);
   let offset = 0;
   const out: string[] = [];
   for (const raw of clean.split("\n")) {
@@ -369,7 +402,9 @@ export function highlightParagraphsHtml(
       if (matched && matched.start < pEnd && matched.end > pStart) {
         local = { start: Math.max(0, matched.start - pStart), end: Math.min(trimmed.length, matched.end - pStart) };
       }
-      out.push(`<p class="pp">${highlightHtml(trimmed, local, queryTerms)}</p>`);
+      let html = highlightHtml(trimmed, local, queryTerms);
+      if (isLecture) html = wrapSpeakerLabelHtml(html);
+      out.push(`<p class="pp">${html}</p>`);
     }
     offset += raw.length + 1; // +1 for the consumed "\n"
   }
@@ -427,12 +462,14 @@ export function buildFoldPreviewHtml(opts: {
   const clean = cleanDisplayText(opts.type === "purport" ? stripPurportBoilerplate(opts.text || "") : (opts.text || "")).trim();
   if (!clean) return { previewHtml: "", truncated: false, matched: null };
 
-  const matched = locateMatchedSentence(clean, opts.matchedChunkText, opts.queryTerms);
+  // Lecture/conversation passages: emphasis may land only on Prabhupāda's own lines.
+  const allowed = opts.type === "lecture" ? allowedEmphasisRanges(clean) : undefined;
+  const matched = locateMatchedSentence(clean, opts.matchedChunkText, opts.queryTerms, allowed);
 
   // Short/medium passage → render in full (paragraphs), no fold, no fade.
   if (clean.length <= FOLD_CUTOFF_CHARS) {
     return {
-      previewHtml: highlightParagraphsHtml(clean, opts.matchedChunkText, opts.queryTerms),
+      previewHtml: highlightParagraphsHtml(clean, opts.matchedChunkText, opts.queryTerms, opts.type),
       truncated: false,
       matched,
     };
@@ -470,8 +507,11 @@ export function buildFoldPreviewHtml(opts: {
     localMatch = { start: Math.max(0, matched.start - winStart), end: Math.min(windowText.length, matched.end - winStart) };
   }
 
+  let previewHtml = highlightHtml(windowText, localMatch, opts.queryTerms);
+  if (opts.type === "lecture") previewHtml = wrapSpeakerLabelHtml(previewHtml);
+
   return {
-    previewHtml: highlightHtml(windowText, localMatch, opts.queryTerms),
+    previewHtml,
     truncated: true,
     matched,
   };
@@ -540,12 +580,17 @@ export function keyLineFor(opts: {
   }
   const text = cleanDisplayText(opts.body || "").trim();
   if (!text) return "";
-  const matched = locateMatchedSentence(text, opts.matchedChunkText, opts.queryTerms);
+  // Lecture/conversation: a key answer may only be a sentence Prabhupāda himself
+  // speaks. If he has no substantive line in the passage, return "" — the caller
+  // skips it, so it can never become a hero or key answer with another's words.
+  const allowed = opts.type === "lecture" ? allowedEmphasisRanges(text) : undefined;
+  const matched = locateMatchedSentence(text, opts.matchedChunkText, opts.queryTerms, allowed);
   if (matched) {
     const line = text.slice(matched.start, matched.end).trim();
     if (line) return line;
   }
   for (const s of sentenceSpans(text)) {
+    if (allowed != null && !allowed.some(r => s.start >= r.start && s.end <= r.end)) continue;
     if (isSubstantiveSentence(s.text)) return s.text.trim();
   }
   return "";

@@ -662,6 +662,16 @@ body {
   color: var(--ink-muted);
 }
 
+/* Dialogue-turn prefix ("Prabhupāda:", "Pradyumna:") inside lecture/conversation
+   passages — quiet typographic distinction only, verbatim text unchanged. */
+.speaker-label {
+  font-family: var(--font-body), 'DM Sans', sans-serif;
+  font-size: 0.86em;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--ink-subtle);
+}
+
 /* ============================================================
    GRADIENT TEXT
    ============================================================ */

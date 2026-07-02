@@ -31,6 +31,8 @@ import {
   type PassageType,
 } from "@/app/lib/10-passage-fold";
 import { chapterSpeakerWalk, type SpeakerState } from "@/app/lib/14-verse-speaker";
+import { allowedEmphasisRanges } from "@/app/lib/15-transcript-speakers";
+import { labelForTranscript } from "@/app/lib/13-passage-label";
 import {
   type Authorship,
   getBookName,
@@ -165,7 +167,7 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; authorship?: Authorship; provenanceNote?: string; speaker?: string; speakerTo?: string; }
 interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
-interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
+interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; speaker?: string; }
 interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
 interface ChunkHit { id: string; verse_id: string; scripture: string; chapter_number?: number; verse_number: string; chunk_number: number; body_text: string; tags?: string[]; score?: number; similarity?: number; }
 
@@ -1500,18 +1502,23 @@ function buildTemplateArticle(
         const city = t.location || "";
         const url = t.vedabase_url || "";
 
-        let attribution = "In a lecture";
-        if (city && year) attribution = `Speaking in ${city} (${year})`;
-        else if (city) attribution = `Speaking in ${city}`;
-        else if (year) attribution = `In a lecture (${year})`;
-
         const citeLabel = ["Lecture", year, city].filter(Boolean).join(" · ");
         const cite = url
           ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
           : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
         const fold = buildFoldPreviewHtml({ type: 'lecture', text: bodyText, queryTerms });
-        parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
+        // "Śrīla Prabhupāda said" only when his own line is the confirmed match
+        // (t.speaker set by annotateProvenance) OR the paragraph is prefix-less
+        // lecture body (the document's own speaker, no contrary evidence).
+        // A mixed or conversational exchange gets neutral framing.
+        const hasSpeakerPrefixes = allowedEmphasisRanges(bodyText) !== null;
+        const isLectureKind = labelForTranscript(t).parts[0] === "Lecture";
+        const place = city && year ? ` in ${city} (${year})` : city ? ` in ${city}` : year ? ` (${year})` : "";
+        const transition = (t.speaker || (!hasSpeakerPrefixes && isLectureKind))
+          ? `${city || year ? `Speaking${place}` : "In a lecture"}, Śrīla Prabhupāda said:`
+          : `From a recorded exchange${place}:`;
+        parts.push(`<p>${transition}</p>`);
         parts.push(buildFoldBlock({
           type: 'lecture', id: t.id, previewHtml: fold.previewHtml, truncated: fold.truncated,
           citeHtml: cite, expandLabel: "Read in context →",
@@ -1703,19 +1710,21 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
     const url = x.vedabase_url || "";
     const sectionHtml = buildSectionHtml(bodyText);
 
-    // Build short attribution
-    let attribution = "In a lecture";
-    if (city && year) attribution = `Speaking in ${city} (${year})`;
-    else if (city) attribution = `Speaking in ${city}`;
-    else if (year) attribution = `In a lecture (${year})`;
-
     // Build citation: [Lecture · 1973 · Stockholm]
     const citeLabel = ["Lecture", year, city].filter(Boolean).join(" · ");
     const cite = url
       ? `<div class="cite-ref"><a href="${url}" class="verse-link" target="_blank"><span class="verse-ref">[${citeLabel}]</span></a></div>`
       : `<div class="cite-ref"><span class="verse-label">[${citeLabel}]</span></div>`;
 
-    parts.push(`<p>${attribution}, Śrīla Prabhupāda said:</p>`);
+    // Same speaker guard as the live template: never claim "Śrīla Prabhupāda
+    // said" over a multi-speaker exchange without a confirmed line of his.
+    const hasSpeakerPrefixes = allowedEmphasisRanges(bodyText) !== null;
+    const isLectureKind = labelForTranscript(x).parts[0] === "Lecture";
+    const place = city && year ? ` in ${city} (${year})` : city ? ` in ${city}` : year ? ` (${year})` : "";
+    const transition = (x.speaker || (!hasSpeakerPrefixes && isLectureKind))
+      ? `${city || year ? `Speaking${place}` : "In a lecture"}, Śrīla Prabhupāda said:`
+      : `From a recorded exchange${place}:`;
+    parts.push(`<p>${transition}</p>`);
     parts.push(`<div class="lecture-quote">${sectionHtml}${cite}</div>`);
   };
 
@@ -2140,6 +2149,7 @@ function annotateProvenance(
   transcripts: TranscriptHit[],
   letters: LetterHit[],
   speakerMap?: Map<string, SpeakerState>,
+  queryTerms: string[] = [],
 ): void {
   for (const v of verses) {
     const slug = (v.book_slug || v.scripture || "").toLowerCase();
@@ -2164,6 +2174,13 @@ function annotateProvenance(
   for (const t of transcripts) {
     t.authorship = authorshipFor({ kind: "lecture" });
     t.provenanceNote = "";
+    // "Prabhupāda replying" is claimed only when the paragraph has Name: turn
+    // prefixes AND the matched sentence lies in a segment he himself speaks.
+    // Prefix-less continuation paragraphs get no speaker chip — never guess.
+    const ranges = allowedEmphasisRanges(t.body_text || "");
+    if (ranges && locateMatchedSentence(t.body_text || "", undefined, queryTerms, ranges)) {
+      t.speaker = "Prabhupāda replying";
+    }
   }
   for (const l of letters) {
     l.authorship = authorshipFor({ kind: "letter" });
@@ -2348,6 +2365,7 @@ export async function GET(request: NextRequest) {
       [...narrativeTranscripts, ...overflowTranscripts],
       [...narrativeLetters, ...overflowLetters],
       speakerMap,
+      queryTerms,
     );
 
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);
