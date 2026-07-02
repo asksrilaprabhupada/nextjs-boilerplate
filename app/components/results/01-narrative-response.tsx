@@ -238,6 +238,17 @@ function PassageCard({
         <span className="cite-dot" data-type={node.type} aria-hidden />
         {formatCiteRef(node.ref)}
       </motion.button>
+      {node.url && (
+        <a
+          className="cite-chip cite-external"
+          href={node.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Open ${formatCiteRef(node.ref)} on Vedabase in a new tab`}
+        >
+          ↗
+        </a>
+      )}
       <CopyButton onCopy={() => onCopy(node)} />
     </div>
   );
@@ -546,7 +557,8 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
   const copyWithRef = async (node: MainFlowNode) => {
     const text = fullTextFor(node);
     if (!text) return;
-    const payload = `"${text}"\n\n— ${formatCiteRef(node.ref)}`;
+    // The reference always includes the passage's own Vedabase URL when it has one.
+    const payload = `"${text}"\n\n— ${formatCiteRef(node.ref)}${node.url ? `\n${node.url}` : ""}`;
     try {
       await navigator.clipboard.writeText(payload);
       setToast("Copied with reference");
@@ -802,6 +814,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .passage-foot { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); }
         .cite-chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em; color: var(--accent-strong); background: var(--accent-tint); border: 1px solid transparent; border-radius: var(--radius-full); padding: 3px 11px; cursor: pointer; transition: border-color var(--dur-2) var(--ease-standard); }
         .cite-chip:hover { border-color: var(--accent); }
+        .cite-external { padding: 3px 9px; text-decoration: none; }
         .cite-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
         .cite-dot[data-type="lecture"] { background: var(--p-gold); }
         .cite-dot[data-type="letter"] { background: #8AA48F; }

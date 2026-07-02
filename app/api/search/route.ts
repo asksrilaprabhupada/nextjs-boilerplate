@@ -97,7 +97,13 @@ function cleanRef(v: { scripture: string; canto_or_division?: string; chapter_nu
   return `${v.scripture} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number}.${cleanVerseNum}`;
 }
 
-/** Fallback URL builder — strips "Text " prefix as safety net */
+/**
+ * Fallback URL builder — strips "Text " prefix as safety net. Only used when a
+ * row has no vedabase_url of its own (rare; coverage is ~100%). Builds ONLY
+ * exact per-verse pages; when the exact page can't be derived it returns ""
+ * rather than a generic book-root link — a citation must open THAT passage's
+ * own page or nothing.
+ */
 function buildVedabaseUrl(scripture: string, canto: string, chapter: string, verse: string): string {
   const base = "https://vedabase.io/en/library";
   const s = scripture?.toLowerCase();
@@ -105,8 +111,7 @@ function buildVedabaseUrl(scripture: string, canto: string, chapter: string, ver
   if (s === "bg") return `${base}/bg/${chapter}/${cleanVerse}/`;
   if (s === "sb") return `${base}/sb/${canto}/${chapter}/${cleanVerse}/`;
   if (s === "cc") return `${base}/cc/${canto}/${chapter}/${cleanVerse}/`;
-  if (NO_VEDABASE_BOOKS.has(s)) return "";
-  return `${base}/${s}/`;
+  return "";
 }
 
 // =====================================================
