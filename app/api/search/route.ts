@@ -31,53 +31,24 @@ import {
   type PassageType,
 } from "@/app/lib/10-passage-fold";
 import { getSpeaker } from "@/app/api/generate-article/route";
+import {
+  type Authorship,
+  getBookName,
+  NO_VEDABASE_BOOKS,
+  authorshipFor,
+  provenanceNoteFor,
+} from "@/app/lib/12-provenance";
 
 const geminiKey = process.env.GEMINI_API_KEY || "";
 
 const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash";
 
-const BOOK_NAMES: Record<string, string> = {
-  bg: "Bhagavad-gītā As It Is",
-  sb: "Śrīmad-Bhāgavatam",
-  cc: "Śrī Caitanya-caritāmṛta",
-  noi: "Nectar of Instruction",
-  iso: "Śrī Īśopaniṣad",
-  bs: "Śrī Brahma-saṁhitā",
-  lob: "Light of the Bhāgavata",
-  kb: "Kṛṣṇa, the Supreme Personality of Godhead",
-  nod: "The Nectar of Devotion",
-  ssr: "The Science of Self-Realization",
-  tlc: "Teachings of Lord Caitanya",
-  tlk: "Teachings of Lord Kapila",
-  tqk: "Teachings of Queen Kuntī",
-  sc: "A Second Chance",
-  bbd: "Beyond Birth and Death",
-  bhakti: "Bhakti: The Art of Eternal Love",
-  cat: "Civilization and Transcendence",
-  josd: "The Journey of Self-Discovery",
-  owk: "On the Way to Kṛṣṇa",
-  pop: "The Path of Perfection",
-  poy: "The Perfection of Yoga",
-  pqpa: "Perfect Questions, Perfect Answers",
-  rv: "Rāja-vidyā: The King of Knowledge",
-  cabh: "Chant and Be Happy",
-  spl: "Śrīla Prabhupāda-līlāmṛta",
-  rkd: "Rāmāyaṇa",
-  mbk: "Mahābhārata",
-  ejop: "Easy Journey to Other Planets",
-  ekc: "Elevation to Kṛṣṇa Consciousness",
-  kcty: "Kṛṣṇa Consciousness: The Topmost Yoga System",
-  lcfl: "Life Comes From Life",
-  mog: "Message of Godhead",
-  rtw: "Renunciation Through Wisdom",
-  top: "Transcendental Teachings of Prahlāda Mahārāja",
-  nbs: "Nārada Bhakti Sūtra",
-  mms: "Mukunda-mālā-stotra",
-};
-function getBookName(slug: string): string { return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown"; }
-
-/** Books that exist in our database but NOT on vedabase.io — never create links for these */
-const NO_VEDABASE_BOOKS = new Set(["nbs", "mms", "rtw", "lcfl", "kcty", "ekc", "mog", "ejop", "top"]);
+/**
+ * Bumped whenever the response shape or content policy changes, so the 24h
+ * in-memory cache can never serve a response built by older code.
+ */
+const RESPONSE_VERSION = "p1";
+const cacheKey = (query: string) => `${RESPONSE_VERSION}:${query}`;
 
 /**
  * Returns true if the text is mostly Sanskrit transliteration (not useful as prose content).
@@ -192,10 +163,10 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 // TYPES
 // =====================================================
-interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; }
-interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; }
-interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; }
+interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; authorship?: Authorship; provenanceNote?: string; }
+interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
+interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
+interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
 interface ChunkHit { id: string; verse_id: string; scripture: string; chapter_number?: number; verse_number: string; chunk_number: number; body_text: string; tags?: string[]; score?: number; similarity?: number; }
 
 // =====================================================
@@ -2103,6 +2074,46 @@ function buildKeyAnswer(item: MainItem, queryTerms: string[]): { id: string; ref
 }
 
 // =====================================================
+// PROVENANCE ANNOTATION
+// =====================================================
+/**
+ * Stamp every outgoing hit with its authorship (HIS / NOT_HIS / MIXED_VERIFY)
+ * and a plain-language provenance note, derived in app code (12-provenance) —
+ * never from books.author. Covers narrative AND overflow sets so every
+ * surface (essay, references, dig deeper, preview sheets) can label passages.
+ */
+function annotateProvenance(
+  verses: VerseHit[],
+  prose: ProseHit[],
+  transcripts: TranscriptHit[],
+  letters: LetterHit[],
+): void {
+  for (const v of verses) {
+    const slug = (v.book_slug || v.scripture || "").toLowerCase();
+    v.authorship = authorshipFor({
+      kind: "verse",
+      bookSlug: slug,
+      vedabaseUrl: v.vedabase_url,
+      canto: v.canto_or_division,
+      chapter: v.chapter_number,
+    });
+    v.provenanceNote = provenanceNoteFor(slug, v.authorship);
+  }
+  for (const p of prose) {
+    p.authorship = authorshipFor({ kind: "prose", bookSlug: p.book_slug });
+    p.provenanceNote = provenanceNoteFor(p.book_slug, p.authorship);
+  }
+  for (const t of transcripts) {
+    t.authorship = authorshipFor({ kind: "lecture" });
+    t.provenanceNote = "";
+  }
+  for (const l of letters) {
+    l.authorship = authorshipFor({ kind: "letter" });
+    l.provenanceNote = "";
+  }
+}
+
+// =====================================================
 // STREAMING HANDLER
 // =====================================================
 export async function GET(request: NextRequest) {
@@ -2113,7 +2124,7 @@ export async function GET(request: NextRequest) {
 
   if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
 
-  const cached = getCached<Record<string, unknown>>(query);
+  const cached = getCached<Record<string, unknown>>(cacheKey(query));
   if (cached) return NextResponse.json(cached);
 
   try {
@@ -2268,6 +2279,15 @@ export async function GET(request: NextRequest) {
     attachNeighbours(narrativeTranscripts);
     attachNeighbours(narrativeLetters);
 
+    // Stamp authorship + provenance notes on everything the client will see —
+    // the narrative set and the dig-deeper overflow alike.
+    annotateProvenance(
+      [...narrativeVerses, ...overflowVerses],
+      [...narrativeProse, ...overflowProse],
+      [...narrativeTranscripts, ...overflowTranscripts],
+      [...narrativeLetters, ...overflowLetters],
+    );
+
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);
     const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
 
@@ -2321,14 +2341,14 @@ export async function GET(request: NextRequest) {
     // References mode: skip Gemini synthesis, return metadata with empty narrative
     if (mode === "references") {
       const result = { ...fullMetadata, narrative: "" };
-      setCached(query, result);
+      setCached(cacheKey(query), result);
       return NextResponse.json(result);
     }
 
     // ── Strategy A: Template-built article (zero AI calls, instant) ──
     const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms);
     const result = { ...fullMetadata, narrative };
-    setCached(query, result);
+    setCached(cacheKey(query), result);
     return NextResponse.json(result);
   } catch (err) {
     console.error("Search error:", err);

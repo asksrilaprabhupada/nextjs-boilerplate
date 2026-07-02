@@ -101,6 +101,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 09-purport-format.ts       (shared purport paragraph/footer helpers)
 │   │   ├── 10-passage-fold.ts         (shared fold preview + matched-line highlight + verbatim key line)
 │   │   ├── 11-motion.ts               (shared Framer Motion tokens: durations, easings, settling spring)
+│   │   ├── 12-provenance.ts           (authorship truth table: HIS / NOT-HIS / MIXED-VERIFY, canonical book registry, SB completion rule, provenance notes)
 │   │   └── server/
 │   │       └── 01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/

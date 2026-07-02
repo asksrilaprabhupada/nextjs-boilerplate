@@ -13,21 +13,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import type { VerseHit, ProseHit, TranscriptHit, LetterHit } from "./01-narrative-response";
-
-const BOOK_NAMES: Record<string, string> = {
-  bg: "Bhagavad Gītā As It Is", sb: "Śrīmad Bhāgavatam", cc: "Śrī Caitanya Caritāmṛta",
-  noi: "Nectar of Instruction", iso: "Śrī Īśopaniṣad", bs: "Śrī Brahma-saṁhitā",
-  lob: "Light of the Bhāgavata", kb: "Kṛṣṇa Book", nod: "The Nectar of Devotion",
-  ssr: "The Science of Self-Realization", tlc: "Teachings of Lord Caitanya",
-  tlk: "Teachings of Lord Kapila", tqk: "Teachings of Queen Kuntī",
-  sc: "A Second Chance", bbd: "Beyond Birth and Death",
-  bhakti: "Bhakti: The Art of Eternal Love", cat: "Civilization and Transcendence",
-  josd: "The Journey of Self-Discovery", owk: "On the Way to Kṛṣṇa",
-  pop: "The Path of Perfection", poy: "The Perfection of Yoga",
-  pqpa: "Perfect Questions, Perfect Answers", rv: "Rāja-vidyā: The King of Knowledge",
-  cabh: "Chant and Be Happy", spl: "Śrīla Prabhupāda-līlāmṛta",
-  rkd: "Rāmāyaṇa", mbk: "Mahābhārata",
-};
+import { getBookName } from "@/app/lib/12-provenance";
 
 /* ─── Neutral chip styling (sacred minimalism — no per-book color) ─── */
 const NEUTRAL_CHIP = {
@@ -40,10 +26,6 @@ const NEUTRAL_CHIP = {
 function getBookColor(_slug?: string) {
   void _slug;
   return NEUTRAL_CHIP;
-}
-
-function getBookName(slug: string): string {
-  return BOOK_NAMES[slug?.toLowerCase()] || slug || "Unknown";
 }
 
 function truncate(text: string, max: number): string {
