@@ -1,27 +1,19 @@
 /**
  * page.tsx — Features Page
  *
- * Showcases the platform's key features with header and footer.
- * Gives visitors a dedicated page to learn about the app's capabilities.
+ * Server wrapper: SEO metadata around the cinematic features page — masked
+ * title reveal, six numbered feature rows, verse interlude, and CTA back to
+ * search. All motion and interaction live in the client component.
  */
 import type { Metadata } from "next";
-import Header from "../components/layout/01-header";
-import FeaturesSection from "../components/landing/03-features-section";
-import FooterSection from "../components/layout/02-footer";
+import FeaturesPage from "../components/cinematic/06-features-page";
 
 export const metadata: Metadata = {
   title: "Features — Ask Śrīla Prabhupāda",
-  description: "AI-powered search across 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda. 244,000 passages, narrative answers, citation links to Vedabase.io.",
+  description:
+    "Ask in your own words and search 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda. Verbatim answers, exact citations linked to Vedabase.io.",
 };
 
-export default function FeaturesPage() {
-  return (
-    <>
-      <Header />
-      <main style={{ paddingTop: 92, display: "grid", gap: 36 }}>
-        <FeaturesSection />
-        <FooterSection />
-      </main>
-    </>
-  );
+export default function Features() {
+  return <FeaturesPage />;
 }
