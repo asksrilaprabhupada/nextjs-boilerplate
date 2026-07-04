@@ -912,3 +912,130 @@ body {
 .narrative-content .letter-quote {
   padding-bottom: 4px;
 }
+
+/* ============================================================
+   CINEMATIC MAIN PAGE (v2)
+   Keyframes + interaction classes for the cinematic home
+   experience (app/components/cinematic/01-cinematic-home.tsx).
+   Values ported verbatim from the Claude Design prototype so the
+   motion reads identically; colors reuse the design tokens above.
+   ============================================================ */
+
+@keyframes cineKenBurns { from { transform: scale(1.04); } to { transform: scale(1.18); } }
+@keyframes lightSweep {
+  0%   { transform: translateX(-70%) rotate(14deg); opacity: 0; }
+  18%  { opacity: 0.5; }
+  50%  { opacity: 0.28; }
+  100% { transform: translateX(80%) rotate(14deg); opacity: 0; }
+}
+@keyframes moteDrift {
+  0%   { transform: translate(0, 0); opacity: 0; }
+  12%  { opacity: var(--mo, 0.5); }
+  88%  { opacity: var(--mo, 0.5); }
+  100% { transform: translate(var(--mx, 20px), -46vh); opacity: 0; }
+}
+@keyframes scrollCue {
+  0%, 100% { transform: translateY(0); opacity: 0.45; }
+  50%      { transform: translateY(8px); opacity: 1; }
+}
+@keyframes auraBreathe {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+  50%      { transform: translate(-50%, -50%) scale(1.08); opacity: 1; }
+}
+@keyframes rotateMandala { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes moreOverlayIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes morePanelIn {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes moreCardIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.94); filter: blur(6px); }
+  to   { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+@keyframes fabIn {
+  from { opacity: 0; transform: translateY(26px) scale(0.85); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes grainShift {
+  0%   { transform: translate(0, 0); }
+  12%  { transform: translate(-2.2%, 1.4%); }
+  25%  { transform: translate(1.6%, -2.0%); }
+  37%  { transform: translate(-1.2%, -1.6%); }
+  50%  { transform: translate(2.0%, 1.2%); }
+  62%  { transform: translate(-1.8%, 0.8%); }
+  75%  { transform: translate(1.2%, 2.0%); }
+  87%  { transform: translate(-0.8%, -1.2%); }
+  100% { transform: translate(0, 0); }
+}
+
+/* ── hover / focus interactions (kept as classes so the component
+   can stay declarative and match the prototype's :hover styling) ── */
+
+/* Entrance controls */
+.cine-skip:hover { background: rgba(22,18,12,0.45) !important; border-color: rgba(255,244,214,0.5) !important; }
+.cine-sound-btn:hover { background: rgba(22,18,12,0.45) !important; border-color: rgba(255,244,214,0.5) !important; }
+.cine-enter-btn:hover {
+  background: rgba(255,248,232,0.22) !important; border-color: rgba(255,244,214,0.8) !important;
+  transform: translateY(-2px); box-shadow: 0 12px 40px rgba(201,162,75,0.25);
+}
+
+/* Nav */
+.cine-nav-link:hover { color: #51409A !important; }
+.cine-nav-menu-item:hover { background: rgba(107,87,201,0.08) !important; }
+
+/* Overlay close button */
+.cine-close:hover { border-color: #6B57C9 !important; color: #6B57C9 !important; transform: rotate(90deg); }
+
+/* Example-question pills + more pill */
+.cine-pill:hover {
+  background: rgba(107,87,201,0.10) !important; border-color: rgba(107,87,201,0.35) !important;
+  color: #51409A !important; transform: translateY(-2px); box-shadow: 0 4px 16px rgba(107,87,201,0.12);
+}
+.cine-more-pill:hover {
+  background: rgba(107,87,201,0.12) !important; border-color: #6B57C9 !important; transform: translateY(-2px);
+}
+.cine-overlay-pill:hover {
+  background: rgba(107,87,201,0.10) !important; border-color: rgba(107,87,201,0.4) !important;
+  color: #51409A !important; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(107,87,201,0.16);
+}
+
+/* Copy / send / vote / cta / fab / journey / sound-float */
+.cine-copy-btn:hover { background: rgba(107,87,201,0.14) !important; border-color: #6B57C9 !important; }
+.cine-send-btn:hover { transform: translateY(-2px); }
+.cine-vote-btn:hover { transform: translateY(-2px); }
+.cine-cta-btn:hover { transform: translateY(-3px) scale(1.02); box-shadow: 0 16px 48px rgba(107,87,201,0.4); }
+.cine-fab:hover { box-shadow: 0 16px 48px rgba(107,87,201,0.5) !important; }
+.cine-journey:hover .cine-journey-btn {
+  background: rgba(22,18,12,0.4); border-color: rgba(255,244,214,0.7); transform: translateY(-2px);
+}
+.cine-sound-float:hover { border-color: #6B57C9 !important; color: #6B57C9 !important; }
+.cine-submit-btn:hover:not(:disabled) { transform: scale(1.06); }
+.cine-voice-btn:hover { background: rgba(107,87,201,0.08) !important; color: #6B57C9 !important; }
+
+/* Textareas / inputs focus ring inside overlays */
+.cine-field:focus { border-color: rgba(107,87,201,0.5) !important; }
+
+/* ============================================================
+   CINEMATIC LINKED PAGES (His Journey / Features / How It Works /
+   Search Results) — one new keyframe + the pages' :hover styling.
+   ============================================================ */
+
+@keyframes waveDrift { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+
+/* Sub-page footer "← Back to search" */
+.cine-backlink:hover { color: #6B57C9 !important; }
+
+/* How It Works — "under the hood" cards */
+.cine-hood-card:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateY(-2px); }
+
+/* Search Results — source chips (Vedabase / copy-with-reference) */
+.cine-source-link:hover { border-color: #6B57C9 !important; color: #51409A !important; }
+
+/* Search Results — follow-up bar controls */
+.cine-newsearch:hover { background: rgba(107,87,201,0.08) !important; color: #6B57C9 !important; }
+
+/* Search Results — Dig deeper trigger + drawer */
+.cine-deep-btn:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateY(-2px); box-shadow: 0 14px 40px rgba(107,87,201,0.12); }
+.cine-drawer-close:hover { background: rgba(107,87,201,0.08) !important; color: #2B2519 !important; }
+.cine-deep-item:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateX(3px); box-shadow: 0 8px 26px rgba(107,87,201,0.10); }
+.cine-results-vote:hover { border-color: #6B57C9 !important; }

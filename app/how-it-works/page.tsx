@@ -1,27 +1,19 @@
 /**
  * page.tsx — How It Works Page
  *
- * Explains the three-step search process with header and footer.
- * Guides new users through how to use Ask Srila Prabhupada.
+ * Server wrapper: SEO metadata around the cinematic explainer — three numbered
+ * steps (Ask → Verify → Go deeper), the under-the-hood pipeline, and a
+ * full-bleed CTA. All motion and interaction live in the client component.
  */
 import type { Metadata } from "next";
-import Header from "../components/layout/01-header";
-import StepsSection from "../components/landing/04-steps-section";
-import FooterSection from "../components/layout/02-footer";
+import HowItWorksPage from "../components/cinematic/07-how-it-works-page";
 
 export const metadata: Metadata = {
   title: "How It Works — Ask Śrīla Prabhupāda",
-  description: "Three simple steps: Ask a question, AI searches 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda, get answers with citations linked to Vedabase.io.",
+  description:
+    "Three steps to his answer: ask in plain language, read his exact words, verify every source. Every citation links directly to Vedabase.io.",
 };
 
-export default function HowItWorksPage() {
-  return (
-    <>
-      <Header />
-      <main style={{ paddingTop: 92, display: "grid", gap: 36 }}>
-        <StepsSection />
-        <FooterSection />
-      </main>
-    </>
-  );
+export default function HowItWorks() {
+  return <HowItWorksPage />;
 }
