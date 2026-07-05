@@ -9,8 +9,8 @@
 "use client";
 
 import Link from "next/link";
-import CinematicPageHeader from "./02-cinematic-page-header";
-import CinematicPageFooter from "./03-cinematic-page-footer";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
 import { useCinematicReveal } from "./04-use-cinematic-reveal";
 
 const IMG_DISCIPLES = "/images/lockscreen/prabhupadaanddisciplessmiling.jpg";
@@ -40,7 +40,7 @@ export default function HowItWorksPage() {
 
   return (
     <div ref={rootRef}>
-      <CinematicPageHeader active="how" />
+      <SiteHeader variant="overlay" />
 
       {/* Opening */}
       <section style={{ minHeight: "70vh", display: "flex", flexDirection: "column", justifyContent: "flex-end", maxWidth: 1280, margin: "0 auto", padding: "140px clamp(24px,6vw,100px) clamp(50px,8vh,90px)", width: "100%" }}>
@@ -91,7 +91,7 @@ export default function HowItWorksPage() {
         </div>
       </section>
 
-      <CinematicPageFooter />
+      <SiteFooter />
     </div>
   );
 }

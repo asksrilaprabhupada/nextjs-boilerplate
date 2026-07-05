@@ -1045,3 +1045,27 @@ body {
 .cine-drawer-close:hover { background: rgba(107,87,201,0.08) !important; color: #2B2519 !important; }
 .cine-deep-item:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateX(3px); box-shadow: 0 8px 26px rgba(107,87,201,0.10); }
 .cine-results-vote:hover { border-color: #6B57C9 !important; }
+/* ═══════════ UNIFIED SITE HEADER (11-site-header) ═══════════ */
+/* Inline styles carry the desktop defaults (nav visible, burger hidden);
+   these !important rules flip them below the tablet breakpoint. */
+@media (max-width: 880px) {
+  .site-nav-desktop { display: none !important; }
+  .site-nav-burger { display: flex !important; }
+}
+
+/* Theme toggle (More ▾ dropdown + mobile sheet) */
+.theme-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border-hair, #E8E0D2);
+  background: var(--surface-raised, #FEFCF8);
+  color: var(--accent-strong, #51409A);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.3s ease, color 0.3s ease, transform 0.2s ease;
+}
+.theme-toggle:hover { border-color: var(--accent, #6B57C9); }
+.theme-toggle:active { transform: scale(0.94); }

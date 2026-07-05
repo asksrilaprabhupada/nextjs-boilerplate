@@ -10,8 +10,8 @@
 "use client";
 
 import Link from "next/link";
-import CinematicPageHeader from "./02-cinematic-page-header";
-import CinematicPageFooter from "./03-cinematic-page-footer";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
 import { useCinematicReveal } from "./04-use-cinematic-reveal";
 
 const IMG = {
@@ -51,7 +51,7 @@ export default function JourneyPage() {
         <div data-rail-fill style={{ width: "100%", height: "0%", background: "linear-gradient(180deg, #C9A24B, #6B57C9)" }} />
       </div>
 
-      <CinematicPageHeader active="journey" />
+      <SiteHeader variant="overlay" />
 
       {/* ── OPENING ── */}
       <section style={{ minHeight: "100vh", position: "relative", overflow: "hidden", background: "#16120C", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "100px 24px 80px" }}>
@@ -166,7 +166,7 @@ export default function JourneyPage() {
         </div>
       </section>
 
-      <CinematicPageFooter />
+      <SiteFooter />
     </div>
   );
 }

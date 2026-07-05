@@ -15,8 +15,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import CinematicPageHeader from "./02-cinematic-page-header";
-import CinematicPageFooter from "./03-cinematic-page-footer";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
 import SearchLoader from "./10-search-loader";
 import NarrativeResponse from "../results/01-narrative-response";
 import { useSearchBehaviorTracker } from "@/app/hooks/01-use-search-behavior-tracker";
@@ -160,7 +160,7 @@ export default function SearchExperience({ q }: { q: string }) {
 
   return (
     <div>
-      <CinematicPageHeader active="search" forceScrolled />
+      <SiteHeader variant="solid" />
 
       {phase === "loading" && <SearchLoader q={q} stage={stage} done={doneRef.current} />}
 
@@ -254,7 +254,7 @@ export default function SearchExperience({ q }: { q: string }) {
         )}
       </main>
 
-      <CinematicPageFooter />
+      <SiteFooter />
     </div>
   );
 }

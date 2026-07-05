@@ -279,7 +279,32 @@ Verification: build ✅ tests 27/27 ✅ · `log_search` live-verified with varia
 `citation_clicks` INSERT policy verified live ✅. Full loop (search row → thumbs update → feedback
 row) asserted on the Task 16 preview.
 
-## §11 · Task 11 — Header/footer unification ⏳
+## §11 · Task 11 — Header/footer unification ✅
+
+- New `cinematic/11-site-header.tsx` (`variant: overlay | solid`): brand, Search (href `/`, no
+  more `/?ask=1`), His Journey, Features, How it works, **More ▾** (Support the seva · Request a
+  feature · Send feedback · GitHub · theme toggle — reusing `layout/03-theme-toggle.tsx`, finally
+  surfaced). Active pill via `usePathname()` (`/` and `/search` both count as Search). ≤880 px the
+  links collapse into a hamburger → slide-down sheet with the same items.
+- New `cinematic/12-site-footer.tsx`: © {year} · GitHub · Support the seva · Send feedback ·
+  "← Back to search" on inner pages.
+- New `cinematic/13-site-modals.tsx`: `SiteModalsProvider` + `useSiteModals()` mounted in
+  `app/layout.tsx` — the three cinematic overlays moved verbatim out of the home monolith, so any
+  page can open them. Seva rows now come from `app/lib/19-seva-config.ts` (values MOVED, not
+  deleted; `isPlaceholder` flag ready for Task 5). Feature/feedback modals now actually POST to
+  `/api/feedback` with sending/success ("Received — thank you.") and error states — completing the
+  Task 14 modal item.
+- `01-cinematic-home.tsx`: inline header/footer/modals + their state (~150 lines) surgically
+  removed; renders `<SiteHeader variant="overlay" />` + `<SiteFooter />`; the feedback FAB and the
+  kept "More questions" overlay are untouched (testimonials untouched).
+- Deleted (spec-authorized): `cinematic/02-cinematic-page-header.tsx`,
+  `03-cinematic-page-footer.tsx`, orphaned `layout/01-header.tsx` + `02-footer.tsx`. All four
+  pages + search experience migrated. Small additive globals.css block: responsive nav breakpoint
+  + `.theme-toggle` styling.
+
+Verification: build ✅ tests ✅ · local prod server: `/`, `/journey`, `/features`,
+`/how-it-works`, `/search?q=` all serve the identical header with More + hamburger markup ✅.
+Seva-modal-from-/journey + 390 px hamburger visual check on the Task 16 preview/screenshots.
 
 ## §5 · Task 5 — FAKE labelling ⏳
 

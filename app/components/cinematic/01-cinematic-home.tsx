@@ -23,6 +23,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
+import { useSiteModals } from "./13-site-modals";
 
 /* ─── Static content (verbatim from the prototype) ─── */
 
@@ -69,13 +72,6 @@ const TESTIMONIALS = [
 
 const SEARCH_STATUSES = ["Listening…", "Searching the library…", "Weaving his words…"];
 
-const DONATE_INFO = [
-  { label: "Account name", value: "Ask Śrīla Prabhupāda Seva" },
-  { label: "Account number", value: "0000 0000 0000" },
-  { label: "IFSC", value: "BANK0000000" },
-  { label: "UPI", value: "seva@upi" },
-];
-
 const GALLERY = [
   { id: "gallery-1", img: IMG.deities, caption: "01 — Vṛndāvana", offset: false },
   { id: "gallery-2", img: IMG.disciples, caption: "02 — Teaching", offset: true },
@@ -88,7 +84,6 @@ const MANIFESTO_WORDS = [
   ["We", "only", "help", "you", "find", "them."],
 ];
 
-type Modal = "donate" | "feature" | "feedback" | null;
 type Mode = "auto" | "click" | "off";
 
 interface Props {
@@ -130,17 +125,9 @@ export default function CinematicHome({
   const [searchPhase, setSearchPhase] = useState(0);
   const [searchQ, setSearchQ] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
-  const [navMoreOpen, setNavMoreOpen] = useState(false);
-  const [modal, setModal] = useState<Modal>(null);
-  const [featText, setFeatText] = useState("");
-  const [featEmail, setFeatEmail] = useState("");
-  const [featSent, setFeatSent] = useState(false);
-  const [fbVote, setFbVote] = useState<"up" | "down" | null>(null);
-  const [fbText, setFbText] = useState("");
-  const [fbSent, setFbSent] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
   const [footerNear, setFooterNear] = useState(false);
   const [motes, setMotes] = useState<React.CSSProperties[]>([]);
+  const { openModal } = useSiteModals();
 
   /* ── refs (for stable access inside long-lived listeners) ── */
   const rootRef = useRef<HTMLDivElement>(null);
@@ -437,7 +424,7 @@ export default function CinematicHome({
     // keyboard: Enter/Space to enter, Escape to close
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === "Enter" || e.key === " ") && lockVisibleRef.current) dismiss();
-      if (e.key === "Escape") { setModal(null); setNavMoreOpen(false); setMoreOpen(false); }
+      if (e.key === "Escape") { setMoreOpen(false); }
     };
     window.addEventListener("keydown", onKey);
 
@@ -502,11 +489,6 @@ export default function CinematicHome({
     dismiss();
     pushTimer(() => { window.scrollTo({ top: 0, behavior: "smooth" }); textareaRef.current?.focus(); }, 80);
   };
-  const copyRow = (label: string, value: string) => () => {
-    try { navigator.clipboard.writeText(value); } catch { /* ok */ }
-    setCopied(label);
-    pushTimer(() => setCopied(null), 1600);
-  };
 
   /* ── shared style fragments ── */
   const overlayBackdrop: React.CSSProperties = {
@@ -524,18 +506,9 @@ export default function CinematicHome({
     boxShadow: "0 40px 120px rgba(22,18,12,0.5), 0 0 0 1px rgba(107,87,201,0.08)",
     animation: "morePanelIn 0.7s cubic-bezier(0.16,1,0.3,1) both",
   });
-  const closeBtn = (
-    <button onClick={() => setModal(null)} aria-label="Close" className="cine-close"
-      style={{ position: "absolute", top: 16, right: 16, width: 38, height: 38, borderRadius: "50%", border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", color: "#6E6353", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.3s ease" }}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-    </button>
-  );
   const eyebrow = (color: string): React.CSSProperties => ({
     fontSize: 11, fontWeight: 600, letterSpacing: "0.32em", textTransform: "uppercase", color, textAlign: "center",
   });
-
-  const featDisabled = !featText.trim();
-  const fbDisabled = !fbVote && !fbText.trim();
 
   return (
     <div ref={rootRef}>
@@ -641,123 +614,8 @@ export default function CinematicHome({
         </div>
       )}
 
-      {/* Nav "More" click-away backdrop */}
-      {navMoreOpen && <div onClick={() => setNavMoreOpen(false)} aria-hidden style={{ position: "fixed", inset: 0, zIndex: 99, cursor: "default" }} />}
-
-      {/* ═══════════ DONATE — cinematic overlay ═══════════ */}
-      {modal === "donate" && (
-        <div role="dialog" aria-label="Donate" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>Support the seva</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>Keep his words freely searchable</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>No ads. No fees. Only seva.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {DONATE_INFO.map((d, i) => (
-                <div key={d.label} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center", padding: "12px 16px", border: "1px solid #E8E0D2", borderRadius: 14, background: "rgba(254,252,248,0.9)", opacity: 0, animation: "moreCardIn 0.55s cubic-bezier(0.16,1,0.3,1) both", animationDelay: `${(0.14 + i * 0.06).toFixed(2)}s` }}>
-                  <div style={{ minWidth: 0 }}>
-                    <p className="font-body" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C9A24B" }}>{d.label}</p>
-                    <p className="font-body" style={{ fontSize: 15, fontWeight: 500, color: "#2B2519", marginTop: 3, fontVariantNumeric: "tabular-nums", overflowWrap: "break-word" }}>{d.value}</p>
-                  </div>
-                  <button onClick={copyRow(d.label, d.value)} className="cine-copy-btn font-body" style={{ padding: "7px 14px", borderRadius: 100, border: "1px solid rgba(107,87,201,0.3)", background: "rgba(107,87,201,0.06)", color: "#51409A", fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.3s" }}>{copied === d.label ? "Copied" : "Copy"}</button>
-                </div>
-              ))}
-            </div>
-            <p className="font-body" style={{ fontSize: 12, color: "#9A8F7D", textAlign: "center", marginTop: 18 }}>Every contribution keeps the library online — servers, search, nothing else.</p>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ FEATURE REQUEST — cinematic overlay ═══════════ */}
-      {modal === "feature" && (
-        <div role="dialog" aria-label="Feature request" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>Shape what comes next</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>What would serve your study?</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>Describe it — we read every request.</p>
-            {!featSent ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.15s both" }}>
-                <textarea value={featText} onChange={(e) => setFeatText(e.target.value)} placeholder="The feature you wish existed…" rows={4} aria-label="Feature request" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "14px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", resize: "none", lineHeight: 1.6, transition: "border-color 0.3s" }} />
-                <input value={featEmail} onChange={(e) => setFeatEmail(e.target.value)} placeholder="Email (optional — for updates)" aria-label="Email" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "13px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", transition: "border-color 0.3s" }} />
-                <button onClick={() => { if (featText.trim()) setFeatSent(true); }} disabled={featDisabled} className="cine-send-btn font-body" style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 9, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "13px 34px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", cursor: featDisabled ? "default" : "pointer", opacity: featDisabled ? 0.45 : 1, boxShadow: "0 10px 30px rgba(107,87,201,0.3)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)", marginTop: 6 }}>Send request</button>
-              </div>
-            ) : (
-              <div style={{ textAlign: "center", padding: "18px 0 6px", animation: "moreCardIn 0.7s cubic-bezier(0.16,1,0.3,1) both" }}>
-                <div aria-hidden style={{ width: 56, height: 1, background: "linear-gradient(90deg, transparent, #C9A24B, transparent)", margin: "0 auto 18px" }} />
-                <p className="font-display" style={{ fontSize: 24, fontStyle: "italic", color: "#201B12" }}>Received with gratitude.</p>
-                <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 8 }}>Every request is read. Hare Kṛṣṇa.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ FEEDBACK — cinematic overlay ═══════════ */}
-      {modal === "feedback" && (
-        <div role="dialog" aria-label="Feedback" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>From the heart</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>How was your experience?</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>Your words guide ours.</p>
-            {!fbSent ? (
-              <>
-                <div style={{ display: "flex", justifyContent: "center", gap: 12, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.12s both" }}>
-                  <button onClick={() => setFbVote("up")} className="cine-vote-btn font-body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 140, padding: "18px 12px", borderRadius: 18, border: `1px solid ${fbVote === "up" ? "#6B57C9" : "#E8E0D2"}`, background: fbVote === "up" ? "rgba(107,87,201,0.10)" : "rgba(254,252,248,0.9)", color: fbVote === "up" ? "#51409A" : "#6E6353", cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" /></svg>
-                    <span>Helpful</span>
-                  </button>
-                  <button onClick={() => setFbVote("down")} className="cine-vote-btn font-body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 140, padding: "18px 12px", borderRadius: 18, border: `1px solid ${fbVote === "down" ? "#6B57C9" : "#E8E0D2"}`, background: fbVote === "down" ? "rgba(107,87,201,0.10)" : "rgba(254,252,248,0.9)", color: fbVote === "down" ? "#51409A" : "#6E6353", cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" /></svg>
-                    <span>Could be better</span>
-                  </button>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 14, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.2s both" }}>
-                  <textarea value={fbText} onChange={(e) => setFbText(e.target.value)} placeholder="Tell us more (optional)…" rows={3} aria-label="Feedback" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "14px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", resize: "none", lineHeight: 1.6, transition: "border-color 0.3s" }} />
-                  <button onClick={() => { if (fbVote || fbText.trim()) setFbSent(true); }} disabled={fbDisabled} className="cine-send-btn font-body" style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 9, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "13px 34px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", cursor: fbDisabled ? "default" : "pointer", opacity: fbDisabled ? 0.45 : 1, boxShadow: "0 10px 30px rgba(107,87,201,0.3)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)" }}>Send feedback</button>
-                </div>
-              </>
-            ) : (
-              <div style={{ textAlign: "center", padding: "18px 0 6px", animation: "moreCardIn 0.7s cubic-bezier(0.16,1,0.3,1) both" }}>
-                <div aria-hidden style={{ width: 56, height: 1, background: "linear-gradient(90deg, transparent, #C9A24B, transparent)", margin: "0 auto 18px" }} />
-                <p className="font-display" style={{ fontSize: 24, fontStyle: "italic", color: "#201B12" }}>Thank you.</p>
-                <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 8 }}>Received with gratitude. Hare Kṛṣṇa.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ HEADER (fixed, outside the camera-pull transform) ═══════════ */}
-      <header style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, height: 60, background: hdr.bg, backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)", borderBottom: `1px solid ${hdr.border}`, padding: "0 clamp(20px,4vw,48px)", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: hdr.shadow, opacity: main.op, transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s, opacity 0.8s ease 0.35s" }}>
-        <button onClick={focusSearch} className="font-display" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "clamp(1rem, 3.5vw, 1.4rem)", fontWeight: 600, color: "#51409A", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>Ask Śrīla Prabhupāda</button>
-        <nav style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={focusSearch} className="font-body" style={{ display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 500, background: "rgba(107,87,201,0.16)", color: "#51409A", lineHeight: 1, whiteSpace: "nowrap", border: "none", cursor: "pointer" }}>Search</button>
-          <Link href="/journey" className="cine-nav-link font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: "transparent", color: "#6E6353", lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.3s" }}>His Journey</Link>
-          <Link href="/features" className="cine-nav-link font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: "transparent", color: "#6E6353", lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.3s" }}>Features</Link>
-          <Link href="/how-it-works" className="cine-nav-link font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: "transparent", color: "#6E6353", lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.3s" }}>How it works</Link>
-          <div style={{ position: "relative", display: "flex" }}>
-            <button onClick={() => setNavMoreOpen((v) => !v)} className="cine-nav-link font-body" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: navMoreOpen ? "rgba(107,87,201,0.10)" : "transparent", color: navMoreOpen ? "#51409A" : "#6E6353", border: "none", lineHeight: 1, whiteSpace: "nowrap", cursor: "pointer", transition: "color 0.3s, background 0.3s" }}>
-              <span>More</span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: `rotate(${navMoreOpen ? "180deg" : "0deg"})`, transition: "transform 0.35s cubic-bezier(0.16,1,0.3,1)" }}><path d="m6 9 6 6 6-6" /></svg>
-            </button>
-            {navMoreOpen && (
-              <div style={{ position: "absolute", top: "calc(100% + 14px)", right: 0, width: 248, background: "linear-gradient(160deg, rgba(254,252,248,0.98), rgba(250,247,241,0.97))", border: "1px solid rgba(107,87,201,0.14)", borderRadius: 18, boxShadow: "0 24px 70px rgba(43,37,25,0.18)", padding: 8, backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", animation: "morePanelIn 0.4s cubic-bezier(0.16,1,0.3,1) both", display: "flex", flexDirection: "column", gap: 2 }}>
-                {[
-                  { title: "Donate", sub: "Support the seva", on: () => { setModal("donate"); setNavMoreOpen(false); setCopied(null); } },
-                  { title: "Feature request", sub: "Shape what comes next", on: () => { setModal("feature"); setNavMoreOpen(false); setFeatSent(false); } },
-                  { title: "Feedback", sub: "Two minutes, from the heart", on: () => { setModal("feedback"); setNavMoreOpen(false); setFbSent(false); } },
-                ].map((it) => (
-                  <button key={it.title} onClick={it.on} className="cine-nav-menu-item font-body" style={{ textAlign: "left", padding: "11px 13px", borderRadius: 12, border: "none", background: "transparent", cursor: "pointer", transition: "background 0.25s" }}>
-                    <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: "#2B2519" }}>{it.title}</span>
-                    <span style={{ display: "block", fontSize: 12, color: "#9A8F7D", marginTop: 2 }}>{it.sub}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </nav>
-      </header>
+      {/* ═══════════ HEADER — unified site header (More ▾ opens the shared modals) ═══════════ */}
+      <SiteHeader variant="overlay" />
 
       {/* Persistent sound toggle (after entrance) */}
       {!lockVisible && (
@@ -768,8 +626,8 @@ export default function CinematicHome({
 
       {/* Floating feedback — cinematic entrance/exit */}
       {!lockVisible && (
-        <button onClick={() => { setModal("feedback"); setNavMoreOpen(false); setFbSent(false); }} aria-label="Send feedback" className="cine-fab"
-          style={{ position: "fixed", bottom: 20, right: 20, zIndex: 500, display: "inline-flex", alignItems: "center", gap: 9, padding: "13px 22px", borderRadius: 100, border: "1px solid rgba(255,244,214,0.35)", background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFF8E8", fontSize: 13, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.35)", animation: "fabIn 0.9s cubic-bezier(0.16,1,0.3,1) 0.6s backwards", opacity: modal || footerNear ? 0 : 1, transform: `translateY(${modal || footerNear ? "18px" : "0px"}) scale(${modal || footerNear ? "0.92" : "1"})`, pointerEvents: modal || footerNear ? "none" : "auto", transition: "opacity 0.4s ease, transform 0.5s cubic-bezier(0.16,1,0.3,1), box-shadow 0.35s ease" }}>
+        <button onClick={() => openModal("feedback")} aria-label="Send feedback" className="cine-fab"
+          style={{ position: "fixed", bottom: 20, right: 20, zIndex: 500, display: "inline-flex", alignItems: "center", gap: 9, padding: "13px 22px", borderRadius: 100, border: "1px solid rgba(255,244,214,0.35)", background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFF8E8", fontSize: 13, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.35)", animation: "fabIn 0.9s cubic-bezier(0.16,1,0.3,1) 0.6s backwards", opacity: footerNear ? 0 : 1, transform: `translateY(${footerNear ? "18px" : "0px"}) scale(${footerNear ? "0.92" : "1"})`, pointerEvents: footerNear ? "none" : "auto", transition: "opacity 0.4s ease, transform 0.5s cubic-bezier(0.16,1,0.3,1), box-shadow 0.35s ease" }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
           <span>Feedback</span>
         </button>
@@ -961,12 +819,7 @@ export default function CinematicHome({
             </div>
           </section>
 
-          <footer style={{ borderTop: "1px solid #E8E0D2", padding: "20px clamp(20px,5vw,80px)", maxWidth: 1280, margin: "0 auto", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-            <span className="font-body" style={{ fontSize: 13, color: "#6E6353" }}>© 2026 All rights reserved</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-              <a href="https://github.com/asksrilaprabhupada/nextjs-boilerplate" target="_blank" rel="noopener noreferrer" className="cine-nav-link font-body" style={{ fontSize: 13, color: "#6E6353", textDecoration: "none", transition: "color 0.3s ease" }}>GitHub</a>
-            </div>
-          </footer>
+          <SiteFooter />
         </main>
       </div>
     </div>

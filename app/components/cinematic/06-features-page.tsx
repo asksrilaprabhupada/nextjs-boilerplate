@@ -9,8 +9,8 @@
 "use client";
 
 import Link from "next/link";
-import CinematicPageHeader from "./02-cinematic-page-header";
-import CinematicPageFooter from "./03-cinematic-page-footer";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
 import { useCinematicReveal } from "./04-use-cinematic-reveal";
 
 const IMG_DEITIES = "/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg";
@@ -30,7 +30,7 @@ export default function FeaturesPage() {
 
   return (
     <div ref={rootRef}>
-      <CinematicPageHeader active="features" />
+      <SiteHeader variant="overlay" />
 
       {/* Opening */}
       <section style={{ minHeight: "74vh", display: "flex", flexDirection: "column", justifyContent: "flex-end", maxWidth: 1280, margin: "0 auto", padding: "140px clamp(24px,6vw,100px) clamp(50px,8vh,90px)", width: "100%" }}>
@@ -75,7 +75,7 @@ export default function FeaturesPage() {
         <Link href="/?ask=1" className="cine-cta-btn font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 10, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", borderRadius: 100, padding: "15px 38px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", boxShadow: "0 10px 34px rgba(107,87,201,0.30)", transition: "all 0.45s cubic-bezier(0.16,1,0.3,1)" }}><span>Try the search</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></Link>
       </section>
 
-      <CinematicPageFooter />
+      <SiteFooter />
     </div>
   );
 }

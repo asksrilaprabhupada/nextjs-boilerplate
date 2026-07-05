@@ -6,6 +6,7 @@
  */
 import type { Metadata } from "next";
 import { Cormorant_Garamond, DM_Sans, Noto_Serif_Devanagari } from "next/font/google";
+import SiteModalsProvider from "./components/cinematic/13-site-modals";
 import "./globals.css";
 
 /*
@@ -151,7 +152,9 @@ export default function RootLayout({
           <rect width="100%" height="100%" filter="url(#grain)" />
         </svg>
 
-        <div style={{ position: "relative", zIndex: 2 }}>{children}</div>
+        <div style={{ position: "relative", zIndex: 2 }}>
+          <SiteModalsProvider>{children}</SiteModalsProvider>
+        </div>
       </body>
     </html>
   );
