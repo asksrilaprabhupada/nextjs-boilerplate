@@ -753,6 +753,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
           totalLetters={results.totalLetters || 0}
           articleVerseIds={new Set(results.articleVerseIds || [])}
           onClose={() => setDigDeeperOpen(false)}
+          onSearch={(q) => { setDigDeeperOpen(false); onSearch(q); }}
         />
       )}
 

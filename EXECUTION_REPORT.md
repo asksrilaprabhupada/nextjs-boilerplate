@@ -200,7 +200,39 @@ equivalence, fail-open) · `npm run build` ✅ · RPC verified live. Essay-order
 (mind-query leads with BG 6.34/6.35-class verse + purport + context + lecture + letter) asserted
 on the Task 16 preview.
 
-## §10 · Task 10 — Dig deeper v2 ⏳
+## §10 · Task 10 — Dig deeper v2 ✅
+
+`02-dig-deeper-modal.tsx` extended (existing SegmentedToggle / Ranked·Topic·Book grouping /
+book multi-select preserved):
+
+- Type toggle now carries live count chips: `All {sum} · Verses {n} · Books {n} · Lectures {n} ·
+  Letters {n}` (overflow-array counts; "Books" = prose per spec wording).
+- Sort `Relevance | Date` (shown when dated sources exist; date sorts lectures/letters newest-first,
+  undated last; verses/prose keep score order).
+- "Search within results" input — case-insensitive substring over translation/purport/body/title/
+  recipient/chapter.
+- "His words only" toggle, **default ON** — hides non-HIS authorship; when OFF those cards show
+  their amber provenance badge (Task 9 styling).
+- Cards upgraded: Verse = ref + speaker chip (`speaker → speakerTo`) + translation + "Purport ▸"
+  expander + Copy-with-reference + Vedabase ↗; Lecture = title · date · location + excerpt +
+  "Show context ▸" (before/after); Letter = "To {recipient} · date" + excerpt + context; Prose =
+  book · chapter + excerpt + Vedabase deep link + context. All cards gain "Ask about this passage"
+  (verses seed their ref → direct lookup; prose/lecture/letter seed the first ~8 words) — closes
+  the drawer and navigates via the threaded `onSearch`.
+- Honest header line: "Showing {rendered} of {total} relevant passages" (rendered = post-filter
+  visible; total = totalVerses+Prose+Transcripts+Letters).
+- URL-hash state `#deeper[=<type>]` via replaceState (no history spam); browser Back closes;
+  deep-link restores the type filter. Focus trap (`role="dialog"`, `aria-modal`, focus → close
+  button, Tab cycles, focus restored to opener), Esc closes (kept). Mobile sheet is now full-height
+  (`100dvh`).
+- Deviation noted: spec's `vedabase_url_precise` field does not exist anywhere in the codebase or
+  API — paragraph rows' `vedabase_url` IS already the precise deep link, so cards use it. Lecture
+  "matched sentence highlight via matchedChunkText": transcripts never carry `matchedChunkText`
+  (only verses get it, from purport chunks); the lecture card's excerpt IS the matched paragraph,
+  with surrounding context behind the expander.
+
+Verification: `npm test` 27/27 ✅ · `npm run build` ✅. Interactive filter behaviour exercised on
+the Task 16 preview.
 
 ## §7 · Task 7 — Loader ✅ (implemented with Task 2's `10-search-loader.tsx`)
 
