@@ -59,7 +59,34 @@ All expected anchors located; two spec assumptions corrected:
 
 ---
 
-## §4 · Task 4 — Supabase RLS + function hardening ⏳
+## §4 · Task 4 — Supabase RLS + function hardening ✅
+
+Applied as ONE atomic migration `20260705144937_enable_rls_with_policies_and_fn_hardening`
+(via Supabase MCP `apply_migration`; SQL committed to `supabase/migrations/`).
+
+- RLS enabled + `"public read"` SELECT (anon, authenticated) on 9 content tables; read policy added
+  to `chapters` (was RLS-on-zero-policies, fully blocking anon).
+- RLS enabled on `search_logs` (NO anon policies — RPC/service-role only) and `feedback`;
+  `"anon insert"` policies on `feedback` and `citation_clicks`.
+- `SET search_path = public, pg_temp` pinned on **45 functions** — list generated from `pg_proc`,
+  not hand-typed. Deviation: the 4 `unaccent`-extension functions (`unaccent` ×2, `unaccent_init`,
+  `unaccent_lexize`) were intentionally excluded — extension-owned, not advisor-flagged, and
+  text-search-template internals are risky to alter.
+
+Verification output:
+1. ✅ Security advisors re-run: all 11 `rls_disabled_in_public` ERRORs cleared; all 45
+   `function_search_path_mutable` WARNs cleared; `sensitive_columns_exposed` (search_logs) cleared;
+   `chapters`/`citation_clicks` no-policy INFOs cleared.
+2. ✅ Anon-role probe (`SET ROLE anon`): `SELECT translation FROM verses LIMIT 1` returns data;
+   `SELECT count(*) FROM search_logs` returns 0 visible rows (RLS filtering works). Content tables
+   have zero write policies → anon writes provably blocked by RLS semantics.
+3. ✅ Live prod `/api/search?q=test` → HTTP 200, `totalResults: 28`, full citations/keyAnswers
+   (fetched via Vercel MCP; this sandbox's egress policy blocks `*.vercel.app` directly).
+4. Remaining advisor items (expected/intentional): `search_logs` RLS-no-policy INFO (by design);
+   2 WARNs for always-true INSERT policies on feedback/citation_clicks (spec-mandated public
+   telemetry writes); `verse_refs` SECURITY DEFINER ERROR (TODO: owner decision — recreate with
+   `security_invoker`); `unaccent` extension in public WARN (pre-existing); Postgres patch WARN
+   (out of scope per spec).
 
 ## §2 · Task 2 — Wire /search to real API + SSE ⏳
 
