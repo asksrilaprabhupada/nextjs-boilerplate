@@ -27,7 +27,6 @@ import {
 } from "@/app/lib/10-passage-fold";
 import { stripPurportBoilerplate, escapeHtml } from "@/app/lib/09-purport-format";
 import { EASE, SPRING_SETTLE } from "@/app/lib/11-motion";
-import type { Authorship } from "@/app/lib/12-provenance";
 import {
   type PassageLabel,
   formatLabel,
@@ -38,89 +37,35 @@ import {
   labelForLetter,
 } from "@/app/lib/13-passage-label";
 
-/* ─────────────────────────── Data contract (unchanged) ─────────────────────────── */
+/* ─────────────────────────── Data contract ───────────────────────────
+   The response types live in the shared server↔client contract
+   (app/lib/types/01-search.ts) and are re-exported here so existing
+   importers (e.g. 02-dig-deeper-modal) keep working unchanged. */
 
-export interface Citation {
-  ref: string;
-  book: string;
-  url: string;
-  type: "verse" | "prose" | "transcript" | "letter";
-  title: string;
-}
+import type {
+  Citation,
+  VerseHit,
+  ProseHit,
+  TranscriptHit,
+  LetterHit,
+  KeyAnswer,
+  BookGroup,
+  MainFlowNode,
+  SearchResults,
+  VerseContext,
+} from "@/app/lib/types/01-search";
 
-export interface VerseHit {
-  id: string; scripture: string; verse_number: string; sanskrit_devanagari: string;
-  transliteration: string; translation: string; purport: string;
-  chapter_number?: string; canto_or_division?: string; chapter_title?: string;
-  book_slug?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number; matchedChunkText?: string;
-  authorship?: Authorship; provenanceNote?: string; speaker?: string; speakerTo?: string;
-}
-
-export interface ProseHit {
-  id: string; book_slug: string; paragraph_number: number; body_text: string;
-  chapter_title?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number; before?: string; after?: string;
-  authorship?: Authorship; provenanceNote?: string;
-}
-
-export interface TranscriptHit {
-  id: string; transcript_id?: string; paragraph_number: number; body_text: string;
-  content_type?: string; title?: string; date?: string; location?: string;
-  occasion?: string; scripture_ref?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
-  authorship?: Authorship; provenanceNote?: string; speaker?: string;
-}
-
-export interface LetterHit {
-  id: string; letter_id?: string; paragraph_number: number; body_text: string;
-  content_type?: string; title?: string; date?: string; location?: string;
-  recipient?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
-  authorship?: Authorship; provenanceNote?: string;
-}
-
-export interface KeyAnswer { id: string; ref: string; line: string; }
-
-export interface BookGroup {
-  slug: string; name: string; verses: VerseHit[]; prose: ProseHit[];
-  transcripts?: TranscriptHit[]; letters?: LetterHit[];
-}
-
-/** Ordered structured descriptor of one woven-essay passage (from the server). */
-export interface MainFlowNode {
-  type: "verse" | "prose" | "lecture" | "letter";
-  id: string;
-  ref: string;
-  url: string;
-}
-
-export interface SearchResults {
-  query: string;
-  keywords: string[];
-  synonyms: string[];
-  relatedConcepts: string[];
-  narrative: string;
-  totalResults: number;
-  citations: Citation[];
-  books: BookGroup[];
-  overflowVerses?: VerseHit[];
-  overflowProse?: ProseHit[];
-  overflowTranscripts?: TranscriptHit[];
-  overflowLetters?: LetterHit[];
-  totalVerses?: number;
-  totalProse?: number;
-  totalTranscripts?: number;
-  totalLetters?: number;
-  articleVerseIds?: string[];
-  suggestion?: string | null;
-  suggestionDisplay?: string | null;
-  queryTerms?: string[];
-  keyAnswers?: KeyAnswer[];
-  mainFlowItems?: MainFlowNode[];
-  intro?: string;
-  conclusion?: string;
-}
+export type {
+  Citation,
+  VerseHit,
+  ProseHit,
+  TranscriptHit,
+  LetterHit,
+  KeyAnswer,
+  BookGroup,
+  MainFlowNode,
+  SearchResults,
+};
 
 /* ─────────────────────────── Citation display ─────────────────────────── */
 
@@ -211,6 +156,32 @@ function LabelLine({ type, data }: { type: MainFlowNode["type"]; data: AnyHit })
       {text && <span>{text}</span>}
       {label.provenanceNote && <span className="passage-label-note">{label.provenanceNote}</span>}
     </div>
+  );
+}
+
+/* ─────────────────────────── Verse context strip ───────────────────────────
+   Dimmed chapter neighbours of the primary verse (get_verse_context RPC) —
+   verbatim translations with fixed neutral frames, each linking to its own
+   Vedabase page. Renders directly under the primary verse's card. */
+
+function VerseContextStrip({ ctx }: { ctx: VerseContext }) {
+  if (ctx.before.length === 0 && ctx.after.length === 0) return null;
+  const line = (l: VerseContext["before"][number], frame: string) => (
+    <p key={l.id} className="ctx-line font-body">
+      <span className="ctx-frame">{frame}</span>{" "}
+      <span className="ctx-text">&ldquo;{l.translation}&rdquo;</span>{" "}
+      {l.vedabase_url ? (
+        <a className="ctx-ref" href={l.vedabase_url} target="_blank" rel="noopener noreferrer">{formatCiteRef(l.ref)} ↗</a>
+      ) : (
+        <span className="ctx-ref">{formatCiteRef(l.ref)}</span>
+      )}
+    </p>
+  );
+  return (
+    <aside className="verse-context-strip" aria-label="Surrounding verses in the chapter">
+      {ctx.before.map(l => line(l, "Just before this, it is asked —"))}
+      {ctx.after.map(l => line(l, "…and the reply —"))}
+    </aside>
   );
 }
 
@@ -583,6 +554,19 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
     return (
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "clamp(48px,10vw,80px) 24px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
         <p className="font-display" style={{ fontSize: "1.4rem", color: "var(--ink)", margin: 0 }}>No passages found for that phrasing.</p>
+        {results.suggestion && results.suggestionDisplay && (
+          <p className="font-body" style={{ fontSize: "1rem", color: "var(--ink)", margin: 0 }}>
+            Did you mean{" "}
+            <button
+              className="font-body"
+              onClick={() => onSearch(results.suggestion!)}
+              style={{ fontSize: "1rem", fontWeight: 600, color: "var(--accent-strong)", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
+            >
+              {results.suggestionDisplay}
+            </button>
+            ?
+          </p>
+        )}
         <p className="font-body" style={{ fontSize: "0.95rem", color: "var(--ink-muted)", maxWidth: 440, lineHeight: 1.6, margin: 0 }}>
           Try rephrasing your question — or a different spelling (Krsna, Krishna, and Kṛṣṇa all work).
         </p>
@@ -653,11 +637,15 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
                   const d = dataFor(h.node);
                   if (!d) return null;
                   return (
-                    <PassageCard
-                      key={`${results.query}:${h.node.id}`}
-                      node={h.node} data={d} hero line={h.line} index={hi}
-                      queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
-                    />
+                    <div key={`${results.query}:${h.node.id}`}>
+                      <PassageCard
+                        node={h.node} data={d} hero line={h.line} index={hi}
+                        queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
+                      />
+                      {results.primaryVerseContext?.verseId === h.node.id && (
+                        <VerseContextStrip ctx={results.primaryVerseContext} />
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -669,11 +657,15 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
                 const d = dataFor(node);
                 if (!d) return null;
                 return (
-                  <PassageCard
-                    key={`${results.query}:${node.id}`}
-                    node={node} data={d} index={heroes.length + j}
-                    queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
-                  />
+                  <div key={`${results.query}:${node.id}`}>
+                    <PassageCard
+                      node={node} data={d} index={heroes.length + j}
+                      queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
+                    />
+                    {results.primaryVerseContext?.verseId === node.id && (
+                      <VerseContextStrip ctx={results.primaryVerseContext} />
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -787,6 +779,15 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
 
         .hero-stack { display: flex; flex-direction: column; gap: var(--space-5); margin-bottom: var(--space-7); }
         .essay-flow { display: flex; flex-direction: column; }
+
+        /* ── Verse context strip — dimmed chapter neighbours under the primary verse ── */
+        .verse-context-strip { margin: var(--space-3) 0 0 var(--space-4); padding: var(--space-3) var(--space-4); border-left: 2px solid var(--border-hair); opacity: 0.82; }
+        .verse-context-strip .ctx-line { margin: 0 0 var(--space-2); font-size: 0.88rem; line-height: 1.6; color: var(--ink-muted); }
+        .verse-context-strip .ctx-line:last-child { margin-bottom: 0; }
+        .verse-context-strip .ctx-frame { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-subtle); }
+        .verse-context-strip .ctx-text { font-style: italic; }
+        .verse-context-strip .ctx-ref { font-size: 0.78rem; font-weight: 600; color: var(--accent-strong); text-decoration: none; white-space: nowrap; }
+        .verse-context-strip a.ctx-ref:hover { text-decoration: underline; }
 
         .passage { padding: var(--space-6) 0; border-bottom: 1px solid var(--border-hair); }
         .essay-flow .passage:last-child { border-bottom: none; }
