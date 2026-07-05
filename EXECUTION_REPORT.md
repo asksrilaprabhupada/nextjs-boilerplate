@@ -88,7 +88,34 @@ Verification output:
    `security_invoker`); `unaccent` extension in public WARN (pre-existing); Postgres patch WARN
    (out of scope per spec).
 
-## §2 · Task 2 — Wire /search to real API + SSE ⏳
+## §2 · Task 2 — Wire /search to real API + SSE ✅
+
+The mock died. `/search` is now a dynamic server shell (`force-dynamic`, reads `searchParams.q`
+server-side, redirects to `/` when empty, `robots: noindex,follow`) around the new client
+orchestrator `app/components/cinematic/09-search-experience.tsx`, which opens
+`/api/search?q=…&stream=1` (SSE), drives the new mandala loader
+(`10-search-loader.tsx`) from real pipeline stage events, and renders the answer with the
+previously-orphaned data-driven renderer (`components/results/01-narrative-response.tsx` +
+Dig-Deeper modal). SSE failure → one plain-fetch fallback; >90 s → honest error card with retry.
+Zero-results state now shows the API's "Did you mean {suggestionDisplay}" + 3 example chips.
+
+- `app/api/search/route.ts`: GET body extracted into `runSearchPipeline(query, mode, onStage)`;
+  two thin handlers — default JSON path byte-compatible, `?stream=1` returns
+  `text/event-stream` (`stage` ×5 at 12/22/45/70/90 → `result` → `done`, 15 s `: ping` heartbeat,
+  `X-Accel-Buffering: no`; cache hits replay stages at ~120 ms). `export const maxDuration = 90`.
+- Shared types: `app/lib/types/01-search.ts` (spec's `lib/types/search.ts`) — extracted from the
+  renderer; route + renderer both import it. Renderer re-exports so `02-dig-deeper-modal` is
+  untouched.
+- Cache: `RESPONSE_VERSION` p6→p7 and `mode` folded into the key — fixes the latent bug where
+  article and references responses shared one cache entry.
+- Deleted: `app/components/cinematic/08-search-results-page.tsx` (the canned BG 2.20/2.40/10.10/
+  18.66 prototype).
+
+Verification: `npm run build` ✅ (route shows as ƒ Dynamic); local prod server: served HTML
+contains the exact question for two different `q` values ✅; `/search` (no q) → 307 → `/` ✅;
+`<meta name="robots" content="noindex, follow"/>` ✅; repo grep for "Prototype shows 5 of 142" /
+"142 more passages" / "Woven from 4 passages" → clean ✅. Live SSE + real-answer check happens on
+the Task 16 preview deploy (no API keys exist in this sandbox).
 
 ## §3 · Task 3 — Multi-query expansion ⏳
 

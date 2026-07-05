@@ -1,21 +1,32 @@
 /**
- * search/page.tsx — Search Results Page
+ * search/page.tsx — Search Results Page (dynamic)
  *
- * Server wrapper: SEO metadata around the cinematic woven-answer view — the
- * meditative loader, the question in big serif, verbatim passage cards with
- * Vedabase links, and the Dig-deeper drawer. The client component reads `?q=`
- * from the URL; wiring it to the live /api/search backend is the next
- * integration step (it currently renders the designed sample answer).
+ * Thin server shell around the live search experience: reads `q` from the URL
+ * server-side (so the question is in the served HTML), redirects to the home
+ * search when empty, and hands off to the client <SearchExperience>, which
+ * opens the /api/search SSE stream and renders the woven answer. Result pages
+ * are noindex — the curated pages carry SEO.
  */
 import type { Metadata } from "next";
-import SearchResultsPage from "../components/cinematic/08-search-results-page";
+import { redirect } from "next/navigation";
+import SearchExperience from "../components/cinematic/09-search-experience";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Answer — Ask Śrīla Prabhupāda",
   description:
     "His words, woven verbatim. Every passage labelled and cited, every citation linked to Vedabase.io.",
+  robots: { index: false, follow: true },
 };
 
-export default function SearchResults() {
-  return <SearchResultsPage />;
+export default async function SearchResults({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const { q } = await searchParams;
+  const query = (q || "").trim();
+  if (!query) redirect("/");
+  return <SearchExperience q={query} />;
 }

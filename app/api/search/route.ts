@@ -2,8 +2,16 @@
  * route.ts — Search API Route
  *
  * Handles search queries with parallel hybrid semantic + full-text + tag search,
- * RRF (Reciprocal Rank Fusion) scoring, Gemini AI narrative generation, and SSE streaming.
- * The core backend that powers the entire search experience.
+ * RRF (Reciprocal Rank Fusion) scoring, Cohere reranking, and a deterministic
+ * verbatim-only woven-essay template. The core backend that powers the entire
+ * search experience.
+ *
+ * Two response modes:
+ *   GET /api/search?q=…            → single JSON response (unchanged, cacheable)
+ *   GET /api/search?q=…&stream=1   → SSE: `stage` events as the pipeline advances
+ *                                    (understood → expanding → searching →
+ *                                    reranking → weaving), then `result` with the
+ *                                    exact same JSON payload, then `done`.
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/app/lib/01-supabase";
@@ -41,6 +49,17 @@ import {
   provenanceNoteFor,
   PROVENANCE_POLICY,
 } from "@/app/lib/12-provenance";
+import type {
+  VerseHit,
+  ProseHit,
+  TranscriptHit,
+  LetterHit,
+  SearchStageKey,
+} from "@/app/lib/types/01-search";
+
+// The cold pipeline (embeddings + ~20 RPCs + Cohere) can take 25–50 s; give the
+// function room on Vercel. If the plan rejects 90, drop to 60.
+export const maxDuration = 90;
 
 const geminiKey = process.env.GEMINI_API_KEY || "";
 
@@ -48,10 +67,24 @@ const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash";
 
 /**
  * Bumped whenever the response shape or content policy changes, so the 24h
- * in-memory cache can never serve a response built by older code.
+ * in-memory cache can never serve a response built by older code. The mode is
+ * part of the key — article and references responses differ and must never
+ * collide.
  */
-const RESPONSE_VERSION = "p6";
-const cacheKey = (query: string) => `${RESPONSE_VERSION}:${query}`;
+const RESPONSE_VERSION = "p7";
+const cacheKey = (query: string, mode: string) => `${RESPONSE_VERSION}:${mode}:${query}`;
+
+/** Pipeline progress hook — drives the SSE `stage` events. */
+type OnStage = (stage: SearchStageKey, labelOverride?: string) => void;
+
+const STAGE_META: Record<SearchStageKey, { pct: number; label: string }> = {
+  understood: { pct: 12, label: "Reading your question…" },
+  expanding: { pct: 22, label: "Exploring 10 angles of your question…" },
+  searching: { pct: 45, label: "Searching 244,148 passages…" },
+  reranking: { pct: 70, label: "Selecting his words…" },
+  weaving: { pct: 90, label: "Weaving the essay…" },
+};
+const STAGE_ORDER: SearchStageKey[] = ["understood", "expanding", "searching", "reranking", "weaving"];
 
 /**
  * Returns true if the text is mostly Sanskrit transliteration (not useful as prose content).
@@ -171,10 +204,9 @@ async function callGemini(prompt: string, model: string, maxTokens: number): Pro
 // =====================================================
 // TYPES
 // =====================================================
-interface VerseHit { id: string; scripture: string; verse_number: string; sanskrit_devanagari: string; transliteration: string; translation: string; purport: string; chapter_id: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string; book_slug?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; matchedChunkText?: string; authorship?: Authorship; provenanceNote?: string; speaker?: string; speakerTo?: string; }
-interface ProseHit { id: string; book_slug: string; paragraph_number: number; body_text: string; chapter_id: string; vedabase_url?: string; chapter_title?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
-interface TranscriptHit { id: string; transcript_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; occasion?: string; scripture_ref?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; speaker?: string; }
-interface LetterHit { id: string; letter_id?: string; paragraph_number: number; body_text: string; content_type?: string; title?: string; date?: string; location?: string; recipient?: string; vedabase_url?: string; tags?: string[]; score?: number; similarity?: number; before?: string; after?: string; authorship?: Authorship; provenanceNote?: string; }
+// VerseHit / ProseHit / TranscriptHit / LetterHit live in the shared
+// server↔client contract (app/lib/types/01-search.ts). ChunkHit never leaves
+// the pipeline (chunks only boost their parent verse), so it stays private.
 interface ChunkHit { id: string; verse_id: string; scripture: string; chapter_number?: number; verse_number: string; chunk_number: number; body_text: string; tags?: string[]; score?: number; similarity?: number; }
 
 // =====================================================
@@ -217,7 +249,7 @@ function rrfMerge<T extends { id: string; similarity?: number }>(
 // =====================================================
 // V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
 // =====================================================
-async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
+async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
   const supabase = getSupabaseAdmin();
 
   // ── Direct verse lookup for exact references like "BG 18.66", "SB 1.1.1", "NOI verse 1" ──
@@ -254,6 +286,10 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   const preprocessed = await preprocessQuery(query);
   const mainPhrase = preprocessed.searchPhrases[0];
 
+  // Multi-query expansion hooks in here (Task 3); until variants exist the
+  // expanding stage reports the direct path.
+  onStage?.("expanding", "Searching directly…");
+
   // For long queries with multiple extracted phrases, run additional FTS searches
   const additionalPhrases = preprocessed.searchPhrases.slice(1, 3);
   const additionalFtsPromises = additionalPhrases.flatMap(phrase => [
@@ -289,6 +325,7 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
   const embeddingPromise = embedQuery(preprocessed.isLong ? mainPhrase : query);
 
   // Wait for all Wave 1 + embedding in parallel
+  onStage?.("searching");
   const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, ftsChunks, tagVerses, tagProse, tagTranscripts, tagLetters, tagChunks, embedding] = await Promise.all([
     ftsVersesPromise, ftsProsePromise, ftsTranscriptsPromise, ftsLettersPromise, ftsChunksPromise,
     tagVersesPromise, tagProsePromise, tagTranscriptsPromise, tagLettersPromise, tagChunksPromise,
@@ -410,9 +447,9 @@ async function hybridSearchV2(query: string): Promise<{ verses: VerseHit[]; pros
 // =====================================================
 // HYBRID SEARCH: V2 with fallback to legacy V1
 // =====================================================
-async function hybridSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
+async function hybridSearch(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
   try {
-    return await hybridSearchV2(query);
+    return await hybridSearchV2(query, onStage);
   } catch (err) {
     console.error("V2 search failed, falling back to v1:", err);
     const raw = await fullTextSearch(query);
@@ -688,7 +725,7 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
 // =====================================================
 async function legacyEnrich(verses: VerseHit[], prose: ProseHit[]) {
   const supabase = getSupabaseAdmin();
-  const ids = [...new Set([...verses.map(v => v.chapter_id), ...prose.map(p => p.chapter_id)].filter(Boolean))];
+  const ids = [...new Set([...verses.map(v => v.chapter_id), ...prose.map(p => p.chapter_id)].filter((x): x is string => !!x))];
 
   let cm = new Map<string, Record<string, unknown>>();
   if (ids.length > 0) {
@@ -697,7 +734,7 @@ async function legacyEnrich(verses: VerseHit[], prose: ProseHit[]) {
   }
 
   const eV = verses.map(v => {
-    const c = cm.get(v.chapter_id);
+    const c = v.chapter_id ? cm.get(v.chapter_id) : undefined;
     const cn = (c?.chapter_number as string) || "";
     const cd = (c?.canto_or_division as string) || "";
     return {
@@ -711,7 +748,7 @@ async function legacyEnrich(verses: VerseHit[], prose: ProseHit[]) {
   });
 
   const eP = prose.map(p => {
-    const c = cm.get(p.chapter_id);
+    const c = p.chapter_id ? cm.get(p.chapter_id) : undefined;
     return {
       ...p,
       chapter_title: (c?.chapter_title as string) || "",
@@ -2108,7 +2145,8 @@ async function fetchVerseSpeakerMap(verses: VerseHit[]): Promise<Map<string, Spe
   );
   if (wanted.length === 0) return result;
 
-  const missing = [...new Set(wanted.map(v => v.chapter_id))].filter(id => !chapterSpeakerCache.has(id));
+  const missing = [...new Set(wanted.map(v => v.chapter_id))]
+    .filter((id): id is string => !!id && !chapterSpeakerCache.has(id));
   if (missing.length > 0) {
     try {
       const supabase = getSupabaseAdmin();
@@ -2136,7 +2174,7 @@ async function fetchVerseSpeakerMap(verses: VerseHit[]): Promise<Map<string, Spe
   }
 
   for (const v of wanted) {
-    const s = chapterSpeakerCache.get(v.chapter_id)?.get(v.id);
+    const s = v.chapter_id ? chapterSpeakerCache.get(v.chapter_id)?.get(v.id) : undefined;
     if (s) result.set(v.id, s);
   }
   return result;
@@ -2195,28 +2233,25 @@ function annotateProvenance(
 }
 
 // =====================================================
-// STREAMING HANDLER
+// SEARCH PIPELINE (shared by the JSON and SSE handlers)
 // =====================================================
-export async function GET(request: NextRequest) {
-  const url = new URL(request.url);
-  const query = url.searchParams.get("q");
-  const wantStream = url.searchParams.get("stream") !== "false";
-  const mode = url.searchParams.get("mode") || "article";
+async function runSearchPipeline(
+  query: string,
+  mode: string,
+  onStage?: OnStage,
+): Promise<Record<string, unknown>> {
+  onStage?.("understood");
 
-  if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
+  // Fire search and spelling check in parallel
+  const spellingSupa = getSupabaseAdmin();
+  const [searchResults, spellResult] = await Promise.all([
+    hybridSearch(query, onStage),
+    spellingSupa.rpc('suggest_spelling', { raw_query: query }).then(res => res, () => ({ data: null })),
+  ]);
 
-  const cached = getCached<Record<string, unknown>>(cacheKey(query));
-  if (cached) return NextResponse.json(cached);
-
-  try {
-    // Fire search and spelling check in parallel
-    const spellingSupa = getSupabaseAdmin();
-    const [searchResults, spellResult] = await Promise.all([
-      hybridSearch(query),
-      spellingSupa.rpc('suggest_spelling', { raw_query: query }).then(res => res, () => ({ data: null })),
-    ]);
-
-    const { verses, prose, transcripts, letters, directVerse } = searchResults;
+  const { verses, prose, transcripts, letters, directVerse } = searchResults;
+  onStage?.("reranking");
+  {
 
     // "Did you mean?" — extract spelling suggestion
     let suggestion: string | null = null;
@@ -2419,6 +2454,7 @@ export async function GET(request: NextRequest) {
     // Main flow = top MAIN_FLOW_COUNT passages across ALL types by rerank score.
     // References keeps the full relevant set above; only the Article is shortened.
     const mainFlow = selectMainFlow(narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
+    onStage?.("weaving");
 
     // Verbatim key answers for the woven main-flow passages (no AI; never paraphrased).
     // Dedupe the same way — two distinct passages can surface the same matched line,
@@ -2463,20 +2499,103 @@ export async function GET(request: NextRequest) {
       conclusion,
     };
 
-    // References mode: skip Gemini synthesis, return metadata with empty narrative
+    // References mode: skip article building, return metadata with empty narrative
     if (mode === "references") {
-      const result = { ...fullMetadata, narrative: "" };
-      setCached(cacheKey(query), result);
-      return NextResponse.json(result);
+      return { ...fullMetadata, narrative: "" };
     }
 
     // ── Strategy A: Template-built article (zero AI calls, instant) ──
     const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms);
-    const result = { ...fullMetadata, narrative };
-    setCached(cacheKey(query), result);
-    return NextResponse.json(result);
-  } catch (err) {
-    console.error("Search error:", err);
-    return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+    return { ...fullMetadata, narrative };
   }
+}
+
+/** Cache-aware pipeline entry — both handlers go through here. */
+async function getOrComputeResult(
+  query: string,
+  mode: string,
+  onStage?: OnStage,
+): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
+  const key = cacheKey(query, mode);
+  const cached = getCached<Record<string, unknown>>(key);
+  if (cached) return { result: cached, fromCache: true };
+  const result = await runSearchPipeline(query, mode, onStage);
+  setCached(key, result);
+  return { result, fromCache: false };
+}
+
+// =====================================================
+// HANDLERS — plain JSON (default) and SSE (?stream=1)
+// =====================================================
+export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const query = url.searchParams.get("q");
+  const mode = url.searchParams.get("mode") || "article";
+  const wantStream = url.searchParams.get("stream") === "1";
+
+  if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
+
+  if (!wantStream) {
+    try {
+      const { result } = await getOrComputeResult(query, mode);
+      return NextResponse.json(result);
+    } catch (err) {
+      console.error("Search error:", err);
+      return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+    }
+  }
+
+  // ── SSE stream: stage events as the pipeline advances, then the full result. ──
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      let closed = false;
+      const write = (chunk: string) => {
+        if (closed) return;
+        try { controller.enqueue(encoder.encode(chunk)); } catch { closed = true; }
+      };
+      const send = (event: string, data: unknown) =>
+        write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      // Comment heartbeat defeats proxy buffering and keeps the connection alive
+      // through the long cold path.
+      const heartbeat = setInterval(() => write(`: ping\n\n`), 15000);
+
+      const emitted = new Set<SearchStageKey>();
+      const onStage: OnStage = (stage, labelOverride) => {
+        if (emitted.has(stage)) return;
+        emitted.add(stage);
+        const meta = STAGE_META[stage];
+        send("stage", { stage, pct: meta.pct, label: labelOverride ?? meta.label });
+      };
+
+      try {
+        const { result, fromCache } = await getOrComputeResult(query, mode, onStage);
+        if (fromCache) {
+          // Cached answer: replay the stages quickly so the loader still arcs.
+          for (const s of STAGE_ORDER) {
+            onStage(s);
+            await new Promise((r) => setTimeout(r, 120));
+          }
+        }
+        send("result", result);
+        send("done", {});
+      } catch (err) {
+        console.error("Search error (stream):", err);
+        send("failure", { error: "An error occurred." });
+      } finally {
+        clearInterval(heartbeat);
+        closed = true;
+        try { controller.close(); } catch { /* already closed */ }
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
