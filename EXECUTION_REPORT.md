@@ -117,7 +117,40 @@ contains the exact question for two different `q` values ✅; `/search` (no q) �
 "142 more passages" / "Woven from 4 passages" → clean ✅. Live SSE + real-answer check happens on
 the Task 16 preview deploy (no API keys exist in this sandbox).
 
-## §3 · Task 3 — Multi-query expansion ⏳
+## §3 · Task 3 — Multi-query expansion (RAG-Fusion) ✅
+
+- New `app/lib/16-multi-query.ts` (spec's `lib/search/multiQuery.ts`): `generateQueryVariants()` —
+  Gemini `GEMINI_MODEL` (default `gemini-2.5-flash`), JSON mode, temp 0.8, **4 s hard timeout**,
+  10 variants + a `topic` gerund phrase in the same call; strict validation + case-insensitive
+  dedupe (vs each other AND the original); ANY failure → `{variants: [], topic: null}` and the
+  pipeline proceeds original-only. 24 h in-memory cache keyed on the normalized query.
+  `fuseRankedLists()` — pure RRF over N ranked lists (canonical row from the first list, so the
+  original's similarity/matchedChunkText survive). Env dials: `MULTIQUERY_ENABLED` /
+  `MULTIQUERY_VARIANTS` / `MULTIQUERY_CHANNELS` (default all). Deviation: manual JSON validation
+  instead of adding a zod dependency.
+- `app/lib/03-embed.ts`: new `embedQueries()` — original + all variants in ONE batched Voyage
+  contextualizedembeddings call (mapped by response index); `embedQuery` now delegates to it.
+- `route.ts` fan-out: original query's full retrieval untouched; per variant all three channels
+  lighter (semantic 8 / fulltext 6 / tags 6 per source table, chunk tables skipped), all RPCs in
+  Promise.all with per-variant `.catch(() => null)` isolation; per-variant `rrfMerge` mini-lists →
+  second-stage `fuseRankedLists` per type (caps 120/40/30/20) → existing Cohere rerank judged
+  against the ORIGINAL question only. `queryVariants` + `topic` returned in the JSON; SSE
+  `expanding` stage says "Exploring N angles of your question…" / "Searching directly…".
+- UI: up to 6 "Ask next" chips render under the essay (09-search-experience), each navigating to
+  `/search?q=<variant>`.
+- Migration m2 `add_query_variants_and_fix_log_search` (applied + committed): `search_logs` gains
+  `query_variants text[]`; `log_search` dropped + recreated with `p_query_variants` (appended,
+  DEFAULT NULL — named-arg callers unaffected), SECURITY DEFINER + pinned search_path.
+  **Bug found & fixed**: `log_search` has always inserted into `popular_queries`, which never
+  existed — every call would have errored. Created the table (RLS on, no policies).
+- Test infra: vitest (devDep) + `vitest.config.ts` + `npm test`. `tests/rrf-fusion.test.ts` (7) and
+  `tests/multi-query-fallback.test.ts` (10): ordering/ties/cap/canonical-row; missing-key,
+  disabled, HTTP 500, network reject, malformed JSON, 4 s abort → all degrade to `[]`; success
+  path caches (single fetch).
+
+Verification: `npm test` 17/17 ✅ · `npm run build` ✅ · `log_search` verified live with and
+without `p_query_variants` (returned row ids). Latency + `queryVariants.length === 10` asserted on
+the Task 16 preview deploy.
 
 ## §6 · Task 6 — Framing grammar ⏳
 

@@ -15,7 +15,8 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/app/lib/01-supabase";
-import { embedQuery } from "@/app/lib/03-embed";
+import { embedQueries } from "@/app/lib/03-embed";
+import { generateQueryVariants, fuseRankedLists, multiQueryChannels } from "@/app/lib/16-multi-query";
 import { getCached, setCached } from "@/app/lib/04-search-cache";
 import { ensureVerseLinks } from "@/app/lib/05-link-postprocessor";
 import { preprocessQuery } from "@/app/lib/07-query-preprocessor";
@@ -249,7 +250,7 @@ function rrfMerge<T extends { id: string; similarity?: number }>(
 // =====================================================
 // V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
 // =====================================================
-async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
+async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null }> {
   const supabase = getSupabaseAdmin();
 
   // ── Direct verse lookup for exact references like "BG 18.66", "SB 1.1.1", "NOI verse 1" ──
@@ -286,10 +287,6 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
   const preprocessed = await preprocessQuery(query);
   const mainPhrase = preprocessed.searchPhrases[0];
 
-  // Multi-query expansion hooks in here (Task 3); until variants exist the
-  // expanding stage reports the direct path.
-  onStage?.("expanding", "Searching directly…");
-
   // For long queries with multiple extracted phrases, run additional FTS searches
   const additionalPhrases = preprocessed.searchPhrases.slice(1, 3);
   const additionalFtsPromises = additionalPhrases.flatMap(phrase => [
@@ -321,16 +318,62 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
     ? supabase.rpc("search_verse_chunks_by_tags", { search_terms: preprocessed.tagTerms, match_count: 10 })
     : Promise.resolve({ data: [] as ChunkHit[] });
 
-  // WAVE 2: Embedding (parallel with Wave 1)
-  const embeddingPromise = embedQuery(preprocessed.isLong ? mainPhrase : query);
+  // ── Multi-query expansion (RAG-Fusion) ──
+  // The original query's Wave-1 FTS/tag RPCs are already in flight above; the
+  // Gemini variant call (4 s hard cap, empty on any failure) overlaps them.
+  // Variants widen recall only — every downstream relevance judgement (Cohere)
+  // stays against the ORIGINAL question.
+  const expansion = await generateQueryVariants(query);
+  const variants = expansion.variants;
+  const channels = multiQueryChannels();
+  onStage?.(
+    "expanding",
+    variants.length > 0
+      ? `Exploring ${variants.length} angles of your question…`
+      : "Searching directly…",
+  );
 
-  // Wait for all Wave 1 + embedding in parallel
+  // Variant fan-out: all three channels, lighter than the original
+  // (semantic 8 / fulltext 6 / tags 6 per source table; chunk tables skipped).
+  const variantFtsPromises = variants.map(v =>
+    channels.has("fulltext")
+      ? Promise.all([
+          supabase.rpc("search_verses_fulltext_v2", { search_query: v, match_count: 6 }),
+          supabase.rpc("search_prose_fulltext_v2", { search_query: v, match_count: 6 }),
+          supabase.rpc("search_transcript_paragraphs_fulltext", { search_query: v, match_count: 6 }),
+          supabase.rpc("search_letter_paragraphs_fulltext", { search_query: v, match_count: 6 }),
+        ]).catch(() => null)
+      : Promise.resolve(null),
+  );
+  const variantTagPromises = variants.map(v => {
+    const terms = v.toLowerCase().replace(/[?!.,;:'"]/g, "").split(/\s+/).filter(w => w.length > 3);
+    return channels.has("tags") && terms.length > 0
+      ? Promise.all([
+          supabase.rpc("search_verses_by_tags", { search_terms: terms, match_count: 6 }),
+          supabase.rpc("search_prose_by_tags", { search_terms: terms, match_count: 6 }),
+          supabase.rpc("search_transcript_paragraphs_by_tags", { search_terms: terms, match_count: 6 }),
+          supabase.rpc("search_letter_paragraphs_by_tags", { search_terms: terms, match_count: 6 }),
+        ]).catch(() => null)
+      : Promise.resolve(null);
+  });
+
+  // WAVE 2: ONE batched Voyage call embeds the original + every variant.
+  const embedTexts = [
+    preprocessed.isLong ? mainPhrase : query,
+    ...(channels.has("semantic") ? variants : []),
+  ];
+  const embeddingsPromise = embedQueries(embedTexts);
+
+  // Wait for all Wave 1 + variant channels + embeddings in parallel
   onStage?.("searching");
-  const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, ftsChunks, tagVerses, tagProse, tagTranscripts, tagLetters, tagChunks, embedding] = await Promise.all([
+  const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, ftsChunks, tagVerses, tagProse, tagTranscripts, tagLetters, tagChunks, embeddings, variantFts, variantTags] = await Promise.all([
     ftsVersesPromise, ftsProsePromise, ftsTranscriptsPromise, ftsLettersPromise, ftsChunksPromise,
     tagVersesPromise, tagProsePromise, tagTranscriptsPromise, tagLettersPromise, tagChunksPromise,
-    embeddingPromise,
+    embeddingsPromise,
+    Promise.all(variantFtsPromises),
+    Promise.all(variantTagPromises),
   ]);
+  const embedding = embeddings[0] || [];
 
   // When embedding is ready, fire semantic search
   let semanticVersesData: VerseHit[] = [];
@@ -338,6 +381,20 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
   let semanticTranscriptsData: TranscriptHit[] = [];
   let semanticLettersData: LetterHit[] = [];
   let semanticChunksData: ChunkHit[] = [];
+
+  // Variant semantic wave fires alongside the original's semantic RPCs.
+  const variantSemanticPromise = Promise.all(
+    (channels.has("semantic") ? embeddings.slice(1) : []).map(emb => {
+      if (emb.length !== 1024) return Promise.resolve(null);
+      const vs = `[${emb.join(",")}]`;
+      return Promise.all([
+        supabase.rpc("search_verses_semantic_v2", { query_embedding: vs, match_count: 8 }),
+        supabase.rpc("search_prose_semantic_v2", { query_embedding: vs, match_count: 8 }),
+        supabase.rpc("search_transcript_paragraphs_semantic", { query_embedding: vs, match_count: 8 }),
+        supabase.rpc("search_letter_paragraphs_semantic", { query_embedding: vs, match_count: 8 }),
+      ]).catch(() => null);
+    }),
+  );
 
   if (embedding.length === 1024) {
     const vectorStr = `[${embedding.join(",")}]`;
@@ -432,22 +489,66 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
   const allTranscripts = [...transcriptMap.values()].sort((a, b) => b.score - a.score);
   const allLetters = [...letterMap.values()].sort((a, b) => b.score - a.score);
 
-  // If we found a direct verse match, inject it at position #1 (deduplicate if already present)
-  if (directVerse) {
-    const existingIdx = allVerses.findIndex(v => v.id === directVerse!.id);
-    if (existingIdx >= 0) {
-      allVerses.splice(existingIdx, 1);
+  // ── RAG-Fusion: per-variant RRF mini-lists, then a second-stage RRF across
+  // the original + all variant lists. The original list is passed FIRST so its
+  // enriched metadata (similarity, matchedChunkText, chunk boosts) wins the
+  // canonical-row pick. Caps keep the pool Cohere sees bounded.
+  let fusedVerses: VerseHit[] = allVerses;
+  let fusedProse: ProseHit[] = allProse;
+  let fusedTranscripts: TranscriptHit[] = allTranscripts;
+  let fusedLetters: LetterHit[] = allLetters;
+
+  const variantSemantic = await variantSemanticPromise;
+  if (variants.length > 0) {
+    const vVerseLists: VerseHit[][] = [];
+    const vProseLists: ProseHit[][] = [];
+    const vTranscriptLists: TranscriptHit[][] = [];
+    const vLetterLists: LetterHit[][] = [];
+
+    for (let i = 0; i < variants.length; i++) {
+      const sem = variantSemantic[i];
+      const fts = variantFts[i];
+      const tags = variantTags[i];
+      const rankedV = [...rrfMerge<VerseHit>(sem?.[0]?.data || [], fts?.[0]?.data || [], tags?.[0]?.data || []).values()].sort((a, b) => b.score - a.score);
+      const rankedP = [...rrfMerge<ProseHit>(sem?.[1]?.data || [], fts?.[1]?.data || [], tags?.[1]?.data || []).values()].sort((a, b) => b.score - a.score);
+      const rankedT = [...rrfMerge<TranscriptHit>(sem?.[2]?.data || [], fts?.[2]?.data || [], tags?.[2]?.data || []).values()].sort((a, b) => b.score - a.score);
+      const rankedL = [...rrfMerge<LetterHit>(sem?.[3]?.data || [], fts?.[3]?.data || [], tags?.[3]?.data || []).values()].sort((a, b) => b.score - a.score);
+      if (rankedV.length > 0) vVerseLists.push(rankedV);
+      if (rankedP.length > 0) vProseLists.push(rankedP);
+      if (rankedT.length > 0) vTranscriptLists.push(rankedT);
+      if (rankedL.length > 0) vLetterLists.push(rankedL);
     }
-    allVerses.unshift(directVerse as VerseHit & { score: number; similarity?: number });
+
+    fusedVerses = fuseRankedLists([allVerses, ...vVerseLists], RRF_K, 120);
+    fusedProse = fuseRankedLists([allProse, ...vProseLists], RRF_K, 40);
+    fusedTranscripts = fuseRankedLists([allTranscripts, ...vTranscriptLists], RRF_K, 30);
+    fusedLetters = fuseRankedLists([allLetters, ...vLetterLists], RRF_K, 20);
   }
 
-  return { verses: allVerses, prose: allProse, transcripts: allTranscripts, letters: allLetters, directVerse };
+  // If we found a direct verse match, inject it at position #1 (deduplicate if already present)
+  if (directVerse) {
+    const existingIdx = fusedVerses.findIndex(v => v.id === directVerse!.id);
+    if (existingIdx >= 0) {
+      fusedVerses.splice(existingIdx, 1);
+    }
+    fusedVerses.unshift(directVerse as VerseHit & { score: number; similarity?: number });
+  }
+
+  return {
+    verses: fusedVerses,
+    prose: fusedProse,
+    transcripts: fusedTranscripts,
+    letters: fusedLetters,
+    directVerse,
+    queryVariants: variants,
+    topic: expansion.topic,
+  };
 }
 
 // =====================================================
 // HYBRID SEARCH: V2 with fallback to legacy V1
 // =====================================================
-async function hybridSearch(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit }> {
+async function hybridSearch(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null }> {
   try {
     return await hybridSearchV2(query, onStage);
   } catch (err) {
@@ -2250,6 +2351,8 @@ async function runSearchPipeline(
   ]);
 
   const { verses, prose, transcripts, letters, directVerse } = searchResults;
+  const queryVariants = searchResults.queryVariants || [];
+  const topic = searchResults.topic ?? null;
   onStage?.("reranking");
   {
 
@@ -2497,6 +2600,8 @@ async function runSearchPipeline(
       mainFlowItems,
       intro,
       conclusion,
+      queryVariants,
+      topic,
     };
 
     // References mode: skip article building, return metadata with empty narrative
