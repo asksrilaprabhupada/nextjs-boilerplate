@@ -1436,6 +1436,7 @@ function buildTemplateArticle(
   transcripts: TranscriptHit[] = [],
   letters: LetterHit[] = [],
   queryTerms: string[] = [],
+  topic: string | null = null,
 ): string {
   if (verses.length === 0 && prose.length === 0 && transcripts.length === 0 && letters.length === 0) {
     return "<p>No relevant passages found for this query.</p>";
@@ -1485,40 +1486,10 @@ function buildTemplateArticle(
   // ── INTRO: framing ONLY ──
   // Name the topic, the sources, and the speakers — never state a teaching in the
   // narrator's voice (Hard Rule 1). The doctrine is carried solely by the attributed
-  // verbatim passages below, not by this orientation.
-  const questionTopic = question
-    .replace(/\?$/, "")
-    .replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "")
-    .replace(/^(srila\s+)?(prabhupada|prabhupāda)\s+(say|said|says|teach|teaches|explain|explains)\s+(about\s+)?/i, "")
-    .trim()
-    .toLowerCase() || question.replace(/\?$/, "").toLowerCase();
-
-  const bookNames = [...new Set([
-    ...verses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")),
-    ...prose.map(x => getBookName(x.book_slug || "")),
-  ].filter(Boolean))];
-  const bookListStr = bookNames.length === 1
-    ? bookNames[0]
-    : bookNames.length === 2
-      ? `${bookNames[0]} and ${bookNames[1]}`
-      : `${bookNames.slice(0, 2).join(", ")}, and ${bookNames.length > 3 ? "other texts" : bookNames[2]}`;
-
-  // The kinds of sources present, named for orientation (books + lectures + letters).
-  const sourceKinds: string[] = [];
-  if (bookNames.length > 0) sourceKinds.push(bookListStr);
-  if (transcripts.length > 0) sourceKinds.push("his recorded lectures");
-  if (letters.length > 0) sourceKinds.push("his letters");
-  const sourcesStr = sourceKinds.length === 0
-    ? "his books, lectures, and letters"
-    : sourceKinds.length === 1
-      ? sourceKinds[0]
-      : sourceKinds.length === 2
-        ? `${sourceKinds[0]} and ${sourceKinds[1]}`
-        : `${sourceKinds.slice(0, -1).join(", ")}, and ${sourceKinds[sourceKinds.length - 1]}`;
-
-  // FRAMING INVARIANT: framing may name ONLY Śrīla Prabhupāda, book titles
-  // from the registry, and source types — never a per-verse speaker.
-  parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.</p>`);
+  // verbatim passages below, not by this orientation. The wording comes from
+  // computeFraming — one source for the structured fields and this HTML.
+  const framing = computeFraming(question, verses, prose, transcripts, letters, topic);
+  parts.push(`<p>${framing.intro}</p>`);
 
   // ── GROUP INTO THEMED SECTIONS with <h3> headings ──
   const themes = groupIntoThemes(allItems);
@@ -1701,7 +1672,7 @@ function buildTemplateArticle(
   }
 
   // ── CONCLUSION: framing only (orientation + where to read more) ──
-  parts.push(`<p>These passages gather Śrīla Prabhupāda's words on ${questionTopic} from ${sourcesStr}. The complete purports, with full context, are available through the Vedabase.io links above.</p>`);
+  parts.push(`<p>${framing.conclusion}</p>`);
 
   return parts.join("\n");
 }
@@ -1743,7 +1714,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
       : fbSourceKinds.length === 2
         ? `${fbSourceKinds[0]} and ${fbSourceKinds[1]}`
         : `${fbSourceKinds.slice(0, -1).join(", ")}, and ${fbSourceKinds[fbSourceKinds.length - 1]}`;
-  parts.push(`<p>Śrīla Prabhupāda addresses ${questionTopic} across ${fbSourcesStr}. Here is what he teaches on this subject, in his own words and purports.</p>`);
+  parts.push(`<p>On the question of “${question.trim().replace(/\s+/g, " ")}”, Śrīla Prabhupāda speaks across ${fbSourcesStr}. Here is what he teaches, in his own words and purports.</p>`);
 
   // Varied transition templates — neutral ref-only forms (a speaker is never
   // guessed; the coarse per-canto speaker map is gone).
@@ -1957,7 +1928,7 @@ function buildFB(question: string, v: VerseHit[], p: ProseHit[], t: TranscriptHi
   }
 
   // Conclusion — framing only (orientation + where to read more)
-  parts.push(`<p>These passages gather Śrīla Prabhupāda's words on ${questionTopic} from ${fbSourcesStr}. The complete purports, with full context, are available through the Vedabase.io links above.</p>`);
+  parts.push(`<p>These passages gather Śrīla Prabhupāda's words on this question from ${fbSourcesStr}. The complete purports, with full context, are one click away on Vedabase.</p>`);
 
   return parts.join("\n");
 }
@@ -2140,14 +2111,8 @@ function computeFraming(
   prose: ProseHit[],
   transcripts: TranscriptHit[] = [],
   letters: LetterHit[] = [],
+  topic: string | null = null,
 ): { intro: string; conclusion: string } {
-  const questionTopic = question
-    .replace(/\?$/, "")
-    .replace(/^(what|how|why|when|where|who|did|does|is|are|was|were)\s+(is|are|did|does|do|was|were|srila|prabhupada|prabhupāda|say|said|about)?\s*/i, "")
-    .replace(/^(srila\s+)?(prabhupada|prabhupāda)\s+(say|said|says|teach|teaches|explain|explains)\s+(about\s+)?/i, "")
-    .trim()
-    .toLowerCase() || question.replace(/\?$/, "").toLowerCase();
-
   const bookNames = [...new Set([
     ...verses.map(x => getBookName(x.book_slug || x.scripture?.toLowerCase() || "")),
     ...prose.map(x => getBookName(x.book_slug || "")),
@@ -2173,8 +2138,17 @@ function computeFraming(
   // FRAMING INVARIANT: intro/conclusion may name ONLY Śrīla Prabhupāda, book
   // titles from the registry, and source types. Never a per-verse speaker,
   // never a name scraped from transcript text, never invented honorifics.
-  const intro = `Śrīla Prabhupāda addresses ${questionTopic} across ${sourcesStr}. Here is what he teaches on this subject, in his own words and purports.`;
-  const conclusion = `These passages gather Śrīla Prabhupāda's words on ${questionTopic} from ${sourcesStr}. The complete purports, with full context, are available through the Vedabase.io links on each passage.`;
+  //
+  // Grammar-safe frames: raw questions never slot into a noun position ("addresses
+  // to control the mind"). With a Gemini gerund topic ("controlling the mind") the
+  // noun frame works; otherwise the question is quoted whole.
+  const displayQuestion = question.trim().replace(/\s+/g, " ");
+  const intro = topic
+    ? `Śrīla Prabhupāda addresses ${topic} across ${sourcesStr}. Here is what he teaches, in his own words and purports.`
+    : `On the question of “${displayQuestion}”, Śrīla Prabhupāda speaks across ${sourcesStr}. Here is what he teaches, in his own words and purports.`;
+  const conclusion = topic
+    ? `These passages gather Śrīla Prabhupāda's words on ${topic} from ${sourcesStr}. The complete purports, with full context, are one click away on Vedabase.`
+    : `These passages gather Śrīla Prabhupāda's words on this question from ${sourcesStr}. The complete purports, with full context, are one click away on Vedabase.`;
   return { intro, conclusion };
 }
 
@@ -2580,7 +2554,7 @@ async function runSearchPipeline(
     // as passage cards, in most-important-first order, reusing the shared fold
     // helpers for the verbatim bodies). Neutral framing sent separately.
     const mainFlowItems = mainFlow.items.map(buildMainFlowNode);
-    const { intro, conclusion } = computeFraming(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters);
+    const { intro, conclusion } = computeFraming(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, topic);
 
     const fullMetadata = {
       ...metadata,
@@ -2610,7 +2584,7 @@ async function runSearchPipeline(
     }
 
     // ── Strategy A: Template-built article (zero AI calls, instant) ──
-    const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms);
+    const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms, topic);
     return { ...fullMetadata, narrative };
   }
 }

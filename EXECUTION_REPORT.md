@@ -152,7 +152,19 @@ Verification: `npm test` 17/17 ✅ · `npm run build` ✅ · `log_search` verifi
 without `p_query_variants` (returned row ids). Latency + `queryVariants.length === 10` asserted on
 the Task 16 preview deploy.
 
-## §6 · Task 6 — Framing grammar ⏳
+## §6 · Task 6 — Framing grammar ✅
+
+`computeFraming` (route.ts) now takes the Gemini `topic` gerund from Task 3's variant call.
+With a topic: "Śrīla Prabhupāda addresses controlling the mind across …" (noun slot gets a noun).
+Without: question-safe frame — `On the question of "{query}", Śrīla Prabhupāda speaks across
+{sources}…` / conclusion "…his words on this question…". "addresses to control the mind" is now
+impossible. `buildTemplateArticle` no longer duplicates the strings — it calls `computeFraming`
+(one source for the structured fields and the narrative HTML); the quarantined `buildFB` fallback
+got the question-safe frame too. Framing invariant (only Prabhupāda + registry titles + source
+types) preserved verbatim in the comment and the logic.
+
+Verification: `grep addresses route.ts` → only the gerund-topic form remains ✅; build ✅. Live
+intro asserted again on the Task 16 preview (`no "addresses to …"`).
 
 ## §9 · Task 9 — Essay v2 + validator + context RPC ⏳
 
