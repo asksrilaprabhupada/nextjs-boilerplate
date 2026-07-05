@@ -105,7 +105,9 @@ export function useSearchBehaviorTracker(searchLogId: string | null) {
     };
   }, [sendBehavior]);
 
-  // Also send on page visibility change (tab switch, close)
+  // Also send on page teardown: visibilitychange covers tab switches, and
+  // pagehide covers actual unloads (incl. Safari) — logBehavior delivers via
+  // navigator.sendBeacon so the POST survives the document going away.
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
@@ -114,7 +116,11 @@ export function useSearchBehaviorTracker(searchLogId: string | null) {
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", sendBehavior);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", sendBehavior);
+    };
   }, [sendBehavior]);
 
   // Expose manual trigger for "Want More" clicks from modals

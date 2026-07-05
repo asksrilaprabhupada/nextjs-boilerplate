@@ -251,7 +251,7 @@ function rrfMerge<T extends { id: string; similarity?: number }>(
 // =====================================================
 // V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
 // =====================================================
-async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null }> {
+async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null; embeddingMs?: number }> {
   const supabase = getSupabaseAdmin();
 
   // ── Direct verse lookup for exact references like "BG 18.66", "SB 1.1.1", "NOI verse 1" ──
@@ -363,7 +363,12 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
     preprocessed.isLong ? mainPhrase : query,
     ...(channels.has("semantic") ? variants : []),
   ];
-  const embeddingsPromise = embedQueries(embedTexts);
+  const embedStart = Date.now();
+  let embeddingMs = 0;
+  const embeddingsPromise = embedQueries(embedTexts).then(r => {
+    embeddingMs = Date.now() - embedStart;
+    return r;
+  });
 
   // Wait for all Wave 1 + variant channels + embeddings in parallel
   onStage?.("searching");
@@ -543,13 +548,14 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
     directVerse,
     queryVariants: variants,
     topic: expansion.topic,
+    embeddingMs,
   };
 }
 
 // =====================================================
 // HYBRID SEARCH: V2 with fallback to legacy V1
 // =====================================================
-async function hybridSearch(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null }> {
+async function hybridSearch(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null; embeddingMs?: number }> {
   try {
     return await hybridSearchV2(query, onStage);
   } catch (err) {
@@ -2347,12 +2353,70 @@ function annotateProvenance(
 // =====================================================
 // SEARCH PIPELINE (shared by the JSON and SSE handlers)
 // =====================================================
+
+/** Request metadata threaded into telemetry (never used for retrieval). */
+interface SearchRequestContext {
+  userAgent?: string | null;
+  referrer?: string | null;
+  visitorId?: string | null;
+}
+
+interface SearchDurations {
+  embeddingMs?: number;
+  searchMs?: number;
+  synthesisMs?: number;
+  totalMs?: number;
+}
+
+/**
+ * Writes one search_logs row via the log_search RPC and returns its id.
+ * Shared by the fresh-pipeline path and the cache-hit path (method: "cache").
+ * Telemetry never blocks or breaks a search — failures log and return null.
+ */
+async function logSearchRow(
+  query: string,
+  result: Record<string, unknown>,
+  method: string,
+  durations: SearchDurations,
+  ctx: SearchRequestContext,
+): Promise<string | null> {
+  try {
+    const supabase = getSupabaseAdmin();
+    const mainFlowItems = (result.mainFlowItems as { type: string; id: string }[] | undefined) || [];
+    const { data, error } = await supabase.rpc("log_search", {
+      p_query: query,
+      p_visitor_id: ctx.visitorId ?? null,
+      p_total_results: (result.totalResults as number) ?? 0,
+      p_verse_ids: (result.articleVerseIds as string[] | undefined) || [],
+      p_prose_ids: mainFlowItems.filter(i => i.type === "prose").map(i => i.id),
+      p_books_returned: ((result.books as { name: string }[] | undefined) || []).map(b => b.name),
+      p_search_method: method,
+      p_search_duration_ms: durations.searchMs ?? null,
+      p_embedding_duration_ms: durations.embeddingMs ?? null,
+      p_synthesis_duration_ms: durations.synthesisMs ?? null,
+      p_total_duration_ms: durations.totalMs ?? null,
+      p_narrative_length: typeof result.narrative === "string" ? result.narrative.length : null,
+      p_source: "web",
+      p_user_agent: ctx.userAgent ?? null,
+      p_referrer: ctx.referrer ?? null,
+      p_query_variants: (result.queryVariants as string[] | undefined) || [],
+    });
+    if (error) throw error;
+    return (data as string) ?? null;
+  } catch (err) {
+    console.error("[log_search] failed (search unaffected):", err);
+    return null;
+  }
+}
+
 async function runSearchPipeline(
   query: string,
   mode: string,
   onStage?: OnStage,
+  ctx: SearchRequestContext = {},
 ): Promise<Record<string, unknown>> {
   onStage?.("understood");
+  const tStart = Date.now();
 
   // Fire search and spelling check in parallel
   const spellingSupa = getSupabaseAdmin();
@@ -2360,10 +2424,12 @@ async function runSearchPipeline(
     hybridSearch(query, onStage),
     spellingSupa.rpc('suggest_spelling', { raw_query: query }).then(res => res, () => ({ data: null })),
   ]);
+  const searchMs = Date.now() - tStart;
 
   const { verses, prose, transcripts, letters, directVerse } = searchResults;
   const queryVariants = searchResults.queryVariants || [];
   const topic = searchResults.topic ?? null;
+  const embeddingMs = searchResults.embeddingMs;
   onStage?.("reranking");
   {
 
@@ -2685,14 +2751,23 @@ async function runSearchPipeline(
       primaryVerseContext,
     };
 
-    // References mode: skip article building, return metadata with empty narrative
-    if (mode === "references") {
-      return { ...fullMetadata, narrative: "" };
-    }
+    // ── Strategy A: Template-built article (zero AI calls, instant).
+    // References mode returns the same metadata with an empty narrative.
+    const narrative = mode === "references"
+      ? ""
+      : buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms, topic);
+    const result: Record<string, unknown> = { ...fullMetadata, narrative };
 
-    // ── Strategy A: Template-built article (zero AI calls, instant) ──
-    const narrative = buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms, topic);
-    return { ...fullMetadata, narrative };
+    // Telemetry: one search_logs row per fresh pipeline run (Task 14). The id
+    // rides on the response so thumbs/behavior/citation clicks can attach.
+    const totalMs = Date.now() - tStart;
+    const searchLogId = await logSearchRow(query, result, "hybrid_rag_fusion", {
+      embeddingMs,
+      searchMs,
+      synthesisMs: totalMs - searchMs,
+      totalMs,
+    }, ctx);
+    return { ...result, searchLogId };
   }
 }
 
@@ -2701,12 +2776,21 @@ async function getOrComputeResult(
   query: string,
   mode: string,
   onStage?: OnStage,
+  ctx: SearchRequestContext = {},
 ): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
   const key = cacheKey(query, mode);
   const cached = getCached<Record<string, unknown>>(key);
-  if (cached) return { result: cached, fromCache: true };
-  const result = await runSearchPipeline(query, mode, onStage);
-  setCached(key, result);
+  if (cached) {
+    // Cached answers still log a fresh row (method "cache") so feedback on
+    // them attributes to a real search_logs id.
+    const searchLogId = await logSearchRow(query, cached, "cache", { totalMs: 0 }, ctx);
+    return { result: { ...cached, searchLogId }, fromCache: true };
+  }
+  const result = await runSearchPipeline(query, mode, onStage, ctx);
+  // Never cache the per-request searchLogId — every serving logs its own row.
+  const { searchLogId: _perRequest, ...cacheable } = result;
+  void _perRequest;
+  setCached(key, cacheable);
   return { result, fromCache: false };
 }
 
@@ -2721,9 +2805,15 @@ export async function GET(request: NextRequest) {
 
   if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
 
+  const ctx: SearchRequestContext = {
+    userAgent: request.headers.get("user-agent"),
+    referrer: request.headers.get("referer"),
+    visitorId: request.cookies.get("asp_vid")?.value ?? null,
+  };
+
   if (!wantStream) {
     try {
-      const { result } = await getOrComputeResult(query, mode);
+      const { result } = await getOrComputeResult(query, mode, undefined, ctx);
       return NextResponse.json(result);
     } catch (err) {
       console.error("Search error:", err);
@@ -2755,7 +2845,7 @@ export async function GET(request: NextRequest) {
       };
 
       try {
-        const { result, fromCache } = await getOrComputeResult(query, mode, onStage);
+        const { result, fromCache } = await getOrComputeResult(query, mode, onStage, ctx);
         if (fromCache) {
           // Cached answer: replay the stages quickly so the loader still arcs.
           for (const s of STAGE_ORDER) {
