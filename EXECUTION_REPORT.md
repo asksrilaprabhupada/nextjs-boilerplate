@@ -202,7 +202,22 @@ on the Task 16 preview.
 
 ## §10 · Task 10 — Dig deeper v2 ⏳
 
-## §7 · Task 7 — Loader ⏳
+## §7 · Task 7 — Loader ✅ (implemented with Task 2's `10-search-loader.tsx`)
+
+- Shows the user's actual question under the mandala — `DEFAULT_Q` died with the mock.
+- SSE stage labels per spec: understood → "Reading your question…" · expanding → "Exploring N
+  angles of your question…" ("Searching directly…" when variants are empty) · searching →
+  "Searching 244,148 passages…" · reranking → "Selecting his words…" · weaving → "Weaving the
+  essay…". `{pct}%` beside the lavender→gold bar, eased toward each stage target (rAF), snapping
+  to 100 on `result`.
+- Mandala + aura identity preserved from the prototype loader.
+- One short verse rotates every 8 s from 5 verbatim translations — **pulled from the DB and
+  diff-checked**: two of the five commonly-quoted texts differed from the stored rows (BG 6.34 has
+  no leading "For"; BG 9.22 uses an en dash) and were corrected to the exact stored strings.
+- `prefers-reduced-motion`: no mandala spin, no aura breathe, no verse crossfade — static label +
+  bar only (percent snaps).
+- No-SSE fallback: optimistic timer over the same stages, capped at 92% until the plain fetch
+  resolves.
 
 ## §14 · Task 14 — Telemetry ⏳
 
