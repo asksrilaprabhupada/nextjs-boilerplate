@@ -69,6 +69,8 @@ export interface VerseContextLine {
   id: string; ref: string; translation: string; vedabase_url?: string; position: number;
 }
 export interface VerseContext {
+  /** The primary verse these neighbours surround — the strip renders under its card. */
+  verseId: string;
   before: VerseContextLine[];
   after: VerseContextLine[];
 }

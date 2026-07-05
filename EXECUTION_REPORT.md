@@ -166,7 +166,39 @@ types) preserved verbatim in the comment and the logic.
 Verification: `grep addresses route.ts` → only the gerund-topic form remains ✅; build ✅. Live
 intro asserted again on the Task 16 preview (`no "addresses to …"`).
 
-## §9 · Task 9 — Essay v2 + validator + context RPC ⏳
+## §9 · Task 9 — Essay v2 + validator + context RPC ✅
+
+- **Guided-study order** (`selectMainFlow`): the essay now opens primary verse → best lecture →
+  best letter → remaining flow by score. Primary verse = top HIS verse preferring BG/SB with a
+  purport; a purport-less top verse yields the anchor slot to the nearest purport-bearing verse.
+  If the top-10 cut carried no lecture/letter, the best of each is pulled back from the pool
+  (lowest-scored tail yields its slot). Heroes (top keyAnswers) therefore render verse + lecture +
+  letter, with the purport folded directly beneath the verse card as before.
+- **Migration m3 `add_get_verse_context_rpc`** (applied + committed): explicit `RETURNS TABLE`
+  instead of the spec's NULL-out `SETOF verses` (fragile against the real 17-column table; spec
+  itself says adjust). Ordering extracts the first integer from text verse_numbers — validated
+  against live formats (`plain-int`, `9-10`, `Text N`, `Text N-M`, `29.1a-2a`, plus non-numeric
+  `Invocation`/`Devanagari` which sort last). Live check: BG 2.20 → 2.19 (−1) / 2.21 (+1) ✅.
+  Pipeline calls it once per search for the primary verse → `primaryVerseContext` in the JSON;
+  rendered as a dimmed strip under the primary verse card ("Just before this, it is asked —" /
+  "…and the reply —"), each neighbour linking to its own Vedabase page. Prose before/after context
+  already shipped and renders via the existing fold expander.
+- **Verbatim validator** `app/lib/17-verbatim-validator.ts` (server, non-negotiable): the ≤10
+  main-flow blocks are re-fetched by id (≤4 batched selects, service client) and asserted
+  `normalize(rendered) ⊆ normalize(source)` (NFC + quote/dash/NBSP unification + whitespace
+  collapse — cosmetic only). Failures are dropped and counted BEFORE
+  keyAnswers/mainFlowItems/framing, so all downstream counts stay consistent; derived keyAnswer
+  lines are additionally checked against the re-fetched source text. Response gains
+  `validated: true` + `droppedBlocks: n`. Fetch-failure → fail-open (`validated: false`, nothing
+  dropped, logged).
+- **Provenance badge**: `.passage-label-note` upgraded to an amber pill (globals.css) — NOT_HIS /
+  MIXED-VERIFY passages in Dig Deeper (and everywhere labels render) now carry a visible amber
+  badge with the provenance note. HIS-only essay enforcement was already in place upstream.
+
+Verification: `npm test` 27/27 ✅ (incl. tampered-fixture drop, cosmetic-normalization
+equivalence, fail-open) · `npm run build` ✅ · RPC verified live. Essay-order acceptance
+(mind-query leads with BG 6.34/6.35-class verse + purport + context + lecture + letter) asserted
+on the Task 16 preview.
 
 ## §10 · Task 10 — Dig deeper v2 ⏳
 

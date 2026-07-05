@@ -57,6 +57,7 @@ import type {
   LetterHit,
   SearchStageKey,
 } from "@/app/lib/types/01-search";
+import { validateMainFlow, normalizeVerbatim, type SourceFetchClient } from "@/app/lib/17-verbatim-validator";
 
 // The cold pipeline (embeddings + ~20 RPCs + Cohere) can take 25–50 s; give the
 // function room on Vercel. If the plan rejects 90, drop to 60.
@@ -2090,12 +2091,48 @@ function selectMainFlow(verses: VerseHit[], prose: ProseHit[], transcripts: Tran
     items.push(it);
     if (items.length >= MAIN_FLOW_COUNT) break;
   }
+
+  // ── Guided-study ordering ──
+  // The essay opens with a primary verse — the top verse preferring BG/SB and
+  // a purport-bearing anchor (a scored verse without a purport yields the
+  // anchor slot to the nearest purport-bearing one) — followed by the best
+  // lecture and the best letter, so every answer walks book → lecture →
+  // letter before the remaining score-ordered flow. The pool arrives HIS-only
+  // (provenance policy runs upstream).
+  const isPreferred = (v: VerseHit) => ["BG", "SB"].includes((v.scripture || "").toUpperCase());
+  const hasPurport = (v: VerseHit) => (v.purport || "").trim().length >= 50;
+
+  // If the top-10 cut missed lectures/letters entirely, pull the best one of
+  // each back in from the pool (swapping out the lowest-scored tail items) —
+  // the guided flow wants his spoken and written voice beside the verse.
+  for (const wanted of ["lecture", "letter"] as const) {
+    if (items.some(i => i.type === wanted)) continue;
+    const candidate = pool.find(i => i.type === wanted && !seenSig.has(sigOf(i)));
+    if (!candidate) continue;
+    if (items.length >= MAIN_FLOW_COUNT) items.pop(); // lowest-scored tail yields its slot
+    const sig = sigOf(candidate);
+    if (sig) seenSig.add(sig);
+    items.push(candidate);
+  }
+
+  const verseItems = items.filter(i => i.type === "verse");
+  const primary =
+    verseItems.find(i => isPreferred(i.data as VerseHit) && hasPurport(i.data as VerseHit)) ||
+    verseItems.find(i => hasPurport(i.data as VerseHit)) ||
+    verseItems.find(i => isPreferred(i.data as VerseHit)) ||
+    verseItems[0];
+  const bestLecture = items.find(i => i.type === "lecture");
+  const bestLetter = items.find(i => i.type === "letter");
+  const head = [primary, bestLecture, bestLetter].filter((x): x is MainItem => !!x);
+  const headIds = new Set(head.map(h => h.data.id));
+  const ordered = [...head, ...items.filter(i => !headIds.has(i.data.id))];
+
   return {
-    items,
-    verses: items.filter(i => i.type === "verse").map(i => i.data as VerseHit),
-    prose: items.filter(i => i.type === "prose").map(i => i.data as ProseHit),
-    transcripts: items.filter(i => i.type === "lecture").map(i => i.data as TranscriptHit),
-    letters: items.filter(i => i.type === "letter").map(i => i.data as LetterHit),
+    items: ordered,
+    verses: ordered.filter(i => i.type === "verse").map(i => i.data as VerseHit),
+    prose: ordered.filter(i => i.type === "prose").map(i => i.data as ProseHit),
+    transcripts: ordered.filter(i => i.type === "lecture").map(i => i.data as TranscriptHit),
+    letters: ordered.filter(i => i.type === "letter").map(i => i.data as LetterHit),
   };
 }
 
@@ -2528,10 +2565,67 @@ async function runSearchPipeline(
     const verseUrlMap = buildVerseUrlMap(narrativeVerses);
     const metadata = buildMetadataAndCitations(query, narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
 
-    // Main flow = top MAIN_FLOW_COUNT passages across ALL types by rerank score.
+    // Main flow = top MAIN_FLOW_COUNT passages across ALL types by rerank score,
+    // reordered so the essay opens primary verse → best lecture → best letter.
     // References keeps the full relevant set above; only the Article is shortened.
-    const mainFlow = selectMainFlow(narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
+    let mainFlow = selectMainFlow(narrativeVerses, narrativeProse, narrativeTranscripts, narrativeLetters);
     onStage?.("weaving");
+
+    // ── Verbatim validator (non-negotiable): every block the essay renders is
+    // re-fetched from its source row and asserted verbatim; failures are
+    // dropped, never rendered. Runs BEFORE keyAnswers/mainFlowItems/framing so
+    // every downstream count stays consistent automatically.
+    const validation = await validateMainFlow(mainFlow.items, spellingSupa as unknown as SourceFetchClient);
+    let droppedBlocks = validation.droppedBlocks;
+    if (validation.keptItems.length !== mainFlow.items.length) {
+      const kept = validation.keptItems;
+      mainFlow = {
+        items: kept,
+        verses: kept.filter(i => i.type === "verse").map(i => i.data as VerseHit),
+        prose: kept.filter(i => i.type === "prose").map(i => i.data as ProseHit),
+        transcripts: kept.filter(i => i.type === "lecture").map(i => i.data as TranscriptHit),
+        letters: kept.filter(i => i.type === "letter").map(i => i.data as LetterHit),
+      };
+    }
+
+    // ── Chapter context for the primary verse (one get_verse_context RPC). ──
+    const primaryVerse = mainFlow.items.find(i => i.type === "verse")?.data as VerseHit | undefined;
+    let primaryVerseContext: {
+      verseId: string;
+      before: { id: string; ref: string; translation: string; vedabase_url?: string; position: number }[];
+      after: { id: string; ref: string; translation: string; vedabase_url?: string; position: number }[];
+    } | null = null;
+    if (primaryVerse) {
+      try {
+        const { data: ctxRows } = await spellingSupa.rpc("get_verse_context", {
+          p_verse_id: primaryVerse.id,
+          p_radius: 1,
+        });
+        if (ctxRows && ctxRows.length > 0) {
+          const toLine = (r: { id: string; scripture: string; verse_number: string; translation: string; vedabase_url: string | null; rel_position: number }) => ({
+            id: r.id,
+            // Neighbours share the primary verse's chapter, so its canto/chapter
+            // numbers complete the reference.
+            ref: cleanRef({
+              scripture: r.scripture,
+              canto_or_division: primaryVerse.canto_or_division,
+              chapter_number: primaryVerse.chapter_number,
+              verse_number: r.verse_number,
+            }),
+            translation: r.translation || "",
+            vedabase_url: r.vedabase_url || undefined,
+            position: r.rel_position,
+          });
+          primaryVerseContext = {
+            verseId: primaryVerse.id,
+            before: ctxRows.filter((r: { rel_position: number }) => r.rel_position < 0).map(toLine),
+            after: ctxRows.filter((r: { rel_position: number }) => r.rel_position > 0).map(toLine),
+          };
+        }
+      } catch (err) {
+        console.error("[get_verse_context] Error:", err); // context is optional — never blocks the answer
+      }
+    }
 
     // Verbatim key answers for the woven main-flow passages (no AI; never paraphrased).
     // Dedupe the same way — two distinct passages can surface the same matched line,
@@ -2541,6 +2635,16 @@ async function runSearchPipeline(
     for (const it of mainFlow.items) {
       const ka = buildKeyAnswer(it, queryTerms);
       if (!ka.line || !ka.line.trim()) continue; // skip empty / non-substantive lines — never a bare fragment
+      // Verbatim check for the derived line too: it must appear inside the
+      // re-fetched source text (validator supplies it; fail-open when absent).
+      if (validation.validated && validation.sourceText.size > 0) {
+        const src = validation.sourceText.get(ka.id);
+        if (src && !src.includes(normalizeVerbatim(ka.line))) {
+          droppedBlocks += 1;
+          console.error(`[verbatim-validator] dropped key answer for ${ka.ref}: line not verbatim`);
+          continue;
+        }
+      }
       const norm = normalizeForMatch(ka.line).slice(0, 200);
       if (norm && seenKeyLine.has(norm)) continue;
       if (norm) seenKeyLine.add(norm);
@@ -2576,6 +2680,9 @@ async function runSearchPipeline(
       conclusion,
       queryVariants,
       topic,
+      validated: validation.validated,
+      droppedBlocks,
+      primaryVerseContext,
     };
 
     // References mode: skip article building, return metadata with empty narrative

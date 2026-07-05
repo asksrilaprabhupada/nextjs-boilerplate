@@ -52,6 +52,7 @@ import type {
   BookGroup,
   MainFlowNode,
   SearchResults,
+  VerseContext,
 } from "@/app/lib/types/01-search";
 
 export type {
@@ -155,6 +156,32 @@ function LabelLine({ type, data }: { type: MainFlowNode["type"]; data: AnyHit })
       {text && <span>{text}</span>}
       {label.provenanceNote && <span className="passage-label-note">{label.provenanceNote}</span>}
     </div>
+  );
+}
+
+/* ─────────────────────────── Verse context strip ───────────────────────────
+   Dimmed chapter neighbours of the primary verse (get_verse_context RPC) —
+   verbatim translations with fixed neutral frames, each linking to its own
+   Vedabase page. Renders directly under the primary verse's card. */
+
+function VerseContextStrip({ ctx }: { ctx: VerseContext }) {
+  if (ctx.before.length === 0 && ctx.after.length === 0) return null;
+  const line = (l: VerseContext["before"][number], frame: string) => (
+    <p key={l.id} className="ctx-line font-body">
+      <span className="ctx-frame">{frame}</span>{" "}
+      <span className="ctx-text">&ldquo;{l.translation}&rdquo;</span>{" "}
+      {l.vedabase_url ? (
+        <a className="ctx-ref" href={l.vedabase_url} target="_blank" rel="noopener noreferrer">{formatCiteRef(l.ref)} ↗</a>
+      ) : (
+        <span className="ctx-ref">{formatCiteRef(l.ref)}</span>
+      )}
+    </p>
+  );
+  return (
+    <aside className="verse-context-strip" aria-label="Surrounding verses in the chapter">
+      {ctx.before.map(l => line(l, "Just before this, it is asked —"))}
+      {ctx.after.map(l => line(l, "…and the reply —"))}
+    </aside>
   );
 }
 
@@ -610,11 +637,15 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
                   const d = dataFor(h.node);
                   if (!d) return null;
                   return (
-                    <PassageCard
-                      key={`${results.query}:${h.node.id}`}
-                      node={h.node} data={d} hero line={h.line} index={hi}
-                      queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
-                    />
+                    <div key={`${results.query}:${h.node.id}`}>
+                      <PassageCard
+                        node={h.node} data={d} hero line={h.line} index={hi}
+                        queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
+                      />
+                      {results.primaryVerseContext?.verseId === h.node.id && (
+                        <VerseContextStrip ctx={results.primaryVerseContext} />
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -626,11 +657,15 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
                 const d = dataFor(node);
                 if (!d) return null;
                 return (
-                  <PassageCard
-                    key={`${results.query}:${node.id}`}
-                    node={node} data={d} index={heroes.length + j}
-                    queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
-                  />
+                  <div key={`${results.query}:${node.id}`}>
+                    <PassageCard
+                      node={node} data={d} index={heroes.length + j}
+                      queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
+                    />
+                    {results.primaryVerseContext?.verseId === node.id && (
+                      <VerseContextStrip ctx={results.primaryVerseContext} />
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -744,6 +779,15 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
 
         .hero-stack { display: flex; flex-direction: column; gap: var(--space-5); margin-bottom: var(--space-7); }
         .essay-flow { display: flex; flex-direction: column; }
+
+        /* ── Verse context strip — dimmed chapter neighbours under the primary verse ── */
+        .verse-context-strip { margin: var(--space-3) 0 0 var(--space-4); padding: var(--space-3) var(--space-4); border-left: 2px solid var(--border-hair); opacity: 0.82; }
+        .verse-context-strip .ctx-line { margin: 0 0 var(--space-2); font-size: 0.88rem; line-height: 1.6; color: var(--ink-muted); }
+        .verse-context-strip .ctx-line:last-child { margin-bottom: 0; }
+        .verse-context-strip .ctx-frame { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-subtle); }
+        .verse-context-strip .ctx-text { font-style: italic; }
+        .verse-context-strip .ctx-ref { font-size: 0.78rem; font-weight: 600; color: var(--accent-strong); text-decoration: none; white-space: nowrap; }
+        .verse-context-strip a.ctx-ref:hover { text-decoration: underline; }
 
         .passage { padding: var(--space-6) 0; border-bottom: 1px solid var(--border-hair); }
         .essay-flow .passage:last-child { border-bottom: none; }
