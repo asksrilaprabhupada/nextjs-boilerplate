@@ -8,6 +8,9 @@
 
 import { useEffect, useRef } from "react";
 
+// TODO(owner): replace with real quotes — these are labelled placeholders
+// ([FAKE] prefix). This component is currently unmounted; the live carousel
+// lives in cinematic/01-cinematic-home.tsx with the same placeholder set.
 const testimonials = [
   {
     quote: "[FAKE] I use it every morning to trace a topic across Gītā, Bhāgavatam, and purports in under 5 minutes. It has completely transformed how I prepare for class.",

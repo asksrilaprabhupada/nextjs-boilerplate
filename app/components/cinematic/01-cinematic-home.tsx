@@ -64,6 +64,9 @@ const TW_QUESTIONS = [
   "Why is chanting Hare Kṛṣṇa important?",
 ];
 
+// TODO(owner): replace with real quotes — every entry below is a labelled
+// placeholder ([FAKE] prefix + XXX/BBB/CCC names). Swap the array contents and
+// nothing else needs to change.
 const TESTIMONIALS = [
   { quote: "[FAKE] I use it every morning to trace a topic across Gītā, Bhāgavatam, and purports in under 5 minutes. It has completely transformed how I prepare for class.", name: "XXX", role: "Temple President · ISKCON AAA" },
   { quote: "[FAKE] It helps me prepare Bhāgavatam classes faster because I can verify the exact source immediately — no more flipping through six books to find one purport.", name: "BBB", role: "Bhakti-śāstrī Scholar" },
@@ -805,6 +808,9 @@ export default function CinematicHome({
                 <button key={i} onClick={() => { if (tRotRef.current) clearInterval(tRotRef.current); setTIdx(i); setTVisible(true); }} aria-label="Show testimonial" style={{ width: i === tIdx ? 26 : 6, height: 6, borderRadius: 100, border: "none", background: i === tIdx ? "#6B57C9" : "#D8CCB8", cursor: "pointer", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)", padding: 0 }} />
               ))}
             </div>
+            <p className="font-body" style={{ fontSize: 12, color: "#9A8F7D", fontStyle: "italic", marginTop: 18 }}>
+              Sample testimonials — real devotee voices will replace these.
+            </p>
           </section>
 
           {/* ── CTA ── */}

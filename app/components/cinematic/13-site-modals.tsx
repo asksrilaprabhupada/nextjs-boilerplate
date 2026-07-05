@@ -141,14 +141,30 @@ export default function SiteModalsProvider({ children }: { children: ReactNode }
             <p className="font-body" style={eyebrow("#C9A24B")}>Support the seva</p>
             <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>Keep his words freely searchable</h2>
             <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>No ads. No fees. Only seva.</p>
+            {SEVA.isPlaceholder && (
+              <p className="font-body" role="alert" style={{ fontSize: 13, fontWeight: 600, color: "#8A5A0B", background: "rgba(201, 142, 36, 0.12)", border: "1px solid rgba(201, 142, 36, 0.30)", borderRadius: 12, padding: "10px 16px", textAlign: "center", marginBottom: 16 }}>
+                {SEVA.notice}
+              </p>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {SEVA.rows.map((d, i) => (
                 <div key={d.label} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center", padding: "12px 16px", border: "1px solid #E8E0D2", borderRadius: 14, background: "rgba(254,252,248,0.9)", opacity: 0, animation: "moreCardIn 0.55s cubic-bezier(0.16,1,0.3,1) both", animationDelay: `${(0.14 + i * 0.06).toFixed(2)}s` }}>
                   <div style={{ minWidth: 0 }}>
                     <p className="font-body" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C9A24B" }}>{d.label}</p>
-                    <p className="font-body" style={{ fontSize: 15, fontWeight: 500, color: "#2B2519", marginTop: 3, fontVariantNumeric: "tabular-nums", overflowWrap: "break-word" }}>{d.value}</p>
+                    <p className="font-body" style={{ fontSize: 15, fontWeight: 500, color: "#2B2519", marginTop: 3, fontVariantNumeric: "tabular-nums", overflowWrap: "break-word" }}>
+                      {SEVA.isPlaceholder ? `${d.value} (FAKE)` : d.value}
+                    </p>
                   </div>
-                  <button onClick={copyRow(d.label, d.value)} className="cine-copy-btn font-body" style={{ padding: "7px 14px", borderRadius: 100, border: "1px solid rgba(107,87,201,0.3)", background: "rgba(107,87,201,0.06)", color: "#51409A", fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.3s" }}>{copied === d.label ? "Copied" : "Copy"}</button>
+                  <button
+                    onClick={SEVA.isPlaceholder ? undefined : copyRow(d.label, d.value)}
+                    disabled={SEVA.isPlaceholder}
+                    aria-disabled={SEVA.isPlaceholder}
+                    title={SEVA.isPlaceholder ? "Placeholder details — copying is disabled" : undefined}
+                    className="cine-copy-btn font-body"
+                    style={{ padding: "7px 14px", borderRadius: 100, border: "1px solid rgba(107,87,201,0.3)", background: "rgba(107,87,201,0.06)", color: "#51409A", fontSize: 12, fontWeight: 500, cursor: SEVA.isPlaceholder ? "not-allowed" : "pointer", opacity: SEVA.isPlaceholder ? 0.4 : 1, whiteSpace: "nowrap", transition: "all 0.3s" }}
+                  >
+                    {copied === d.label ? "Copied" : "Copy"}
+                  </button>
                 </div>
               ))}
             </div>

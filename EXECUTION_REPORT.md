@@ -306,7 +306,20 @@ Verification: build ✅ tests ✅ · local prod server: `/`, `/journey`, `/featu
 `/how-it-works`, `/search?q=` all serve the identical header with More + hamburger markup ✅.
 Seva-modal-from-/journey + 390 px hamburger visual check on the Task 16 preview/screenshots.
 
-## §5 · Task 5 — FAKE labelling ⏳
+## §5 · Task 5 — FAKE labelling ✅ (nothing deleted)
+
+- Testimonials: all three slides KEPT (quotes already begin `[FAKE]`, attributions XXX/BBB/CCC ·
+  ISKCON AAA); `// TODO(owner): replace with real quotes` on the array; caption under the carousel:
+  "Sample testimonials — real devotee voices will replace these." The unmounted
+  `landing/05-testimonials-section.tsx` copy got the same TODO note.
+- Seva modal: every value KEPT and renders with a ` (FAKE)` suffix while
+  `SEVA.isPlaceholder === true` (`app/lib/19-seva-config.ts`); amber notice above the rows:
+  "Placeholder details — please do not send money yet."; Copy buttons disabled
+  (`disabled` + `aria-disabled` + not-allowed cursor + 0.4 opacity) so no one can transfer to a
+  dead account. Flipping to real details is config-only.
+
+Verification: build ✅ tests ✅ · `grep "(FAKE)"` hits the seva render + config ✅ · both surfaces
+still render (screenshots in Task 16).
 
 ## §12 · Task 12 — Homepage fixes ⏳
 
