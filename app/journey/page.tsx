@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   title: "His Journey — Ask Śrīla Prabhupāda",
   description:
     "1965: at sixty-nine, Śrīla Prabhupāda crossed an ocean with a trunk of books. Five chapters — the Jaladuta, New York, Matchless Gifts, the books, the world.",
+  alternates: { canonical: "/journey" },
 };
 
 export default function Journey() {

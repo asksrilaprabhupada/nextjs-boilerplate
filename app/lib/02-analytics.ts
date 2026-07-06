@@ -118,6 +118,43 @@ export interface BehaviorParams {
   followedUpQuery?: string;
 }
 
-export async function logBehavior(params: BehaviorParams): Promise<void> {
-  await post("/api/analytics/behavior", params);
+/**
+ * Beacon-first delivery so signals survive page unload (sendBeacon queues the
+ * POST even as the document tears down); falls back to keepalive fetch.
+ */
+function beacon(path: string, body: Record<string, unknown>): void {
+  const payload = JSON.stringify(body);
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      const ok = navigator.sendBeacon(path, new Blob([payload], { type: "application/json" }));
+      if (ok) return;
+    }
+  } catch { /* fall through to fetch */ }
+  void fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload,
+    keepalive: true,
+  }).catch(() => { /* fire-and-forget */ });
+}
+
+export function logBehavior(params: BehaviorParams): void {
+  beacon("/api/analytics/behavior", { ...params });
+}
+
+// ---------------------------------------------------------------------------
+// Record a Vedabase citation click (dedicated citation_clicks table)
+// ---------------------------------------------------------------------------
+
+export interface CitationClickParams {
+  searchLogId: string;
+  verseId?: string | null;
+  proseId?: string | null;
+  citationRef?: string | null;
+  bookSlug?: string | null;
+  clickPosition?: number | null;
+}
+
+export function logCitationClick(params: CitationClickParams): void {
+  beacon("/api/analytics/citation-click", { ...params });
 }

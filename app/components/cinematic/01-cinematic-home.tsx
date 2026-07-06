@@ -14,23 +14,22 @@
  * colors reuse the design tokens in globals.css. Keyframes and :hover styling
  * live in the "CINEMATIC MAIN PAGE" block of globals.css.
  *
- * Search seam: submitting a question plays the meditative aura/mandala sequence
- * and then hands off to the app's search (see `runSearch`). Wire that call to
+ * Search seam: submitting a question (or tapping any suggestion chip) hands
+ * straight off to /search?q= (see `runSearch`) — the live results page owns
  * your real search handler when integrating; it currently deep-links to the
  * home route with `?q=` (the app's existing deep-link convention).
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
+import { useSiteModals } from "./13-site-modals";
+import Image from "next/image";
+import { INTRO_IMAGES, IMG as MANIFEST } from "@/app/lib/18-image-manifest";
 
 /* ─── Static content (verbatim from the prototype) ─── */
-
-const IMG = {
-  disciples: "/images/lockscreen/prabhupadaanddisciplessmiling.jpg",
-  deities: "/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg",
-  walk: "/images/lockscreen/Srila-Prabhupada-on-morning-walk-in-Vrindavan-620x350.avif",
-};
 
 const DAILY_VERSES = [
   { text: "For one who has conquered the mind, the mind is the best of friends; but for one who has failed to do so, his mind will remain the greatest enemy.", citation: "Bhagavad Gītā 6.6" },
@@ -61,26 +60,21 @@ const TW_QUESTIONS = [
   "Why is chanting Hare Kṛṣṇa important?",
 ];
 
+// TODO(owner): replace with real quotes — every entry below is a labelled
+// placeholder ([FAKE] prefix + XXX/BBB/CCC names). Swap the array contents and
+// nothing else needs to change.
 const TESTIMONIALS = [
   { quote: "[FAKE] I use it every morning to trace a topic across Gītā, Bhāgavatam, and purports in under 5 minutes. It has completely transformed how I prepare for class.", name: "XXX", role: "Temple President · ISKCON AAA" },
   { quote: "[FAKE] It helps me prepare Bhāgavatam classes faster because I can verify the exact source immediately — no more flipping through six books to find one purport.", name: "BBB", role: "Bhakti-śāstrī Scholar" },
   { quote: "[FAKE] As a new devotee, it helped me study without relying on unsourced summaries. Every answer links back to Prabhupāda's actual words, so I know it's authentic.", name: "CCC", role: "Aspiring Devotee · 6 months" },
 ];
 
-const SEARCH_STATUSES = ["Listening…", "Searching the library…", "Weaving his words…"];
-
-const DONATE_INFO = [
-  { label: "Account name", value: "Ask Śrīla Prabhupāda Seva" },
-  { label: "Account number", value: "0000 0000 0000" },
-  { label: "IFSC", value: "BANK0000000" },
-  { label: "UPI", value: "seva@upi" },
-];
-
+// Four DISTINCT manifest photos; captions describe what each actually shows.
 const GALLERY = [
-  { id: "gallery-1", img: IMG.deities, caption: "01 — Vṛndāvana", offset: false },
-  { id: "gallery-2", img: IMG.disciples, caption: "02 — Teaching", offset: true },
-  { id: "gallery-3", img: IMG.walk, caption: "03 — With disciples", offset: false },
-  { id: "gallery-4", img: IMG.deities, caption: "04 — The books", offset: true },
+  { id: "gallery-1", entry: MANIFEST.deities, caption: "01 — Before the Kṛṣṇa-Balarāma Deities", offset: false },
+  { id: "gallery-2", entry: MANIFEST.disciples, caption: "02 — With his disciples", offset: true },
+  { id: "gallery-3", entry: MANIFEST.walk, caption: "03 — Morning walk in Vṛndāvana", offset: false },
+  { id: "gallery-4", entry: MANIFEST.prabhupada, caption: "04 — Śrīla Prabhupāda", offset: true },
 ];
 
 const MANIFESTO_WORDS = [
@@ -88,7 +82,6 @@ const MANIFESTO_WORDS = [
   ["We", "only", "help", "you", "find", "them."],
 ];
 
-type Modal = "donate" | "feature" | "feedback" | null;
 type Mode = "auto" | "click" | "off";
 
 interface Props {
@@ -122,25 +115,17 @@ export default function CinematicHome({
   const [query, setQuery] = useState("");
   const [scrolled, setScrolled] = useState(false);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [stats, setStats] = useState({ books: 0, lectures: 0, letters: 0 });
+  // SSR the real numbers — the count-up is a client enhancement, never a 0 flash.
+  const [stats, setStats] = useState({ books: 36, lectures: 3700, letters: 6500 });
   const [tIdx, setTIdx] = useState(0);
   const [tVisible, setTVisible] = useState(true);
   const [soundOn, setSoundOn] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [searchPhase, setSearchPhase] = useState(0);
-  const [searchQ, setSearchQ] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
-  const [navMoreOpen, setNavMoreOpen] = useState(false);
-  const [modal, setModal] = useState<Modal>(null);
-  const [featText, setFeatText] = useState("");
-  const [featEmail, setFeatEmail] = useState("");
-  const [featSent, setFeatSent] = useState(false);
-  const [fbVote, setFbVote] = useState<"up" | "down" | null>(null);
-  const [fbText, setFbText] = useState("");
-  const [fbSent, setFbSent] = useState(false);
-  const [copied, setCopied] = useState<string | null>(null);
   const [footerNear, setFooterNear] = useState(false);
   const [motes, setMotes] = useState<React.CSSProperties[]>([]);
+  const { openModal } = useSiteModals();
+  const [introIdx, setIntroIdx] = useState(0);
+  const introRotRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /* ── refs (for stable access inside long-lived listeners) ── */
   const rootRef = useRef<HTMLDivElement>(null);
@@ -152,7 +137,6 @@ export default function CinematicHome({
   const lockVisibleRef = useRef(true);
   const footerNearRef = useRef(false);
   const audioRef = useRef<{ ctx: AudioContext; master: GainNode } | null>(null);
-  const searchIvRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tRotRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRafRef = useRef<number>(0);
   const plRafRef = useRef<number>(0);
@@ -173,6 +157,7 @@ export default function CinematicHome({
   const dismiss = useCallback(() => {
     if (!lockVisibleRef.current) return;
     lockVisibleRef.current = false;
+    if (introRotRef.current) clearInterval(introRotRef.current);
     setLockVisible(false);
     setHeroIn(true);
     pushTimer(() => setLockMounted(false), 1200);
@@ -227,6 +212,7 @@ export default function CinematicHome({
 
   /* ── count-up for library stats ── */
   const countUp = useCallback(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return; // keep the SSR'd numbers
     const start = performance.now(), dur = 2400;
     const targets = { books: 36, lectures: 3700, letters: 6500 };
     const step = (now: number) => {
@@ -242,24 +228,10 @@ export default function CinematicHome({
     countRafRef.current = requestAnimationFrame(step);
   }, []);
 
-  /* ── cinematic search moment → hand off to search ── */
+  /* ── hand off to the live search page — its loader owns the wait ── */
   const runSearch = useCallback((q: string) => {
     if (!q.trim()) return;
-    setSearching(true);
-    setSearchPhase(0);
-    setSearchQ(q.trim());
-    let phase = 0;
-    searchIvRef.current = setInterval(() => {
-      phase += 1;
-      if (phase >= 3) {
-        if (searchIvRef.current) clearInterval(searchIvRef.current);
-        // Integration seam: the cinematic moment hands off to the woven-answer
-        // results page. Point this at your real search route when integrating.
-        window.location.assign("/search?q=" + encodeURIComponent(q.trim()));
-        return;
-      }
-      setSearchPhase(phase);
-    }, 1150);
+    window.location.assign("/search?q=" + encodeURIComponent(q.trim()));
   }, []);
 
   /* ── mount: entrance sequence, scroll engine, observers, rotators ── */
@@ -300,7 +272,12 @@ export default function CinematicHome({
       askFlag = /(^|[#?&])ask(=|$|&)/i.test(location.hash + location.search);
       qParam = new URLSearchParams(location.search).get("q") || "";
     } catch { /* ok */ }
-    if (askFlag || qParam) mode = "off";
+    let introSeen = false, forceIntro = false;
+    try {
+      introSeen = sessionStorage.getItem("asp_intro_seen") === "1";
+      forceIntro = /(^|[?&])intro=1/.test(location.search); // QA override replays the intro
+    } catch { /* private mode */ }
+    if (askFlag || qParam || (introSeen && !forceIntro)) mode = "off";
 
     if (mode === "off") {
       lockVisibleRef.current = false;
@@ -316,6 +293,26 @@ export default function CinematicHome({
         } catch { /* ok */ }
       }, 60);
     } else {
+      try { sessionStorage.setItem("asp_intro_seen", "1"); } catch { /* private mode */ }
+      // Photo rotation: consecutive visits start on different photos
+      // (sessionStorage remembers the last index); crossfade every 9s, at
+      // most 4 photos across the 26s intro; first two preloaded.
+      try {
+        const stored = parseInt(sessionStorage.getItem("asp_intro_idx") || "-1", 10);
+        const start = ((Number.isFinite(stored) ? stored : -1) + 1 + INTRO_IMAGES.length) % INTRO_IMAGES.length;
+        sessionStorage.setItem("asp_intro_idx", String(start));
+        setIntroIdx(start);
+        [start, (start + 1) % INTRO_IMAGES.length].forEach((i) => { const im = new window.Image(); im.src = INTRO_IMAGES[i].src; });
+      } catch { /* private mode */ }
+      let advances = 0;
+      introRotRef.current = setInterval(() => {
+        advances += 1;
+        if (advances > 3 || !lockVisibleRef.current) {
+          if (introRotRef.current) clearInterval(introRotRef.current);
+          return;
+        }
+        setIntroIdx((i) => (i + 1) % INTRO_IMAGES.length);
+      }, 9000);
       pushTimer(() => setBeat(1), 200);   // verse on black
       pushTimer(() => setBeat(2), 2600);  // photo bloom
       pushTimer(() => setBeat(3), 3600);  // title reveal
@@ -413,6 +410,21 @@ export default function CinematicHome({
       }, { threshold: 0.15, rootMargin: "0px 0px -60px 0px" });
       root.querySelectorAll("[data-creveal]").forEach((el) => io?.observe(el));
 
+      // Reveal failsafe: no section may stay blank if the observer or the
+      // scrub loop never fires — everything is visible 1.5s after mount, and
+      // immediately under prefers-reduced-motion.
+      const revealAll = () => {
+        root.querySelectorAll("[data-creveal]").forEach((el) => {
+          const key = el.getAttribute("data-creveal");
+          if (key) setRevealed((s) => (s[key] ? s : { ...s, [key]: true }));
+        });
+        root.querySelectorAll<HTMLElement>("[data-word]").forEach((w) => { w.style.opacity = "1"; w.style.filter = "blur(0px)"; });
+        const tail = root.querySelector<HTMLElement>("[data-manifesto-tail]");
+        if (tail) { tail.style.opacity = "1"; tail.style.transform = "translateY(0)"; }
+      };
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) revealAll();
+      else pushTimer(revealAll, 1500);
+
       footIo = new IntersectionObserver((entries) => {
         entries.forEach((en) => {
           if (en.isIntersecting !== footerNearRef.current) {
@@ -437,7 +449,7 @@ export default function CinematicHome({
     // keyboard: Enter/Space to enter, Escape to close
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === "Enter" || e.key === " ") && lockVisibleRef.current) dismiss();
-      if (e.key === "Escape") { setModal(null); setNavMoreOpen(false); setMoreOpen(false); }
+      if (e.key === "Escape") { setMoreOpen(false); }
     };
     window.addEventListener("keydown", onKey);
 
@@ -450,7 +462,6 @@ export default function CinematicHome({
       io?.disconnect();
       footIo?.disconnect();
       if (tRotRef.current) clearInterval(tRotRef.current);
-      if (searchIvRef.current) clearInterval(searchIvRef.current);
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("keydown", onKey);
       stopDrone();
@@ -495,17 +506,12 @@ export default function CinematicHome({
     ? "0 0 0 4px rgba(107,87,201,0.10), 0 18px 60px rgba(107,87,201,0.16)"
     : "0 2px 6px rgba(43,37,25,0.05), 0 18px 50px rgba(43,37,25,0.08)";
 
-  const mandala = useMemo(() => Array.from({ length: 12 }, (_, i) => i * 30), []);
-
-  const pick = (text: string) => () => { setQuery(text); setFocused(true); };
+  // Suggestion chips navigate straight to the answer — the 24h server cache
+  // makes the three demo chips warm after their first hit.
+  const pick = (text: string) => () => runSearch(text);
   const focusSearch = () => {
     dismiss();
     pushTimer(() => { window.scrollTo({ top: 0, behavior: "smooth" }); textareaRef.current?.focus(); }, 80);
-  };
-  const copyRow = (label: string, value: string) => () => {
-    try { navigator.clipboard.writeText(value); } catch { /* ok */ }
-    setCopied(label);
-    pushTimer(() => setCopied(null), 1600);
   };
 
   /* ── shared style fragments ── */
@@ -524,25 +530,16 @@ export default function CinematicHome({
     boxShadow: "0 40px 120px rgba(22,18,12,0.5), 0 0 0 1px rgba(107,87,201,0.08)",
     animation: "morePanelIn 0.7s cubic-bezier(0.16,1,0.3,1) both",
   });
-  const closeBtn = (
-    <button onClick={() => setModal(null)} aria-label="Close" className="cine-close"
-      style={{ position: "absolute", top: 16, right: 16, width: 38, height: 38, borderRadius: "50%", border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", color: "#6E6353", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.3s ease" }}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-    </button>
-  );
   const eyebrow = (color: string): React.CSSProperties => ({
     fontSize: 11, fontWeight: 600, letterSpacing: "0.32em", textTransform: "uppercase", color, textAlign: "center",
   });
 
-  const featDisabled = !featText.trim();
-  const fbDisabled = !fbVote && !fbText.trim();
-
   return (
     <div ref={rootRef}>
       {/* ── FILM GRADE: vignette (under UI) + animated grain (over everything) ── */}
-      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 90, pointerEvents: "none", background: "radial-gradient(120% 100% at 50% 42%, transparent 58%, rgba(22,18,12,0.14) 100%)" }} />
+      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 90, pointerEvents: "none", background: "radial-gradient(120% 100% at 50% 42%, transparent 58%, rgba(22,18,12,0.18) 100%)" }} />
       {filmGrain && (
-        <div aria-hidden style={{ position: "fixed", inset: "-12%", zIndex: 3000, pointerEvents: "none", opacity: 0.05, backgroundImage: `url('${GRAIN_URI}')`, backgroundSize: "160px 160px", animation: "grainShift 0.9s steps(1) infinite" }} />
+        <div aria-hidden className="film-grain-anim" style={{ position: "fixed", inset: "-12%", zIndex: 3000, pointerEvents: "none", opacity: 0.05, backgroundImage: `url('${GRAIN_URI}')`, backgroundSize: "160px 160px" }} />
       )}
 
       {/* ═══════════ ENTRANCE — title sequence ═══════════ */}
@@ -556,8 +553,19 @@ export default function CinematicHome({
             <span className="font-body" style={{ marginTop: 18, fontSize: 12, fontWeight: 600, color: "rgba(201,162,75,0.95)", letterSpacing: "0.26em", textTransform: "uppercase" }}>{verse.citation}</span>
           </div>
 
-          {/* Beat 2: photo blooms in */}
-          <div style={{ position: "absolute", inset: 0, backgroundImage: `url('${IMG.disciples}')`, backgroundSize: "cover", backgroundPosition: "center 30%", animation: "cineKenBurns 26s cubic-bezier(0.25,0,0.4,1) forwards", transformOrigin: "50% 38%", opacity: b.imgOp, transition: "opacity 2.0s cubic-bezier(0.4,0,0.2,1)" }} />
+          {/* Beat 2: photo blooms in — dual-layer so the photograph itself is
+              NEVER cropped: a blurred cover backdrop fills any aspect ratio
+              while the full image sits above it (object-fit: contain). The
+              rotation crossfades through the manifest photos every 9s. */}
+          <div style={{ position: "absolute", inset: 0, opacity: b.imgOp, transition: "opacity 2.0s cubic-bezier(0.4,0,0.2,1)" }}>
+            {INTRO_IMAGES.map((img, i) => (
+              <div key={img.src} aria-hidden={i !== introIdx} style={{ position: "absolute", inset: 0, opacity: i === introIdx ? 1 : 0, transition: "opacity 1.6s ease" }}>
+                <div style={{ position: "absolute", inset: 0, backgroundImage: `url('${img.src}')`, backgroundSize: "cover", backgroundPosition: "center 30%", filter: "blur(28px) saturate(1.05) brightness(0.72)", transform: "scale(1.12)" }} />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img.src} alt="" className="cine-intro-subject" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }} />
+              </div>
+            ))}
+          </div>
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(22,18,12,0.34) 0%, rgba(22,18,12,0.06) 34%, rgba(22,18,12,0.12) 60%, rgba(22,18,12,0.74) 100%)", opacity: b.imgOp, transition: "opacity 2.0s ease" }} />
           <div style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 90% at 50% 88%, rgba(201,162,75,0.22), transparent 55%)", opacity: b.imgOp, transition: "opacity 2.4s ease" }} />
           <div aria-hidden style={{ position: "absolute", top: "-30%", left: 0, width: "45%", height: "160%", background: "linear-gradient(90deg, transparent, rgba(255,244,214,0.20), transparent)", filter: "blur(30px)", animation: "lightSweep 9s ease-in-out infinite", pointerEvents: "none", opacity: b.imgOp }} />
@@ -598,28 +606,7 @@ export default function CinematicHome({
         </div>
       )}
 
-      {/* ═══════════ SEARCH MOMENT OVERLAY ═══════════ */}
-      {searching && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(250,247,241,0.94)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
-          <div style={{ position: "relative", width: "min(70vw, 340px)", height: "min(70vw, 340px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div aria-hidden style={{ position: "absolute", top: "50%", left: "50%", width: "130%", height: "130%", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.26) 0%, rgba(201,162,75,0.12) 42%, transparent 70%)", filter: "blur(38px)", animation: "auraBreathe 4.5s ease-in-out infinite" }} />
-            <svg viewBox="0 0 400 400" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.16, animation: "rotateMandala 60s linear infinite", color: "#6B57C9" }}>
-              {mandala.map((deg, i) => (
-                <g key={i} transform={`rotate(${deg} 200 200)`}><ellipse cx="200" cy="120" rx="18" ry="40" fill="none" stroke="currentColor" strokeWidth="0.6" /></g>
-              ))}
-              <circle cx="200" cy="200" r="70" fill="none" stroke="currentColor" strokeWidth="0.5" />
-              <circle cx="200" cy="200" r="110" fill="none" stroke="currentColor" strokeWidth="0.35" />
-            </svg>
-            <p className="font-display" style={{ fontSize: "clamp(17px, 2.4vw, 22px)", fontStyle: "italic", color: "#51409A", textAlign: "center", maxWidth: 240, position: "relative" }}>{SEARCH_STATUSES[searchPhase]}</p>
-          </div>
-          <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 10, maxWidth: 420, textAlign: "center" }}>“{searchQ}”</p>
-          <div style={{ width: "min(60vw, 280px)", height: 2, background: "#E8E0D2", borderRadius: 2, marginTop: 28, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${((searchPhase + 1) / 3 * 100).toFixed(0)}%`, background: "linear-gradient(90deg, #C9A24B, #6B57C9)", borderRadius: 2, transition: "width 1.1s cubic-bezier(0.2,0,0,1)" }} />
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ MORE QUESTIONS — cinematic overlay ═══════════ */}
+      {/* ═══════════ MORE QUESTIONS — cinematic overlay ═══════════ */}      {/* ═══════════ MORE QUESTIONS — cinematic overlay ═══════════ */}
       {moreOpen && (
         <div role="dialog" aria-label="Example questions" onClick={() => setMoreOpen(false)}
           style={{ ...overlayBackdrop, background: "radial-gradient(120% 100% at 50% 30%, rgba(45,36,80,0.42), rgba(22,18,12,0.66))", backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)" }}>
@@ -633,7 +620,7 @@ export default function CinematicHome({
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10 }}>
               {EXAMPLE_QUESTIONS.map((q, i) => (
                 <button key={q} className="cine-overlay-pill font-body"
-                  onClick={() => { setQuery(q); setFocused(true); setMoreOpen(false); }}
+                  onClick={() => { setMoreOpen(false); runSearch(q); }}
                   style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 100, border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", fontSize: 14, fontWeight: 400, color: "#2B2519", cursor: "pointer", whiteSpace: "nowrap", opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) both", animationDelay: `${(0.14 + i * 0.05).toFixed(2)}s`, transition: "background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s, transform 0.3s" }}>{q}</button>
               ))}
             </div>
@@ -641,123 +628,8 @@ export default function CinematicHome({
         </div>
       )}
 
-      {/* Nav "More" click-away backdrop */}
-      {navMoreOpen && <div onClick={() => setNavMoreOpen(false)} aria-hidden style={{ position: "fixed", inset: 0, zIndex: 99, cursor: "default" }} />}
-
-      {/* ═══════════ DONATE — cinematic overlay ═══════════ */}
-      {modal === "donate" && (
-        <div role="dialog" aria-label="Donate" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>Support the seva</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>Keep his words freely searchable</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>No ads. No fees. Only seva.</p>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {DONATE_INFO.map((d, i) => (
-                <div key={d.label} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center", padding: "12px 16px", border: "1px solid #E8E0D2", borderRadius: 14, background: "rgba(254,252,248,0.9)", opacity: 0, animation: "moreCardIn 0.55s cubic-bezier(0.16,1,0.3,1) both", animationDelay: `${(0.14 + i * 0.06).toFixed(2)}s` }}>
-                  <div style={{ minWidth: 0 }}>
-                    <p className="font-body" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C9A24B" }}>{d.label}</p>
-                    <p className="font-body" style={{ fontSize: 15, fontWeight: 500, color: "#2B2519", marginTop: 3, fontVariantNumeric: "tabular-nums", overflowWrap: "break-word" }}>{d.value}</p>
-                  </div>
-                  <button onClick={copyRow(d.label, d.value)} className="cine-copy-btn font-body" style={{ padding: "7px 14px", borderRadius: 100, border: "1px solid rgba(107,87,201,0.3)", background: "rgba(107,87,201,0.06)", color: "#51409A", fontSize: 12, fontWeight: 500, cursor: "pointer", whiteSpace: "nowrap", transition: "all 0.3s" }}>{copied === d.label ? "Copied" : "Copy"}</button>
-                </div>
-              ))}
-            </div>
-            <p className="font-body" style={{ fontSize: 12, color: "#9A8F7D", textAlign: "center", marginTop: 18 }}>Every contribution keeps the library online — servers, search, nothing else.</p>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ FEATURE REQUEST — cinematic overlay ═══════════ */}
-      {modal === "feature" && (
-        <div role="dialog" aria-label="Feature request" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>Shape what comes next</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>What would serve your study?</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>Describe it — we read every request.</p>
-            {!featSent ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.15s both" }}>
-                <textarea value={featText} onChange={(e) => setFeatText(e.target.value)} placeholder="The feature you wish existed…" rows={4} aria-label="Feature request" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "14px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", resize: "none", lineHeight: 1.6, transition: "border-color 0.3s" }} />
-                <input value={featEmail} onChange={(e) => setFeatEmail(e.target.value)} placeholder="Email (optional — for updates)" aria-label="Email" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "13px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", transition: "border-color 0.3s" }} />
-                <button onClick={() => { if (featText.trim()) setFeatSent(true); }} disabled={featDisabled} className="cine-send-btn font-body" style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 9, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "13px 34px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", cursor: featDisabled ? "default" : "pointer", opacity: featDisabled ? 0.45 : 1, boxShadow: "0 10px 30px rgba(107,87,201,0.3)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)", marginTop: 6 }}>Send request</button>
-              </div>
-            ) : (
-              <div style={{ textAlign: "center", padding: "18px 0 6px", animation: "moreCardIn 0.7s cubic-bezier(0.16,1,0.3,1) both" }}>
-                <div aria-hidden style={{ width: 56, height: 1, background: "linear-gradient(90deg, transparent, #C9A24B, transparent)", margin: "0 auto 18px" }} />
-                <p className="font-display" style={{ fontSize: 24, fontStyle: "italic", color: "#201B12" }}>Received with gratitude.</p>
-                <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 8 }}>Every request is read. Hare Kṛṣṇa.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ FEEDBACK — cinematic overlay ═══════════ */}
-      {modal === "feedback" && (
-        <div role="dialog" aria-label="Feedback" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>From the heart</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>How was your experience?</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>Your words guide ours.</p>
-            {!fbSent ? (
-              <>
-                <div style={{ display: "flex", justifyContent: "center", gap: 12, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.12s both" }}>
-                  <button onClick={() => setFbVote("up")} className="cine-vote-btn font-body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 140, padding: "18px 12px", borderRadius: 18, border: `1px solid ${fbVote === "up" ? "#6B57C9" : "#E8E0D2"}`, background: fbVote === "up" ? "rgba(107,87,201,0.10)" : "rgba(254,252,248,0.9)", color: fbVote === "up" ? "#51409A" : "#6E6353", cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" /></svg>
-                    <span>Helpful</span>
-                  </button>
-                  <button onClick={() => setFbVote("down")} className="cine-vote-btn font-body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 140, padding: "18px 12px", borderRadius: 18, border: `1px solid ${fbVote === "down" ? "#6B57C9" : "#E8E0D2"}`, background: fbVote === "down" ? "rgba(107,87,201,0.10)" : "rgba(254,252,248,0.9)", color: fbVote === "down" ? "#51409A" : "#6E6353", cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" /></svg>
-                    <span>Could be better</span>
-                  </button>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 14, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.2s both" }}>
-                  <textarea value={fbText} onChange={(e) => setFbText(e.target.value)} placeholder="Tell us more (optional)…" rows={3} aria-label="Feedback" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "14px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", resize: "none", lineHeight: 1.6, transition: "border-color 0.3s" }} />
-                  <button onClick={() => { if (fbVote || fbText.trim()) setFbSent(true); }} disabled={fbDisabled} className="cine-send-btn font-body" style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 9, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "13px 34px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", cursor: fbDisabled ? "default" : "pointer", opacity: fbDisabled ? 0.45 : 1, boxShadow: "0 10px 30px rgba(107,87,201,0.3)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)" }}>Send feedback</button>
-                </div>
-              </>
-            ) : (
-              <div style={{ textAlign: "center", padding: "18px 0 6px", animation: "moreCardIn 0.7s cubic-bezier(0.16,1,0.3,1) both" }}>
-                <div aria-hidden style={{ width: 56, height: 1, background: "linear-gradient(90deg, transparent, #C9A24B, transparent)", margin: "0 auto 18px" }} />
-                <p className="font-display" style={{ fontSize: 24, fontStyle: "italic", color: "#201B12" }}>Thank you.</p>
-                <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 8 }}>Received with gratitude. Hare Kṛṣṇa.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ HEADER (fixed, outside the camera-pull transform) ═══════════ */}
-      <header style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, height: 60, background: hdr.bg, backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)", borderBottom: `1px solid ${hdr.border}`, padding: "0 clamp(20px,4vw,48px)", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: hdr.shadow, opacity: main.op, transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s, opacity 0.8s ease 0.35s" }}>
-        <button onClick={focusSearch} className="font-display" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: "clamp(1rem, 3.5vw, 1.4rem)", fontWeight: 600, color: "#51409A", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>Ask Śrīla Prabhupāda</button>
-        <nav style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <button onClick={focusSearch} className="font-body" style={{ display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 500, background: "rgba(107,87,201,0.16)", color: "#51409A", lineHeight: 1, whiteSpace: "nowrap", border: "none", cursor: "pointer" }}>Search</button>
-          <Link href="/journey" className="cine-nav-link font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: "transparent", color: "#6E6353", lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.3s" }}>His Journey</Link>
-          <Link href="/features" className="cine-nav-link font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: "transparent", color: "#6E6353", lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.3s" }}>Features</Link>
-          <Link href="/how-it-works" className="cine-nav-link font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: "transparent", color: "#6E6353", lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.3s" }}>How it works</Link>
-          <div style={{ position: "relative", display: "flex" }}>
-            <button onClick={() => setNavMoreOpen((v) => !v)} className="cine-nav-link font-body" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 16px", borderRadius: 9, fontSize: 14, fontWeight: 400, background: navMoreOpen ? "rgba(107,87,201,0.10)" : "transparent", color: navMoreOpen ? "#51409A" : "#6E6353", border: "none", lineHeight: 1, whiteSpace: "nowrap", cursor: "pointer", transition: "color 0.3s, background 0.3s" }}>
-              <span>More</span><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: `rotate(${navMoreOpen ? "180deg" : "0deg"})`, transition: "transform 0.35s cubic-bezier(0.16,1,0.3,1)" }}><path d="m6 9 6 6 6-6" /></svg>
-            </button>
-            {navMoreOpen && (
-              <div style={{ position: "absolute", top: "calc(100% + 14px)", right: 0, width: 248, background: "linear-gradient(160deg, rgba(254,252,248,0.98), rgba(250,247,241,0.97))", border: "1px solid rgba(107,87,201,0.14)", borderRadius: 18, boxShadow: "0 24px 70px rgba(43,37,25,0.18)", padding: 8, backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)", animation: "morePanelIn 0.4s cubic-bezier(0.16,1,0.3,1) both", display: "flex", flexDirection: "column", gap: 2 }}>
-                {[
-                  { title: "Donate", sub: "Support the seva", on: () => { setModal("donate"); setNavMoreOpen(false); setCopied(null); } },
-                  { title: "Feature request", sub: "Shape what comes next", on: () => { setModal("feature"); setNavMoreOpen(false); setFeatSent(false); } },
-                  { title: "Feedback", sub: "Two minutes, from the heart", on: () => { setModal("feedback"); setNavMoreOpen(false); setFbSent(false); } },
-                ].map((it) => (
-                  <button key={it.title} onClick={it.on} className="cine-nav-menu-item font-body" style={{ textAlign: "left", padding: "11px 13px", borderRadius: 12, border: "none", background: "transparent", cursor: "pointer", transition: "background 0.25s" }}>
-                    <span style={{ display: "block", fontSize: 14, fontWeight: 500, color: "#2B2519" }}>{it.title}</span>
-                    <span style={{ display: "block", fontSize: 12, color: "#9A8F7D", marginTop: 2 }}>{it.sub}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </nav>
-      </header>
+      {/* ═══════════ HEADER — unified site header (More ▾ opens the shared modals) ═══════════ */}
+      <SiteHeader variant="overlay" />
 
       {/* Persistent sound toggle (after entrance) */}
       {!lockVisible && (
@@ -768,8 +640,8 @@ export default function CinematicHome({
 
       {/* Floating feedback — cinematic entrance/exit */}
       {!lockVisible && (
-        <button onClick={() => { setModal("feedback"); setNavMoreOpen(false); setFbSent(false); }} aria-label="Send feedback" className="cine-fab"
-          style={{ position: "fixed", bottom: 20, right: 20, zIndex: 500, display: "inline-flex", alignItems: "center", gap: 9, padding: "13px 22px", borderRadius: 100, border: "1px solid rgba(255,244,214,0.35)", background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFF8E8", fontSize: 13, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.35)", animation: "fabIn 0.9s cubic-bezier(0.16,1,0.3,1) 0.6s backwards", opacity: modal || footerNear ? 0 : 1, transform: `translateY(${modal || footerNear ? "18px" : "0px"}) scale(${modal || footerNear ? "0.92" : "1"})`, pointerEvents: modal || footerNear ? "none" : "auto", transition: "opacity 0.4s ease, transform 0.5s cubic-bezier(0.16,1,0.3,1), box-shadow 0.35s ease" }}>
+        <button onClick={() => openModal("feedback")} aria-label="Send feedback" className="cine-fab"
+          style={{ position: "fixed", bottom: 20, right: 20, zIndex: 500, display: "inline-flex", alignItems: "center", gap: 9, padding: "13px 22px", borderRadius: 100, border: "1px solid rgba(255,244,214,0.35)", background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFF8E8", fontSize: 13, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.35)", animation: "fabIn 0.9s cubic-bezier(0.16,1,0.3,1) 0.6s backwards", opacity: footerNear ? 0 : 1, transform: `translateY(${footerNear ? "18px" : "0px"}) scale(${footerNear ? "0.92" : "1"})`, pointerEvents: footerNear ? "none" : "auto", transition: "opacity 0.4s ease, transform 0.5s cubic-bezier(0.16,1,0.3,1), box-shadow 0.35s ease" }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
           <span>Feedback</span>
         </button>
@@ -781,7 +653,7 @@ export default function CinematicHome({
 
           {/* ── HERO ── */}
           <section style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px clamp(16px,4vw,80px) 60px", position: "relative", overflow: "hidden" }}>
-            <div aria-hidden style={{ position: "absolute", top: "44%", left: "50%", width: "min(90vw,760px)", height: "min(90vw,760px)", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.20) 0%, rgba(201,162,75,0.10) 40%, transparent 70%)", filter: "blur(60px)", transform: "translate(-50%,-50%)", animation: "auraBreathe 9s ease-in-out infinite", pointerEvents: "none" }} />
+            <div aria-hidden style={{ position: "absolute", top: "44%", left: "50%", width: "min(90vw,760px)", height: "min(90vw,760px)", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.30) 0%, rgba(201,162,75,0.10) 40%, transparent 70%)", filter: "blur(52px)", transform: "translate(-50%,-50%)", animation: "auraBreathe 9s ease-in-out infinite", pointerEvents: "none" }} />
             {showMotes && (
               <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
                 {motes.map((s, i) => <span key={i} aria-hidden style={s} />)}
@@ -809,9 +681,7 @@ export default function CinematicHome({
                     <span aria-hidden className="font-body" style={{ position: "absolute", left: 28, top: 24, right: 104, fontSize: "clamp(15px,2.8vw,18px)", color: "#9A8F7D", pointerEvents: "none", lineHeight: 1.5, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>Ask anything about the scriptures...</span>
                   )}
                   <div style={{ position: "absolute", right: 62, top: 16 }}>
-                    <button type="button" aria-label="Voice input" className="cine-voice-btn" style={{ width: 40, height: 40, borderRadius: 12, border: "none", background: "transparent", color: "#6E6353", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s ease" }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" x2="12" y1="19" y2="23" /><line x1="8" x2="16" y1="23" y2="23" /></svg>
-                    </button>
+                    {/* TODO(owner): voice input — a working SpeechRecognition component exists at components/search/03-voice-input.tsx, ready to wire in */}
                   </div>
                   <button type="submit" aria-label="Search" disabled={!can} className="cine-submit-btn" style={{ position: "absolute", right: 10, top: 12, width: 48, height: 48, borderRadius: 14, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", cursor: can ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", opacity: can ? 1 : 0.4, transition: "all 0.3s cubic-bezier(0.2,0,0,1)", boxShadow: can ? "0 4px 14px rgba(107,87,201,0.30)" : "none" }}>
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -839,10 +709,10 @@ export default function CinematicHome({
               <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.32em", color: "#6B57C9", whiteSpace: "nowrap" }}>The library</p>
               <div aria-hidden style={{ flex: 1, height: 1, background: "#E8E0D2" }} />
             </div>
-            <h2 className="font-display" style={{ fontSize: "clamp(30px,4.4vw,58px)", fontWeight: 600, lineHeight: 1.12, letterSpacing: "-0.02em", color: "#201B12", maxWidth: 760, marginBottom: "clamp(48px,8vh,80px)", textWrap: "pretty", opacity: rev("lib").op, transform: `translateY(${rev("lib").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s" }}>Everything he wrote and spoke, <span style={{ fontStyle: "italic", color: "#6B57C9" }}>searched together.</span></h2>
+            <h2 className="font-display" style={{ fontSize: "clamp(30px,4.4vw,58px)", fontWeight: 600, lineHeight: 1.12, letterSpacing: "-0.02em", color: "#201B12", maxWidth: 760, marginBottom: "clamp(48px,8vh,80px)", textWrap: "pretty", opacity: rev("lib").op, transform: `translateY(${rev("lib").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s" }}>Everything he wrote and spoke, <span className="headline-two-line" style={{ fontStyle: "italic", color: "#6B57C9" }}>searched together.</span></h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "clamp(32px,4vw,56px)" }}>
               {[
-                { n: stats.books.toLocaleString("en-US"), label: "Books", desc: "Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, and 30+ more titles.", delay: "0.2s" },
+                { n: stats.books.toLocaleString("en-US"), label: "Books", desc: "Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, and 32 more titles.", delay: "0.2s" },
                 { n: stats.lectures.toLocaleString("en-US") + "+", label: "Lectures", desc: "Transcribed lectures, conversations, and morning walks spanning decades of teaching.", delay: "0.35s" },
                 { n: stats.letters.toLocaleString("en-US") + "+", label: "Letters", desc: "Personal correspondence and instructions to disciples, friends, and world leaders.", delay: "0.5s" },
               ].map((c) => (
@@ -866,7 +736,9 @@ export default function CinematicHome({
               <div data-htrack style={{ display: "flex", gap: "clamp(20px,2.5vw,36px)", padding: "0 clamp(24px,6vw,100px)", willChange: "transform", alignItems: "stretch" }}>
                 {GALLERY.map((g) => (
                   <div key={g.id} style={{ flex: "0 0 auto", width: "clamp(280px, 36vw, 520px)", display: "flex", flexDirection: "column", gap: 14, marginTop: g.offset ? "clamp(20px,4vh,44px)" : 0 }}>
-                    <div style={{ width: "100%", height: "min(58vh, 520px)", borderRadius: 18, backgroundImage: `url('${g.img}')`, backgroundSize: "cover", backgroundPosition: "center", boxShadow: "0 20px 60px rgba(43,37,25,0.14)" }} />
+                    <div style={{ position: "relative", width: "100%", height: "min(58vh, 520px)", borderRadius: 18, overflow: "hidden", boxShadow: "0 20px 60px rgba(43,37,25,0.14)" }}>
+                      <Image src={g.entry.src} alt={g.entry.alt} fill sizes="(max-width: 768px) 80vw, 520px" style={{ objectFit: "cover" }} />
+                    </div>
                     <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.18em", textTransform: "uppercase", color: "#9A8F7D" }}>{g.caption}</p>
                   </div>
                 ))}
@@ -887,7 +759,11 @@ export default function CinematicHome({
                 {MANIFESTO_WORDS.map((line, li) => (
                   <span key={li}>
                     {line.map((w, wi) => (
-                      <span key={wi} data-word style={{ opacity: 0.1, filter: "blur(5px)", display: "inline-block", transition: "opacity 0.35s ease, filter 0.35s ease" }}>{w}{" "}</span>
+                      // The space lives OUTSIDE the inline-block span — trailing
+                      // whitespace inside one collapses ("Hewroteeveryword").
+                      <Fragment key={wi}>
+                        <span data-word style={{ opacity: 0.1, filter: "blur(5px)", display: "inline-block", transition: "opacity 0.35s ease, filter 0.35s ease" }}>{w}</span>{" "}
+                      </Fragment>
                     ))}
                     {li === 0 && <br />}
                   </span>
@@ -923,7 +799,7 @@ export default function CinematicHome({
 
           {/* ── JOURNEY TEASER ── */}
           <Link href="/journey" data-creveal="journey" className="cine-journey" style={{ textDecoration: "none", display: "block", position: "relative", minHeight: "clamp(420px, 68vh, 640px)", overflow: "hidden", cursor: "pointer" }}>
-            <div data-parallax="0.14" style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${IMG.walk}')`, backgroundSize: "cover", backgroundPosition: "center 40%", willChange: "transform" }} />
+            <div data-parallax="0.14" role="img" aria-label={MANIFEST.prabhupada.alt} style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${MANIFEST.prabhupada.src}')`, backgroundSize: "cover", backgroundPosition: "center 40%", filter: "blur(10px) brightness(0.92)", willChange: "transform" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(250,247,241,1) 0%, rgba(22,18,12,0.34) 26%, rgba(22,18,12,0.42) 60%, rgba(22,18,12,0.78) 100%)" }} />
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "60px 24px", opacity: rev("journey").op, transform: `translateY(${rev("journey").ty})`, transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)" }}>
               <p className="font-display" style={{ fontSize: "clamp(80px, 14vw, 200px)", fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "rgba(255,248,232,0.95)", textShadow: "0 6px 60px rgba(22,18,12,0.5)" }}>1965</p>
@@ -947,11 +823,14 @@ export default function CinematicHome({
                 <button key={i} onClick={() => { if (tRotRef.current) clearInterval(tRotRef.current); setTIdx(i); setTVisible(true); }} aria-label="Show testimonial" style={{ width: i === tIdx ? 26 : 6, height: 6, borderRadius: 100, border: "none", background: i === tIdx ? "#6B57C9" : "#D8CCB8", cursor: "pointer", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)", padding: 0 }} />
               ))}
             </div>
+            <p className="font-body" style={{ fontSize: 12, color: "#9A8F7D", fontStyle: "italic", marginTop: 18 }}>
+              Sample testimonials — real devotee voices will replace these.
+            </p>
           </section>
 
           {/* ── CTA ── */}
           <section style={{ position: "relative", minHeight: "clamp(440px, 74vh, 700px)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div data-parallax="0.12" style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${IMG.disciples}')`, backgroundSize: "cover", backgroundPosition: "center 28%", willChange: "transform" }} />
+            <div data-parallax="0.12" role="img" aria-label={MANIFEST.disciples.alt} style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${MANIFEST.disciples.src}')`, backgroundSize: "cover", backgroundPosition: "center 28%", willChange: "transform" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(250,247,241,1) 0%, rgba(250,247,241,0.55) 24%, rgba(250,247,241,0.30) 55%, rgba(250,247,241,0.88) 100%)" }} />
             <div style={{ position: "absolute", inset: 0, background: "radial-gradient(70% 60% at 50% 55%, rgba(250,247,241,0.72), transparent 78%)" }} />
             <div data-creveal="cta" style={{ position: "relative", zIndex: 1, textAlign: "center", padding: "80px 24px", opacity: rev("cta").op, transform: `translateY(${rev("cta").ty})`, transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)" }}>
@@ -961,12 +840,7 @@ export default function CinematicHome({
             </div>
           </section>
 
-          <footer style={{ borderTop: "1px solid #E8E0D2", padding: "20px clamp(20px,5vw,80px)", maxWidth: 1280, margin: "0 auto", width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
-            <span className="font-body" style={{ fontSize: 13, color: "#6E6353" }}>© 2026 All rights reserved</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
-              <a href="https://github.com/asksrilaprabhupada/nextjs-boilerplate" target="_blank" rel="noopener noreferrer" className="cine-nav-link font-body" style={{ fontSize: 13, color: "#6E6353", textDecoration: "none", transition: "color 0.3s ease" }}>GitHub</a>
-            </div>
-          </footer>
+          <SiteFooter />
         </main>
       </div>
     </div>

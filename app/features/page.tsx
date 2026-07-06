@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   title: "Features — Ask Śrīla Prabhupāda",
   description:
     "Ask in your own words and search 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda. Verbatim answers, exact citations linked to Vedabase.io.",
+  alternates: { canonical: "/features" },
 };
 
 export default function Features() {

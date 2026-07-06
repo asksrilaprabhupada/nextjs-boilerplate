@@ -9,8 +9,8 @@
 "use client";
 
 import Link from "next/link";
-import CinematicPageHeader from "./02-cinematic-page-header";
-import CinematicPageFooter from "./03-cinematic-page-footer";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
 import { useCinematicReveal } from "./04-use-cinematic-reveal";
 
 const IMG_DISCIPLES = "/images/lockscreen/prabhupadaanddisciplessmiling.jpg";
@@ -26,6 +26,7 @@ const PIPELINE = [
   { label: "2 · Search", body: "Hybrid search runs over every book, lecture, and letter — meaning and keywords together." },
   { label: "3 · Rerank", body: "A relevance model reorders the results so the truest passages rise." },
   { label: "4 · Weave", body: "His passages are joined verbatim with neutral framing — never paraphrased." },
+  { label: "5 · Verify", body: "Every quote is checksum-verified against the library before it renders." },
 ];
 
 export default function HowItWorksPage() {
@@ -40,7 +41,7 @@ export default function HowItWorksPage() {
 
   return (
     <div ref={rootRef}>
-      <CinematicPageHeader active="how" />
+      <SiteHeader variant="overlay" />
 
       {/* Opening */}
       <section style={{ minHeight: "70vh", display: "flex", flexDirection: "column", justifyContent: "flex-end", maxWidth: 1280, margin: "0 auto", padding: "140px clamp(24px,6vw,100px) clamp(50px,8vh,90px)", width: "100%" }}>
@@ -48,7 +49,7 @@ export default function HowItWorksPage() {
         <div style={{ overflow: "hidden", padding: "4px 0" }}>
           <h1 className="font-display" style={{ fontSize: "clamp(40px, 7.5vw, 104px)", fontWeight: 600, letterSpacing: "-0.03em", lineHeight: 1.04, color: "#201B12", maxWidth: 940, textWrap: "pretty", transform: `translateY(${op.l})`, transition: "transform 1.2s cubic-bezier(0.16,1,0.3,1) 0.3s" }}>Three steps to <span style={{ fontStyle: "italic", background: "linear-gradient(120deg, #C9A24B, #6B57C9)", WebkitBackgroundClip: "text", backgroundClip: "text", WebkitTextFillColor: "transparent" }}>his answer</span></h1>
         </div>
-        <p className="font-body" style={{ fontSize: "clamp(15px,1.7vw,18px)", lineHeight: 1.75, color: "#6E6353", maxWidth: "56ch", marginTop: 26, opacity: op.k, transform: `translateY(${op.subY})`, transition: "opacity 1s ease 0.7s, transform 1s cubic-bezier(0.16,1,0.3,1) 0.7s" }}>You ask in plain language. The system finds his exact words. You verify every source yourself.</p>
+        <p className="font-body" style={{ fontSize: "clamp(15px,1.7vw,18px)", lineHeight: 1.75, color: "#6E6353", maxWidth: "52ch", textWrap: "balance", marginTop: 26, opacity: op.k, transform: `translateY(${op.subY})`, transition: "opacity 1s ease 0.7s, transform 1s cubic-bezier(0.16,1,0.3,1) 0.7s" }}>You ask in plain language. The system finds his exact words. You verify every source yourself.</p>
       </section>
 
       {/* Steps */}
@@ -66,10 +67,11 @@ export default function HowItWorksPage() {
 
       {/* Under the hood */}
       <section data-creveal="pipe" style={{ maxWidth: 1080, margin: "0 auto", padding: "0 clamp(24px,6vw,100px) clamp(80px,12vh,140px)", width: "100%", opacity: rev("pipe").op, transform: `translateY(${rev("pipe").ty})`, transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)" }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 20, marginBottom: "clamp(30px,5vh,44px)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 20, marginBottom: 14 }}>
           <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.32em", color: "#6B57C9", whiteSpace: "nowrap" }}>Under the hood</p>
           <div aria-hidden style={{ flex: 1, height: 1, background: "#E8E0D2" }} />
         </div>
+        <h2 className="font-display" style={{ fontSize: "clamp(26px,3.4vw,44px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", lineHeight: 1.12, marginBottom: "clamp(26px,4vh,38px)", textWrap: "balance" }}>What happens under the hood</h2>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14 }}>
           {PIPELINE.map((c) => (
             <div key={c.label} className="cine-hood-card" style={{ background: "#FEFCF8", border: "1px solid #E8E0D2", borderRadius: 16, padding: "22px 20px", transition: "all 0.3s ease" }}>
@@ -78,7 +80,7 @@ export default function HowItWorksPage() {
             </div>
           ))}
         </div>
-        <p className="font-display" style={{ fontSize: "clamp(18px,2.2vw,24px)", fontStyle: "italic", color: "#6E6353", marginTop: "clamp(28px,4vh,40px)", maxWidth: 640 }}>The AI never writes philosophy. It finds, orders, and presents — <span style={{ color: "#51409A" }}>the words remain his.</span></p>
+        <p className="font-display" style={{ fontSize: "clamp(18px,2.2vw,24px)", fontStyle: "italic", color: "#6E6353", marginTop: "clamp(28px,4vh,40px)", maxWidth: 640 }}>AI-assisted retrieval that finds and orders his words — <span style={{ color: "#51409A" }}>it never writes philosophy.</span></p>
       </section>
 
       {/* CTA */}
@@ -91,7 +93,7 @@ export default function HowItWorksPage() {
         </div>
       </section>
 
-      <CinematicPageFooter />
+      <SiteFooter />
     </div>
   );
 }

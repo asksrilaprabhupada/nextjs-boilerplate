@@ -56,6 +56,18 @@ export function useCinematicReveal(options?: { railFill?: boolean; revealDistanc
         });
       }, { threshold: 0.12, rootMargin: `0px 0px -${revealMargin}px 0px` });
       root.querySelectorAll("[data-creveal]").forEach((el) => io?.observe(el));
+
+      // Reveal failsafe: no section may stay blank if the observer never
+      // fires — everything is visible 1.5s after mount, and immediately under
+      // prefers-reduced-motion.
+      const revealAll = () => {
+        root.querySelectorAll("[data-creveal]").forEach((el) => {
+          const key = el.getAttribute("data-creveal");
+          if (key) setRevealed((s) => (s[key] ? s : { ...s, [key]: true }));
+        });
+      };
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) revealAll();
+      else timers.push(setTimeout(revealAll, 1500));
     }, 300);
 
     return () => {

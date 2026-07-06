@@ -9,8 +9,8 @@
 "use client";
 
 import Link from "next/link";
-import CinematicPageHeader from "./02-cinematic-page-header";
-import CinematicPageFooter from "./03-cinematic-page-footer";
+import SiteHeader from "./11-site-header";
+import SiteFooter from "./12-site-footer";
 import { useCinematicReveal } from "./04-use-cinematic-reveal";
 
 const IMG_DEITIES = "/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg";
@@ -20,8 +20,9 @@ const FEATURES = [
   { key: "f2", num: "02", title: "36 books, 3,700 lectures, 6,500 letters", description: "Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, plus 33 more books, thousands of recorded lectures, and personal letters — all searchable from one interface." },
   { key: "f3", num: "03", title: "Prabhupāda's purports", description: "Access complete commentary and purports by His Divine Grace for every verse — with direct links to Vedabase.io for full context." },
   { key: "f4", num: "04", title: "Narrative answers", description: "Answers weave Prabhupāda's actual words into flowing answers — “Lord Kṛṣṇa says…” for translations, “Prabhupāda explains…” for purports. Never AI-generated philosophy." },
-  { key: "f5", num: "05", title: "Citation links", description: "Every verse reference links directly to Vedabase.io. Click any citation to read the full verse, synonyms, and complete purport." },
-  { key: "f6", num: "06", title: "Open source", description: "Built with Next.js, TypeScript, Supabase, and Claude AI. Fully open source — inspect, contribute, or self-host." },
+  { key: "f5", num: "05", title: "Context on tap", description: "Read the verses before and after — every passage arrives with its surroundings, one tap away." },
+  { key: "f6", num: "06", title: "Citation links", description: "Every verse reference links directly to Vedabase.io. Click any citation to read the full verse, synonyms, and complete purport." },
+  { key: "f7", num: "07", title: "Open source", description: "Built with Next.js, TypeScript, Supabase, and Claude AI. Fully open source — inspect, contribute, or self-host.", href: "https://github.com/asksrilaprabhupada/nextjs-boilerplate" },
 ];
 
 export default function FeaturesPage() {
@@ -30,7 +31,7 @@ export default function FeaturesPage() {
 
   return (
     <div ref={rootRef}>
-      <CinematicPageHeader active="features" />
+      <SiteHeader variant="overlay" />
 
       {/* Opening */}
       <section style={{ minHeight: "74vh", display: "flex", flexDirection: "column", justifyContent: "flex-end", maxWidth: 1280, margin: "0 auto", padding: "140px clamp(24px,6vw,100px) clamp(50px,8vh,90px)", width: "100%" }}>
@@ -49,7 +50,13 @@ export default function FeaturesPage() {
             <div key={f.key} data-creveal={f.key} style={{ display: "grid", gridTemplateColumns: "minmax(56px, 96px) 1fr", gap: "clamp(16px,3vw,40px)", alignItems: "start", padding: "clamp(30px,4.5vh,48px) 0", borderTop: "1px solid #E8E0D2", opacity: r.op, transform: `translateY(${r.ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1), transform 0.9s cubic-bezier(0.16,1,0.3,1)" }}>
               <span className="font-display" style={{ fontSize: "clamp(22px,2.6vw,32px)", fontWeight: 500, color: "#C9A24B", lineHeight: 1.3 }}>{f.num}</span>
               <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10, maxWidth: 760 }}>
-                <h3 className="font-display" style={{ fontSize: "clamp(24px,3.2vw,42px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", lineHeight: 1.15 }}>{f.title}</h3>
+                <h3 className="font-display" style={{ fontSize: "clamp(24px,3.2vw,42px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", lineHeight: 1.15 }}>
+                  {"href" in f && f.href ? (
+                    <a href={f.href} target="_blank" rel="noopener noreferrer" className="cine-nav-link" style={{ color: "inherit", textDecoration: "none", borderBottom: "1px solid #C9A24B" }}>{f.title} ↗</a>
+                  ) : (
+                    f.title
+                  )}
+                </h3>
                 <p className="font-body" style={{ fontSize: "clamp(15px,1.6vw,17px)", lineHeight: 1.75, color: "#6E6353", maxWidth: "64ch" }}>{f.description}</p>
               </div>
             </div>
@@ -75,7 +82,7 @@ export default function FeaturesPage() {
         <Link href="/?ask=1" className="cine-cta-btn font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 10, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", borderRadius: 100, padding: "15px 38px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", boxShadow: "0 10px 34px rgba(107,87,201,0.30)", transition: "all 0.45s cubic-bezier(0.16,1,0.3,1)" }}><span>Try the search</span><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></Link>
       </section>
 
-      <CinematicPageFooter />
+      <SiteFooter />
     </div>
   );
 }
