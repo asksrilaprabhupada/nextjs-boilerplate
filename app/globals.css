@@ -1016,7 +1016,6 @@ body {
 }
 .cine-sound-float:hover { border-color: #6B57C9 !important; color: #6B57C9 !important; }
 .cine-submit-btn:hover:not(:disabled) { transform: scale(1.06); }
-.cine-voice-btn:hover { background: rgba(107,87,201,0.08) !important; color: #6B57C9 !important; }
 
 /* Textareas / inputs focus ring inside overlays */
 .cine-field:focus { border-color: rgba(107,87,201,0.5) !important; }
@@ -1069,3 +1068,18 @@ body {
 }
 .theme-toggle:hover { border-color: var(--accent, #6B57C9); }
 .theme-toggle:active { transform: scale(0.94); }
+
+/* ═══════════ TASK 12 — homepage ambience + headline lockup ═══════════ */
+/* Ambient drift + film grain run only when motion is welcome. */
+.garden-wash { animation: gardenDrift 40s ease-in-out infinite; }
+.film-grain-anim { animation: grainShift 0.9s steps(1) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .garden-wash,
+  .film-grain-anim { animation: none; }
+}
+
+/* Deliberate two-line headline: "searched together." owns its own line on
+   large screens, wraps naturally below. */
+@media (min-width: 1024px) {
+  .headline-two-line { display: block; }
+}

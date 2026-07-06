@@ -114,11 +114,12 @@ export default function RootLayout({
               position: "absolute",
               inset: "-10%",
               background: `
-                radial-gradient(ellipse 1100px 460px at 22% 8%, color-mix(in srgb, var(--p-lavender) 12%, transparent), transparent),
-                radial-gradient(ellipse 900px 420px at 80% 88%, color-mix(in srgb, var(--p-gold) 8%, transparent), transparent)
+                radial-gradient(ellipse 1100px 460px at 22% 8%, color-mix(in srgb, var(--p-lavender) 20%, transparent), transparent),
+                radial-gradient(ellipse 900px 420px at 80% 88%, color-mix(in srgb, var(--p-gold) 14%, transparent), transparent),
+                radial-gradient(ellipse 700px 380px at 55% 55%, color-mix(in srgb, var(--p-gold) 7%, transparent), transparent)
               `,
-              animation: "gardenDrift 40s ease-in-out infinite",
             }}
+            className="garden-wash"
           />
           <div
             style={{
@@ -137,7 +138,7 @@ export default function RootLayout({
             width: "100%",
             height: "100%",
             zIndex: 1,
-            opacity: 0.03,
+            opacity: 0.05,
             pointerEvents: "none",
           }}
         >

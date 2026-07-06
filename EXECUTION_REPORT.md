@@ -321,7 +321,32 @@ Seva-modal-from-/journey + 390 px hamburger visual check on the Task 16 preview/
 Verification: build ✅ tests ✅ · `grep "(FAKE)"` hits the seva render + config ✅ · both surfaces
 still render (screenshots in Task 16).
 
-## §12 · Task 12 — Homepage fixes ⏳
+## §12 · Task 12 — Homepage fixes ✅
+
+- **"Hewroteeveryword" bug**: the manifesto word spans kept the space INSIDE `display:inline-block`
+  (collapses) — the space now lives outside each span (keyed `<Fragment>`). Served HTML reads
+  "He wrote every word" ✅.
+- **Reveal failsafe**: every `[data-creveal]`/`[data-word]` element becomes fully visible 1.5 s
+  after mount, and immediately under `prefers-reduced-motion` — in BOTH the home page's own
+  observer and the shared `04-use-cinematic-reveal.ts` hook (fixes the blank-section class of bugs
+  on Features/How-it-works too).
+- **Stats SSR**: initial state is the real numbers — served HTML shows 36 / 3,700+ / 6,500+ (never
+  0); the count-up runs only as a motion-safe client enhancement. "30+ more titles" → "32 more
+  titles" ✅.
+- **Darker ambience** (owner-approved values): garden wash lavender 12%→20%, gold 8%→14%, third
+  gold orb added (layout.tsx); hero aura 0.20→0.30 with blur 60→52; film grain 0.03→0.05; vignette
+  0.14→0.18; `gardenDrift`/`grainShift` moved to `.garden-wash`/`.film-grain-anim` classes gated
+  behind `prefers-reduced-motion` in globals.css.
+- **Headline lockup**: "searched together." wraps in `.headline-two-line` (`display:block`
+  ≥1024 px), natural wrap below.
+- **Chips navigate**: suggestion pills, the "More questions" overlay pills, and submit all go
+  straight to `/search?q=…` — the fake 3-phase home timer and its overlay are gone (the /search
+  loader owns the wait; the 24 h server cache answers the demo chips warm).
+- **Mic stub removed** (`// TODO(owner): voice input` left; working SpeechRecognition component
+  noted at `components/search/03-voice-input.tsx`). Orphan `.cine-voice-btn` hover rule cleaned.
+
+Verification: build ✅ tests ✅ · served-HTML checks all pass (36 tile / 3,700+ / 6,500+ /
+"He wrote every word" / "32 more titles" / mic gone / darker wash values present) ✅.
 
 ## §8 · Task 8 — Images ⏳
 

@@ -14,14 +14,14 @@
  * colors reuse the design tokens in globals.css. Keyframes and :hover styling
  * live in the "CINEMATIC MAIN PAGE" block of globals.css.
  *
- * Search seam: submitting a question plays the meditative aura/mandala sequence
- * and then hands off to the app's search (see `runSearch`). Wire that call to
+ * Search seam: submitting a question (or tapping any suggestion chip) hands
+ * straight off to /search?q= (see `runSearch`) — the live results page owns
  * your real search handler when integrating; it currently deep-links to the
  * home route with `?q=` (the app's existing deep-link convention).
  */
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
@@ -73,8 +73,6 @@ const TESTIMONIALS = [
   { quote: "[FAKE] As a new devotee, it helped me study without relying on unsourced summaries. Every answer links back to Prabhupāda's actual words, so I know it's authentic.", name: "CCC", role: "Aspiring Devotee · 6 months" },
 ];
 
-const SEARCH_STATUSES = ["Listening…", "Searching the library…", "Weaving his words…"];
-
 const GALLERY = [
   { id: "gallery-1", img: IMG.deities, caption: "01 — Vṛndāvana", offset: false },
   { id: "gallery-2", img: IMG.disciples, caption: "02 — Teaching", offset: true },
@@ -120,13 +118,11 @@ export default function CinematicHome({
   const [query, setQuery] = useState("");
   const [scrolled, setScrolled] = useState(false);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [stats, setStats] = useState({ books: 0, lectures: 0, letters: 0 });
+  // SSR the real numbers — the count-up is a client enhancement, never a 0 flash.
+  const [stats, setStats] = useState({ books: 36, lectures: 3700, letters: 6500 });
   const [tIdx, setTIdx] = useState(0);
   const [tVisible, setTVisible] = useState(true);
   const [soundOn, setSoundOn] = useState(false);
-  const [searching, setSearching] = useState(false);
-  const [searchPhase, setSearchPhase] = useState(0);
-  const [searchQ, setSearchQ] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const [footerNear, setFooterNear] = useState(false);
   const [motes, setMotes] = useState<React.CSSProperties[]>([]);
@@ -142,7 +138,6 @@ export default function CinematicHome({
   const lockVisibleRef = useRef(true);
   const footerNearRef = useRef(false);
   const audioRef = useRef<{ ctx: AudioContext; master: GainNode } | null>(null);
-  const searchIvRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const tRotRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const countRafRef = useRef<number>(0);
   const plRafRef = useRef<number>(0);
@@ -217,6 +212,7 @@ export default function CinematicHome({
 
   /* ── count-up for library stats ── */
   const countUp = useCallback(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return; // keep the SSR'd numbers
     const start = performance.now(), dur = 2400;
     const targets = { books: 36, lectures: 3700, letters: 6500 };
     const step = (now: number) => {
@@ -232,24 +228,10 @@ export default function CinematicHome({
     countRafRef.current = requestAnimationFrame(step);
   }, []);
 
-  /* ── cinematic search moment → hand off to search ── */
+  /* ── hand off to the live search page — its loader owns the wait ── */
   const runSearch = useCallback((q: string) => {
     if (!q.trim()) return;
-    setSearching(true);
-    setSearchPhase(0);
-    setSearchQ(q.trim());
-    let phase = 0;
-    searchIvRef.current = setInterval(() => {
-      phase += 1;
-      if (phase >= 3) {
-        if (searchIvRef.current) clearInterval(searchIvRef.current);
-        // Integration seam: the cinematic moment hands off to the woven-answer
-        // results page. Point this at your real search route when integrating.
-        window.location.assign("/search?q=" + encodeURIComponent(q.trim()));
-        return;
-      }
-      setSearchPhase(phase);
-    }, 1150);
+    window.location.assign("/search?q=" + encodeURIComponent(q.trim()));
   }, []);
 
   /* ── mount: entrance sequence, scroll engine, observers, rotators ── */
@@ -403,6 +385,21 @@ export default function CinematicHome({
       }, { threshold: 0.15, rootMargin: "0px 0px -60px 0px" });
       root.querySelectorAll("[data-creveal]").forEach((el) => io?.observe(el));
 
+      // Reveal failsafe: no section may stay blank if the observer or the
+      // scrub loop never fires — everything is visible 1.5s after mount, and
+      // immediately under prefers-reduced-motion.
+      const revealAll = () => {
+        root.querySelectorAll("[data-creveal]").forEach((el) => {
+          const key = el.getAttribute("data-creveal");
+          if (key) setRevealed((s) => (s[key] ? s : { ...s, [key]: true }));
+        });
+        root.querySelectorAll<HTMLElement>("[data-word]").forEach((w) => { w.style.opacity = "1"; w.style.filter = "blur(0px)"; });
+        const tail = root.querySelector<HTMLElement>("[data-manifesto-tail]");
+        if (tail) { tail.style.opacity = "1"; tail.style.transform = "translateY(0)"; }
+      };
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) revealAll();
+      else pushTimer(revealAll, 1500);
+
       footIo = new IntersectionObserver((entries) => {
         entries.forEach((en) => {
           if (en.isIntersecting !== footerNearRef.current) {
@@ -440,7 +437,6 @@ export default function CinematicHome({
       io?.disconnect();
       footIo?.disconnect();
       if (tRotRef.current) clearInterval(tRotRef.current);
-      if (searchIvRef.current) clearInterval(searchIvRef.current);
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("keydown", onKey);
       stopDrone();
@@ -485,9 +481,9 @@ export default function CinematicHome({
     ? "0 0 0 4px rgba(107,87,201,0.10), 0 18px 60px rgba(107,87,201,0.16)"
     : "0 2px 6px rgba(43,37,25,0.05), 0 18px 50px rgba(43,37,25,0.08)";
 
-  const mandala = useMemo(() => Array.from({ length: 12 }, (_, i) => i * 30), []);
-
-  const pick = (text: string) => () => { setQuery(text); setFocused(true); };
+  // Suggestion chips navigate straight to the answer — the 24h server cache
+  // makes the three demo chips warm after their first hit.
+  const pick = (text: string) => () => runSearch(text);
   const focusSearch = () => {
     dismiss();
     pushTimer(() => { window.scrollTo({ top: 0, behavior: "smooth" }); textareaRef.current?.focus(); }, 80);
@@ -516,9 +512,9 @@ export default function CinematicHome({
   return (
     <div ref={rootRef}>
       {/* ── FILM GRADE: vignette (under UI) + animated grain (over everything) ── */}
-      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 90, pointerEvents: "none", background: "radial-gradient(120% 100% at 50% 42%, transparent 58%, rgba(22,18,12,0.14) 100%)" }} />
+      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 90, pointerEvents: "none", background: "radial-gradient(120% 100% at 50% 42%, transparent 58%, rgba(22,18,12,0.18) 100%)" }} />
       {filmGrain && (
-        <div aria-hidden style={{ position: "fixed", inset: "-12%", zIndex: 3000, pointerEvents: "none", opacity: 0.05, backgroundImage: `url('${GRAIN_URI}')`, backgroundSize: "160px 160px", animation: "grainShift 0.9s steps(1) infinite" }} />
+        <div aria-hidden className="film-grain-anim" style={{ position: "fixed", inset: "-12%", zIndex: 3000, pointerEvents: "none", opacity: 0.05, backgroundImage: `url('${GRAIN_URI}')`, backgroundSize: "160px 160px" }} />
       )}
 
       {/* ═══════════ ENTRANCE — title sequence ═══════════ */}
@@ -574,28 +570,7 @@ export default function CinematicHome({
         </div>
       )}
 
-      {/* ═══════════ SEARCH MOMENT OVERLAY ═══════════ */}
-      {searching && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1200, background: "rgba(250,247,241,0.94)", backdropFilter: "blur(18px)", WebkitBackdropFilter: "blur(18px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24 }}>
-          <div style={{ position: "relative", width: "min(70vw, 340px)", height: "min(70vw, 340px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div aria-hidden style={{ position: "absolute", top: "50%", left: "50%", width: "130%", height: "130%", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.26) 0%, rgba(201,162,75,0.12) 42%, transparent 70%)", filter: "blur(38px)", animation: "auraBreathe 4.5s ease-in-out infinite" }} />
-            <svg viewBox="0 0 400 400" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.16, animation: "rotateMandala 60s linear infinite", color: "#6B57C9" }}>
-              {mandala.map((deg, i) => (
-                <g key={i} transform={`rotate(${deg} 200 200)`}><ellipse cx="200" cy="120" rx="18" ry="40" fill="none" stroke="currentColor" strokeWidth="0.6" /></g>
-              ))}
-              <circle cx="200" cy="200" r="70" fill="none" stroke="currentColor" strokeWidth="0.5" />
-              <circle cx="200" cy="200" r="110" fill="none" stroke="currentColor" strokeWidth="0.35" />
-            </svg>
-            <p className="font-display" style={{ fontSize: "clamp(17px, 2.4vw, 22px)", fontStyle: "italic", color: "#51409A", textAlign: "center", maxWidth: 240, position: "relative" }}>{SEARCH_STATUSES[searchPhase]}</p>
-          </div>
-          <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 10, maxWidth: 420, textAlign: "center" }}>“{searchQ}”</p>
-          <div style={{ width: "min(60vw, 280px)", height: 2, background: "#E8E0D2", borderRadius: 2, marginTop: 28, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${((searchPhase + 1) / 3 * 100).toFixed(0)}%`, background: "linear-gradient(90deg, #C9A24B, #6B57C9)", borderRadius: 2, transition: "width 1.1s cubic-bezier(0.2,0,0,1)" }} />
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ MORE QUESTIONS — cinematic overlay ═══════════ */}
+      {/* ═══════════ MORE QUESTIONS — cinematic overlay ═══════════ */}      {/* ═══════════ MORE QUESTIONS — cinematic overlay ═══════════ */}
       {moreOpen && (
         <div role="dialog" aria-label="Example questions" onClick={() => setMoreOpen(false)}
           style={{ ...overlayBackdrop, background: "radial-gradient(120% 100% at 50% 30%, rgba(45,36,80,0.42), rgba(22,18,12,0.66))", backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)" }}>
@@ -609,7 +584,7 @@ export default function CinematicHome({
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10 }}>
               {EXAMPLE_QUESTIONS.map((q, i) => (
                 <button key={q} className="cine-overlay-pill font-body"
-                  onClick={() => { setQuery(q); setFocused(true); setMoreOpen(false); }}
+                  onClick={() => { setMoreOpen(false); runSearch(q); }}
                   style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 100, border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", fontSize: 14, fontWeight: 400, color: "#2B2519", cursor: "pointer", whiteSpace: "nowrap", opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) both", animationDelay: `${(0.14 + i * 0.05).toFixed(2)}s`, transition: "background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s, transform 0.3s" }}>{q}</button>
               ))}
             </div>
@@ -642,7 +617,7 @@ export default function CinematicHome({
 
           {/* ── HERO ── */}
           <section style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px clamp(16px,4vw,80px) 60px", position: "relative", overflow: "hidden" }}>
-            <div aria-hidden style={{ position: "absolute", top: "44%", left: "50%", width: "min(90vw,760px)", height: "min(90vw,760px)", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.20) 0%, rgba(201,162,75,0.10) 40%, transparent 70%)", filter: "blur(60px)", transform: "translate(-50%,-50%)", animation: "auraBreathe 9s ease-in-out infinite", pointerEvents: "none" }} />
+            <div aria-hidden style={{ position: "absolute", top: "44%", left: "50%", width: "min(90vw,760px)", height: "min(90vw,760px)", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.30) 0%, rgba(201,162,75,0.10) 40%, transparent 70%)", filter: "blur(52px)", transform: "translate(-50%,-50%)", animation: "auraBreathe 9s ease-in-out infinite", pointerEvents: "none" }} />
             {showMotes && (
               <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
                 {motes.map((s, i) => <span key={i} aria-hidden style={s} />)}
@@ -670,9 +645,7 @@ export default function CinematicHome({
                     <span aria-hidden className="font-body" style={{ position: "absolute", left: 28, top: 24, right: 104, fontSize: "clamp(15px,2.8vw,18px)", color: "#9A8F7D", pointerEvents: "none", lineHeight: 1.5, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>Ask anything about the scriptures...</span>
                   )}
                   <div style={{ position: "absolute", right: 62, top: 16 }}>
-                    <button type="button" aria-label="Voice input" className="cine-voice-btn" style={{ width: 40, height: 40, borderRadius: 12, border: "none", background: "transparent", color: "#6E6353", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.2s ease" }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" x2="12" y1="19" y2="23" /><line x1="8" x2="16" y1="23" y2="23" /></svg>
-                    </button>
+                    {/* TODO(owner): voice input — a working SpeechRecognition component exists at components/search/03-voice-input.tsx, ready to wire in */}
                   </div>
                   <button type="submit" aria-label="Search" disabled={!can} className="cine-submit-btn" style={{ position: "absolute", right: 10, top: 12, width: 48, height: 48, borderRadius: 14, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", cursor: can ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", opacity: can ? 1 : 0.4, transition: "all 0.3s cubic-bezier(0.2,0,0,1)", boxShadow: can ? "0 4px 14px rgba(107,87,201,0.30)" : "none" }}>
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -700,10 +673,10 @@ export default function CinematicHome({
               <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.32em", color: "#6B57C9", whiteSpace: "nowrap" }}>The library</p>
               <div aria-hidden style={{ flex: 1, height: 1, background: "#E8E0D2" }} />
             </div>
-            <h2 className="font-display" style={{ fontSize: "clamp(30px,4.4vw,58px)", fontWeight: 600, lineHeight: 1.12, letterSpacing: "-0.02em", color: "#201B12", maxWidth: 760, marginBottom: "clamp(48px,8vh,80px)", textWrap: "pretty", opacity: rev("lib").op, transform: `translateY(${rev("lib").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s" }}>Everything he wrote and spoke, <span style={{ fontStyle: "italic", color: "#6B57C9" }}>searched together.</span></h2>
+            <h2 className="font-display" style={{ fontSize: "clamp(30px,4.4vw,58px)", fontWeight: 600, lineHeight: 1.12, letterSpacing: "-0.02em", color: "#201B12", maxWidth: 760, marginBottom: "clamp(48px,8vh,80px)", textWrap: "pretty", opacity: rev("lib").op, transform: `translateY(${rev("lib").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.1s" }}>Everything he wrote and spoke, <span className="headline-two-line" style={{ fontStyle: "italic", color: "#6B57C9" }}>searched together.</span></h2>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "clamp(32px,4vw,56px)" }}>
               {[
-                { n: stats.books.toLocaleString("en-US"), label: "Books", desc: "Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, and 30+ more titles.", delay: "0.2s" },
+                { n: stats.books.toLocaleString("en-US"), label: "Books", desc: "Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, Nectar of Devotion, and 32 more titles.", delay: "0.2s" },
                 { n: stats.lectures.toLocaleString("en-US") + "+", label: "Lectures", desc: "Transcribed lectures, conversations, and morning walks spanning decades of teaching.", delay: "0.35s" },
                 { n: stats.letters.toLocaleString("en-US") + "+", label: "Letters", desc: "Personal correspondence and instructions to disciples, friends, and world leaders.", delay: "0.5s" },
               ].map((c) => (
@@ -748,7 +721,11 @@ export default function CinematicHome({
                 {MANIFESTO_WORDS.map((line, li) => (
                   <span key={li}>
                     {line.map((w, wi) => (
-                      <span key={wi} data-word style={{ opacity: 0.1, filter: "blur(5px)", display: "inline-block", transition: "opacity 0.35s ease, filter 0.35s ease" }}>{w}{" "}</span>
+                      // The space lives OUTSIDE the inline-block span — trailing
+                      // whitespace inside one collapses ("Hewroteeveryword").
+                      <Fragment key={wi}>
+                        <span data-word style={{ opacity: 0.1, filter: "blur(5px)", display: "inline-block", transition: "opacity 0.35s ease, filter 0.35s ease" }}>{w}</span>{" "}
+                      </Fragment>
                     ))}
                     {li === 0 && <br />}
                   </span>
