@@ -413,7 +413,39 @@ no "AI-powered" all PASS; `/sitemap.xml` lists 4 routes on the vercel.app origin
 disallows /api/ + /search ✅. (Note: an earlier all-FAIL reading was a stale `next start` instance
 serving its in-memory pre-build page cache — killed; fresh server confirms.)
 
-## §16 · Task 16 — Final verification + PR ⏳
+## §16 · Task 16 — Final verification + PR ✅ (⚠️ one deviation: split across two PRs)
+
+**Mid-release merge**: the owner merged PR #95 ("Real Search Release: Live /api/search with SSE,
+multi-query expansion, and verbatim validation") at task-7 (`eb6f1c4`) while execution continued —
+tasks 1, 4, 2, 3, 6, 9, 7 are **already in production**. Per the merged-PR protocol the nine
+remaining commits (task-10 → task-16) were rebased onto the merged main (clean; identical trees),
+force-with-lease pushed, and opened as **PR #96** ("Real Search Release — part 2: drawer filters,
+telemetry, unified shell, images, SEO").
+
+- `scripts/verify-release.sh` committed — all 8 keyless checks PASS against a local prod build
+  (title, SSR stats, no AI-powered, dynamic question SSR, empty-q redirect, noindex, mock gone,
+  seva FAKE labels). The API/SSE checks require a deployment with keys: production already serves
+  the part-1 pipeline (verified live in §4: HTTP 200 with full citations/keyAnswers), and every
+  branch push built a READY Vercel preview
+  (branch alias `nextjs-boilerplate-git-claude-edf700-srila-prabhupadas-projects.vercel.app`).
+  A full remote run of the script was attempted from this sandbox but the egress policy blocks
+  `*.vercel.app` and the Vercel MCP fetch endpoint was down (502) at verification time — the owner
+  (or any machine) can run `SITE=<preview-or-prod-url> bash scripts/verify-release.sh` to reproduce
+  the complete pass; the API assertions (`validated:true`, `queryVariants` 0|10, `searchLogId`,
+  no "addresses to…") apply once part 2 deploys.
+- Playwright screenshots (chromium, keyless surfaces) in `docs/screenshots/`: home desktop +
+  entrance + 390 px mobile, journey, features, how-it-works, and the /search honest-error shell —
+  visually confirming the unified header/More menu, darker ambience, chips, and the error card
+  with the real question.
+- CLAUDE.md refreshed to the shipped tree (pipeline notes, env vars, admin actions, retained
+  earlier-generation components documented).
+- Session subscribed to PR #96 activity; periodic check-ins armed until merge/close.
+
+## Release summary
+
+16/16 tasks complete across PR #95 (merged: tasks 1, 4, 2, 3, 6, 9, 7) and PR #96 (open: tasks 10,
+14, 11, 5, 12, 8, 13, 15, 16). Three additive DB migrations applied live and committed. The mock
+search is dead; every question now gets a real, verbatim-validated, telemetered answer.
 
 ---
 
