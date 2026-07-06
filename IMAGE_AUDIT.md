@@ -26,8 +26,8 @@ All three photos are also auto-discovered and served by `/api/lockscreen-images`
 
 | File | Deleted in | Action |
 |---|---|---|
-| `public/images/lockscreen/Prabh14.jpg` | `9483c47` | Restore (`git checkout 9483c47^ -- <path>`) — Task 8 |
-| `public/images/lockscreen/CT03-044-620x350.avif` | `9483c47` | Restore — Task 8 |
+| `public/images/lockscreen/Prabh14.jpg` | `9483c47` | ✅ Restored (682×466) — Task 8 |
+| `public/images/lockscreen/CT03-044-620x350.avif` | `9483c47` | ✅ Restored (620×350) — Task 8 |
 | `public/images/lockscreen/.gitkeep` | `d684e30` | Not needed (dir non-empty) |
 
 ## D. External design-tool URLs (v0.dev / *.vercel-storage.com / blob URLs / claude / design hosts)
@@ -44,11 +44,13 @@ into `public/images/lockscreen/` (auto-discovered) and register them in
 
 ## F. Usage-pattern notes (feeds Task 8)
 
-- No `next/image` usage anywhere; all imagery is CSS `background-image` cover (crops freely — the
-  reported "intro photo gets cropped" bug). Fixed in Task 8 via dual-layer (blurred cover backdrop +
-  `object-fit: contain` subject).
-- The 4-card "Moments" gallery (`01-cinematic-home.tsx` GALLERY) reuses 3 photos with mismatched
-  captions ("03 — With disciples" shows the morning walk; "04 — The books" repeats the Deity photo).
-  Fixed in Task 8 with distinct manifest images + truthful captions.
-- After restoration the pool is **5 photos**; the intro rotation (max 4 per 26 s intro) and gallery
-  (4 distinct) both fit.
+- ✅ FIXED (Task 8): the intro is now dual-layer (blurred cover backdrop + `object-fit: contain`
+  subject) — the photograph itself is never cropped at any viewport shape — and rotates through the
+  full manifest (sessionStorage-seeded start, 9 s crossfade, max 4 per intro, first two preloaded,
+  once per session with a `?intro=1` QA override).
+- ✅ FIXED (Task 8): the Moments gallery shows 4 DISTINCT photos with truthful captions and renders
+  via `next/image` (fill + sizes + real alt). The 620×350 walk AVIF no longer stretches full-bleed —
+  the journey-teaser band uses the restored 682×466 `Prabh14.jpg` behind a deliberate blur, and both
+  parallax CSS backgrounds now carry `role="img"` + `aria-label`.
+- Manifest: `app/lib/18-image-manifest.ts` registers every photo ({src, alt, caption, dimensions,
+  allowFullBleed}); `public/images/README.md` tells the owner how to add more. Pool is **5 photos**.

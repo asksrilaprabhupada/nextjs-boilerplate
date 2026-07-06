@@ -1083,3 +1083,13 @@ body {
 @media (min-width: 1024px) {
   .headline-two-line { display: block; }
 }
+
+/* ═══════════ TASK 8 — intro subject layer Ken Burns (never the crop) ═══════════ */
+.cine-intro-subject { animation: introKenBurns 26s cubic-bezier(0.25, 0, 0.4, 1) forwards; }
+@keyframes introKenBurns {
+  from { transform: scale(1); }
+  to { transform: scale(1.06); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cine-intro-subject { animation: none; }
+}

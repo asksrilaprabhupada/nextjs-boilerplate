@@ -26,14 +26,10 @@ import Link from "next/link";
 import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import { useSiteModals } from "./13-site-modals";
+import Image from "next/image";
+import { INTRO_IMAGES, IMG as MANIFEST } from "@/app/lib/18-image-manifest";
 
 /* ─── Static content (verbatim from the prototype) ─── */
-
-const IMG = {
-  disciples: "/images/lockscreen/prabhupadaanddisciplessmiling.jpg",
-  deities: "/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg",
-  walk: "/images/lockscreen/Srila-Prabhupada-on-morning-walk-in-Vrindavan-620x350.avif",
-};
 
 const DAILY_VERSES = [
   { text: "For one who has conquered the mind, the mind is the best of friends; but for one who has failed to do so, his mind will remain the greatest enemy.", citation: "Bhagavad Gītā 6.6" },
@@ -73,11 +69,12 @@ const TESTIMONIALS = [
   { quote: "[FAKE] As a new devotee, it helped me study without relying on unsourced summaries. Every answer links back to Prabhupāda's actual words, so I know it's authentic.", name: "CCC", role: "Aspiring Devotee · 6 months" },
 ];
 
+// Four DISTINCT manifest photos; captions describe what each actually shows.
 const GALLERY = [
-  { id: "gallery-1", img: IMG.deities, caption: "01 — Vṛndāvana", offset: false },
-  { id: "gallery-2", img: IMG.disciples, caption: "02 — Teaching", offset: true },
-  { id: "gallery-3", img: IMG.walk, caption: "03 — With disciples", offset: false },
-  { id: "gallery-4", img: IMG.deities, caption: "04 — The books", offset: true },
+  { id: "gallery-1", entry: MANIFEST.deities, caption: "01 — Before the Kṛṣṇa-Balarāma Deities", offset: false },
+  { id: "gallery-2", entry: MANIFEST.disciples, caption: "02 — With his disciples", offset: true },
+  { id: "gallery-3", entry: MANIFEST.walk, caption: "03 — Morning walk in Vṛndāvana", offset: false },
+  { id: "gallery-4", entry: MANIFEST.prabhupada, caption: "04 — Śrīla Prabhupāda", offset: true },
 ];
 
 const MANIFESTO_WORDS = [
@@ -127,6 +124,8 @@ export default function CinematicHome({
   const [footerNear, setFooterNear] = useState(false);
   const [motes, setMotes] = useState<React.CSSProperties[]>([]);
   const { openModal } = useSiteModals();
+  const [introIdx, setIntroIdx] = useState(0);
+  const introRotRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /* ── refs (for stable access inside long-lived listeners) ── */
   const rootRef = useRef<HTMLDivElement>(null);
@@ -158,6 +157,7 @@ export default function CinematicHome({
   const dismiss = useCallback(() => {
     if (!lockVisibleRef.current) return;
     lockVisibleRef.current = false;
+    if (introRotRef.current) clearInterval(introRotRef.current);
     setLockVisible(false);
     setHeroIn(true);
     pushTimer(() => setLockMounted(false), 1200);
@@ -272,7 +272,12 @@ export default function CinematicHome({
       askFlag = /(^|[#?&])ask(=|$|&)/i.test(location.hash + location.search);
       qParam = new URLSearchParams(location.search).get("q") || "";
     } catch { /* ok */ }
-    if (askFlag || qParam) mode = "off";
+    let introSeen = false, forceIntro = false;
+    try {
+      introSeen = sessionStorage.getItem("asp_intro_seen") === "1";
+      forceIntro = /(^|[?&])intro=1/.test(location.search); // QA override replays the intro
+    } catch { /* private mode */ }
+    if (askFlag || qParam || (introSeen && !forceIntro)) mode = "off";
 
     if (mode === "off") {
       lockVisibleRef.current = false;
@@ -288,6 +293,26 @@ export default function CinematicHome({
         } catch { /* ok */ }
       }, 60);
     } else {
+      try { sessionStorage.setItem("asp_intro_seen", "1"); } catch { /* private mode */ }
+      // Photo rotation: consecutive visits start on different photos
+      // (sessionStorage remembers the last index); crossfade every 9s, at
+      // most 4 photos across the 26s intro; first two preloaded.
+      try {
+        const stored = parseInt(sessionStorage.getItem("asp_intro_idx") || "-1", 10);
+        const start = ((Number.isFinite(stored) ? stored : -1) + 1 + INTRO_IMAGES.length) % INTRO_IMAGES.length;
+        sessionStorage.setItem("asp_intro_idx", String(start));
+        setIntroIdx(start);
+        [start, (start + 1) % INTRO_IMAGES.length].forEach((i) => { const im = new window.Image(); im.src = INTRO_IMAGES[i].src; });
+      } catch { /* private mode */ }
+      let advances = 0;
+      introRotRef.current = setInterval(() => {
+        advances += 1;
+        if (advances > 3 || !lockVisibleRef.current) {
+          if (introRotRef.current) clearInterval(introRotRef.current);
+          return;
+        }
+        setIntroIdx((i) => (i + 1) % INTRO_IMAGES.length);
+      }, 9000);
       pushTimer(() => setBeat(1), 200);   // verse on black
       pushTimer(() => setBeat(2), 2600);  // photo bloom
       pushTimer(() => setBeat(3), 3600);  // title reveal
@@ -528,8 +553,19 @@ export default function CinematicHome({
             <span className="font-body" style={{ marginTop: 18, fontSize: 12, fontWeight: 600, color: "rgba(201,162,75,0.95)", letterSpacing: "0.26em", textTransform: "uppercase" }}>{verse.citation}</span>
           </div>
 
-          {/* Beat 2: photo blooms in */}
-          <div style={{ position: "absolute", inset: 0, backgroundImage: `url('${IMG.disciples}')`, backgroundSize: "cover", backgroundPosition: "center 30%", animation: "cineKenBurns 26s cubic-bezier(0.25,0,0.4,1) forwards", transformOrigin: "50% 38%", opacity: b.imgOp, transition: "opacity 2.0s cubic-bezier(0.4,0,0.2,1)" }} />
+          {/* Beat 2: photo blooms in — dual-layer so the photograph itself is
+              NEVER cropped: a blurred cover backdrop fills any aspect ratio
+              while the full image sits above it (object-fit: contain). The
+              rotation crossfades through the manifest photos every 9s. */}
+          <div style={{ position: "absolute", inset: 0, opacity: b.imgOp, transition: "opacity 2.0s cubic-bezier(0.4,0,0.2,1)" }}>
+            {INTRO_IMAGES.map((img, i) => (
+              <div key={img.src} aria-hidden={i !== introIdx} style={{ position: "absolute", inset: 0, opacity: i === introIdx ? 1 : 0, transition: "opacity 1.6s ease" }}>
+                <div style={{ position: "absolute", inset: 0, backgroundImage: `url('${img.src}')`, backgroundSize: "cover", backgroundPosition: "center 30%", filter: "blur(28px) saturate(1.05) brightness(0.72)", transform: "scale(1.12)" }} />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={img.src} alt="" className="cine-intro-subject" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }} />
+              </div>
+            ))}
+          </div>
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(22,18,12,0.34) 0%, rgba(22,18,12,0.06) 34%, rgba(22,18,12,0.12) 60%, rgba(22,18,12,0.74) 100%)", opacity: b.imgOp, transition: "opacity 2.0s ease" }} />
           <div style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 90% at 50% 88%, rgba(201,162,75,0.22), transparent 55%)", opacity: b.imgOp, transition: "opacity 2.4s ease" }} />
           <div aria-hidden style={{ position: "absolute", top: "-30%", left: 0, width: "45%", height: "160%", background: "linear-gradient(90deg, transparent, rgba(255,244,214,0.20), transparent)", filter: "blur(30px)", animation: "lightSweep 9s ease-in-out infinite", pointerEvents: "none", opacity: b.imgOp }} />
@@ -700,7 +736,9 @@ export default function CinematicHome({
               <div data-htrack style={{ display: "flex", gap: "clamp(20px,2.5vw,36px)", padding: "0 clamp(24px,6vw,100px)", willChange: "transform", alignItems: "stretch" }}>
                 {GALLERY.map((g) => (
                   <div key={g.id} style={{ flex: "0 0 auto", width: "clamp(280px, 36vw, 520px)", display: "flex", flexDirection: "column", gap: 14, marginTop: g.offset ? "clamp(20px,4vh,44px)" : 0 }}>
-                    <div style={{ width: "100%", height: "min(58vh, 520px)", borderRadius: 18, backgroundImage: `url('${g.img}')`, backgroundSize: "cover", backgroundPosition: "center", boxShadow: "0 20px 60px rgba(43,37,25,0.14)" }} />
+                    <div style={{ position: "relative", width: "100%", height: "min(58vh, 520px)", borderRadius: 18, overflow: "hidden", boxShadow: "0 20px 60px rgba(43,37,25,0.14)" }}>
+                      <Image src={g.entry.src} alt={g.entry.alt} fill sizes="(max-width: 768px) 80vw, 520px" style={{ objectFit: "cover" }} />
+                    </div>
                     <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.18em", textTransform: "uppercase", color: "#9A8F7D" }}>{g.caption}</p>
                   </div>
                 ))}
@@ -761,7 +799,7 @@ export default function CinematicHome({
 
           {/* ── JOURNEY TEASER ── */}
           <Link href="/journey" data-creveal="journey" className="cine-journey" style={{ textDecoration: "none", display: "block", position: "relative", minHeight: "clamp(420px, 68vh, 640px)", overflow: "hidden", cursor: "pointer" }}>
-            <div data-parallax="0.14" style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${IMG.walk}')`, backgroundSize: "cover", backgroundPosition: "center 40%", willChange: "transform" }} />
+            <div data-parallax="0.14" role="img" aria-label={MANIFEST.prabhupada.alt} style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${MANIFEST.prabhupada.src}')`, backgroundSize: "cover", backgroundPosition: "center 40%", filter: "blur(10px) brightness(0.92)", willChange: "transform" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(250,247,241,1) 0%, rgba(22,18,12,0.34) 26%, rgba(22,18,12,0.42) 60%, rgba(22,18,12,0.78) 100%)" }} />
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "60px 24px", opacity: rev("journey").op, transform: `translateY(${rev("journey").ty})`, transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)" }}>
               <p className="font-display" style={{ fontSize: "clamp(80px, 14vw, 200px)", fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "rgba(255,248,232,0.95)", textShadow: "0 6px 60px rgba(22,18,12,0.5)" }}>1965</p>
@@ -792,7 +830,7 @@ export default function CinematicHome({
 
           {/* ── CTA ── */}
           <section style={{ position: "relative", minHeight: "clamp(440px, 74vh, 700px)", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div data-parallax="0.12" style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${IMG.disciples}')`, backgroundSize: "cover", backgroundPosition: "center 28%", willChange: "transform" }} />
+            <div data-parallax="0.12" role="img" aria-label={MANIFEST.disciples.alt} style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${MANIFEST.disciples.src}')`, backgroundSize: "cover", backgroundPosition: "center 28%", willChange: "transform" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(250,247,241,1) 0%, rgba(250,247,241,0.55) 24%, rgba(250,247,241,0.30) 55%, rgba(250,247,241,0.88) 100%)" }} />
             <div style={{ position: "absolute", inset: 0, background: "radial-gradient(70% 60% at 50% 55%, rgba(250,247,241,0.72), transparent 78%)" }} />
             <div data-creveal="cta" style={{ position: "relative", zIndex: 1, textAlign: "center", padding: "80px 24px", opacity: rev("cta").op, transform: `translateY(${rev("cta").ty})`, transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)" }}>

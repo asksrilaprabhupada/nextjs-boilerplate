@@ -348,7 +348,29 @@ still render (screenshots in Task 16).
 Verification: build ✅ tests ✅ · served-HTML checks all pass (36 tile / 3,700+ / 6,500+ /
 "He wrote every word" / "32 more titles" / mic gone / darker wash values present) ✅.
 
-## §8 · Task 8 — Images ⏳
+## §8 · Task 8 — Images ✅
+
+- Restored from git history (`9483c47^`): `Prabh14.jpg` (682×466) + `CT03-044-620x350.avif` →
+  photo pool is now 5; the stale `06-lockscreen-data.ts` fallback reference is valid again.
+- New `app/lib/18-image-manifest.ts` (spec's `lib/images/manifest.ts`): every photo registered with
+  src/alt/caption/dimensions/`allowFullBleed`; owner instructions in the doc comment +
+  `public/images/README.md`.
+- **No-crop cinematic intro**: Beat 2 is now dual-layer — blurred cover backdrop
+  (blur(28px) saturate(1.05) brightness(0.72), scale 1.12) under an `object-fit: contain` subject
+  `<img>`; Ken Burns (scale 1→1.06 / 26 s) moves the SUBJECT only and is disabled under
+  `prefers-reduced-motion`. The photograph is never cropped at any viewport shape.
+- **Rotation through all photos**: sessionStorage `asp_intro_idx` seeds a different start photo per
+  visit; 9 s crossfades, max 4 photos per 26 s intro; first two preloaded. **Once per session**
+  (`asp_intro_seen`) — internal nav and `/search?q=` deep links skip it (existing `?ask`/`?q` skip
+  kept); `?intro=1` replays it for QA.
+- Moments gallery: 4 distinct manifest photos, truthful captions ("01 — Before the Kṛṣṇa-Balarāma
+  Deities" … "04 — Śrīla Prabhupāda"), migrated to `next/image` (fill, sizes, real alt).
+- 620×350 AVIF policy: never full-bleed. The journey-teaser band swapped to the restored 682×466
+  photo behind a deliberate blur; both parallax CSS backgrounds carry `role="img"` + `aria-label`.
+- IMAGE_AUDIT.md updated; RE-EXPORT NEEDED remains empty (no Claude-Design external URLs exist).
+
+Verification: build ✅ tests ✅ · all manifest paths exist on disk · intro/gallery visuals on the
+Task 16 preview + screenshots.
 
 ## §13 · Task 13 — Inner pages ⏳
 
