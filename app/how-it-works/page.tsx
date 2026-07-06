@@ -12,6 +12,7 @@ export const metadata: Metadata = {
   title: "How It Works — Ask Śrīla Prabhupāda",
   description:
     "Three steps to his answer: ask in plain language, read his exact words, verify every source. Every citation links directly to Vedabase.io.",
+  alternates: { canonical: "/how-it-works" },
 };
 
 export default function HowItWorks() {

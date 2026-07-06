@@ -4,9 +4,10 @@
  * Defines the HTML shell, fonts (Cormorant Garamond, DM Sans, Noto Serif Devanagari), metadata, and background gradients.
  * Wraps every page with consistent styling and SEO configuration.
  */
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, DM_Sans, Noto_Serif_Devanagari } from "next/font/google";
 import SiteModalsProvider from "./components/cinematic/13-site-modals";
+import { SITE_URL } from "@/app/lib/20-site";
 import "./globals.css";
 
 /*
@@ -37,9 +38,9 @@ const fontDeva = Noto_Serif_Devanagari({
 });
 
 export const metadata: Metadata = {
-  title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
+  title: "Ask Śrīla Prabhupāda — Search His Books, Lectures & Letters",
   description:
-    "AI-powered search across 36 books, 3,700 lectures, and 6,500 letters of Śrīla Prabhupāda. 244,000 searchable passages from Bhagavad Gītā, Śrīmad Bhāgavatam, Caitanya Caritāmṛta, recorded lectures, and personal letters. Every answer from Prabhupāda's actual words.",
+    "Search Śrīla Prabhupāda's 36 books, purports, 3,700 lectures, and 6,500 letters. Read his exact words with citations and Vedabase links. Nothing added, nothing invented.",
   keywords: [
     "Srila Prabhupada", "Bhagavad Gita", "Srimad Bhagavatam", "Caitanya Caritamrita",
     "ISKCON", "Krishna", "Vedic", "scripture search", "purport", "devotional service",
@@ -47,15 +48,16 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Ask Śrīla Prabhupāda" }],
   creator: "Ask Śrīla Prabhupāda",
-  metadataBase: new URL("https://asksrilaprabhupada.com"),
+  metadataBase: new URL(SITE_URL),
+  alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://asksrilaprabhupada.com",
+    url: "/",
     siteName: "Ask Śrīla Prabhupāda",
-    title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
+    title: "Ask Śrīla Prabhupāda — Search His Books, Lectures & Letters",
     description:
-      "AI-powered scripture search engine. Ask any question and get answers directly from Śrīla Prabhupāda's books, lectures, and letters — 244,000 searchable passages.",
+      "Ask any question and read the answer in Śrīla Prabhupāda's own words — 244,000 searchable passages from his books, lectures, and letters, every citation linked to Vedabase.",
     images: [
       {
         url: "/images/og-image.png",
@@ -67,9 +69,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Ask Śrīla Prabhupāda — Search 36 Books, 3,700 Lectures & 6,500 Letters",
+    title: "Ask Śrīla Prabhupāda — Search His Books, Lectures & Letters",
     description:
-      "AI-powered search across Prabhupāda's books, lectures, and letters. 244,000 passages. Every answer from his actual words.",
+      "Search Prabhupāda's books, lectures, and letters. 244,000 passages. Every answer in his actual words.",
     images: ["/images/og-image.png"],
   },
   robots: {
@@ -80,6 +82,10 @@ export const metadata: Metadata = {
       follow: true,
     },
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#FAF7F1",
 };
 
 export default function RootLayout({
@@ -152,6 +158,36 @@ export default function RootLayout({
           </filter>
           <rect width="100%" height="100%" filter="url(#grain)" />
         </svg>
+
+        {/* Structured data: the site + its search action, and the organization. */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify([
+              {
+                "@context": "https://schema.org",
+                "@type": "WebSite",
+                name: "Ask Śrīla Prabhupāda",
+                url: SITE_URL,
+                potentialAction: {
+                  "@type": "SearchAction",
+                  target: {
+                    "@type": "EntryPoint",
+                    urlTemplate: `${SITE_URL}/search?q={search_term_string}`,
+                  },
+                  "query-input": "required name=search_term_string",
+                },
+              },
+              {
+                "@context": "https://schema.org",
+                "@type": "Organization",
+                name: "Ask Śrīla Prabhupāda",
+                url: SITE_URL,
+                logo: `${SITE_URL}/images/og-image.png`,
+              },
+            ]),
+          }}
+        />
 
         <div style={{ position: "relative", zIndex: 2 }}>
           <SiteModalsProvider>{children}</SiteModalsProvider>

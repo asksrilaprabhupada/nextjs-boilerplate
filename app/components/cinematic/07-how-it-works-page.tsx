@@ -80,7 +80,7 @@ export default function HowItWorksPage() {
             </div>
           ))}
         </div>
-        <p className="font-display" style={{ fontSize: "clamp(18px,2.2vw,24px)", fontStyle: "italic", color: "#6E6353", marginTop: "clamp(28px,4vh,40px)", maxWidth: 640 }}>The AI never writes philosophy. It finds, orders, and presents — <span style={{ color: "#51409A" }}>the words remain his.</span></p>
+        <p className="font-display" style={{ fontSize: "clamp(18px,2.2vw,24px)", fontStyle: "italic", color: "#6E6353", marginTop: "clamp(28px,4vh,40px)", maxWidth: 640 }}>AI-assisted retrieval that finds and orders his words — <span style={{ color: "#51409A" }}>it never writes philosophy.</span></p>
       </section>
 
       {/* CTA */}

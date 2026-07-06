@@ -389,7 +389,29 @@ Task 16 preview + screenshots.
 
 Verification: build ✅ tests ✅.
 
-## §15 · Task 15 — SEO ⏳
+## §15 · Task 15 — SEO & metadata ✅
+
+- Title: "Ask Śrīla Prabhupāda — Search His Books, Lectures & Letters"; description per spec —
+  "AI-powered" removed from all metadata (was ×3). The one AI sentence lives on How-it-works only:
+  "AI-assisted retrieval that finds and orders his words — it never writes philosophy."
+- `metadataBase` now `new URL(SITE_URL)` where `SITE_URL = NEXT_PUBLIC_SITE_URL ??
+  "https://asksrilaprabhupada.vercel.app"` (new `app/lib/20-site.ts`, with the TODO(owner): set the
+  env var after attaching the custom domain). Fixes og:url/og:image pointing at the unattached
+  `.com` domain. `viewport.themeColor: #FAF7F1`.
+- JSON-LD in the layout: `WebSite` (+ `SearchAction` → `/search?q={search_term_string}`) +
+  `Organization`.
+- `app/sitemap.ts`: 4 curated routes incl. `/journey`, env origin. `app/robots.ts`:
+  `Disallow: /api/, /search` + env sitemap URL. Canonicals: `/` in layout + per-page alternates on
+  journey/features/how-it-works (unique descriptions already existed). `/search` was already
+  noindex (Task 2).
+- New `app/icon.svg` — lavender serif "A" monogram on cream #FAF7F1. `og-image.png` verified
+  present (304 KB).
+
+Verification: build ✅ tests ✅ · fresh local prod server: new title / vercel.app OG origin /
+no stale `.com` / JSON-LD WebSite + SearchAction / canonical / icon.svg / theme-color /
+no "AI-powered" all PASS; `/sitemap.xml` lists 4 routes on the vercel.app origin; `/robots.txt`
+disallows /api/ + /search ✅. (Note: an earlier all-FAIL reading was a stale `next start` instance
+serving its in-memory pre-build page cache — killed; fresh server confirms.)
 
 ## §16 · Task 16 — Final verification + PR ⏳
 

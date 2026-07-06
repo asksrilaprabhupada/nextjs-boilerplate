@@ -1,10 +1,11 @@
 /**
  * robots.ts — Robots.txt Generator
  *
- * Generates the robots.txt file for search engine crawlers.
- * Controls which pages search engines can index.
+ * Allows everything except the API and the /search result pages (noindex —
+ * the curated pages carry the SEO). Origin follows NEXT_PUBLIC_SITE_URL.
  */
 import { MetadataRoute } from "next";
+import { SITE_URL } from "@/app/lib/20-site";
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -12,9 +13,9 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/api/"],
+        disallow: ["/api/", "/search"],
       },
     ],
-    sitemap: "https://asksrilaprabhupada.com/sitemap.xml",
+    sitemap: `${SITE_URL}/sitemap.xml`,
   };
 }
