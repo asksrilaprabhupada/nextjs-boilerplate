@@ -372,7 +372,22 @@ Verification: build ✅ tests ✅ · served-HTML checks all pass (36 tile / 3,70
 Verification: build ✅ tests ✅ · all manifest paths exist on disk · intro/gallery visuals on the
 Task 16 preview + screenshots.
 
-## §13 · Task 13 — Inner pages ⏳
+## §13 · Task 13 — Inner pages ✅
+
+- Features: "05 · Context on tap" added ("Read the verses before and after — every passage arrives
+  with its surroundings, one tap away.") — the list is now 7, gapless (06 Citation links, 07 Open
+  source); "Open source" links to the GitHub repo (gold-underlined title ↗).
+- How it works: proper `<h2>` "What happens under the hood" above the pipeline cards (the reveal
+  failsafe from Task 12 already guarantees they can never render blank); fifth card "5 · Verify —
+  Every quote is checksum-verified against the library before it renders." (Task 9's validator makes
+  it literally true); subtitle constrained to `52ch` + `text-wrap: balance`.
+- Journey: Chapter 3 (26 Second Avenue) now shows the restored archival photo instead of repeating
+  the Deity image from the quote band directly above; every ChapterFrame alt now describes what the
+  photo actually shows; CTA reads "Now, ask him →" (uppercase transform dropped). The `/?ask=1`
+  CTA deep-links stay — the `ask` flag skips the intro and focuses the search box, which is the
+  desired CTA behavior (the nav-level link was fixed to `/` in Task 11).
+
+Verification: build ✅ tests ✅.
 
 ## §15 · Task 15 — SEO ⏳
 

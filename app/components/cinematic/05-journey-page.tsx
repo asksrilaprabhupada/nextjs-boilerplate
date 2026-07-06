@@ -79,7 +79,7 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, maxWidth: 640, opacity: rev("ch1").op, transform: `translateY(${rev("ch1").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>Thirty-five days at sea aboard the <span style={{ fontStyle: "italic", color: "#6B57C9" }}>Jaladuta</span></h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch1").op, transform: `translateY(${rev("ch1").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>A steam cargo ship from Calcutta. On the way he suffered two heart attacks — and kept writing in his diary, praying to make the message of Kṛṣṇa understandable to the Western world.</p>
           <div style={{ marginTop: 36, opacity: rev("ch1").op, transform: `translateY(${rev("ch1").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img={IMG.walk} alt="Śrīla Prabhupāda — the crossing" />
+            <ChapterFrame img={IMG.walk} alt="Śrīla Prabhupāda on a morning walk in Vṛndāvana" />
           </div>
         </div>
       </section>
@@ -92,7 +92,7 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, opacity: rev("ch2").op, transform: `translateY(${rev("ch2").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>He stepped ashore with about <span style={{ fontStyle: "italic", color: "#6B57C9" }}>seven dollars</span> and trunks of Śrīmad-Bhāgavatam</h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch2").op, transform: `translateY(${rev("ch2").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>No institution behind him. No congregation waiting. Only the order of his spiritual master: carry these teachings to the English-speaking world.</p>
           <div style={{ marginTop: 36, opacity: rev("ch2").op, transform: `translateY(${rev("ch2").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img={IMG.disciples} alt="Śrīla Prabhupāda — New York, 1965" />
+            <ChapterFrame img={IMG.disciples} alt="Śrīla Prabhupāda smiling among his disciples" />
           </div>
         </div>
       </section>
@@ -116,7 +116,7 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, opacity: rev("ch3").op, transform: `translateY(${rev("ch3").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>26 Second Avenue. A sign in the window: <span style={{ fontStyle: "italic", color: "#6B57C9" }}>Matchless Gifts</span></h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch3").op, transform: `translateY(${rev("ch3").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>In a small Lower East Side storefront he began evening classes and kīrtana. In July 1966 he incorporated the International Society for Krishna Consciousness.</p>
           <div style={{ marginTop: 36, opacity: rev("ch3").op, transform: `translateY(${rev("ch3").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img={IMG.deities} alt="Śrīla Prabhupāda — 26 Second Avenue" />
+            <ChapterFrame img="/images/lockscreen/Prabh14.jpg" alt="Śrīla Prabhupāda — archival photograph" />
           </div>
         </div>
       </section>
@@ -149,7 +149,7 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, opacity: rev("ch5").op, transform: `translateY(${rev("ch5").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>Fourteen times around the world in <span style={{ fontStyle: "italic", color: "#6B57C9" }}>eleven years</span></h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch5").op, transform: `translateY(${rev("ch5").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>Lecturing on six continents, opening more than a hundred temples, and writing letters — thousands of them — to guide the people he had met.</p>
           <div style={{ marginTop: 36, opacity: rev("ch5").op, transform: `translateY(${rev("ch5").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img={IMG.disciples} alt="Śrīla Prabhupāda — travelling with devotees worldwide" />
+            <ChapterFrame img={IMG.disciples} alt="Śrīla Prabhupāda with his disciples" />
           </div>
         </div>
       </section>
@@ -162,7 +162,7 @@ export default function JourneyPage() {
           <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.32em", textTransform: "uppercase", color: "rgba(201,162,75,1)", marginBottom: 20 }}>1977 — today</p>
           <h2 className="font-display" style={{ fontSize: "clamp(36px,6vw,80px)", fontWeight: 600, lineHeight: 1.08, letterSpacing: "-0.02em", color: "#FFF8E8", marginBottom: 16, textShadow: "0 4px 44px rgba(22,18,12,0.5)", textWrap: "balance" }}>His words remain.</h2>
           <p className="font-display" style={{ fontSize: "clamp(18px,2.4vw,26px)", fontStyle: "italic", color: "rgba(255,248,232,0.9)", maxWidth: 560, margin: "0 auto 36px", textWrap: "pretty" }}>Every book, every lecture, every letter — preserved, and now searchable.</p>
-          <Link href="/?ask=1" className="cine-enter-btn font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(255,248,232,0.12)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", color: "#FFF8E8", border: "1px solid rgba(255,244,214,0.45)", borderRadius: 100, padding: "15px 38px", fontSize: 14, fontWeight: 500, letterSpacing: "0.14em", textTransform: "uppercase", cursor: "pointer", transition: "all 0.45s cubic-bezier(0.16,1,0.3,1)" }}><span>Now, ask him</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></Link>
+          <Link href="/?ask=1" className="cine-enter-btn font-body" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(255,248,232,0.12)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", color: "#FFF8E8", border: "1px solid rgba(255,244,214,0.45)", borderRadius: 100, padding: "15px 38px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", transition: "all 0.45s cubic-bezier(0.16,1,0.3,1)" }}><span>Now, ask him →</span><svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg></Link>
         </div>
       </section>
 
