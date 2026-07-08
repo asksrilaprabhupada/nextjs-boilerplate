@@ -1,0 +1,9 @@
+# Offline batch harness for the Tags & FTS Rebuild.
+# Install:  python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+supabase>=2.4.0          # service-key client for RPCs + small reads/writes (PostgREST)
+psycopg[binary]>=3.1     # optional: direct Postgres for fast bulk vector reads / backfill (needs DATABASE_URL)
+numpy>=1.26              # vector math for clustering
+scikit-learn>=1.4        # MiniBatchKMeans + agglomerative merge (Phase 1 vocabulary)
+requests>=2.31           # raw HTTP to Gemini / Voyage / Cohere (matches the app's fetch approach)
+python-dotenv>=1.0       # load .env.local for local runs
+tqdm>=4.66               # progress bars for the long passes
