@@ -5,7 +5,9 @@
  * Matchless Gifts → the books → the world), with a fixed gold→violet timeline
  * rail that fills with scroll progress, an opening "1965" title reveal, a
  * parallax-free verse interlude, and a closing CTA back to search. A faithful
- * React port of the "His Journey" Claude Design prototype.
+ * React port of the "His Journey" Claude Design prototype. Chapter photos are
+ * path-addressed slots under /images/journey/ — each renders an honest
+ * placeholder until the exactly named file is uploaded and the site redeploys.
  */
 "use client";
 
@@ -13,24 +15,35 @@ import Link from "next/link";
 import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import { useCinematicReveal } from "./04-use-cinematic-reveal";
+import PhotoSlot, { useImageAvailable } from "./14-photo-slot";
 
 const IMG = {
   disciples: "/images/lockscreen/prabhupadaanddisciplessmiling.jpg",
   deities: "/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg",
-  walk: "/images/lockscreen/Srila-Prabhupada-on-morning-walk-in-Vrindavan-620x350.avif",
 };
+
+// Path-addressed chapter slots: upload the exactly named file to
+// public/images/journey/ and redeploy — the placeholder is replaced with no
+// code change (see public/images/journey/README.md).
+const JOURNEY = {
+  jaladuta: { src: "/images/journey/journey-1965-jaladuta-ship.jpg", alt: "The Jaladuta, the cargo ship that carried Śrīla Prabhupāda from Calcutta to New York, 1965", placeholderCaption: "Photograph coming — the Jaladuta, 1965" },
+  arrival: { src: "/images/journey/journey-1965-arrival-new-york.jpg", alt: "Śrīla Prabhupāda after arriving in New York, 1965", placeholderCaption: "Photograph coming — arrival in New York, 1965" },
+  storefront: { src: "/images/journey/journey-1966-matchless-gifts-storefront.jpg", alt: "The Matchless Gifts storefront at 26 Second Avenue, New York, 1966", placeholderCaption: "Photograph coming — 26 Second Avenue, 1966" },
+  books: { src: "/images/journey/journey-books-translating.jpg", alt: "Śrīla Prabhupāda at work translating his books", placeholderCaption: "Photograph coming — translating the books" },
+  world: { src: "/images/journey/journey-1966-77-world.jpg", alt: "Śrīla Prabhupāda during his world travels, 1966–77", placeholderCaption: "Photograph coming — around the world, 1966–77" },
+  quoteBackground: "/images/journey/journey-quote-background.jpg",
+} as const;
 
 /* Reused wrappers so each chapter reads the same */
 const yearStyle: React.CSSProperties = { position: "sticky", top: 108, fontSize: "clamp(30px,4vw,52px)", fontWeight: 500, color: "#C9A24B", lineHeight: 1, fontVariantNumeric: "lining-nums", letterSpacing: "0.01em" };
 
-function ChapterFrame({ img, alt }: { img: string; alt: string }) {
-  return (
-    <div style={{ width: "100%", maxWidth: 720, height: "clamp(260px, 46vh, 440px)", borderRadius: 18, backgroundImage: `url('${img}')`, backgroundSize: "cover", backgroundPosition: "center", boxShadow: "0 20px 60px rgba(43,37,25,0.14)" }} role="img" aria-label={alt} />
-  );
+function ChapterPhoto({ slot }: { slot: { src: string; alt: string; placeholderCaption: string } }) {
+  return <PhotoSlot {...slot} frame={{ width: "100%", maxWidth: 720, height: "clamp(260px, 46vh, 440px)" }} />;
 }
 
 export default function JourneyPage() {
   const { rootRef, entered, rev } = useCinematicReveal({ railFill: true, revealMargin: 80 });
+  const quoteBgReady = useImageAvailable(JOURNEY.quoteBackground);
 
   const op = entered
     ? { kicker: 1, year: "0", sub: 1, subY: "0px" }
@@ -79,7 +92,7 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, maxWidth: 640, opacity: rev("ch1").op, transform: `translateY(${rev("ch1").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>Thirty-five days at sea aboard the <span style={{ fontStyle: "italic", color: "#6B57C9" }}>Jaladuta</span></h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch1").op, transform: `translateY(${rev("ch1").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>A steam cargo ship from Calcutta. On the way he suffered two heart attacks — and kept writing in his diary, praying to make the message of Kṛṣṇa understandable to the Western world.</p>
           <div style={{ marginTop: 36, opacity: rev("ch1").op, transform: `translateY(${rev("ch1").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img={IMG.walk} alt="Śrīla Prabhupāda on a morning walk in Vṛndāvana" />
+            <ChapterPhoto slot={JOURNEY.jaladuta} />
           </div>
         </div>
       </section>
@@ -92,14 +105,14 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, opacity: rev("ch2").op, transform: `translateY(${rev("ch2").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>He stepped ashore with about <span style={{ fontStyle: "italic", color: "#6B57C9" }}>seven dollars</span> and trunks of Śrīmad-Bhāgavatam</h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch2").op, transform: `translateY(${rev("ch2").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>No institution behind him. No congregation waiting. Only the order of his spiritual master: carry these teachings to the English-speaking world.</p>
           <div style={{ marginTop: 36, opacity: rev("ch2").op, transform: `translateY(${rev("ch2").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img={IMG.disciples} alt="Śrīla Prabhupāda smiling among his disciples" />
+            <ChapterPhoto slot={JOURNEY.arrival} />
           </div>
         </div>
       </section>
 
       {/* ── INTERLUDE — verse band (static) ── */}
       <section style={{ position: "relative", height: "clamp(440px, 76vh, 720px)", overflow: "hidden" }}>
-        <div style={{ position: "absolute", inset: 0, backgroundImage: `url('${IMG.deities}')`, backgroundSize: "cover", backgroundPosition: "center 25%" }} />
+        <div style={{ position: "absolute", inset: 0, backgroundImage: `url('${quoteBgReady ? JOURNEY.quoteBackground : IMG.deities}')`, backgroundSize: "cover", backgroundPosition: "center 25%" }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(250,247,241,1) 0%, rgba(22,18,12,0.12) 20%, rgba(22,18,12,0.10) 48%, rgba(22,18,12,0.68) 100%)" }} />
         <div data-creveal="inter" style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "0 clamp(24px,7vw,110px) clamp(44px,8vh,84px)", opacity: rev("inter").op, transform: `translateY(${rev("inter").ty})`, transition: "opacity 1.1s cubic-bezier(0.16,1,0.3,1), transform 1.1s cubic-bezier(0.16,1,0.3,1)" }}>
           <div aria-hidden style={{ width: 56, height: 1, background: "rgba(201,162,75,0.9)", marginBottom: 22 }} />
@@ -116,7 +129,7 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, opacity: rev("ch3").op, transform: `translateY(${rev("ch3").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>26 Second Avenue. A sign in the window: <span style={{ fontStyle: "italic", color: "#6B57C9" }}>Matchless Gifts</span></h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch3").op, transform: `translateY(${rev("ch3").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>In a small Lower East Side storefront he began evening classes and kīrtana. In July 1966 he incorporated the International Society for Krishna Consciousness.</p>
           <div style={{ marginTop: 36, opacity: rev("ch3").op, transform: `translateY(${rev("ch3").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img="/images/lockscreen/Prabh14.jpg" alt="Śrīla Prabhupāda — archival photograph" />
+            <ChapterPhoto slot={JOURNEY.storefront} />
           </div>
         </div>
       </section>
@@ -138,6 +151,9 @@ export default function JourneyPage() {
               <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.2em", textTransform: "uppercase", color: "#6B57C9", marginTop: 10 }}>His writing hour</p>
             </div>
           </div>
+          <div style={{ marginTop: 36, opacity: rev("ch4").op, transform: `translateY(${rev("ch4").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.48s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.48s" }}>
+            <ChapterPhoto slot={JOURNEY.books} />
+          </div>
         </div>
       </section>
 
@@ -149,7 +165,7 @@ export default function JourneyPage() {
           <h2 className="font-display" style={{ ...h2, opacity: rev("ch5").op, transform: `translateY(${rev("ch5").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.12s" }}>Fourteen times around the world in <span style={{ fontStyle: "italic", color: "#6B57C9" }}>eleven years</span></h2>
           <p className="font-body" style={{ ...body, opacity: rev("ch5").op, transform: `translateY(${rev("ch5").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.24s" }}>Lecturing on six continents, opening more than a hundred temples, and writing letters — thousands of them — to guide the people he had met.</p>
           <div style={{ marginTop: 36, opacity: rev("ch5").op, transform: `translateY(${rev("ch5").ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.36s" }}>
-            <ChapterFrame img={IMG.disciples} alt="Śrīla Prabhupāda with his disciples" />
+            <ChapterPhoto slot={JOURNEY.world} />
           </div>
         </div>
       </section>

@@ -76,7 +76,8 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── 10-search-loader.tsx   (mandala loader: SSE stages, percent, rotating verses)
 │   │   │   ├── 11-site-header.tsx     (unified header: nav, More ▾, hamburger, theme toggle)
 │   │   │   ├── 12-site-footer.tsx     (unified footer)
-│   │   │   └── 13-site-modals.tsx     (provider: seva/feature/feedback overlays, /api/feedback wiring)
+│   │   │   ├── 13-site-modals.tsx     (provider: seva/feature/feedback overlays, /api/feedback wiring)
+│   │   │   └── 14-photo-slot.tsx      (path-addressed photo slot: placeholder until the exact file exists; useImageAvailable for bg swaps)
 │   │   ├── results/
 │   │   │   ├── 01-narrative-response.tsx (woven essay: heroes, purport folds, context strip, citations)
 │   │   │   └── 02-dig-deeper-modal.tsx (overflow drawer: count-chip filters, sort, search-within, His-words-only)
@@ -126,6 +127,8 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   ├── images/
 │   │   ├── README.md                  (how to add photos + register them in the manifest)
 │   │   ├── lockscreen/                (photos; auto-discovered by /api/lockscreen-images)
+│   │   ├── journey/                   (path-addressed /journey chapter photos; exact filenames in its README)
+│   │   ├── moments/                   (path-addressed landing Moments photos: moments-01.jpg … moments-04.jpg)
 │   │   └── og-image.png               (Open Graph social preview)
 │   └── videos/lockscreen/             (optional admin video upload)
 ├── scripts/verify-release.sh          (acceptance checks: run with SITE=<url>)
@@ -148,6 +151,7 @@ All server-side Supabase access goes through the single shared client in `app/li
 ### Admin Actions Required
 
 - Upload Śrīla Prabhupāda photos to `public/images/lockscreen/` (auto-discovered by `/api/lockscreen-images`) AND register them in `app/lib/18-image-manifest.ts` with truthful alt/caption so they join the intro rotation and galleries.
+- Upload the /journey chapter photos and the landing Moments photos by their exact filenames per `public/images/journey/README.md` and `public/images/moments/README.md` (path-addressed slots — placeholders are replaced automatically on redeploy, no code change). After the four Moments photos land, replace the neutral gallery captions in `app/components/cinematic/01-cinematic-home.tsx` (GALLERY array) with truthful lines.
 - Replace the FAKE seva details in `app/lib/19-seva-config.ts` and flip `isPlaceholder: false` (this removes the FAKE labels and re-enables the Copy buttons).
 - Replace the `[FAKE]` testimonials in `app/components/cinematic/01-cinematic-home.tsx` (TESTIMONIALS array).
 - After attaching the custom domain in Vercel, set `NEXT_PUBLIC_SITE_URL=https://asksrilaprabhupada.com`.
