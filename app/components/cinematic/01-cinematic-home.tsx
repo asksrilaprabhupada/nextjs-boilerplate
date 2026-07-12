@@ -18,6 +18,11 @@
  * straight off to /search?q= (see `runSearch`) — the live results page owns
  * your real search handler when integrating; it currently deep-links to the
  * home route with `?q=` (the app's existing deep-link convention).
+ *
+ * The Moments gallery renders path-addressed slots (public/images/moments/,
+ * placeholder until the exactly named files are uploaded), and the 1965
+ * journey teaser prefers the Jaladuta photo from public/images/journey/ once
+ * it exists, falling back to the current manifest photo.
  */
 "use client";
 
@@ -26,7 +31,7 @@ import Link from "next/link";
 import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import { useSiteModals } from "./13-site-modals";
-import Image from "next/image";
+import PhotoSlot, { useImageAvailable } from "./14-photo-slot";
 import { INTRO_IMAGES, IMG as MANIFEST } from "@/app/lib/18-image-manifest";
 
 /* ─── Static content (verbatim from the prototype) ─── */
@@ -69,13 +74,23 @@ const TESTIMONIALS = [
   { quote: "[FAKE] As a new devotee, it helped me study without relying on unsourced summaries. Every answer links back to Prabhupāda's actual words, so I know it's authentic.", name: "CCC", role: "Aspiring Devotee · 6 months" },
 ];
 
-// Four DISTINCT manifest photos; captions describe what each actually shows.
+// Path-addressed Moments slots: upload the exactly named files to
+// public/images/moments/ and redeploy — no code change needed. Captions and
+// alt stay deliberately neutral until the maintainer supplies the real
+// caption lines (see public/images/moments/README.md).
 const GALLERY = [
-  { id: "gallery-1", entry: MANIFEST.deities, caption: "01 — Before the Kṛṣṇa-Balarāma Deities", offset: false },
-  { id: "gallery-2", entry: MANIFEST.disciples, caption: "02 — With his disciples", offset: true },
-  { id: "gallery-3", entry: MANIFEST.walk, caption: "03 — Morning walk in Vṛndāvana", offset: false },
-  { id: "gallery-4", entry: MANIFEST.prabhupada, caption: "04 — Śrīla Prabhupāda", offset: true },
+  { id: "gallery-1", src: "/images/moments/moments-01.jpg", alt: "Śrīla Prabhupāda — archival photograph (1 of 4)", caption: "01 — Śrīla Prabhupāda · archival photograph", placeholderCaption: "Photograph coming — archival moment 01", offset: false },
+  { id: "gallery-2", src: "/images/moments/moments-02.jpg", alt: "Śrīla Prabhupāda — archival photograph (2 of 4)", caption: "02 — Śrīla Prabhupāda · archival photograph", placeholderCaption: "Photograph coming — archival moment 02", offset: true },
+  { id: "gallery-3", src: "/images/moments/moments-03.jpg", alt: "Śrīla Prabhupāda — archival photograph (3 of 4)", caption: "03 — Śrīla Prabhupāda · archival photograph", placeholderCaption: "Photograph coming — archival moment 03", offset: false },
+  { id: "gallery-4", src: "/images/moments/moments-04.jpg", alt: "Śrīla Prabhupāda — archival photograph (4 of 4)", caption: "04 — Śrīla Prabhupāda · archival photograph", placeholderCaption: "Photograph coming — archival moment 04", offset: true },
 ];
+
+// The 1965 journey teaser prefers the real Jaladuta photo once it is uploaded
+// to public/images/journey/ (same file the /journey Ch1 slot uses).
+const JOURNEY_BANNER = {
+  src: "/images/journey/journey-1965-jaladuta-ship.jpg",
+  alt: "The Jaladuta, the cargo ship that carried Śrīla Prabhupāda from Calcutta to New York, 1965",
+} as const;
 
 const MANIFESTO_WORDS = [
   ["He", "wrote", "every", "word."],
@@ -126,6 +141,7 @@ export default function CinematicHome({
   const { openModal } = useSiteModals();
   const [introIdx, setIntroIdx] = useState(0);
   const introRotRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const jaladutaReady = useImageAvailable(JOURNEY_BANNER.src);
 
   /* ── refs (for stable access inside long-lived listeners) ── */
   const rootRef = useRef<HTMLDivElement>(null);
@@ -736,9 +752,7 @@ export default function CinematicHome({
               <div data-htrack style={{ display: "flex", gap: "clamp(20px,2.5vw,36px)", padding: "0 clamp(24px,6vw,100px)", willChange: "transform", alignItems: "stretch" }}>
                 {GALLERY.map((g) => (
                   <div key={g.id} style={{ flex: "0 0 auto", width: "clamp(280px, 36vw, 520px)", display: "flex", flexDirection: "column", gap: 14, marginTop: g.offset ? "clamp(20px,4vh,44px)" : 0 }}>
-                    <div style={{ position: "relative", width: "100%", height: "min(58vh, 520px)", borderRadius: 18, overflow: "hidden", boxShadow: "0 20px 60px rgba(43,37,25,0.14)" }}>
-                      <Image src={g.entry.src} alt={g.entry.alt} fill sizes="(max-width: 768px) 80vw, 520px" style={{ objectFit: "cover" }} />
-                    </div>
+                    <PhotoSlot src={g.src} alt={g.alt} placeholderCaption={g.placeholderCaption} frame={{ width: "100%", height: "min(58vh, 520px)" }} />
                     <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.18em", textTransform: "uppercase", color: "#9A8F7D" }}>{g.caption}</p>
                   </div>
                 ))}
@@ -799,7 +813,7 @@ export default function CinematicHome({
 
           {/* ── JOURNEY TEASER ── */}
           <Link href="/journey" data-creveal="journey" className="cine-journey" style={{ textDecoration: "none", display: "block", position: "relative", minHeight: "clamp(420px, 68vh, 640px)", overflow: "hidden", cursor: "pointer" }}>
-            <div data-parallax="0.14" role="img" aria-label={MANIFEST.prabhupada.alt} style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${MANIFEST.prabhupada.src}')`, backgroundSize: "cover", backgroundPosition: "center 40%", filter: "blur(10px) brightness(0.92)", willChange: "transform" }} />
+            <div data-parallax="0.14" role="img" aria-label={jaladutaReady ? JOURNEY_BANNER.alt : MANIFEST.prabhupada.alt} style={{ position: "absolute", inset: "-16% 0", backgroundImage: `url('${jaladutaReady ? JOURNEY_BANNER.src : MANIFEST.prabhupada.src}')`, backgroundSize: "cover", backgroundPosition: "center 40%", filter: "blur(10px) brightness(0.92)", willChange: "transform" }} />
             <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(250,247,241,1) 0%, rgba(22,18,12,0.34) 26%, rgba(22,18,12,0.42) 60%, rgba(22,18,12,0.78) 100%)" }} />
             <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "60px 24px", opacity: rev("journey").op, transform: `translateY(${rev("journey").ty})`, transition: "opacity 1s cubic-bezier(0.16,1,0.3,1), transform 1s cubic-bezier(0.16,1,0.3,1)" }}>
               <p className="font-display" style={{ fontSize: "clamp(80px, 14vw, 200px)", fontWeight: 500, letterSpacing: "-0.02em", lineHeight: 1, color: "rgba(255,248,232,0.95)", textShadow: "0 6px 60px rgba(22,18,12,0.5)" }}>1965</p>
