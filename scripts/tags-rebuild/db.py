@@ -1,34 +1,101 @@
 """
-db.py — database access for the offline harness.
+db.py — database access for the offline harness (v2).
 
-Two paths, chosen by what credentials are present:
-  • get_supabase()  → supabase-py client (service key). Used for RPCs
-    (fts_core_backfill_batch, batch_set_tags, …) and small reads/writes via
-    PostgREST. Works with only SUPABASE_SERVICE_KEY — no DB password needed.
-  • get_pg()        → direct psycopg connection (needs DATABASE_URL). Preferred
-    for bulk vector reads (clustering) and large backfills: no PostgREST size
-    limits and no 60s statement cap. Returns None if DATABASE_URL is unset.
+Two clients, both REQUIRED (config.require_keys enforces this — no fallbacks):
+  • get_pg()        → direct psycopg connection via DATABASE_URL (the Supabase
+    **Session Pooler** DSN). Used for everything bulk: backfills, vector reads,
+    shard planning, applying results, CREATE INDEX CONCURRENTLY. autocommit=True
+    so CONCURRENTLY works; wrap multi-statement writes in `with conn.transaction()`.
+  • get_supabase()  → supabase-py client (SERVICE key). Used only where PostgREST
+    is the natural fit (vocab_terms upserts). Never constructed with the anon key.
+
+Helpers keep retry/iteration logic in one place so step modules stay readable.
 """
 from __future__ import annotations
-from typing import Optional
+
+import time
+from typing import Any, Callable, Iterator, Sequence
+
 import config
 
 _supabase = None
+_pg = None
 
 
 def get_supabase():
     global _supabase
     if _supabase is None:
         from supabase import create_client
+
         if not (config.SUPABASE_URL and config.SUPABASE_SERVICE_KEY):
-            raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_KEY missing — see config.missing_keys()")
+            raise SystemExit(
+                "FATAL: SUPABASE_URL / SUPABASE_SERVICE_KEY missing — the harness has"
+                " no anon-key fallback. See `python run_all.py --doctor`."
+            )
         _supabase = create_client(config.SUPABASE_URL, config.SUPABASE_SERVICE_KEY)
     return _supabase
 
 
-def get_pg() -> Optional["object"]:
-    """Direct Postgres connection, or None if DATABASE_URL is not configured."""
+def get_pg():
+    """Shared direct Postgres connection (Session Pooler). Fails loudly if absent."""
+    global _pg
     if not config.DATABASE_URL:
-        return None
+        raise SystemExit(
+            "FATAL: DATABASE_URL missing — set the Supabase Session Pooler DSN in"
+            f" {config.ENV_FILE}. The harness requires a direct SQL connection."
+        )
+    if _pg is None or _pg.closed:
+        import psycopg
+
+        _pg = psycopg.connect(config.DATABASE_URL, autocommit=True)
+    return _pg
+
+
+def fresh_pg():
+    """A NEW connection (not the shared one) — for CREATE INDEX CONCURRENTLY,
+    which must not share a session with any open cursor/transaction state."""
     import psycopg
+
+    if not config.DATABASE_URL:
+        raise SystemExit("FATAL: DATABASE_URL missing.")
     return psycopg.connect(config.DATABASE_URL, autocommit=True)
+
+
+def one(sql: str, params: Sequence[Any] | None = None) -> Any:
+    """Run a single-value query on the shared connection."""
+    with get_pg().cursor() as cur:
+        cur.execute(sql, params)
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def rows(sql: str, params: Sequence[Any] | None = None) -> list[tuple]:
+    with get_pg().cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchall()
+
+
+def iter_rows(sql: str, params: Sequence[Any] | None = None, size: int = 2000) -> Iterator[tuple]:
+    """Server-side cursor iteration for big reads (vectors, transcripts)."""
+    conn = get_pg()
+    with conn.cursor(name=f"harness_iter_{int(time.time() * 1000)}") as cur:
+        cur.itersize = size
+        cur.execute(sql, params)
+        yield from cur
+
+
+def with_retry(fn: Callable[[], Any], what: str, attempts: int = 4) -> Any:
+    """Network retry with exponential backoff (2s, 4s, 8s) — pooler blips happen."""
+    for attempt in range(attempts):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: BLE001 — deliberate catch-all with loud rethrow
+            if attempt == attempts - 1:
+                raise
+            wait = 2 ** (attempt + 1)
+            print(f"  retry {attempt + 1}/{attempts - 1} for {what} in {wait}s: {exc}", flush=True)
+            time.sleep(wait)
+
+
+def table_count(table: str, where: str = "TRUE") -> int:
+    return int(one(f"SELECT count(*) FROM public.{table} WHERE {where}"))
