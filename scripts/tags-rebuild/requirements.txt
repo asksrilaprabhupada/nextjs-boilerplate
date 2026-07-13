@@ -1,9 +1,11 @@
-# Offline batch harness for the Tags & FTS Rebuild.
-# Install:  python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-supabase>=2.4.0          # service-key client for RPCs + small reads/writes (PostgREST)
-psycopg[binary]>=3.1     # optional: direct Postgres for fast bulk vector reads / backfill (needs DATABASE_URL)
+# Offline batch harness for the Tags & FTS Rebuild (v2).
+# Install:  python -m venv .venv  →  activate  →  pip install -r requirements.txt
+supabase>=2.4.0          # service-key client for vocab_terms upserts (PostgREST)
+psycopg[binary]>=3.1     # REQUIRED: direct Postgres via the Session Pooler DATABASE_URL
 numpy>=1.26              # vector math for clustering
-scikit-learn>=1.4        # MiniBatchKMeans + agglomerative merge (Phase 1 vocabulary)
-requests>=2.31           # raw HTTP to Gemini / Voyage / Cohere (matches the app's fetch approach)
-python-dotenv>=1.0       # load .env.local for local runs
+scikit-learn>=1.4        # MiniBatchKMeans + agglomerative merge (vocabulary build)
+requests>=2.31           # raw HTTP to Gemini / Voyage (matches the app's fetch approach)
+python-dotenv>=1.0       # loads scripts/tags-rebuild/.env
 tqdm>=4.66               # progress bars for the long passes
+regex>=2024.4            # \p{Lu}-class Unicode regex — mirrors the app's speaker-prefix rule
+colorama>=0.4            # green/red --doctor checklist on Windows terminals

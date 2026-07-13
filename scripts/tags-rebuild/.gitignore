@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 .env
 .env.local
+# Built artifacts (reviewed locally at the ⛔ gate; never committed)
+vocabulary.json
+pilot-report.md
+shards/
