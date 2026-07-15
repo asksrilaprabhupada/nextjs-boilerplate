@@ -78,10 +78,13 @@ def rows(sql: str, params: Sequence[Any] | None = None) -> list[tuple]:
 def iter_rows(sql: str, params: Sequence[Any] | None = None, size: int = 2000) -> Iterator[tuple]:
     """Server-side cursor iteration for big reads (vectors, transcripts)."""
     conn = get_pg()
-    with conn.cursor(name=f"harness_iter_{int(time.time() * 1000)}") as cur:
-        cur.itersize = size
-        cur.execute(sql, params)
-        yield from cur
+    # Named cursors require an explicit transaction block (the shared
+    # connection is autocommit); these iterations are read-only.
+    with conn.transaction():
+        with conn.cursor(name=f"harness_iter_{int(time.time() * 1000)}") as cur:
+            cur.itersize = size
+            cur.execute(sql, params)
+            yield from cur
 
 
 def with_retry(fn: Callable[[], Any], what: str, attempts: int = 4) -> Any:
