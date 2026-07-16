@@ -6,4 +6,5 @@ __pycache__/
 # Built artifacts (reviewed locally at the ⛔ gate; never committed)
 vocabulary.json
 pilot-report.md
+hygiene-report.md
 shards/

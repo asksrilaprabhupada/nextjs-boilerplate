@@ -12,19 +12,26 @@ continues exactly where the previous invocation stopped.
 
 Steps (each idempotent):
   1. fts_core backfill               (touch rows WHERE fts_core IS NULL)
-  2. vocabulary build + load         (vocabulary.json + vocab_terms)
-  ⛔  THE ONE GATE: review vocabulary.json, press Enter (skipped by --yes)
-  3. pilot                           (first stratified 1,000; auto-validate;
-                                      pilot-report.md; auto-continue per the
-                                      standing ruling unless thresholds fail)
+  2. vocabulary build + load         (vocabulary.json + vocab_terms; scope
+                                      notes; merge PROPOSALS in "merges")
+  ⛔  THE ONE GATE: review vocabulary.json — terms, scope notes AND the MERGES
+      section (veto a merge by editing the file) — then press Enter
+      (skipped by --yes)
+  3. pilot                           (2,000 seeded-random stratified passages;
+                                      auto-gates + pilot-report.md with the
+                                      real extrapolated cost + 30 skim samples;
+                                      auto-continue per the standing ruling
+                                      unless a gate fails)
   4. full tagging                    (sharded Gemini Batch; machine-enforced
                                       MAX_SPEND_USD ceiling; resumable)
   5. finalize                        (verse_chunks inheritance; tsvector
-                                      verification; GIN indexes CONCURRENTLY)
+                                      verification; GIN indexes CONCURRENTLY;
+                                      hygiene report; completion checklist)
 
 The harness only ever writes the NEW columns (tags_core, questions,
-fts_expansion_src + their trigger-derived tsvectors) and its own support
-tables — the old tags/fts columns and the live search stay untouched.
+fts_expansion_src, passage_function + their trigger-derived tsvectors) and its
+own support tables — the old tags/fts columns and the live search stay
+untouched.
 """
 from __future__ import annotations
 
@@ -40,7 +47,12 @@ def gate_vocabulary(skip: bool) -> None:
     if skip:
         print("⛔ gate skipped (--yes): vocabulary accepted by standing ruling.", flush=True)
         return
-    print(f"\n⛔ Review {config.VOCAB_PATH}, then press Enter to continue.", flush=True)
+    print(
+        f"\n⛔ Review {config.VOCAB_PATH} — the terms with their scope notes AND"
+        " the \"merges\" section (every entry is a PROPOSAL; veto one by editing"
+        " the file: rename/split/re-add terms). Then press Enter to continue.",
+        flush=True,
+    )
     try:
         input()
     except EOFError:
@@ -50,16 +62,20 @@ def gate_vocabulary(skip: bool) -> None:
         )
 
 
-def run_pilot(run_id: str, model: str, term_by_slug: dict) -> None:
+def run_pilot(run_id: str, model: str, vocab_index) -> None:
     import tagging
 
     if tagging.pilot_done() and config.PILOT_REPORT_PATH.exists():
         print("Step 3 · pilot: already complete (pilot-report.md exists).", flush=True)
         return
-    print("Step 3 · pilot (first stratified 1,000 passages)…", flush=True)
+    print(
+        f"Step 3 · pilot ({config.PILOT_SIZE:,} seeded-random stratified passages,"
+        f" seed {config.SAMPLE_SEED!r})…",
+        flush=True,
+    )
     tagging.plan_pilot_shards(run_id)
     tagging.reconcile()
-    tagging.submit_pending(model, term_by_slug)
+    tagging.submit_pending(model, vocab_index)
     tagging.collect(run_id, shard_key_prefix="pilot:")
     stats = tagging.pilot_stats_from_db()
     failures = tagging.pilot_thresholds_pass(stats)
@@ -76,7 +92,7 @@ def run_pilot(run_id: str, model: str, term_by_slug: dict) -> None:
     )
 
 
-def run_full(run_id: str, model: str, term_by_slug: dict) -> bool:
+def run_full(run_id: str, model: str, vocab_index) -> bool:
     """Returns True when every Gemini-eligible row is tagged; False when the
     cost ceiling (or repeated shard failure) stopped the run early."""
     import db
@@ -86,7 +102,7 @@ def run_full(run_id: str, model: str, term_by_slug: dict) -> bool:
     for _ in range(MAX_WAVES_PER_INVOCATION):
         tagging.reconcile()
         tagging.plan_full_shards(run_id)
-        tagging.submit_pending(model, term_by_slug)
+        tagging.submit_pending(model, vocab_index)
         in_flight = db.one(
             "SELECT count(*) FROM public.tag_batch_jobs"
             " WHERE status IN ('submitted','running','retrieved')"
@@ -155,18 +171,17 @@ def main() -> int:
 
     gate_vocabulary(skip=args.yes)
 
-    vocabulary = build_vocabulary.load_vocabulary()
-    term_by_slug = {t["slug"]: t for t in vocabulary["terms"]}
+    vocab_index = tagging.load_vocab_index()
     run_id = audit.open_or_create_run(model)
     print(f"  tag run: {run_id} · prompt {config.PROMPT_VERSION} · vocab {audit.vocab_version()}", flush=True)
 
-    run_pilot(run_id, model, term_by_slug)
+    run_pilot(run_id, model, vocab_index)
 
-    complete = run_full(run_id, model, term_by_slug)
+    complete = run_full(run_id, model, vocab_index)
     if not complete:
         return 3
 
-    print("Step 5 · finalize (inheritance, tsvectors, GIN indexes)…", flush=True)
+    print("Step 5 · finalize (inheritance, tsvectors, GIN indexes, hygiene report)…", flush=True)
     finalize.run()
 
     ledger = tagging.spend_ledger()

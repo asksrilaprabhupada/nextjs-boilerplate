@@ -37,19 +37,32 @@ CREATE TABLE IF NOT EXISTS public.tag_runs (
 ALTER TABLE public.tag_runs ENABLE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS public.tag_evidence (
-  id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  run_id        uuid NOT NULL REFERENCES public.tag_runs(id),
-  table_name    text NOT NULL,
-  passage_id    uuid NOT NULL,
-  tag           text NOT NULL,
-  evidence      text NOT NULL,
-  accepted      boolean NOT NULL,
-  reject_reason text,
-  created_at    timestamptz NOT NULL DEFAULT now()
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  run_id         uuid NOT NULL REFERENCES public.tag_runs(id),
+  table_name     text NOT NULL,
+  passage_id     uuid NOT NULL,
+  tag            text NOT NULL,
+  evidence       text NOT NULL,
+  accepted       boolean NOT NULL,
+  reject_reason  text,
+  -- Soft evidence gate: in-vocabulary tags are KEPT even when their evidence
+  -- sentence can't be located (accepted=true, evidence_found=false, the miss
+  -- reason in reject_reason). evidence_start/evidence_end are character
+  -- offsets of the matched evidence into the composed passage text AS SENT to
+  -- Gemini (for verses that is the TRANSLATION/SYNONYMS/PURPORT composition,
+  -- not a single raw column).
+  evidence_found boolean,
+  evidence_start integer,
+  evidence_end   integer,
+  created_at     timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE public.tag_evidence ENABLE ROW LEVEL SECURITY;
 CREATE INDEX IF NOT EXISTS idx_tag_evidence_passage ON public.tag_evidence (table_name, passage_id);
 CREATE INDEX IF NOT EXISTS idx_tag_evidence_run     ON public.tag_evidence (run_id);
+-- Same columns as additive ALTERs for a tag_evidence created by harness v2.
+ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS evidence_found boolean;
+ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS evidence_start integer;
+ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS evidence_end integer;
 
 -- Additive columns on the shard state machine (support table owned by this
 -- harness): run linkage + pre-submission token estimates for the cost ceiling
@@ -57,6 +70,16 @@ CREATE INDEX IF NOT EXISTS idx_tag_evidence_run     ON public.tag_evidence (run_
 ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS run_id uuid;
 ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS est_input_tok bigint DEFAULT 0;
 ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS est_output_tok bigint DEFAULT 0;
+
+-- passage_function (additive, killable, hidden metadata) on the five content
+-- tables — ONE primary value per passage from the closed enum in config.py,
+-- enforced in harness code, never by a constraint. verse_chunks inherit it
+-- from their parent verse at finalize.
+ALTER TABLE public.verses                ADD COLUMN IF NOT EXISTS passage_function text;
+ALTER TABLE public.verse_chunks          ADD COLUMN IF NOT EXISTS passage_function text;
+ALTER TABLE public.prose_paragraphs      ADD COLUMN IF NOT EXISTS passage_function text;
+ALTER TABLE public.transcript_paragraphs ADD COLUMN IF NOT EXISTS passage_function text;
+ALTER TABLE public.letter_paragraphs     ADD COLUMN IF NOT EXISTS passage_function text;
 """
 
 
@@ -98,11 +121,15 @@ def open_or_create_run(model: str) -> str:
     snapshot = {
         "max_tags": config.MAX_TAGS,
         "max_questions": config.MAX_QUESTIONS,
-        "shortlist_size": config.SHORTLIST_SIZE,
+        "shortlist_semantic": config.SHORTLIST_SEMANTIC,
+        "shortlist_cap": config.SHORTLIST_CAP,
         "shard_size": config.SHARD_SIZE,
         "min_evidence_words": config.MIN_EVIDENCE_WORDS,
         "passage_char_cap": config.PASSAGE_CHAR_CAP,
         "max_spend_usd": config.MAX_SPEND_USD,
+        "sample_seed": config.SAMPLE_SEED,
+        "pilot_size": config.PILOT_SIZE,
+        "passage_functions": config.PASSAGE_FUNCTIONS,
     }
     with db.get_pg().cursor() as cur:
         cur.execute(
@@ -121,8 +148,9 @@ def finish_run(run_id: str, notes: str = "") -> None:
         )
 
 
-def record_evidence(run_id: str, records: list[tuple[str, str, str, str, bool, str | None]]) -> None:
-    """records: (table_name, passage_id, tag, evidence, accepted, reject_reason)."""
+def record_evidence(run_id: str, records: list[tuple]) -> None:
+    """records: (table_name, passage_id, tag, evidence, accepted, reject_reason,
+    evidence_found, evidence_start, evidence_end) — matches tagging.apply_results."""
     if not records:
         return
     conn = db.get_pg()
@@ -130,7 +158,8 @@ def record_evidence(run_id: str, records: list[tuple[str, str, str, str, bool, s
         with conn.cursor() as cur:
             cur.executemany(
                 "INSERT INTO public.tag_evidence"
-                " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason)"
-                " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s)",
+                " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason,"
+                "  evidence_found, evidence_start, evidence_end)"
+                " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s)",
                 [(run_id, *r) for r in records],
             )

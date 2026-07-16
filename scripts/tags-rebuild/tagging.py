@@ -1,26 +1,50 @@
 """
-tagging.py — the combined tagging + questions pass (Gemini Batch API).
+tagging.py — the combined tagging + questions + passage_function pass
+(Gemini Batch API).
 
-ONE structured call per passage returns BOTH:
+ONE structured call per passage returns ALL of:
+  • reasoning — a free-text field placed FIRST in the responseSchema (the model
+    reasons before any constrained field, mitigating the documented format-tax
+    of constrained decoding); never stored;
+  • passage_function — ONE primary value from the closed enum in
+    config.PASSAGE_FUNCTIONS (hidden metadata; additive column; killable);
   • tags_core — flexible count up to config.MAX_TAGS, every tag constrained to
-    the passage's vocab shortlist by a strict responseSchema enum, each with an
-    evidence sentence; and
-  • questions — the few distinct questions the passage genuinely answers
-    (doc2query lane) — requested ONLY for Prabhupāda-speaking / HIS passages.
-    Gating comes exclusively from provenance.json: NOT-HIS/MIXED-VERIFY rows
-    get topic tags only, and their responseSchema omits questions entirely.
+    the passage's candidate shortlist by a strict responseSchema enum, each
+    with an evidence sentence. ZERO tags is a valid answer; and
+  • questions — 0-3 distinct questions the passage genuinely ANSWERS, each with
+    the exact answer span as evidence (doc2query lane) — requested ONLY for
+    Prabhupāda-speaking / HIS passages. Gating comes exclusively from
+    provenance.json: NOT-HIS/MIXED-VERIFY rows get topic tags only, and their
+    responseSchema omits questions entirely.
 
-verse_chunks are NEVER sent — they inherit tags_core from their parent verse
-by SQL (finalize.py).
+The candidate shortlist is a UNION: semantic top-SHORTLIST_SEMANTIC (pgvector)
+∪ exact alias/lexical matches found in the passage ∪ the hard-negative partners
+of anything shortlisted (the model always sees BOTH sides of a contrast pair),
+capped ≈ SHORTLIST_CAP. Every candidate line carries the term's scope note and
+its "do NOT confuse with" hard negatives, so the model judges against
+definitions, not just labels.
+
+verse_chunks are NEVER sent — they inherit tags_core + passage_function from
+their parent verse by SQL (finalize.py).
 
 Code gates on every response (evidence is stored either way — tag_evidence):
-  1. closed vocabulary: a tag not in vocabulary.json is dropped;
-  2. evidence: the sentence must appear in the passage under a lenient fold
-     (lowercase + strip diacritics + collapse whitespace), ≥ MIN_EVIDENCE_WORDS.
+  1. closed vocabulary: a tag not in vocabulary.json is dropped (HARD);
+  2. evidence (SOFT): the sentence must appear in the passage under a lenient
+     fold (lowercase + strip diacritics + collapse whitespace),
+     ≥ MIN_EVIDENCE_WORDS. In-vocabulary tags whose evidence fails are KEPT and
+     flagged evidence_found=false — abstract doctrinal themes often have no
+     single quotable sentence, and strict-drop preferentially deletes the best
+     tags. Matched evidence stores character offsets (into the composed passage
+     text as sent to Gemini);
+  3. questions: an unevidenced answer span DROPS the question (questions are
+     generated text — stricter than tags);
+  4. passage_function outside the enum → NULL.
 
 Batch mechanics (resumable; jobs run server-side up to 24h — close the script
 after submission and rerun later to collect):
   • deterministic shard names ("pilot:verses:000", "transcript_paragraphs:w01:0003");
+  • the pilot is PILOT_SIZE seeded-random passages, stratified by table
+    (seed = config.SAMPLE_SEED, recorded in pilot-report.md);
   • Google job IDs recorded in tag_batch_jobs BEFORE any polling;
   • on restart, reconcile against Google's job list by display_name so
     accepted-but-unrecorded jobs are recovered, never resubmitted;
@@ -30,7 +54,9 @@ after submission and rerun later to collect):
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re as stdre
 import time
 import unicodedata
 from dataclasses import dataclass, field
@@ -44,35 +70,102 @@ import gemini_client
 import provenance
 
 GEN_TEMPERATURE = 0.2
-MAX_OUTPUT_TOKENS = 2048
+MAX_OUTPUT_TOKENS = 4096  # reasoning + evidence quotes + answer spans need room
 IN_FLIGHT = ("submitted", "running")
 UNFINISHED = ("pending", "submitted", "running", "retrieved")
+
+_QUOTE_MAP = {"‘": "'", "’": "'", "“": '"', "”": '"', "—": "-", "–": "-"}
 
 
 # ── text folding + evidence gate ────────────────────────────────────────────
 
+def fold_text_with_map(text: str) -> tuple[str, list[int]]:
+    """Lenient fold for the evidence gate — lowercase, strip diacritics,
+    normalize quotes/dashes, collapse whitespace — PLUS an index map from every
+    folded character back to its character offset in the original text, so a
+    match in folded space yields offsets into the passage as sent to Gemini.
+    Deliberately looser than the display verbatim validator so valid tags
+    aren't over-flagged."""
+    out: list[str] = []
+    mapping: list[int] = []
+    pending_space = False
+    for i, ch in enumerate(text or ""):
+        for d in unicodedata.normalize("NFD", ch):
+            if unicodedata.combining(d):
+                continue
+            for c in _QUOTE_MAP.get(d, d).lower():
+                if c.isspace():
+                    pending_space = True
+                    continue
+                if pending_space:
+                    if out:
+                        out.append(" ")
+                        mapping.append(i)
+                    pending_space = False
+                out.append(c)
+                mapping.append(i)
+    return "".join(out), mapping
+
+
 def fold_text(text: str) -> str:
-    """Lenient fold for the evidence gate: lowercase, strip diacritics,
-    normalize quotes/dashes, collapse whitespace. Deliberately looser than the
-    display verbatim validator so valid tags aren't over-dropped."""
-    decomposed = unicodedata.normalize("NFD", text or "")
-    stripped = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
-    normalized = (
-        stripped.lower()
-        .replace("‘", "'").replace("’", "'")
-        .replace("“", '"').replace("”", '"')
-        .replace("—", "-").replace("–", "-")
-    )
-    return " ".join(normalized.split())
+    return fold_text_with_map(text)[0]
 
 
-def evidence_ok(evidence: str, folded_passage: str) -> tuple[bool, str | None]:
+def evidence_ok(evidence: str, folded_passage: str, mapping: list[int]) -> tuple[bool, str | None, int | None, int | None]:
+    """Returns (found, miss_reason, start_offset, end_offset). Offsets are
+    character positions in the ORIGINAL passage text (as sent to Gemini)."""
     words = (evidence or "").split()
     if len(words) < config.MIN_EVIDENCE_WORDS:
-        return False, f"evidence shorter than {config.MIN_EVIDENCE_WORDS} words"
-    if fold_text(evidence) not in folded_passage:
-        return False, "evidence not found in passage (lenient fold)"
-    return True, None
+        return False, f"evidence shorter than {config.MIN_EVIDENCE_WORDS} words", None, None
+    needle = fold_text(evidence)
+    pos = folded_passage.find(needle)
+    if pos == -1 or not needle:
+        return False, "evidence not found in passage (lenient fold)", None, None
+    start = mapping[pos]
+    end = mapping[pos + len(needle) - 1] + 1
+    return True, None, start, end
+
+
+# ── vocabulary index (shortlist union + prompt context) ─────────────────────
+
+class VocabIndex:
+    """Everything the tagging pass needs from the frozen vocabulary.json:
+    slug lookup, the folded alias → slug map for the exact-lexical shortlist
+    lane, and hard-negative partners for the contrast-pair union."""
+
+    def __init__(self, vocabulary: dict) -> None:
+        self.terms: list[dict] = vocabulary["terms"]
+        self.term_by_slug: dict[str, dict] = {t["slug"]: t for t in self.terms}
+        self.slugs: set[str] = set(self.term_by_slug)
+        self.term_count: int = int(vocabulary.get("term_count") or len(self.terms))
+        alias_map: dict[str, str] = {}
+        for t in self.terms:
+            for alias in [t["term"], *t.get("variants", [])]:
+                folded = fold_text(alias)
+                if len(folded) >= 3:
+                    alias_map.setdefault(folded, t["slug"])
+        self.alias_to_slug = alias_map
+        if alias_map:
+            pattern = "|".join(stdre.escape(a) for a in sorted(alias_map, key=len, reverse=True))
+            self.alias_regex = stdre.compile(r"(?<![a-z0-9])(?:" + pattern + r")(?![a-z0-9])")
+        else:
+            self.alias_regex = None
+
+    def lexical_slugs(self, folded_text: str) -> list[str]:
+        if self.alias_regex is None:
+            return []
+        found: dict[str, None] = {}
+        for m in self.alias_regex.finditer(folded_text):
+            found.setdefault(self.alias_to_slug[m.group(0)], None)
+        return list(found)
+
+    def hard_negatives(self, slug: str) -> list[str]:
+        term = self.term_by_slug.get(slug) or {}
+        return [s for s in term.get("hard_negatives", []) if s in self.slugs]
+
+
+def load_vocab_index() -> VocabIndex:
+    return VocabIndex(build_vocabulary.load_vocabulary())
 
 
 # ── passages ────────────────────────────────────────────────────────────────
@@ -167,10 +260,14 @@ def load_passages(table: str, ids: list[str]) -> list[Passage]:
     return passages
 
 
-def attach_shortlists(table: str, passages: list[Passage]) -> None:
-    """Top-SHORTLIST_SIZE nearest vocab terms per passage via pgvector — free SQL."""
+def attach_shortlists(table: str, passages: list[Passage], vocab: VocabIndex) -> None:
+    """Candidate UNION per passage: semantic top-SHORTLIST_SEMANTIC via
+    pgvector ∪ exact alias matches found in the passage text ∪ the
+    hard-negative partners of anything shortlisted. The union (before
+    negatives) is capped at SHORTLIST_CAP; negatives are always added back so
+    the model sees both sides of every contrast pair."""
     ids = [p.id for p in passages]
-    shortlist_by_id: dict[str, list[str]] = {}
+    semantic_by_id: dict[str, list[str]] = {}
     for pid, slugs in db.rows(
         f"SELECT p.id::text, ("
         f"   SELECT array_agg(sub.slug ORDER BY sub.dist) FROM ("
@@ -179,80 +276,137 @@ def attach_shortlists(table: str, passages: list[Passage]) -> None:
         f"     ORDER BY embedding <=> p.embedding_context4 LIMIT %s) sub)"
         f" FROM public.{table} p"
         f" WHERE p.id = ANY(%s::uuid[]) AND p.embedding_context4 IS NOT NULL",
-        (config.SHORTLIST_SIZE, ids),
+        (config.SHORTLIST_SEMANTIC, ids),
     ):
-        shortlist_by_id[pid] = list(slugs or [])
+        semantic_by_id[pid] = list(slugs or [])
     for passage in passages:
-        passage.shortlist = shortlist_by_id.get(passage.id, [])
+        semantic = [s for s in semantic_by_id.get(passage.id, []) if s in vocab.slugs]
+        if not semantic:
+            passage.shortlist = []
+            continue
+        folded = fold_text(passage.text)
+        in_semantic = set(semantic)
+        lexical = sorted(s for s in vocab.lexical_slugs(folded) if s not in in_semantic)
+        base = (semantic + lexical)[: config.SHORTLIST_CAP]
+        seen = set(base)
+        negatives: list[str] = []
+        for slug in base:
+            for neg in vocab.hard_negatives(slug):
+                if neg not in seen:
+                    seen.add(neg)
+                    negatives.append(neg)
+        passage.shortlist = base + negatives
 
 
 # ── prompt + schema ─────────────────────────────────────────────────────────
 
 def response_schema(shortlist: list[str], questions_allowed: bool) -> dict:
-    schema: dict = {
-        "type": "OBJECT",
-        "properties": {
-            "tags": {
-                "type": "ARRAY",
-                "maxItems": config.MAX_TAGS,
-                "items": {
-                    "type": "OBJECT",
-                    "properties": {
-                        "tag": {"type": "STRING", "enum": shortlist},
-                        "evidence": {"type": "STRING"},
-                    },
-                    "required": ["tag", "evidence"],
+    """reasoning comes FIRST (free text before any constrained field —
+    mitigates the documented format-tax of constrained decoding), then the
+    constrained fields, in a pinned propertyOrdering."""
+    properties: dict = {
+        "reasoning": {"type": "STRING"},
+        "passage_function": {"type": "STRING", "enum": config.PASSAGE_FUNCTIONS},
+        "tags": {
+            "type": "ARRAY",
+            "maxItems": config.MAX_TAGS,
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "tag": {"type": "STRING", "enum": shortlist},
+                    "evidence": {"type": "STRING"},
                 },
-            }
+                "required": ["tag", "evidence"],
+                "propertyOrdering": ["tag", "evidence"],
+            },
         },
-        "required": ["tags"],
     }
+    ordering = ["reasoning", "passage_function", "tags"]
     if questions_allowed:
-        schema["properties"]["questions"] = {
+        properties["questions"] = {
             "type": "ARRAY",
             "maxItems": config.MAX_QUESTIONS,
-            "items": {"type": "STRING"},
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "question": {"type": "STRING"},
+                    "evidence": {"type": "STRING"},
+                },
+                "required": ["question", "evidence"],
+                "propertyOrdering": ["question", "evidence"],
+            },
         }
-    return schema
+        ordering.append("questions")
+    return {
+        "type": "OBJECT",
+        "properties": properties,
+        "required": ["reasoning", "passage_function", "tags"],
+        "propertyOrdering": ordering,
+    }
 
 
-def build_prompt(passage: Passage, term_by_slug: dict[str, dict]) -> str:
+def _candidate_line(slug: str, vocab: VocabIndex) -> str:
+    term = vocab.term_by_slug[slug]
+    line = f"- {slug} — \"{term['term']}\" ({term['facet']})"
+    note = (term.get("scope_note") or "").strip()
+    if note:
+        line += f". Scope: {note}"
+    negatives = vocab.hard_negatives(slug)
+    if negatives:
+        names = ", ".join(f"{n} (\"{vocab.term_by_slug[n]['term']}\")" for n in negatives)
+        line += f". Do NOT confuse with: {names}"
+    return line
+
+
+def build_prompt(passage: Passage, vocab: VocabIndex) -> str:
     candidates = "\n".join(
-        f"- {slug}: {term_by_slug[slug]['term']} ({term_by_slug[slug]['facet']})"
-        for slug in passage.shortlist
-        if slug in term_by_slug
+        _candidate_line(slug, vocab) for slug in passage.shortlist if slug in vocab.term_by_slug
     )
+    functions = ", ".join(config.PASSAGE_FUNCTIONS)
     base = (
         "You are indexing a passage from Śrīla Prabhupāda's corpus for subject"
-        " search.\n\nCANDIDATE TAGS (closed list — you may ONLY use these slugs):\n"
+        " search.\n\nCANDIDATE TAGS (closed list — you may ONLY use these slugs;"
+        " each shows its scope and what NOT to confuse it with):\n"
         f"{candidates}\n\nRULES:\n"
-        "1. Choose only tags whose subject the passage SUBSTANTIALLY discusses —"
-        " as few or as many of the candidates as truly apply (often 2-6, never"
-        f" more than {config.MAX_TAGS}). Do not tag passing mentions.\n"
-        "2. For EACH tag, quote one EXACT sentence from the passage (verbatim,"
+        "1. First fill `reasoning`: 2-4 sentences on what this passage is"
+        " actually ABOUT, which candidates truly fit, and which near-misses you"
+        " are rejecting and why. Reason BEFORE you answer.\n"
+        "2. Tag ABOUTNESS only. Do NOT tag a subject the passage merely mentions"
+        " in passing, quotes from an opponent, or explicitly REJECTS (a passage"
+        " arguing against a view is not endorsing it). Choose the MOST SPECIFIC"
+        " fitting concepts; do not pad with broad ancestors. Tag a Person, Place"
+        " or Scripture only when it is PROMINENT in the passage, never on a"
+        " stray mention. ZERO tags is a valid answer — filler or small talk may"
+        f" be about nothing; never force tags. Never more than {config.MAX_TAGS}.\n"
+        "3. For EACH tag, quote one EXACT sentence from the passage (verbatim,"
         " no paraphrase, no ellipsis) that shows the passage discusses that"
-        " subject. Tags without a real verbatim sentence are discarded.\n"
+        " subject.\n"
+        "4. `passage_function`: the ONE primary thing this passage DOES, from:"
+        f" {functions}.\n"
     )
     if passage.questions_allowed:
         base += (
-            f"3. Also list the few (at most {config.MAX_QUESTIONS}) DISTINCT"
-            " questions a person might sincerely ask that THIS passage genuinely"
-            " answers. Write natural questions, one sentence each; no duplicates,"
-            " no questions the passage only touches in passing.\n"
+            f"5. `questions`: the 0-{config.MAX_QUESTIONS} DISTINCT questions a"
+            " person might sincerely ask that THIS passage genuinely ANSWERS."
+            " For each, `evidence` = the EXACT contiguous span from the passage"
+            " (verbatim) that contains the answer. NEVER write a question whose"
+            " answer needs outside facts, is only an inference, is far broader"
+            " than the passage, or would present a view the passage rejects or"
+            " negates as if endorsed. ZERO questions is a valid answer.\n"
         )
     else:
         base += (
-            "3. This passage is NOT Śrīla Prabhupāda's own words — return topic"
-            " tags only.\n"
+            "5. This passage is NOT Śrīla Prabhupāda's own words — return"
+            " reasoning, passage_function and topic tags only.\n"
         )
     return base + "\nPASSAGE:\n" + passage.text
 
 
-def request_line(passage: Passage, term_by_slug: dict[str, dict]) -> dict:
+def request_line(passage: Passage, vocab: VocabIndex) -> dict:
     return {
         "key": f"{passage.table}|{passage.id}",
         "request": {
-            "contents": [{"parts": [{"text": build_prompt(passage, term_by_slug)}]}],
+            "contents": [{"parts": [{"text": build_prompt(passage, vocab)}]}],
             "generationConfig": {
                 "responseMimeType": "application/json",
                 "responseSchema": response_schema(passage.shortlist, passage.questions_allowed),
@@ -266,8 +420,9 @@ def request_line(passage: Passage, term_by_slug: dict[str, dict]) -> dict:
 # ── shard planning (deterministic names, persisted before submission) ───────
 
 def plan_pilot_shards(run_id: str) -> None:
-    """First stratified PILOT_SIZE passages, proportional across the five
-    content tables ('first' = ORDER BY id, deterministic). The verse_chunks
+    """PILOT_SIZE seeded-random passages, stratified proportionally across the
+    five content tables (ORDER BY md5(seed || id) — deterministic for a given
+    config.SAMPLE_SEED, which is recorded in pilot-report.md). The verse_chunks
     stratum is fulfilled through parent verses — chunks are never sent; their
     representation is inherited by SQL after apply."""
     if db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", ("pilot:%",)):
@@ -287,18 +442,18 @@ def plan_pilot_shards(run_id: str) -> None:
             rows = db.rows(
                 "SELECT DISTINCT v.id::text FROM ("
                 "  SELECT verse_id FROM public.verse_chunks"
-                "  WHERE tags_core IS NULL ORDER BY id LIMIT %s) c"
+                "  WHERE tags_core IS NULL ORDER BY md5(%s || id::text) LIMIT %s) c"
                 " JOIN public.verses v ON v.id = c.verse_id"
                 " WHERE v.tags_core IS NULL AND v.embedding_context4 IS NOT NULL",
-                (want,),
+                (config.SAMPLE_SEED, want),
             )
             picked["verses"].extend(r[0] for r in rows)
         else:
             rows = db.rows(
                 f"SELECT id::text FROM public.{table}"
                 " WHERE tags_core IS NULL AND embedding_context4 IS NOT NULL"
-                " ORDER BY id LIMIT %s",
-                (want,),
+                " ORDER BY md5(%s || id::text) LIMIT %s",
+                (config.SAMPLE_SEED, want),
             )
             picked[table].extend(r[0] for r in rows)
     for table, ids in picked.items():
@@ -308,7 +463,11 @@ def plan_pilot_shards(run_id: str) -> None:
         for index in range(0, len(ids), config.SHARD_SIZE):
             chunk = ids[index : index + config.SHARD_SIZE]
             _insert_shard(f"pilot:{table}:{index // config.SHARD_SIZE:03d}", table, chunk, run_id)
-    print(f"  pilot planned: {sum(len(v) for v in picked.values())} passages.", flush=True)
+    print(
+        f"  pilot planned: {sum(len(v) for v in picked.values())} passages"
+        f" (seeded-random, seed {config.SAMPLE_SEED!r}).",
+        flush=True,
+    )
 
 
 def plan_full_shards(run_id: str) -> int:
@@ -396,10 +555,10 @@ def measured_output_tokens_per_row() -> float:
 
 # ── submission ──────────────────────────────────────────────────────────────
 
-def build_shard_file(shard_key: str, table: str, ids: list[str], term_by_slug: dict[str, dict]) -> tuple[int, int, int]:
+def build_shard_file(shard_key: str, table: str, ids: list[str], vocab: VocabIndex) -> tuple[int, int, int]:
     """Write shards/<key>.requests.jsonl. Returns (rows_written, est_in, est_out)."""
     passages = load_passages(table, ids)
-    attach_shortlists(table, passages)
+    attach_shortlists(table, passages, vocab)
     usable = [p for p in passages if p.shortlist]
     skipped = len(passages) - len(usable)
     if skipped:
@@ -409,7 +568,7 @@ def build_shard_file(shard_key: str, table: str, ids: list[str], term_by_slug: d
     est_in = 0
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         for passage in usable:
-            line = request_line(passage, term_by_slug)
+            line = request_line(passage, vocab)
             raw = json.dumps(line, ensure_ascii=False)
             est_in += len(raw) // 4  # chars/4 ≈ tokens; includes schema+enum overhead
             f.write(raw + "\n")
@@ -421,7 +580,7 @@ def shard_request_path(shard_key: str) -> Path:
     return config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.requests.jsonl"
 
 
-def submit_pending(model: str, term_by_slug: dict[str, dict]) -> None:
+def submit_pending(model: str, vocab: VocabIndex) -> None:
     """Submit pending shards while the ceiling allows. Job IDs are recorded in
     tag_batch_jobs immediately on acceptance — BEFORE any polling."""
     pending = db.rows(
@@ -429,7 +588,7 @@ def submit_pending(model: str, term_by_slug: dict[str, dict]) -> None:
         " WHERE status = 'pending' ORDER BY shard_key"
     )
     for shard_key, table, ids in pending:
-        rows_written, est_in, est_out = build_shard_file(shard_key, table, ids, term_by_slug)
+        rows_written, est_in, est_out = build_shard_file(shard_key, table, ids, vocab)
         if rows_written == 0:
             with db.get_pg().cursor() as cur:
                 cur.execute(
@@ -539,9 +698,11 @@ class ShardOutcome:
     schema_valid: int = 0
     tags_returned: int = 0
     tags_out_of_vocab: int = 0
-    tags_evidence_rejected: int = 0
+    tags_unevidenced_kept: int = 0
     tags_accepted: int = 0
     questions_kept: int = 0
+    questions_dropped: int = 0
+    functions_kept: int = 0
     zero_tag_rows: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -549,13 +710,16 @@ class ShardOutcome:
 
 
 def apply_results(shard_key: str, table: str, results_path, run_id: str,
-                  vocab_slugs: set[str], term_by_slug: dict[str, dict]) -> ShardOutcome:
+                  vocab: VocabIndex) -> ShardOutcome:
     """Validate + write one shard inside ONE transaction; mark applied only
     after commit. Writes ONLY new columns (tags_core, questions,
-    fts_expansion_src — the trigger derives the tsvectors). Rows whose tags all
-    fail the gates get tags_core='{}' so they are never resubmitted."""
+    fts_expansion_src, passage_function — the trigger derives the tsvectors).
+    Gates: out-of-vocabulary → HARD drop; missing evidence → SOFT (tag kept,
+    evidence_found=false); unevidenced question → dropped; passage_function
+    outside the enum → NULL. Rows whose tags all fail the hard gate get
+    tags_core='{}' so they are never resubmitted."""
     outcome = ShardOutcome(shard_key=shard_key)
-    updates: list[tuple] = []          # (tags[], questions|None, expansion|None, id)
+    updates: list[tuple] = []   # (tags[], questions|None, expansion|None, function|None, id)
     evidence_records: list[tuple] = []
 
     passages = {p.id: p for p in load_passages(table, [
@@ -581,7 +745,7 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                 continue
             outcome.schema_valid += 1
 
-            folded = fold_text(passage.text)
+            folded, mapping = fold_text_with_map(passage.text)
             accepted: list[str] = []
             for item in parsed.get("tags", [])[: config.MAX_TAGS]:
                 if not isinstance(item, dict):
@@ -589,36 +753,58 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                 tag = str(item.get("tag") or "").strip()
                 evidence = str(item.get("evidence") or "").strip()
                 outcome.tags_returned += 1
-                if tag not in vocab_slugs:
+                if tag not in vocab.slugs:
+                    # HARD gate — out-of-vocabulary is never written.
                     outcome.tags_out_of_vocab += 1
-                    evidence_records.append((table, passage_id, tag, evidence, False, "out of vocabulary"))
+                    evidence_records.append(
+                        (table, passage_id, tag, evidence, False, "out of vocabulary", False, None, None)
+                    )
                     continue
-                ok, reason = evidence_ok(evidence, folded)
-                if not ok:
-                    outcome.tags_evidence_rejected += 1
-                    evidence_records.append((table, passage_id, tag, evidence, False, reason))
+                if tag in accepted:
                     continue
-                if tag not in accepted:
-                    accepted.append(tag)
-                    outcome.tags_accepted += 1
-                    evidence_records.append((table, passage_id, tag, evidence, True, None))
+                # SOFT gate — the tag is KEPT either way; a miss is flagged
+                # (evidence_found=false) with the miss reason in reject_reason.
+                found, miss_reason, start, end = evidence_ok(evidence, folded, mapping)
+                accepted.append(tag)
+                outcome.tags_accepted += 1
+                if not found:
+                    outcome.tags_unevidenced_kept += 1
+                evidence_records.append(
+                    (table, passage_id, tag, evidence, True, miss_reason, found, start, end)
+                )
 
             questions: list[str] = []
             if passage.questions_allowed:
                 seen = set()
                 for q in parsed.get("questions", [])[: config.MAX_QUESTIONS]:
-                    q = str(q or "").strip()
-                    if q and q.lower() not in seen:
-                        seen.add(q.lower())
-                        questions.append(q)
+                    if not isinstance(q, dict):
+                        continue
+                    question = str(q.get("question") or "").strip()
+                    answer_span = str(q.get("evidence") or "").strip()
+                    if not question or question.lower() in seen:
+                        continue
+                    found, _, _, _ = evidence_ok(answer_span, folded, mapping)
+                    if not found:
+                        # Questions are generated text — unevidenced answers drop.
+                        outcome.questions_dropped += 1
+                        continue
+                    seen.add(question.lower())
+                    questions.append(question)
             outcome.questions_kept += len(questions)
+
+            function = str(parsed.get("passage_function") or "").strip()
+            if function not in config.PASSAGE_FUNCTIONS:
+                function = None
+            if function:
+                outcome.functions_kept += 1
+
             outcome.per_row_tag_counts.append(len(accepted))
             if not accepted:
                 outcome.zero_tag_rows += 1
 
             expansion_lines: dict[str, None] = {}
             for tag in accepted:
-                term = term_by_slug.get(tag)
+                term = vocab.term_by_slug.get(tag)
                 if term:
                     expansion_lines.setdefault(term["term"], None)
                     for variant in term["variants"]:
@@ -628,6 +814,7 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                     accepted,
                     "\n".join(questions) if questions else None,
                     "\n".join(expansion_lines) if expansion_lines else None,
+                    function,
                     passage_id,
                 )
             )
@@ -639,13 +826,14 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
             for start in range(0, len(updates), config.DB_BATCH):
                 cur.executemany(
                     f"UPDATE public.{table} SET tags_core=%s::text[], questions=%s,"
-                    f" fts_expansion_src=%s WHERE id=%s::uuid",
+                    f" fts_expansion_src=%s, passage_function=%s WHERE id=%s::uuid",
                     updates[start : start + config.DB_BATCH],
                 )
             cur.executemany(
                 "INSERT INTO public.tag_evidence"
-                " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason)"
-                " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s)",
+                " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason,"
+                "  evidence_found, evidence_start, evidence_end)"
+                " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s)",
                 [(run_id, *r) for r in evidence_records],
             )
             cur.execute(
@@ -659,9 +847,7 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
 def collect(run_id: str, shard_key_prefix: str = "") -> list[ShardOutcome]:
     """Poll submitted/running shards until every one is terminal; download,
     gate and apply results as each finishes. Safe to Ctrl+C and rerun."""
-    vocabulary = build_vocabulary.load_vocabulary()
-    vocab_slugs = {t["slug"] for t in vocabulary["terms"]}
-    term_by_slug = {t["slug"]: t for t in vocabulary["terms"]}
+    vocab = load_vocab_index()
     outcomes: list[ShardOutcome] = []
     like = shard_key_prefix + "%"
     while True:
@@ -677,7 +863,7 @@ def collect(run_id: str, shard_key_prefix: str = "") -> list[ShardOutcome]:
         for shard_key, table, job_name, status in jobs:
             results_path = config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.results.jsonl"
             if status == "retrieved":
-                outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab_slugs, term_by_slug))
+                outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab))
                 progressed = True
                 continue
             job = db.with_retry(lambda name=job_name: gemini_client.get_batch(name), f"poll {shard_key}")
@@ -699,7 +885,7 @@ def collect(run_id: str, shard_key_prefix: str = "") -> list[ShardOutcome]:
                         "UPDATE public.tag_batch_jobs SET status='retrieved', retrieved_at=%s WHERE shard_key=%s",
                         (datetime.now(timezone.utc), shard_key),
                     )
-                outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab_slugs, term_by_slug))
+                outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab))
                 print(f"  applied {shard_key}", flush=True)
                 progressed = True
             elif state in gemini_client.TERMINAL_STATES:
@@ -725,52 +911,179 @@ def _fail_shard(shard_key: str, error: str) -> None:
 
 # ── pilot validation + report ───────────────────────────────────────────────
 
-def summarize(outcomes: list[ShardOutcome]) -> dict:
-    tag_counts = [n for o in outcomes for n in o.per_row_tag_counts]
-    responses = sum(o.responses for o in outcomes)
-    tags_returned = sum(o.tags_returned for o in outcomes)
-    vocab_valid = tags_returned - sum(o.tags_out_of_vocab for o in outcomes)
-    stats = {
-        "rows": sum(o.rows for o in outcomes),
-        "responses": responses,
-        "schema_valid_rate": (sum(o.schema_valid for o in outcomes) / responses) if responses else 0.0,
-        "out_of_vocab_rate": (sum(o.tags_out_of_vocab for o in outcomes) / tags_returned) if tags_returned else 0.0,
-        "evidence_match_rate": (sum(o.tags_accepted for o in outcomes) / vocab_valid) if vocab_valid else 0.0,
+def pilot_stats_from_db() -> dict:
+    """Pilot quality metrics recomputed from the DATABASE (not in-memory shard
+    outcomes) so validation is correct even when some pilot shards were applied
+    by an earlier, interrupted process. schema_valid_rate works because apply
+    only UPDATEs rows whose response parsed: unparsed rows keep tags_core NULL.
+    Zero-tag passages are VALID and excluded from the tagged-row median."""
+    planned, real_in, real_out = db.rows(
+        "SELECT coalesce(sum(row_count),0), coalesce(sum(cost_input_tok),0),"
+        "       coalesce(sum(cost_output_tok),0)"
+        " FROM public.tag_batch_jobs WHERE shard_key LIKE %s AND status='applied'",
+        ("pilot:%",),
+    )[0]
+    per_table_union = " UNION ALL ".join(
+        f"SELECT cardinality(t.tags_core) AS n, t.questions IS NOT NULL AS has_q,"
+        f"       t.tags_core IS NOT NULL AS updated,"
+        f"       t.passage_function IS NOT NULL AS has_fn"
+        f" FROM pilot p JOIN public.{t} t ON t.id = p.id AND p.table_name = '{t}'"
+        for t in config.GEMINI_TABLES
+    )
+    row = db.rows(
+        "WITH pilot AS (SELECT table_name, unnest(id_list) AS id FROM public.tag_batch_jobs"
+        "               WHERE shard_key LIKE %s AND status='applied'),"
+        f" c AS ({per_table_union})"
+        " SELECT count(*) FILTER (WHERE updated),"
+        "        coalesce(avg(n) FILTER (WHERE updated), 0),"
+        "        coalesce(percentile_disc(0.5) WITHIN GROUP (ORDER BY n)"
+        "                 FILTER (WHERE updated AND n > 0), 0),"
+        "        coalesce(percentile_disc(0.9) WITHIN GROUP (ORDER BY n)"
+        "                 FILTER (WHERE updated AND n > 0), 0),"
+        "        coalesce(max(n) FILTER (WHERE updated), 0),"
+        "        count(*) FILTER (WHERE updated AND n = 0),"
+        "        count(*) FILTER (WHERE has_q),"
+        "        count(*) FILTER (WHERE has_fn)"
+        " FROM c",
+        ("pilot:%",),
+    )[0]
+    (updated, tags_mean, tagged_median, tagged_p90, tags_max,
+     zero_tag_rows, question_rows, function_rows) = row
+
+    # Per-tag usage distribution over the pilot rows (unnested tags_core).
+    tag_usage: dict[str, int] = {}
+    for t in config.GEMINI_TABLES:
+        for tag, n in db.rows(
+            "WITH pilot AS (SELECT unnest(id_list) AS id FROM public.tag_batch_jobs"
+            "               WHERE shard_key LIKE %s AND status='applied' AND table_name=%s)"
+            f" SELECT tag, count(*) FROM ("
+            f"   SELECT unnest(t.tags_core) AS tag FROM public.{t} t"
+            f"   JOIN pilot p ON p.id = t.id WHERE t.tags_core IS NOT NULL) x"
+            " GROUP BY tag",
+            ("pilot:%", t),
+        ):
+            tag_usage[tag] = tag_usage.get(tag, 0) + int(n)
+    distinct_tags = len(tag_usage)
+    singletons = sum(1 for n in tag_usage.values() if n == 1)
+    max_tag_uses = max(tag_usage.values()) if tag_usage else 0
+    vocab_total = int(build_vocabulary.load_vocabulary().get("term_count") or 1)
+
+    ev = db.rows(
+        "WITH pilot AS (SELECT table_name, unnest(id_list) AS id FROM public.tag_batch_jobs"
+        "               WHERE shard_key LIKE %s AND status='applied')"
+        " SELECT count(*),"
+        "        count(*) FILTER (WHERE NOT accepted AND reject_reason = 'out of vocabulary'),"
+        "        count(*) FILTER (WHERE accepted),"
+        "        count(*) FILTER (WHERE accepted AND evidence_found)"
+        " FROM public.tag_evidence e"
+        " WHERE EXISTS (SELECT 1 FROM pilot p WHERE p.table_name = e.table_name AND p.id = e.passage_id)",
+        ("pilot:%",),
+    )[0]
+    tags_returned, oov, accepted, evidenced = (int(x) for x in ev)
+    planned = int(planned)
+    updated = int(updated)
+    return {
+        "rows": updated,
+        "responses": planned,
+        "schema_valid_rate": (updated / planned) if planned else 0.0,
+        "out_of_vocab_rate": (oov / tags_returned) if tags_returned else 0.0,
+        "evidence_found_rate": (evidenced / accepted) if accepted else 0.0,  # reported, not gated
         "tags_returned": tags_returned,
-        "tags_accepted": sum(o.tags_accepted for o in outcomes),
-        "questions_kept": sum(o.questions_kept for o in outcomes),
-        "zero_tag_rows": sum(o.zero_tag_rows for o in outcomes),
-        "input_tokens": sum(o.input_tokens for o in outcomes),
-        "output_tokens": sum(o.output_tokens for o in outcomes),
+        "tags_accepted": accepted,
+        "questions_kept": int(question_rows),
+        "functions_kept": int(function_rows),
+        "zero_tag_rows": int(zero_tag_rows),
+        "input_tokens": int(real_in),
+        "output_tokens": int(real_out),
+        "tags_mean": float(tags_mean),
+        "tagged_median": int(tagged_median),
+        "tagged_p90": int(tagged_p90),
+        "tags_max": int(tags_max),
+        "distinct_tags": distinct_tags,
+        "singleton_share": (singletons / distinct_tags) if distinct_tags else 0.0,
+        "vocab_coverage": (distinct_tags / vocab_total) if vocab_total else 0.0,
+        "vocab_total": vocab_total,
+        "max_tag_share": (max_tag_uses / updated) if updated else 0.0,
     }
-    if tag_counts:
-        ordered = sorted(tag_counts)
-        stats["tags_mean"] = sum(ordered) / len(ordered)
-        stats["tags_p50"] = ordered[len(ordered) // 2]
-        stats["tags_p90"] = ordered[int(len(ordered) * 0.9)]
-        stats["tags_max"] = ordered[-1]
-    else:
-        stats.update({"tags_mean": 0.0, "tags_p50": 0, "tags_p90": 0, "tags_max": 0})
-    return stats
 
 
 def pilot_thresholds_pass(stats: dict) -> list[str]:
+    """Auto-gates: continue automatically when ALL pass; otherwise STOP with
+    pilot-report.md. Evidence-found rate is reported, never gated. There is NO
+    minimum-tag-count gate — zero-tag passages are valid; the tagged-row median
+    must merely sit in a sane band."""
     failures = []
     if stats["schema_valid_rate"] < config.PILOT_MIN_SCHEMA_VALID:
         failures.append(
             f"schema_valid_rate {stats['schema_valid_rate']:.3f} < {config.PILOT_MIN_SCHEMA_VALID}"
         )
-    if stats["evidence_match_rate"] < config.PILOT_MIN_EVIDENCE_MATCH:
-        failures.append(
-            f"evidence_match_rate {stats['evidence_match_rate']:.3f} < {config.PILOT_MIN_EVIDENCE_MATCH}"
-        )
     if stats["out_of_vocab_rate"] > config.PILOT_MAX_OUT_OF_VOCAB:
         failures.append(
             f"out_of_vocab_rate {stats['out_of_vocab_rate']:.3f} > {config.PILOT_MAX_OUT_OF_VOCAB}"
         )
-    if stats["tags_mean"] < config.PILOT_MIN_MEAN_TAGS:
-        failures.append(f"tags_mean {stats['tags_mean']:.2f} < {config.PILOT_MIN_MEAN_TAGS}")
+    if stats["distinct_tags"] < config.PILOT_MIN_DISTINCT_TAGS:
+        failures.append(
+            f"distinct tags used {stats['distinct_tags']} < {config.PILOT_MIN_DISTINCT_TAGS}"
+        )
+    if stats["singleton_share"] > config.PILOT_MAX_SINGLETON_SHARE:
+        failures.append(
+            f"singleton-tag share {stats['singleton_share']:.2f} > {config.PILOT_MAX_SINGLETON_SHARE}"
+        )
+    if stats["vocab_coverage"] < config.PILOT_MIN_VOCAB_COVERAGE:
+        failures.append(
+            f"vocabulary coverage {stats['vocab_coverage']:.2f} < {config.PILOT_MIN_VOCAB_COVERAGE}"
+        )
+    if stats["max_tag_share"] > config.PILOT_MAX_TAG_SHARE:
+        failures.append(
+            f"most-used tag covers {stats['max_tag_share']:.2f} of pilot passages"
+            f" > {config.PILOT_MAX_TAG_SHARE}"
+        )
+    if stats["rows"] > stats["zero_tag_rows"] and not (
+        config.PILOT_MEDIAN_TAGS_MIN <= stats["tagged_median"] <= config.PILOT_MEDIAN_TAGS_MAX
+    ):
+        failures.append(
+            f"median tags among tagged passages {stats['tagged_median']} outside"
+            f" [{config.PILOT_MEDIAN_TAGS_MIN}, {config.PILOT_MEDIAN_TAGS_MAX}]"
+        )
     return failures
+
+
+def _pilot_samples(limit: int) -> list[dict]:
+    """Seeded-random passage→tags→evidence samples for the optional human skim."""
+    rows: list[dict] = []
+    for t in config.GEMINI_TABLES:
+        column = "translation" if t == "verses" else "body_text"
+        for row_id, snippet, tags, function in db.rows(
+            "WITH pilot AS (SELECT unnest(id_list) AS id FROM public.tag_batch_jobs"
+            "               WHERE shard_key LIKE %s AND status='applied' AND table_name=%s)"
+            f" SELECT t.id::text, left(coalesce(t.{column}, ''), 300), t.tags_core, t.passage_function"
+            f" FROM public.{t} t JOIN pilot p ON p.id = t.id"
+            " WHERE t.tags_core IS NOT NULL AND cardinality(t.tags_core) > 0"
+            " ORDER BY md5(%s || t.id::text) LIMIT %s",
+            ("pilot:%", t, config.SAMPLE_SEED, limit),
+        ):
+            rows.append(
+                {
+                    "table": t,
+                    "id": row_id,
+                    "snippet": (snippet or "").replace("\n", " ").strip(),
+                    "tags": list(tags or []),
+                    "function": function,
+                }
+            )
+    rows.sort(
+        key=lambda r: hashlib.md5((config.SAMPLE_SEED + r["table"] + r["id"]).encode()).hexdigest()
+    )
+    rows = rows[:limit]
+    for row in rows:
+        row["evidence"] = db.rows(
+            "SELECT tag, coalesce(evidence_found, false), left(coalesce(evidence, ''), 200)"
+            " FROM public.tag_evidence"
+            " WHERE table_name = %s AND passage_id = %s::uuid AND accepted"
+            " ORDER BY tag",
+            (row["table"], row["id"]),
+        )
+    return rows
 
 
 def write_pilot_report(stats: dict, failures: list[str], model: str) -> None:
@@ -785,20 +1098,35 @@ def write_pilot_report(stats: dict, failures: list[str], model: str) -> None:
     projected_usd = _usd(per_row_in * remaining, per_row_out * remaining)
     verdict = "PASS — continuing automatically (standing ruling)" if not failures else "FAIL — run stopped"
     lines = [
-        "# Pilot report — tags+questions combined pass",
+        "# Pilot report — tags + questions + passage_function combined pass",
         "",
         f"- Generated: {datetime.now(timezone.utc).isoformat()}",
         f"- Model: `{model}` · prompt `{config.PROMPT_VERSION}` · MAX_TAGS {config.MAX_TAGS}",
+        f"- Sampling: seeded-random stratified, seed `{config.SAMPLE_SEED}` · pilot size {config.PILOT_SIZE}",
         f"- Verdict: **{verdict}**",
         "",
-        "## Quality",
+        "## Quality gates",
         f"- Passages applied: {stats['rows']} (responses: {stats['responses']})",
-        f"- Schema validity: {stats['schema_valid_rate']:.1%} (threshold ≥ {config.PILOT_MIN_SCHEMA_VALID:.0%})",
-        f"- Evidence-match rate: {stats['evidence_match_rate']:.1%} (threshold ≥ {config.PILOT_MIN_EVIDENCE_MATCH:.0%})",
-        f"- Out-of-vocabulary rate: {stats['out_of_vocab_rate']:.2%} (threshold ≤ {config.PILOT_MAX_OUT_OF_VOCAB:.0%})",
-        f"- Tags/passage: mean {stats['tags_mean']:.2f} · p50 {stats['tags_p50']} · p90 {stats['tags_p90']}"
-        f" · max {stats['tags_max']} (cap {config.MAX_TAGS})",
-        f"- Zero-tag passages: {stats['zero_tag_rows']}",
+        f"- Schema validity: {stats['schema_valid_rate']:.1%} (gate ≥ {config.PILOT_MIN_SCHEMA_VALID:.0%})",
+        f"- Out-of-vocabulary rate: {stats['out_of_vocab_rate']:.2%} (gate ≤ {config.PILOT_MAX_OUT_OF_VOCAB:.0%})",
+        f"- Evidence-found rate: {stats['evidence_found_rate']:.1%} (REPORTED — not gated;"
+        " unevidenced in-vocab tags are kept and flagged)",
+        "",
+        "## Distribution health",
+        f"- Distinct tags used: {stats['distinct_tags']} (gate ≥ {config.PILOT_MIN_DISTINCT_TAGS})",
+        f"- Singleton-tag share: {stats['singleton_share']:.1%} of used terms"
+        f" (gate ≤ {config.PILOT_MAX_SINGLETON_SHARE:.0%})",
+        f"- Vocabulary coverage: {stats['vocab_coverage']:.1%} of {stats['vocab_total']} terms"
+        f" used at least once (gate ≥ {config.PILOT_MIN_VOCAB_COVERAGE:.0%})",
+        f"- Most-used tag share: {stats['max_tag_share']:.1%} of pilot passages"
+        f" (gate ≤ {config.PILOT_MAX_TAG_SHARE:.0%})",
+        f"- Tags/passage: median {stats['tagged_median']} among TAGGED passages"
+        f" (gate {config.PILOT_MEDIAN_TAGS_MIN}-{config.PILOT_MEDIAN_TAGS_MAX};"
+        f" zero-tag passages excluded, no minimum-count gate)"
+        f" · mean {stats['tags_mean']:.2f} · p90 {stats['tagged_p90']} · max {stats['tags_max']}"
+        f" (cap {config.MAX_TAGS})",
+        f"- Zero-tag passages: {stats['zero_tag_rows']} (valid output)",
+        f"- Passages with passage_function: {stats['functions_kept']}",
         f"- Passages carrying questions (HIS/Prabhupāda-speaking rows only): {stats['questions_kept']}",
         "",
         "## Real cost (from usageMetadata) and extrapolation",
@@ -812,73 +1140,25 @@ def write_pilot_report(stats: dict, failures: list[str], model: str) -> None:
     ]
     if failures:
         lines += ["", "## Threshold failures", *[f"- {f}" for f in failures]]
+    lines += ["", f"## {config.PILOT_SAMPLE_ROWS} random samples (optional human skim)", ""]
+    for i, sample in enumerate(_pilot_samples(config.PILOT_SAMPLE_ROWS), 1):
+        lines.append(
+            f"**{i}. {sample['table']} {sample['id']}**"
+            + (f" · function: `{sample['function']}`" if sample["function"] else "")
+        )
+        lines.append(f"> {sample['snippet']}")
+        for tag, found, evidence in sample["evidence"]:
+            marker = "✓" if found else "∅ (kept, unevidenced)"
+            lines.append(f"- `{tag}` {marker} — “{evidence}”")
+        lines.append("")
     with open(config.PILOT_REPORT_PATH, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     print(f"  wrote {config.PILOT_REPORT_PATH}", flush=True)
-
-
-def pilot_stats_from_db() -> dict:
-    """Pilot quality metrics recomputed from the DATABASE (not in-memory shard
-    outcomes) so validation is correct even when some pilot shards were applied
-    by an earlier, interrupted process. schema_valid_rate works because apply
-    only UPDATEs rows whose response parsed: unparsed rows keep tags_core NULL."""
-    planned, real_in, real_out = db.rows(
-        "SELECT coalesce(sum(row_count),0), coalesce(sum(cost_input_tok),0),"
-        "       coalesce(sum(cost_output_tok),0)"
-        " FROM public.tag_batch_jobs WHERE shard_key LIKE %s AND status='applied'",
-        ("pilot:%",),
-    )[0]
-    per_table_union = " UNION ALL ".join(
-        f"SELECT cardinality(t.tags_core) AS n, t.questions IS NOT NULL AS has_q,"
-        f"       t.tags_core IS NOT NULL AS updated"
-        f" FROM pilot p JOIN public.{t} t ON t.id = p.id AND p.table_name = '{t}'"
-        for t in config.GEMINI_TABLES
+    print(
+        f"  pilot real cost ${pilot_usd:,.2f} → projected full run ${projected_usd:,.2f}"
+        f" (ceiling ${config.MAX_SPEND_USD:,.2f})",
+        flush=True,
     )
-    row = db.rows(
-        "WITH pilot AS (SELECT table_name, unnest(id_list) AS id FROM public.tag_batch_jobs"
-        "               WHERE shard_key LIKE %s AND status='applied'),"
-        f" c AS ({per_table_union})"
-        " SELECT count(*) FILTER (WHERE updated),"
-        "        coalesce(avg(n) FILTER (WHERE updated), 0),"
-        "        coalesce(percentile_disc(0.5) WITHIN GROUP (ORDER BY n) FILTER (WHERE updated), 0),"
-        "        coalesce(percentile_disc(0.9) WITHIN GROUP (ORDER BY n) FILTER (WHERE updated), 0),"
-        "        coalesce(max(n) FILTER (WHERE updated), 0),"
-        "        count(*) FILTER (WHERE updated AND n = 0),"
-        "        count(*) FILTER (WHERE has_q)"
-        " FROM c",
-        ("pilot:%",),
-    )[0]
-    updated, tags_mean, tags_p50, tags_p90, tags_max, zero_tag_rows, question_rows = row
-    ev = db.rows(
-        "WITH pilot AS (SELECT table_name, unnest(id_list) AS id FROM public.tag_batch_jobs"
-        "               WHERE shard_key LIKE %s AND status='applied')"
-        " SELECT count(*),"
-        "        count(*) FILTER (WHERE NOT accepted AND reject_reason = 'out of vocabulary'),"
-        "        count(*) FILTER (WHERE accepted)"
-        " FROM public.tag_evidence e"
-        " WHERE EXISTS (SELECT 1 FROM pilot p WHERE p.table_name = e.table_name AND p.id = e.passage_id)",
-        ("pilot:%",),
-    )[0]
-    tags_returned, oov, accepted = int(ev[0]), int(ev[1]), int(ev[2])
-    vocab_valid = tags_returned - oov
-    planned = int(planned)
-    return {
-        "rows": int(updated),
-        "responses": planned,
-        "schema_valid_rate": (int(updated) / planned) if planned else 0.0,
-        "out_of_vocab_rate": (oov / tags_returned) if tags_returned else 0.0,
-        "evidence_match_rate": (accepted / vocab_valid) if vocab_valid else 0.0,
-        "tags_returned": tags_returned,
-        "tags_accepted": accepted,
-        "questions_kept": int(question_rows),
-        "zero_tag_rows": int(zero_tag_rows),
-        "input_tokens": int(real_in),
-        "output_tokens": int(real_out),
-        "tags_mean": float(tags_mean),
-        "tags_p50": int(tags_p50),
-        "tags_p90": int(tags_p90),
-        "tags_max": int(tags_max),
-    }
 
 
 def pilot_done() -> bool:

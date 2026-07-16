@@ -3,26 +3,40 @@ build_vocabulary.py — build the closed, faceted controlled vocabulary
 (vocabulary.json) and load it into vocab_terms. Step 2 of run_all.py; also
 runnable standalone: `python build_vocabulary.py`.
 
-Facets: Concept / Sanskrit / Person / Place / Scripture / Practice.
+Facets: Concept / Person / Place / Scripture / Practice. There is NO Sanskrit
+facet — one topic = one term and language forms are spelling variants. Every
+term carries kind=concept (Concept/Practice) or kind=entity (Person/Place/
+Scripture); entities don't count toward the concept-size expectation.
 
 Sources, in order:
-  1. Curated seeds (vocabulary_seeds.json — established Gauḍīya/Vedabase
-     subject structure, committed to the repo).
-  2. Chapter titles (chapters.chapter_title) → Concept candidates.
-  3. Clustering of existing embedding_context4 vectors (stratified sample →
-     MiniBatchKMeans → cosine merge) → Concept candidates. Gemini NAMES the
-     clusters and ORGANIZES the tree only — it never invents standalone terms.
-  4. Recurring Sanskrit glossary terms mined from verses.synonyms glosses →
-     Sanskrit candidates, with spelling variants from transliteration_synonyms
-     plus automatic diacritic folding.
+  1. Curated seeds (vocabulary_seeds.json — the reviewed menu, committed to the
+     repo, including hard_negative contrast pairs and related links).
+  2. CANDIDATES — never straight into the menu, always through one Gemini
+     naming/dedup review path:
+       a. chapter titles (chapters.chapter_title);
+       b. recurring Sanskrit glossary terms mined from verses.synonyms glosses
+          (particle stoplist + chapter-dispersion check + net-new cap ~100).
+  3. Clustering of existing embedding_context4 vectors as LENSES, not truth:
+     seeded-random stratified sample → MiniBatchKMeans at k ∈ KMEANS_VIEWS plus
+     one HDBSCAN density view. Gemini names each cluster from its nearest AND
+     farthest members and may answer "incoherent — drop". The cosine centroid
+     auto-merge produces merge PROPOSALS: applied provisionally, every one
+     listed in vocabulary.json's "merges" section for the human gate to veto
+     (veto = edit vocabulary.json before pressing Enter at the ⛔ gate).
 
-Every term carries spelling variants. Output: vocabulary.json (the ⛔ review
-gate artifact) with {term, slug, facet, parent, variants, sources}. Then
+After assembly Gemini drafts a ONE-line scope note per term (what it covers +
+one thing it excludes) — stored on the term, shown at the gate, injected into
+the tagging prompt.
+
+Output: vocabulary.json (the ⛔ review gate artifact) with {term, slug, facet,
+kind, parent, variants, sources, scope_note, hard_negatives, related} plus the
+"merges" and "warnings" sections and the recorded sampling seed. Then
 load_vocab_terms() upserts the frozen list into public.vocab_terms (service
 key) with Voyage embeddings for the per-passage shortlists.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re as stdre
 import unicodedata
@@ -40,13 +54,19 @@ import voyage_client
 
 CHAPTER_TITLE_MAX = 800
 GEMINI_NAMING_TEMP = 0.2
-CLUSTERS_PER_CALL = 40
+CLUSTERS_PER_CALL = 25          # nearest+farthest snippets make each cluster bigger
+CANDIDATES_PER_CALL = 60
+SCOPE_NOTES_PER_CALL = 80
+MIN_CLUSTER_MEMBERS = 5         # tiny clusters are noise, not concepts
 # Sanskrit particles/inflection words that recur constantly in glosses but make
-# useless tags (the recurrence floor alone would let them in).
+# useless tags (the recurrence floor alone would let them in). Grammatical
+# particles are NEVER terms; the Gemini candidate review is told the same rule.
 SANSKRIT_STOPWORDS = {
     "ca", "eva", "na", "hi", "tu", "api", "iti", "vai", "atha", "tat", "tam",
     "sa", "te", "me", "mama", "asya", "tasya", "yat", "etat", "idam", "kim",
-    "uvaca", "uvāca", "aham", "tvam", "sarva", "sarvam",
+    "uvaca", "uvāca", "aham", "tvam", "sarva", "sarvam", "khalu", "kila",
+    "iva", "yatha", "tatha", "yada", "tada", "atra", "tatra", "kintu",
+    "punah", "param", "tatah", "tasmat", "tesam", "yasya", "asmin", "caiva",
 }
 
 
@@ -59,6 +79,12 @@ def fold(text: str) -> str:
 def slugify(term: str) -> str:
     folded = fold(term)
     return stdre.sub(r"-{2,}", "-", stdre.sub(r"[^a-z0-9]+", "-", folded)).strip("-")
+
+
+def seed_int(salt: str = "") -> int:
+    """Deterministic 31-bit int derived from SAMPLE_SEED for sklearn seeding."""
+    digest = hashlib.sha256((config.SAMPLE_SEED + salt).encode("utf-8")).hexdigest()
+    return int(digest[:8], 16) % (2**31)
 
 
 def _variants_for(term: str, extra: list[str]) -> list[str]:
@@ -87,9 +113,13 @@ class Vocab:
                 "term": term.strip(),
                 "slug": slug,
                 "facet": facet,
+                "kind": "entity" if facet in config.ENTITY_FACETS else "concept",
                 "parent": parent,
                 "variants": [],
                 "sources": [],
+                "scope_note": "",
+                "hard_negatives": [],
+                "related": [],
             }
             self.terms[slug] = entry
         merged = {v: None for v in entry["variants"]}
@@ -102,141 +132,63 @@ class Vocab:
             entry["parent"] = parent
         return slug
 
+    def add_variant(self, slug: str, variant: str) -> None:
+        entry = self.terms.get(slug)
+        if entry is None:
+            return
+        merged = {v: None for v in entry["variants"]}
+        for v in _variants_for(entry["term"], [variant]):
+            merged.setdefault(v, None)
+        entry["variants"] = list(merged)
 
-# ── Source 1: curated seeds ─────────────────────────────────────────────────
+    def link(self, kind: str, slug_a: str, slug_b: str) -> None:
+        """Symmetric hard_negatives / related link between two existing slugs."""
+        if slug_a == slug_b or slug_a not in self.terms or slug_b not in self.terms:
+            return
+        for one, other in ((slug_a, slug_b), (slug_b, slug_a)):
+            bucket = self.terms[one][kind]
+            if other not in bucket:
+                bucket.append(other)
+
+    def concept_count(self) -> int:
+        return sum(1 for t in self.terms.values() if t["kind"] == "concept")
+
+    def entity_count(self) -> int:
+        return sum(1 for t in self.terms.values() if t["kind"] == "entity")
+
+
+# ── Source 1: curated seeds (incl. contrast pairs) ──────────────────────────
 
 def add_seeds(vocab: Vocab) -> None:
     with open(config.SEEDS_PATH, encoding="utf-8") as f:
         seeds = json.load(f)
+    if "Sanskrit" in seeds["facets"]:
+        raise SystemExit(
+            "FATAL: vocabulary_seeds.json still has a Sanskrit facet — the v3 rule is"
+            " one topic = one term with language forms as variants. Dissolve it first."
+        )
+    pending_links: list[tuple[str, str, str]] = []  # (kind, from_slug, to_term_name)
     for facet, entries in seeds["facets"].items():
         if facet not in config.FACETS:
             raise SystemExit(f"FATAL: vocabulary_seeds.json has unknown facet '{facet}'")
         for entry in entries:
-            vocab.add(entry["term"], facet, entry.get("variants", []), "seed")
+            slug = vocab.add(entry["term"], facet, entry.get("variants", []), "seed")
+            for name in entry.get("hard_negatives", []):
+                pending_links.append(("hard_negatives", slug, name))
+            for name in entry.get("related", []):
+                pending_links.append(("related", slug, name))
+    # Second pass: every referenced partner must itself be a seeded term.
+    for kind, slug, name in pending_links:
+        target = slugify(name)
+        if target not in vocab.terms:
+            raise SystemExit(
+                f"FATAL: vocabulary_seeds.json links '{slug}' → '{name}' ({kind}) but"
+                " no seed term has that slug — contrast pairs must name real terms."
+            )
+        vocab.link(kind, slug, target)
 
 
-# ── Source 2: chapter titles ────────────────────────────────────────────────
-
-def add_chapter_titles(vocab: Vocab) -> None:
-    titles = db.rows(
-        "SELECT DISTINCT chapter_title FROM public.chapters"
-        " WHERE chapter_title IS NOT NULL AND length(chapter_title) BETWEEN 4 AND 80"
-        " ORDER BY chapter_title LIMIT %s",
-        (CHAPTER_TITLE_MAX,),
-    )
-    for (title,) in titles:
-        cleaned = stdre.sub(r"^\s*(chapter\s+)?\d+[.:\s-]*", "", title, flags=stdre.I).strip()
-        if len(cleaned) >= 4 and not cleaned.isdigit():
-            vocab.add(cleaned, "Concept", [], "chapter_title")
-
-
-# ── Source 4: Sanskrit terms from synonyms glosses ──────────────────────────
-
-def add_sanskrit_terms(vocab: Vocab) -> None:
-    """verses.synonyms holds word-for-word glosses: 'term — gloss; term — gloss'.
-    Recurring terms (freq ≥ SANSKRIT_MIN_FREQ, not particles) become the
-    Sanskrit facet; the diacritic original is the display term and folded/known
-    alternates are variants."""
-    counts: Counter[str] = Counter()
-    display: dict[str, str] = {}
-    for (synonyms,) in db.iter_rows(
-        "SELECT synonyms FROM public.verses WHERE synonyms IS NOT NULL"
-    ):
-        for entry in synonyms.split(";"):
-            head = entry.split("—", 1)[0].split("--", 1)[0].strip()
-            head = stdre.sub(r"[.,:()\[\]\"']", "", head).strip()
-            if not head or " " in head:
-                continue
-            base = fold(head).strip("-")
-            if len(base) < 4 or base in SANSKRIT_STOPWORDS or base.isdigit():
-                continue
-            counts[base] += 1
-            display.setdefault(base, head)
-
-    translit = defaultdict(list)
-    for variant, canonical, display_name in db.rows(
-        "SELECT variant, canonical, display_name FROM public.transliteration_synonyms"
-    ):
-        translit[fold(canonical)].extend(x for x in (variant, display_name) if x)
-
-    for base, freq in counts.most_common(config.SANSKRIT_MAX_TERMS):
-        if freq < config.SANSKRIT_MIN_FREQ:
-            break
-        vocab.add(display[base], "Sanskrit", translit.get(base, []), "synonyms_gloss")
-
-
-# ── Source 3: embedding clusters, named by Gemini ───────────────────────────
-
-def _parse_vector(text: str) -> np.ndarray:
-    # pgvector's text form "[0.1,0.2,...]" is valid JSON
-    return np.asarray(json.loads(text), dtype=np.float32)
-
-
-def _stratified_sample() -> tuple[list[tuple[str, str]], np.ndarray]:
-    """Proportional sample of (table, id) + vectors across the five tables."""
-    live = {t: db.table_count(t, "embedding_context4 IS NOT NULL") for t in config.CONTENT_TABLES}
-    total = sum(live.values()) or 1
-    keys: list[tuple[str, str]] = []
-    vectors: list[np.ndarray] = []
-    for table, count in live.items():
-        want = min(count, round(config.CLUSTER_SAMPLE * count / total))
-        if want == 0:
-            continue
-        print(f"  sampling {want} vectors from {table}", flush=True)
-        got = 0
-        for row_id, vec_text in db.iter_rows(
-            f"SELECT id::text, embedding_context4::text FROM public.{table}"
-            " WHERE embedding_context4 IS NOT NULL ORDER BY id LIMIT %s",
-            (want,),
-        ):
-            vec = _parse_vector(vec_text)
-            if vec.size != 1024:
-                continue
-            keys.append((table, row_id))
-            vectors.append(vec)
-            got += 1
-        print(f"  {table}: {got} vectors", flush=True)
-    return keys, np.vstack(vectors)
-
-
-def _cluster(matrix: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """MiniBatchKMeans over-clustering, then cosine merge of near-duplicate
-    centroids. Returns (final_labels_per_row, final_centroids)."""
-    from sklearn.cluster import AgglomerativeClustering, MiniBatchKMeans
-
-    normalized = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
-    k = min(config.KMEANS_K, len(normalized))
-    km = MiniBatchKMeans(n_clusters=k, random_state=42, batch_size=4096, n_init=3)
-    labels = km.fit_predict(normalized)
-    centroids = km.cluster_centers_
-    centroids = centroids / (np.linalg.norm(centroids, axis=1, keepdims=True) + 1e-9)
-
-    merger = AgglomerativeClustering(
-        n_clusters=None,
-        metric="cosine",
-        linkage="average",
-        distance_threshold=config.CLUSTER_MERGE_COSINE,
-    )
-    group_of = merger.fit_predict(centroids)
-    final_labels = np.array([group_of[l] for l in labels])
-    n_groups = int(group_of.max()) + 1
-    merged = np.zeros((n_groups, centroids.shape[1]), dtype=np.float32)
-    for group in range(n_groups):
-        members = centroids[group_of == group]
-        merged[group] = members.mean(axis=0)
-    return final_labels, merged
-
-
-def _snippets_for(keys: list[tuple[str, str]]) -> list[str]:
-    """Short text snippets for representative passages (verses → translation,
-    everything else → body_text)."""
-    out = []
-    for table, row_id in keys:
-        column = "translation" if table == "verses" else "body_text"
-        text = db.one(f"SELECT left(coalesce({column}, ''), 240) FROM public.{table} WHERE id = %s", (row_id,))
-        out.append((text or "").replace("\n", " ").strip())
-    return out
-
+# ── Gemini helpers ──────────────────────────────────────────────────────────
 
 def _gemini_generate(model: str, prompt: str, schema: dict) -> dict:
     def _call():
@@ -257,9 +209,330 @@ def _gemini_generate(model: str, prompt: str, schema: dict) -> dict:
             raise RuntimeError(f"Gemini HTTP {res.status_code}: {res.text[:500]}")
         return res.json()
 
-    data = db.with_retry(_call, "gemini naming call")
+    data = db.with_retry(_call, "gemini vocabulary call")
     text = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [{}])[0].get("text", "")
     return json.loads(text)
+
+
+LABEL_RULES = (
+    "Label rules: the preferred label is the word devotees actually use —"
+    " English by default; Sanskrit-preferred ONLY where the Sanskrit word IS the"
+    " everyday word (prasādam, kīrtana, japa, ekādaśī). Labels are short subject"
+    " headings (2-5 words, the kind Vedabase or a Gītā index would use)."
+    " Grammatical particles or inflection words (eva, ca, tu, hi, api, na, iti…)"
+    " are NEVER terms."
+)
+
+
+# ── Source 2: candidates (chapter titles + mined Sanskrit glosses) ──────────
+
+def chapter_title_candidates() -> list[dict]:
+    titles = db.rows(
+        "SELECT DISTINCT chapter_title FROM public.chapters"
+        " WHERE chapter_title IS NOT NULL AND length(chapter_title) BETWEEN 4 AND 80"
+        " ORDER BY chapter_title LIMIT %s",
+        (CHAPTER_TITLE_MAX,),
+    )
+    out = []
+    for (title,) in titles:
+        cleaned = stdre.sub(r"^\s*(chapter\s+)?\d+[.:\s-]*", "", title, flags=stdre.I).strip()
+        if len(cleaned) >= 4 and not cleaned.isdigit():
+            out.append({"text": cleaned, "source": "chapter_title", "context": "book chapter title"})
+    return out
+
+
+def sanskrit_gloss_candidates() -> list[dict]:
+    """verses.synonyms holds word-for-word glosses: 'term — gloss; term — gloss'.
+    Candidates = recurring terms (freq ≥ SANSKRIT_MIN_FREQ) that also pass the
+    particle stoplist and the DISPERSION check (must appear across at least
+    SANSKRIT_MIN_CHAPTERS distinct chapters — a term concentrated in one chapter
+    is a local word, not a subject). Top SANSKRIT_MAX_CANDIDATES by frequency go
+    to the Gemini review; net-NEW additions are capped later at SANSKRIT_MAX_NEW."""
+    counts: Counter[str] = Counter()
+    chapters: dict[str, set] = defaultdict(set)
+    display: dict[str, str] = {}
+    for synonyms, chapter_id in db.iter_rows(
+        "SELECT synonyms, chapter_id::text FROM public.verses WHERE synonyms IS NOT NULL"
+    ):
+        for entry in synonyms.split(";"):
+            head = entry.split("—", 1)[0].split("--", 1)[0].strip()
+            head = stdre.sub(r"[.,:()\[\]\"']", "", head).strip()
+            if not head or " " in head:
+                continue
+            base = fold(head).strip("-")
+            if len(base) < 4 or base in SANSKRIT_STOPWORDS or base.isdigit():
+                continue
+            counts[base] += 1
+            chapters[base].add(chapter_id)
+            display.setdefault(base, head)
+
+    translit = defaultdict(list)
+    for variant, canonical, display_name in db.rows(
+        "SELECT variant, canonical, display_name FROM public.transliteration_synonyms"
+    ):
+        translit[fold(canonical)].extend(x for x in (variant, display_name) if x)
+
+    out = []
+    dropped_dispersion = 0
+    for base, freq in counts.most_common():
+        if freq < config.SANSKRIT_MIN_FREQ:
+            break
+        if len(chapters[base]) < config.SANSKRIT_MIN_CHAPTERS:
+            dropped_dispersion += 1
+            continue
+        out.append(
+            {
+                "text": display[base],
+                "source": "synonyms_gloss",
+                "context": f"gloss frequency {freq}, {len(chapters[base])} chapters",
+                "variants": translit.get(base, []),
+            }
+        )
+        if len(out) >= config.SANSKRIT_MAX_CANDIDATES:
+            break
+    print(
+        f"  gloss mining: {len(out)} candidates (dispersion dropped {dropped_dispersion};"
+        f" net-new additions capped at {config.SANSKRIT_MAX_NEW})",
+        flush=True,
+    )
+    return out
+
+
+CANDIDATE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "decisions": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "candidate_id": {"type": "INTEGER"},
+                    "action": {"type": "STRING", "enum": ["add", "merge", "drop"]},
+                    "name": {"type": "STRING"},
+                    "facet": {"type": "STRING", "enum": config.FACETS},
+                    "merge_into_slug": {"type": "STRING"},
+                    "plain_english_variant": {"type": "STRING"},
+                },
+                "required": ["candidate_id", "action"],
+            },
+        }
+    },
+    "required": ["decisions"],
+}
+
+
+def review_candidates(vocab: Vocab, model: str, candidates: list[dict], merges: list[dict]) -> None:
+    """ONE naming/dedup path for every non-seed candidate. Gemini decides per
+    candidate: add (with a properly-labelled name + facet + one plain-English
+    variant), merge into an existing term, or drop. Mined gloss additions are
+    capped at SANSKRIT_MAX_NEW net-new terms."""
+    if not candidates:
+        return
+    gloss_added = 0
+    for start in tqdm(range(0, len(candidates), CANDIDATES_PER_CALL), desc="  candidate review"):
+        chunk = candidates[start : start + CANDIDATES_PER_CALL]
+        catalog = "\n".join(f"{s}: {vocab.terms[s]['term']}" for s in sorted(vocab.terms))
+        lines = [
+            f"candidate_id={i}: \"{c['text']}\" (source: {c['source']}; {c['context']})"
+            for i, c in enumerate(chunk)
+        ]
+        prompt = (
+            "You are curating a closed subject vocabulary for Śrīla Prabhupāda's"
+            " books, lectures and letters (Gauḍīya Vaiṣṇava corpus). Below are raw"
+            " CANDIDATES (book chapter titles and recurring Sanskrit glossary"
+            " words). For EACH candidate decide:\n"
+            "- merge: it is the SAME subject as an existing term → merge_into_slug.\n"
+            "- add: it is a real, reusable subject not yet covered → give the"
+            " canonical name and facet, plus one plain_english_variant (a natural"
+            " English wording of the same subject).\n"
+            "- drop: not a reusable subject (a one-off narrative title, a"
+            " grammatical particle or inflected form, or too vague to tag with).\n"
+            f"{LABEL_RULES}\n\nCANDIDATES:\n" + "\n".join(lines)
+            + "\n\nExisting terms (slug: term):\n" + catalog
+        )
+        parsed = _gemini_generate(model, prompt, CANDIDATE_SCHEMA)
+        for item in parsed.get("decisions", []):
+            try:
+                index = int(item.get("candidate_id"))
+            except (TypeError, ValueError):
+                continue
+            if not 0 <= index < len(chunk):  # negative would WRAP to chunk[-1]
+                continue
+            cand = chunk[index]
+            action = item.get("action")
+            if action == "merge":
+                target = (item.get("merge_into_slug") or "").strip()
+                if target in vocab.terms:
+                    if cand["source"] == "synonyms_gloss":
+                        # A language form of the same topic → becomes a variant.
+                        vocab.add_variant(target, cand["text"])
+                        for extra in cand.get("variants", []):
+                            vocab.add_variant(target, extra)
+                    if cand["source"] not in vocab.terms[target]["sources"]:
+                        vocab.terms[target]["sources"].append(cand["source"])
+                    merges.append(
+                        {
+                            "type": "candidate-merge",
+                            "source": cand["source"],
+                            "candidate": cand["text"],
+                            "into_slug": target,
+                        }
+                    )
+            elif action == "add":
+                if cand["source"] == "synonyms_gloss" and gloss_added >= config.SANSKRIT_MAX_NEW:
+                    continue  # mining cap: ~100 net-new terms
+                name = (item.get("name") or "").strip()
+                facet = item.get("facet", "Concept")
+                if not name or facet not in config.FACETS:
+                    continue
+                variants = [cand["text"], *cand.get("variants", [])]
+                plain = (item.get("plain_english_variant") or "").strip()
+                if plain:
+                    variants.append(plain)
+                before = slugify(name) in vocab.terms
+                vocab.add(name, facet, variants, cand["source"])
+                if cand["source"] == "synonyms_gloss" and not before:
+                    gloss_added += 1
+
+
+# ── Source 3: embedding clusters as lenses, named by Gemini ─────────────────
+
+def _parse_vector(text: str) -> np.ndarray:
+    # pgvector's text form "[0.1,0.2,...]" is valid JSON
+    return np.asarray(json.loads(text), dtype=np.float32)
+
+
+def _sample_table(table: str, want: int, keys: list, vectors: list, extra_where: str = "",
+                  params: tuple = ()) -> None:
+    got = 0
+    for row_id, vec_text in db.iter_rows(
+        f"SELECT id::text, embedding_context4::text FROM public.{table}"
+        f" WHERE embedding_context4 IS NOT NULL{extra_where}"
+        f" ORDER BY md5(%s || id::text) LIMIT %s",
+        (*params, config.SAMPLE_SEED, want),
+    ):
+        vec = _parse_vector(vec_text)
+        if vec.size != 1024:
+            continue
+        keys.append((table, row_id))
+        vectors.append(vec)
+        got += 1
+    print(f"  {table}{extra_where and ' (stratum)' or ''}: {got} vectors", flush=True)
+
+
+def _stratified_sample() -> tuple[list[tuple[str, str]], np.ndarray]:
+    """SEEDED random sample of (table, id) + vectors, stratified by table (and
+    by book within prose_paragraphs). Deterministic given SAMPLE_SEED — the
+    seed is recorded in vocabulary.json."""
+    live = {t: db.table_count(t, "embedding_context4 IS NOT NULL") for t in config.CONTENT_TABLES}
+    total = sum(live.values()) or 1
+    keys: list[tuple[str, str]] = []
+    vectors: list[np.ndarray] = []
+    for table, count in live.items():
+        want = min(count, round(config.CLUSTER_SAMPLE * count / total))
+        if want == 0:
+            continue
+        print(f"  sampling {want} vectors from {table} (seed {config.SAMPLE_SEED!r})", flush=True)
+        if table == "prose_paragraphs":
+            by_book = db.rows(
+                "SELECT lower(coalesce(book_slug, '')), count(*) FROM public.prose_paragraphs"
+                " WHERE embedding_context4 IS NOT NULL GROUP BY 1 ORDER BY 1"
+            )
+            book_total = sum(n for _, n in by_book) or 1
+            for book, n in by_book:
+                want_book = min(n, round(want * n / book_total))
+                if want_book:
+                    _sample_table(
+                        table, want_book, keys, vectors,
+                        extra_where=" AND lower(coalesce(book_slug, '')) = %s",
+                        params=(book,),
+                    )
+        else:
+            _sample_table(table, want, keys, vectors)
+    return keys, np.vstack(vectors)
+
+
+def _kmeans_view(normalized: np.ndarray, k: int, view: str):
+    """One MiniBatchKMeans lens + cosine centroid merge PROPOSALS (applied
+    provisionally; every merge recorded for the human gate to veto). Returns
+    (labels, centroids, merged_groups) where merged_groups maps final group id
+    → provisional merge record (appended to the run's `merges` list by
+    _name_view after naming)."""
+    from sklearn.cluster import AgglomerativeClustering, MiniBatchKMeans
+
+    k = min(k, len(normalized))
+    km = MiniBatchKMeans(n_clusters=k, random_state=seed_int(view), batch_size=4096, n_init=3)
+    labels = km.fit_predict(normalized)
+    centroids = km.cluster_centers_
+    centroids = centroids / (np.linalg.norm(centroids, axis=1, keepdims=True) + 1e-9)
+
+    merger = AgglomerativeClustering(
+        n_clusters=None,
+        metric="cosine",
+        linkage="average",
+        distance_threshold=config.CLUSTER_MERGE_COSINE,
+    )
+    group_of = merger.fit_predict(centroids)
+    final_labels = np.array([group_of[l] for l in labels])
+    n_groups = int(group_of.max()) + 1
+    merged = np.zeros((n_groups, centroids.shape[1]), dtype=np.float32)
+    merged_groups: dict[int, dict] = {}
+    for group in range(n_groups):
+        members = centroids[group_of == group]
+        merged[group] = members.mean(axis=0)
+        if len(members) > 1:
+            merged_groups[group] = {
+                "type": "centroid-merge",
+                "view": view,
+                "merged_clusters": int(len(members)),
+                "passages": int((final_labels == group).sum()),
+                "named_as": None,  # filled after Gemini naming
+            }
+    return final_labels, merged, merged_groups
+
+
+def _hdbscan_view(normalized: np.ndarray, view: str):
+    """One density lens. Noise (-1) is ignored; no centroid merging. The point
+    set is capped at HDBSCAN_MAX_POINTS (the sample is already seeded-random,
+    so slicing keeps it random) — the cap is PRINTED, never silent."""
+    from sklearn.cluster import HDBSCAN
+
+    points = normalized
+    if len(points) > config.HDBSCAN_MAX_POINTS:
+        print(
+            f"  {view}: capping {len(points)} → {config.HDBSCAN_MAX_POINTS} points"
+            " (seeded-random prefix; cap in config.HDBSCAN_MAX_POINTS)",
+            flush=True,
+        )
+        points = points[: config.HDBSCAN_MAX_POINTS]
+    labels = HDBSCAN(min_cluster_size=config.HDBSCAN_MIN_CLUSTER_SIZE).fit_predict(points)
+    n_groups = int(labels.max()) + 1
+    if n_groups <= 0:
+        return np.full(len(normalized), -1), np.zeros((0, normalized.shape[1]), dtype=np.float32)
+    centroids = np.zeros((n_groups, normalized.shape[1]), dtype=np.float32)
+    for group in range(n_groups):
+        centroids[group] = points[labels == group].mean(axis=0)
+    full_labels = np.full(len(normalized), -1)
+    full_labels[: len(points)] = labels
+    return full_labels, centroids
+
+
+def _snippets_for(keys: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
+    """Short text snippets for representative passages, batched per table
+    (verses → translation, everything else → body_text)."""
+    by_table: dict[str, list[str]] = defaultdict(list)
+    for table, row_id in keys:
+        by_table[table].append(row_id)
+    out: dict[tuple[str, str], str] = {}
+    for table, ids in by_table.items():
+        column = "translation" if table == "verses" else "body_text"
+        for row_id, text in db.rows(
+            f"SELECT id::text, left(coalesce({column}, ''), 240) FROM public.{table}"
+            f" WHERE id = ANY(%s::uuid[])",
+            (ids,),
+        ):
+            out[(table, row_id)] = (text or "").replace("\n", " ").strip()
+    return out
 
 
 NAMING_SCHEMA = {
@@ -271,11 +544,12 @@ NAMING_SCHEMA = {
                 "type": "OBJECT",
                 "properties": {
                     "cluster_id": {"type": "INTEGER"},
+                    "incoherent": {"type": "BOOLEAN"},
                     "name": {"type": "STRING"},
                     "facet": {"type": "STRING", "enum": config.FACETS},
                     "same_as_existing_slug": {"type": "STRING"},
                 },
-                "required": ["cluster_id", "name", "facet"],
+                "required": ["cluster_id", "incoherent"],
             },
         }
     },
@@ -283,57 +557,117 @@ NAMING_SCHEMA = {
 }
 
 
-def add_cluster_concepts(vocab: Vocab, model: str) -> None:
-    keys, matrix = _stratified_sample()
-    print(f"  clustering {len(keys)} vectors (k={config.KMEANS_K}, merge<{config.CLUSTER_MERGE_COSINE})", flush=True)
-    labels, centroids = _cluster(matrix)
-    print(f"  {centroids.shape[0]} merged clusters", flush=True)
-
-    normalized = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
+def _name_view(vocab: Vocab, model: str, view: str, keys: list, normalized: np.ndarray,
+               labels: np.ndarray, centroids: np.ndarray, merges: list[dict],
+               merged_groups: dict[int, dict] | None = None) -> None:
+    """Gemini names one view's clusters from nearest AND farthest members;
+    'incoherent — drop' is an allowed answer. same-as-existing answers are
+    recorded as merge proposals too."""
     clusters = []
     for group in range(centroids.shape[0]):
         member_idx = np.where(labels == group)[0]
-        if member_idx.size < 5:  # tiny clusters are noise, not concepts
+        if member_idx.size < MIN_CLUSTER_MEMBERS:
             continue
         sims = normalized[member_idx] @ centroids[group]
-        reps = member_idx[np.argsort(-sims)[:3]]
-        clusters.append({"id": group, "size": int(member_idx.size), "reps": [keys[i] for i in reps]})
-
-    existing = sorted(vocab.terms)
-    for start in tqdm(range(0, len(clusters), CLUSTERS_PER_CALL), desc="  gemini naming"):
+        order = np.argsort(-sims)
+        nearest = member_idx[order[:3]]
+        farthest = member_idx[order[-3:]]
+        clusters.append(
+            {
+                "id": group,
+                "size": int(member_idx.size),
+                "near": [keys[i] for i in nearest],
+                "far": [keys[i] for i in farthest],
+            }
+        )
+    snippet_keys = [k for c in clusters for k in (*c["near"], *c["far"])]
+    snippets = _snippets_for(snippet_keys)
+    incoherent = named = mapped = 0
+    for start in tqdm(range(0, len(clusters), CLUSTERS_PER_CALL), desc=f"  naming {view}"):
         chunk = clusters[start : start + CLUSTERS_PER_CALL]
         lines = []
         for cluster in chunk:
-            snippets = _snippets_for(cluster["reps"])
+            near = "\n    - ".join(snippets.get(k, "") for k in cluster["near"])
+            far = "\n    - ".join(snippets.get(k, "") for k in cluster["far"])
             lines.append(
-                f"cluster_id={cluster['id']} (≈{cluster['size']} passages):\n  - "
-                + "\n  - ".join(snippets)
+                f"cluster_id={cluster['id']} (≈{cluster['size']} passages)\n"
+                f"  NEAREST members:\n    - {near}\n  FARTHEST members:\n    - {far}"
             )
+        existing = sorted(vocab.terms)
         prompt = (
             "You are organizing a closed subject vocabulary for Śrīla Prabhupāda's"
             " books, lectures and letters (Gauḍīya Vaiṣṇava corpus). Below are"
-            " embedding clusters, each shown as representative passage snippets.\n"
-            "For EACH cluster return a short subject name (2-5 words, the kind of"
-            " heading Vedabase or a Gītā index would use), the facet it belongs to"
-            f" (one of {', '.join(config.FACETS)}), and — if the cluster is the SAME"
-            " subject as one of the existing terms listed after the clusters — that"
-            " term's slug in same_as_existing_slug (else omit it). Name and organize"
-            " only; do not invent subjects the snippets do not show.\n\n"
+            " embedding clusters from ONE clustering lens, each shown as its"
+            " NEAREST members (closest to the centroid) and FARTHEST members"
+            " (still inside the cluster). Clustering is a lens, not truth.\n"
+            "For EACH cluster answer:\n"
+            "- incoherent=true if the members do not share ONE subject (judge by"
+            " the farthest members especially) — the cluster is then dropped;\n"
+            "- else incoherent=false plus: the subject name, its facet (one of"
+            f" {', '.join(config.FACETS)}), and — if it is the SAME subject as an"
+            " existing term listed below — that term's slug in"
+            " same_as_existing_slug (omit it otherwise).\n"
+            f"{LABEL_RULES} Name and organize only; never invent subjects the"
+            " snippets do not show.\n\n"
             + "\n\n".join(lines)
             + "\n\nExisting term slugs:\n"
             + ", ".join(existing)
         )
         parsed = _gemini_generate(model, prompt, NAMING_SCHEMA)
         for item in parsed.get("clusters", []):
+            cluster_id = item.get("cluster_id")
+            if item.get("incoherent"):
+                incoherent += 1
+                continue
             same = (item.get("same_as_existing_slug") or "").strip()
+            name = (item.get("name") or "").strip()
+            record = (merged_groups or {}).get(cluster_id)
             if same and same in vocab.terms:
                 if "cluster" not in vocab.terms[same]["sources"]:
                     vocab.terms[same]["sources"].append("cluster")
+                mapped += 1
+                size = next((c["size"] for c in clusters if c["id"] == cluster_id), None)
+                merges.append(
+                    {
+                        "type": "same-as-existing",
+                        "view": view,
+                        "passages": size,
+                        "existing_slug": same,
+                        "proposed_name": name or None,
+                    }
+                )
+                if record:
+                    record["named_as"] = same
                 continue
-            name = (item.get("name") or "").strip()
             facet = item.get("facet", "Concept")
             if name and facet in config.FACETS:
-                vocab.add(name, facet, [], "cluster")
+                slug = vocab.add(name, facet, [], f"cluster:{view}")
+                named += 1
+                if record:
+                    record["named_as"] = slug
+    for record in (merged_groups or {}).values():
+        merges.append(record)
+    print(
+        f"  {view}: {named} named · {mapped} mapped to existing · {incoherent} incoherent-dropped",
+        flush=True,
+    )
+
+
+def add_cluster_concepts(vocab: Vocab, model: str, merges: list[dict]) -> None:
+    keys, matrix = _stratified_sample()
+    normalized = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
+    for k in config.KMEANS_VIEWS:
+        view = f"kmeans-{k}"
+        print(f"  clustering {len(keys)} vectors ({view}, merge<{config.CLUSTER_MERGE_COSINE})", flush=True)
+        labels, centroids, merged_groups = _kmeans_view(normalized, k, view)
+        print(f"  {view}: {centroids.shape[0]} clusters after provisional merges", flush=True)
+        _name_view(vocab, model, view, keys, normalized, labels, centroids, merges, merged_groups)
+    view = "hdbscan"
+    print(f"  clustering ({view}, min_cluster_size={config.HDBSCAN_MIN_CLUSTER_SIZE})", flush=True)
+    labels, centroids = _hdbscan_view(normalized, view)
+    print(f"  {view}: {centroids.shape[0]} dense clusters (noise ignored)", flush=True)
+    if centroids.shape[0]:
+        _name_view(vocab, model, view, keys, normalized, labels, centroids, merges)
 
 
 # ── Tree organization (Gemini organizes only) ───────────────────────────────
@@ -390,19 +724,114 @@ def organize_tree(vocab: Vocab, model: str) -> None:
                     vocab.terms[slug]["parent"] = parent
 
 
-# ── Output + vocab_terms load ───────────────────────────────────────────────
+# ── Scope notes (one line per term; shown at the gate; used in tagging) ─────
 
-def write_vocabulary(vocab: Vocab) -> None:
+SCOPE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "notes": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "slug": {"type": "STRING"},
+                    "scope_note": {"type": "STRING"},
+                },
+                "required": ["slug", "scope_note"],
+            },
+        }
+    },
+    "required": ["notes"],
+}
+
+
+def draft_scope_notes(vocab: Vocab, model: str) -> None:
+    """ONE line per term: what it covers + one thing it explicitly excludes
+    (e.g. 'surrender — taking shelter of the Lord; not mere resignation').
+    Stored on the term; shown at the ⛔ gate; injected into the tagging prompt."""
+    pending = [s for s, t in vocab.terms.items() if not t["scope_note"]]
+    for attempt in range(2):
+        if not pending:
+            break
+        chunks = [pending[i : i + SCOPE_NOTES_PER_CALL] for i in range(0, len(pending), SCOPE_NOTES_PER_CALL)]
+        for chunk in tqdm(chunks, desc=f"  scope notes (pass {attempt + 1})"):
+            lines = []
+            for slug in chunk:
+                t = vocab.terms[slug]
+                variants = ", ".join(t["variants"][:4])
+                lines.append(f"{slug}: {t['term']} ({t['facet']}{'; variants: ' + variants if variants else ''})")
+            prompt = (
+                "For EACH term of this Gauḍīya Vaiṣṇava subject vocabulary write"
+                " ONE short scope line (≤ 140 characters): what the term covers"
+                " PLUS one thing it explicitly does NOT cover, separated by ';"
+                " not'. Example: 'surrender — taking shelter of the Lord; not"
+                " mere resignation'. Be concrete; never write doctrine, only"
+                " indexing scope.\n\nTERMS:\n" + "\n".join(lines)
+            )
+            parsed = _gemini_generate(model, prompt, SCOPE_SCHEMA)
+            for item in parsed.get("notes", []):
+                slug = (item.get("slug") or "").strip()
+                note = (item.get("scope_note") or "").strip()
+                if slug in vocab.terms and note:
+                    vocab.terms[slug]["scope_note"] = note[:200]
+        pending = [s for s, t in vocab.terms.items() if not t["scope_note"]]
+    if pending:
+        print(f"  WARNING: {len(pending)} terms still have no scope note (listed in vocabulary.json warnings)", flush=True)
+
+
+# ── Validation + output + vocab_terms load ──────────────────────────────────
+
+def validate(vocab: Vocab) -> list[str]:
+    """Gate warnings (never fatal — the human decides at the ⛔ gate)."""
+    warnings: list[str] = []
+    for slug, t in sorted(vocab.terms.items()):
+        if t["kind"] == "concept":
+            folded_label = fold(t["term"])
+            has_plain_english = t["term"].isascii() or any(
+                v.isascii() and fold(v) != folded_label for v in t["variants"]
+            )
+            if not has_plain_english:
+                warnings.append(f"{slug}: no plain-English variant (label rule: every term carries one)")
+        if slugify(t["term"]) in SANSKRIT_STOPWORDS or fold(t["term"]) in SANSKRIT_STOPWORDS:
+            warnings.append(f"{slug}: label is a grammatical particle — particles are never terms")
+        if not t["scope_note"]:
+            warnings.append(f"{slug}: missing scope note")
+    return warnings
+
+
+def write_vocabulary(vocab: Vocab, merges: list[dict], warnings: list[str]) -> None:
     payload = {
         "version": datetime.now(timezone.utc).strftime("%Y-%m-%d.%H%M"),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "facets": config.FACETS,
+        "sampling": {
+            "seed": config.SAMPLE_SEED,
+            "cluster_sample": config.CLUSTER_SAMPLE,
+            "kmeans_views": config.KMEANS_VIEWS,
+            "hdbscan_min_cluster_size": config.HDBSCAN_MIN_CLUSTER_SIZE,
+            "stratified": "by table; by book within prose_paragraphs",
+        },
         "term_count": len(vocab.terms),
+        "concept_count": vocab.concept_count(),
+        "entity_count": vocab.entity_count(),
         "terms": sorted(vocab.terms.values(), key=lambda t: (t["facet"], t["slug"])),
+        # ⛔ gate: every provisional merge below is a PROPOSAL. Veto = edit this
+        # file (rename/split/re-add terms) before pressing Enter at the gate.
+        "merges": merges,
+        "warnings": warnings,
     }
     with open(config.VOCAB_PATH, "w", encoding="utf-8", newline="\n") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
-    print(f"  wrote {config.VOCAB_PATH} ({len(vocab.terms)} terms)", flush=True)
+    print(
+        f"  wrote {config.VOCAB_PATH} ({payload['concept_count']} concepts +"
+        f" {payload['entity_count']} entities · {len(merges)} merge proposals ·"
+        f" {len(warnings)} warnings)",
+        flush=True,
+    )
+    print(
+        "  Healthy is ~400-700 concepts — but the ⛔ gate decides, not a round number.",
+        flush=True,
+    )
 
 
 def load_vocabulary() -> dict:
@@ -460,12 +889,15 @@ def run(model: str) -> None:
         print(f"  {config.VOCAB_PATH} already exists — keeping it (delete to rebuild).", flush=True)
     else:
         vocab = Vocab()
+        merges: list[dict] = []
         add_seeds(vocab)
-        add_chapter_titles(vocab)
-        add_sanskrit_terms(vocab)
-        add_cluster_concepts(vocab, model)
+        candidates = chapter_title_candidates() + sanskrit_gloss_candidates()
+        review_candidates(vocab, model, candidates, merges)
+        add_cluster_concepts(vocab, model, merges)
         organize_tree(vocab, model)
-        write_vocabulary(vocab)
+        draft_scope_notes(vocab, model)
+        warnings = validate(vocab)
+        write_vocabulary(vocab, merges, warnings)
     expected = load_vocabulary()["term_count"]
     if not vocab_terms_ready(expected):
         load_vocab_terms()
