@@ -96,6 +96,26 @@ def _check_db() -> bool:
             _bad(table, str(exc)[:200])
 
     try:
+        missing_fn = [
+            t
+            for t in config.CONTENT_TABLES
+            if not db.one(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_schema='public' AND table_name=%s AND column_name='passage_function'",
+                (t,),
+            )
+        ]
+        if missing_fn:
+            _warn(
+                "passage_function column",
+                f"missing on {', '.join(missing_fn)} — run_all adds it (additive, audit.ensure_audit_tables)",
+            )
+        else:
+            _ok("passage_function column", "present on all five content tables")
+    except Exception as exc:  # noqa: BLE001
+        _bad("passage_function column", str(exc)[:200])
+
+    try:
         vocab_count = db.table_count("vocab_terms")
         embedded = db.table_count("vocab_terms", "embedding IS NOT NULL")
         (_ok if embedded else _warn)("vocab_terms", f"{vocab_count:,} terms · {embedded:,} embedded")
@@ -144,7 +164,12 @@ def _check_artifacts() -> None:
         try:
             with open(config.VOCAB_PATH, encoding="utf-8") as f:
                 vocab = json.load(f)
-            _ok("vocabulary.json built", f"{vocab.get('term_count')} terms · version {vocab.get('version')}")
+            _ok(
+                "vocabulary.json built",
+                f"{vocab.get('term_count')} terms ({vocab.get('concept_count', '?')} concepts ·"
+                f" {vocab.get('entity_count', '?')} entities) · {len(vocab.get('merges', []))} merge"
+                f" proposals · {len(vocab.get('warnings', []))} warnings · version {vocab.get('version')}",
+            )
         except Exception as exc:  # noqa: BLE001
             _bad("vocabulary.json parses", str(exc)[:200])
     else:
