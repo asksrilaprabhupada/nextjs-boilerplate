@@ -206,12 +206,63 @@ def _gemini_generate(model: str, prompt: str, schema: dict) -> dict:
             timeout=120,
         )
         if not res.ok:
-            raise RuntimeError(f"Gemini HTTP {res.status_code}: {res.text[:500]}")
+            raise gemini_client.GeminiHTTPError("vocabulary call", res)
         return res.json()
 
-    data = db.with_retry(_call, "gemini vocabulary call")
+    # Patient Gemini-specific retry (503 demand spikes last minutes), NOT the
+    # short db.with_retry pooler backoff. 400/401/403 still fail immediately.
+    data = gemini_client.with_gemini_retry(_call, "vocabulary call")
     text = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [{}])[0].get("text", "")
     return json.loads(text)
+
+
+# ── Gemini decision cache (crash-resume: paid work is never repeated) ───────
+# Local JSONL, gitignored. Every cluster-naming and candidate-review decision
+# is appended as soon as its response arrives, keyed by a content hash; a rerun
+# after a crash replays cached decisions in seconds and only calls Gemini for
+# uncached work. Append-only writes survive a crash (a torn last line is
+# skipped on load).
+
+GEMINI_CACHE_PATH = config.HARNESS_DIR / "gemini-vocab-cache.jsonl"
+# Part of every cache key — bump when the naming/review prompts or schemas
+# change so stale decisions are never reused.
+CACHE_PROMPT_VERSION = "asp-vocab-v1"
+
+_gemini_cache: dict[str, dict] | None = None
+
+
+def _cache_key(*parts) -> str:
+    return hashlib.sha256(
+        json.dumps(parts, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _cache_load() -> dict[str, dict]:
+    global _gemini_cache
+    if _gemini_cache is None:
+        _gemini_cache = {}
+        if GEMINI_CACHE_PATH.exists():
+            with open(GEMINI_CACHE_PATH, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        _gemini_cache[entry["key"]] = entry["value"]
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        continue  # torn last line from a crash — ignored
+    return _gemini_cache
+
+
+def _cache_get(key: str) -> dict | None:
+    return _cache_load().get(key)
+
+
+def _cache_put(key: str, value: dict) -> None:
+    _cache_load()[key] = value
+    with open(GEMINI_CACHE_PATH, "a", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps({"key": key, "value": value}, ensure_ascii=False) + "\n")
 
 
 LABEL_RULES = (
@@ -329,8 +380,69 @@ def review_candidates(vocab: Vocab, model: str, candidates: list[dict], merges: 
     if not candidates:
         return
     gloss_added = 0
-    for start in tqdm(range(0, len(candidates), CANDIDATES_PER_CALL), desc="  candidate review"):
-        chunk = candidates[start : start + CANDIDATES_PER_CALL]
+
+    def apply_decision(cand: dict, item: dict) -> None:
+        nonlocal gloss_added
+        action = item.get("action")
+        if action == "merge":
+            target = (item.get("merge_into_slug") or "").strip()
+            if target in vocab.terms:
+                if cand["source"] == "synonyms_gloss":
+                    # A language form of the same topic → becomes a variant.
+                    vocab.add_variant(target, cand["text"])
+                    for extra in cand.get("variants", []):
+                        vocab.add_variant(target, extra)
+                if cand["source"] not in vocab.terms[target]["sources"]:
+                    vocab.terms[target]["sources"].append(cand["source"])
+                merges.append(
+                    {
+                        "type": "candidate-merge",
+                        "source": cand["source"],
+                        "candidate": cand["text"],
+                        "into_slug": target,
+                    }
+                )
+        elif action == "add":
+            if cand["source"] == "synonyms_gloss" and gloss_added >= config.SANSKRIT_MAX_NEW:
+                return  # mining cap: ~100 net-new terms
+            name = (item.get("name") or "").strip()
+            facet = item.get("facet", "Concept")
+            if not name or facet not in config.FACETS:
+                return
+            variants = [cand["text"], *cand.get("variants", [])]
+            plain = (item.get("plain_english_variant") or "").strip()
+            if plain:
+                variants.append(plain)
+            before = slugify(name) in vocab.terms
+            vocab.add(name, facet, variants, cand["source"])
+            if cand["source"] == "synonyms_gloss" and not before:
+                gloss_added += 1
+
+    # Cache split: cached decisions replay instantly (in original candidate
+    # order — the cap allocation stays deterministic); only the rest are paid.
+    cached: list[tuple[dict, dict]] = []
+    pending: list[dict] = []
+    for cand in candidates:
+        key = _cache_key(
+            "candidate-review", CACHE_PROMPT_VERSION, model,
+            cand["source"], cand["text"], cand.get("context", ""),
+            sorted(cand.get("variants", [])),
+        )
+        cand["_cache_key"] = key
+        hit = _cache_get(key)
+        if hit is not None:
+            cached.append((cand, hit))
+        else:
+            pending.append(cand)
+    if cached:
+        print(
+            f"  candidate review: {len(cached)} decisions from cache, {len(pending)} to review",
+            flush=True,
+        )
+    for cand, item in cached:
+        apply_decision(cand, item)
+    for start in tqdm(range(0, len(pending), CANDIDATES_PER_CALL), desc="  candidate review"):
+        chunk = pending[start : start + CANDIDATES_PER_CALL]
         catalog = "\n".join(f"{s}: {vocab.terms[s]['term']}" for s in sorted(vocab.terms))
         lines = [
             f"candidate_id={i}: \"{c['text']}\" (source: {c['source']}; {c['context']})"
@@ -359,40 +471,8 @@ def review_candidates(vocab: Vocab, model: str, candidates: list[dict], merges: 
             if not 0 <= index < len(chunk):  # negative would WRAP to chunk[-1]
                 continue
             cand = chunk[index]
-            action = item.get("action")
-            if action == "merge":
-                target = (item.get("merge_into_slug") or "").strip()
-                if target in vocab.terms:
-                    if cand["source"] == "synonyms_gloss":
-                        # A language form of the same topic → becomes a variant.
-                        vocab.add_variant(target, cand["text"])
-                        for extra in cand.get("variants", []):
-                            vocab.add_variant(target, extra)
-                    if cand["source"] not in vocab.terms[target]["sources"]:
-                        vocab.terms[target]["sources"].append(cand["source"])
-                    merges.append(
-                        {
-                            "type": "candidate-merge",
-                            "source": cand["source"],
-                            "candidate": cand["text"],
-                            "into_slug": target,
-                        }
-                    )
-            elif action == "add":
-                if cand["source"] == "synonyms_gloss" and gloss_added >= config.SANSKRIT_MAX_NEW:
-                    continue  # mining cap: ~100 net-new terms
-                name = (item.get("name") or "").strip()
-                facet = item.get("facet", "Concept")
-                if not name or facet not in config.FACETS:
-                    continue
-                variants = [cand["text"], *cand.get("variants", [])]
-                plain = (item.get("plain_english_variant") or "").strip()
-                if plain:
-                    variants.append(plain)
-                before = slugify(name) in vocab.terms
-                vocab.add(name, facet, variants, cand["source"])
-                if cand["source"] == "synonyms_gloss" and not before:
-                    gloss_added += 1
+            _cache_put(cand["_cache_key"], {k: v for k, v in item.items() if k != "candidate_id"})
+            apply_decision(cand, item)
 
 
 # ── Source 3: embedding clusters as lenses, named by Gemini ─────────────────
@@ -572,19 +652,76 @@ def _name_view(vocab: Vocab, model: str, view: str, keys: list, normalized: np.n
         order = np.argsort(-sims)
         nearest = member_idx[order[:3]]
         farthest = member_idx[order[-3:]]
+        member_ids = sorted(f"{keys[i][0]}:{keys[i][1]}" for i in member_idx)
         clusters.append(
             {
                 "id": group,
                 "size": int(member_idx.size),
                 "near": [keys[i] for i in nearest],
                 "far": [keys[i] for i in farthest],
+                "cache_key": _cache_key(
+                    "cluster-naming", CACHE_PROMPT_VERSION, model, view,
+                    int(group), member_ids,
+                ),
             }
         )
-    snippet_keys = [k for c in clusters for k in (*c["near"], *c["far"])]
-    snippets = _snippets_for(snippet_keys)
     incoherent = named = mapped = 0
-    for start in tqdm(range(0, len(clusters), CLUSTERS_PER_CALL), desc=f"  naming {view}"):
-        chunk = clusters[start : start + CLUSTERS_PER_CALL]
+
+    def apply_decision(item: dict) -> None:
+        nonlocal incoherent, named, mapped
+        cluster_id = item.get("cluster_id")
+        if item.get("incoherent"):
+            incoherent += 1
+            return
+        same = (item.get("same_as_existing_slug") or "").strip()
+        name = (item.get("name") or "").strip()
+        record = (merged_groups or {}).get(cluster_id)
+        if same and same in vocab.terms:
+            if "cluster" not in vocab.terms[same]["sources"]:
+                vocab.terms[same]["sources"].append("cluster")
+            mapped += 1
+            size = next((c["size"] for c in clusters if c["id"] == cluster_id), None)
+            merges.append(
+                {
+                    "type": "same-as-existing",
+                    "view": view,
+                    "passages": size,
+                    "existing_slug": same,
+                    "proposed_name": name or None,
+                }
+            )
+            if record:
+                record["named_as"] = same
+            return
+        facet = item.get("facet", "Concept")
+        if name and facet in config.FACETS:
+            slug = vocab.add(name, facet, [], f"cluster:{view}")
+            named += 1
+            if record:
+                record["named_as"] = slug
+
+    # Cache split: replay cached decisions instantly; only uncached clusters
+    # are sent to Gemini (snippets are fetched only for those).
+    cached_items: list[dict] = []
+    pending: list[dict] = []
+    for cluster in clusters:
+        hit = _cache_get(cluster["cache_key"])
+        if hit is not None:
+            cached_items.append({**hit, "cluster_id": cluster["id"]})
+        else:
+            pending.append(cluster)
+    if cached_items:
+        print(
+            f"  {view}: {len(cached_items)} cluster decisions from cache, {len(pending)} to name",
+            flush=True,
+        )
+    for item in cached_items:
+        apply_decision(item)
+    snippet_keys = [k for c in pending for k in (*c["near"], *c["far"])]
+    snippets = _snippets_for(snippet_keys)
+    for start in tqdm(range(0, len(pending), CLUSTERS_PER_CALL), desc=f"  naming {view}"):
+        chunk = pending[start : start + CLUSTERS_PER_CALL]
+        by_id = {c["id"]: c for c in chunk}
         lines = []
         for cluster in chunk:
             near = "\n    - ".join(snippets.get(k, "") for k in cluster["near"])
@@ -615,36 +752,10 @@ def _name_view(vocab: Vocab, model: str, view: str, keys: list, normalized: np.n
         )
         parsed = _gemini_generate(model, prompt, NAMING_SCHEMA)
         for item in parsed.get("clusters", []):
-            cluster_id = item.get("cluster_id")
-            if item.get("incoherent"):
-                incoherent += 1
-                continue
-            same = (item.get("same_as_existing_slug") or "").strip()
-            name = (item.get("name") or "").strip()
-            record = (merged_groups or {}).get(cluster_id)
-            if same and same in vocab.terms:
-                if "cluster" not in vocab.terms[same]["sources"]:
-                    vocab.terms[same]["sources"].append("cluster")
-                mapped += 1
-                size = next((c["size"] for c in clusters if c["id"] == cluster_id), None)
-                merges.append(
-                    {
-                        "type": "same-as-existing",
-                        "view": view,
-                        "passages": size,
-                        "existing_slug": same,
-                        "proposed_name": name or None,
-                    }
-                )
-                if record:
-                    record["named_as"] = same
-                continue
-            facet = item.get("facet", "Concept")
-            if name and facet in config.FACETS:
-                slug = vocab.add(name, facet, [], f"cluster:{view}")
-                named += 1
-                if record:
-                    record["named_as"] = slug
+            cluster = by_id.get(item.get("cluster_id"))
+            if cluster is not None:
+                _cache_put(cluster["cache_key"], {k: v for k, v in item.items() if k != "cluster_id"})
+            apply_decision(item)
     for record in (merged_groups or {}).values():
         merges.append(record)
     print(

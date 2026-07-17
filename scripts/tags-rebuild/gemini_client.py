@@ -24,9 +24,10 @@ Response JSONL line: {"key": ..., "response": {GenerateContentResponse}} | {"key
 from __future__ import annotations
 
 import json
+import random
 import time
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 import requests
 
@@ -36,9 +37,75 @@ TIMEOUT = 120
 TERMINAL_STATES = {"BATCH_STATE_SUCCEEDED", "BATCH_STATE_FAILED", "BATCH_STATE_CANCELLED", "BATCH_STATE_EXPIRED"}
 SUCCESS_STATE = "BATCH_STATE_SUCCEEDED"
 
+# Transient Gemini statuses. A 503 "high demand" spike lasts MINUTES, so the
+# interactive-call waits are patient (base ~15s → 240s, jittered) — far longer
+# than db.with_retry's pooler-blip backoff. 400/401/403 and every other status
+# are never retried: the request itself is wrong and must fail loudly.
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+RETRY_WAITS = (15, 30, 60, 120, 240)  # 6 attempts total: the first + these 5
+
 
 class GeminiError(RuntimeError):
     pass
+
+
+class GeminiHTTPError(GeminiError):
+    """HTTP-level Gemini failure carrying status + Retry-After for retry logic."""
+
+    def __init__(self, what: str, res: requests.Response) -> None:
+        super().__init__(f"Gemini {what} HTTP {res.status_code}: {res.text[:2000]}")
+        self.status = res.status_code
+        self.retry_after = _retry_after_seconds(res)
+
+
+def _retry_after_seconds(res: requests.Response) -> Optional[float]:
+    """Parse a Retry-After header (delta-seconds or HTTP-date) if present."""
+    value = (res.headers.get("Retry-After") or "").strip()
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+
+        return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+    except Exception:
+        return None
+
+
+def with_gemini_retry(fn: Callable[[], Any], what: str) -> Any:
+    """Patient retry for interactive Gemini calls. Transient failures (HTTP
+    429/500/502/503/504 as GeminiHTTPError, plus network-level errors) retry up
+    to len(RETRY_WAITS) times with exponential backoff + jitter, honouring a
+    server Retry-After when it asks for longer. Non-retryable HTTP errors
+    (400/401/403/…) re-raise immediately — never swallowed, never retried."""
+    for attempt, base_wait in enumerate((*RETRY_WAITS, None)):
+        try:
+            return fn()
+        except GeminiHTTPError as exc:
+            if exc.status not in RETRYABLE_STATUS or base_wait is None:
+                raise
+            wait = base_wait * (1 + random.random() * 0.25)
+            if exc.retry_after is not None:
+                wait = max(wait, exc.retry_after)
+            print(
+                f"  Gemini {what}: transient HTTP {exc.status} — waiting {wait:.0f}s,"
+                f" then retry {attempt + 1}/{len(RETRY_WAITS)}",
+                flush=True,
+            )
+            time.sleep(wait)
+        except requests.RequestException as exc:
+            if base_wait is None:
+                raise
+            wait = base_wait * (1 + random.random() * 0.25)
+            print(
+                f"  Gemini {what}: network error ({exc}) — waiting {wait:.0f}s,"
+                f" then retry {attempt + 1}/{len(RETRY_WAITS)}",
+                flush=True,
+            )
+            time.sleep(wait)
 
 
 def _key() -> str:

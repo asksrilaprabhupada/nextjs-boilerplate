@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 .env
 .env.local
+# Local Gemini decision cache (crash-resume; never committed)
+gemini-vocab-cache.jsonl
 # Built artifacts (reviewed locally at the ⛔ gate; never committed)
 vocabulary.json
 pilot-report.md
