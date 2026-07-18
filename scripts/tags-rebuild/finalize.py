@@ -1,10 +1,10 @@
 """
-finalize.py — after the tagging data lands: verse_chunks inheritance, tsvector
-verification, GIN indexes, the vocabulary HYGIENE REPORT, and the completion
-checklist. Step 5 of run_all.py; also runnable standalone.
+finalize.py — after the tagging data lands: tsvector verification, GIN indexes,
+the vocabulary HYGIENE REPORT, and the completion checklist. Step 5 of
+run_all.py; also runnable standalone.
 
-1. verse_chunks inherit tags_core AND passage_function from their parent verse
-   by SQL (chunks are never sent to Gemini).
+1. (v3.p2) verse_chunks are now Gemini-tagged DIRECTLY, so there is NO parent→
+   chunk inheritance step — every content table carries its own tags.
 2. Verify the trigger-maintained tsvectors: every row with questions /
    fts_expansion_src must have questions_fts / fts_expansion (the tagging
    UPDATE fires the trigger, so mismatches indicate a disabled trigger —
@@ -38,22 +38,6 @@ GIN_INDEXES = [
     for col in ("fts_core", "fts_expansion", "questions_fts", "tags_core")
     for t in config.CONTENT_TABLES
 ]
-
-
-def inherit_verse_chunk_tags() -> None:
-    with db.get_pg().cursor() as cur:
-        cur.execute(
-            "UPDATE public.verse_chunks c"
-            " SET tags_core = v.tags_core, passage_function = v.passage_function"
-            " FROM public.verses v"
-            " WHERE c.verse_id = v.id AND v.tags_core IS NOT NULL"
-            "   AND (c.tags_core IS DISTINCT FROM v.tags_core"
-            "        OR c.passage_function IS DISTINCT FROM v.passage_function)"
-        )
-        print(
-            f"  verse_chunks inherited tags_core + passage_function from parents: {cur.rowcount} rows",
-            flush=True,
-        )
 
 
 def verify_tsvectors() -> None:
@@ -124,9 +108,9 @@ def hygiene_report() -> None:
     """List terms with 0 uses (delete candidates), < HYGIENE_MIN_USES uses
     (merge-up candidates), and terms on > HYGIENE_MAX_SHARE of the corpus
     (too-broad candidates). REPORT ONLY — nothing is auto-deleted; the
-    maintainer decides in a 10-minute pass. Counted over the four
-    Gemini-tagged tables (verse_chunks mirror their parent verses and would
-    double-count)."""
+    maintainer decides in a 10-minute pass. Counted over all five directly
+    Gemini-tagged tables (v3.p2: verse_chunks now carry their own tags, so they
+    are first-class corpus rows, not parent mirrors)."""
     usage: Counter[str] = Counter()
     corpus_rows = 0
     for table in config.GEMINI_TABLES:
@@ -154,7 +138,7 @@ def hygiene_report() -> None:
         "",
         f"- Generated: {datetime.now(timezone.utc).isoformat()}",
         f"- Corpus: {corpus_rows:,} tagged passages across {', '.join(config.GEMINI_TABLES)}"
-        " (verse_chunks mirror their parent verses and are not double-counted)",
+        " (v3.p2: verse_chunks are tagged directly, counted as first-class rows)",
         f"- Vocabulary: {len(all_slugs)} terms · {len(usage)} used at least once",
         "",
         "The maintainer decides in a 10-minute pass; edit vocabulary.json /",
@@ -200,7 +184,6 @@ def print_completion_checklist() -> None:
 
 
 def run() -> None:
-    inherit_verse_chunk_tags()
     verify_tsvectors()
     build_indexes()
     hygiene_report()

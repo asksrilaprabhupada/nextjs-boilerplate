@@ -2,42 +2,46 @@
 tagging.py — the combined tagging + questions + passage_function pass
 (Gemini Batch API).
 
-ONE structured call per passage returns ALL of:
-  • reasoning — a free-text field placed FIRST in the responseSchema (the model
-    reasons before any constrained field, mitigating the documented format-tax
-    of constrained decoding); never stored;
+ONE structured call per passage (v3.p2) returns ALL of:
   • passage_function — ONE primary value from the closed enum in
-    config.PASSAGE_FUNCTIONS (hidden metadata; additive column; killable);
+    config.PASSAGE_FUNCTIONS (incl. `not_applicable` for filler; hidden metadata;
+    additive column; killable);
   • tags_core — flexible count up to config.MAX_TAGS, every tag constrained to
-    the passage's candidate shortlist by a strict responseSchema enum, each
-    with an evidence sentence. ZERO tags is a valid answer; and
-  • questions — 0-3 distinct questions the passage genuinely ANSWERS, each with
-    the exact answer span as evidence (doc2query lane) — requested ONLY for
-    Prabhupāda-speaking / HIS passages. Gating comes exclusively from
-    provenance.json: NOT-HIS/MIXED-VERIFY rows get topic tags only, and their
-    responseSchema omits questions entirely.
+    the passage's candidate shortlist by a strict responseSchema enum, each with
+    an `evidence_sentence_id`. ZERO tags is a valid answer; and
+  • questions — 0-3 distinct questions the passage genuinely ANSWERS, each with an
+    `evidence_sentence_id` — requested ONLY for Prabhupāda-speaking / HIS passages.
+    Gating comes exclusively from provenance.json: NOT-HIS/MIXED-VERIFY rows get
+    topic tags only, and their responseSchema omits questions entirely.
+
+The request uses thinkingConfig.thinkingLevel=LOW (native reasoning replaces the
+old free-text reasoning field) and the model-default temperature;
+maxOutputTokens is a safety ceiling only.
+
+EVIDENCE IS A SENTENCE ID, not copied text. The target passage is split by the
+deterministic splitter (sentences.py, SPLITTER_VERSION) into numbered sentences
+(S001, S002, …) shown in the prompt; the responseSchema constrains
+`evidence_sentence_id` to a CLOSED ENUM of those ids, so the model cannot invent
+or hallucinate a quote. Our code resolves the id back to the exact source
+sentence + offsets for tag_evidence.
 
 The candidate shortlist is a UNION: semantic top-SHORTLIST_SEMANTIC (pgvector)
 ∪ exact alias/lexical matches found in the passage ∪ the hard-negative partners
 of anything shortlisted (the model always sees BOTH sides of a contrast pair),
 capped ≈ SHORTLIST_CAP. Every candidate line carries the term's scope note and
-its "do NOT confuse with" hard negatives, so the model judges against
-definitions, not just labels.
+its "do NOT confuse with" hard negatives.
 
-verse_chunks are NEVER sent — they inherit tags_core + passage_function from
-their parent verse by SQL (finalize.py).
+verse_chunks are tagged DIRECTLY (v3.p2): the target chunk body is the numbered/
+citable region; the parent-verse translation + adjacent chunks are un-numbered
+CONTEXT; provenance (and questions_allowed) comes from the parent verse. There is
+no parent→chunk inheritance step.
 
 Code gates on every response (evidence is stored either way — tag_evidence):
   1. closed vocabulary: a tag not in vocabulary.json is dropped (HARD);
-  2. evidence (SOFT): the sentence must appear in the passage under a lenient
-     fold (lowercase + strip diacritics + collapse whitespace),
-     ≥ MIN_EVIDENCE_WORDS. In-vocabulary tags whose evidence fails are KEPT and
-     flagged evidence_found=false — abstract doctrinal themes often have no
-     single quotable sentence, and strict-drop preferentially deletes the best
-     tags. Matched evidence stores character offsets (into the composed passage
-     text as sent to Gemini);
-  3. questions: an unevidenced answer span DROPS the question (questions are
-     generated text — stricter than tags);
+  2. evidence (SOFT): the returned sentence id is resolved to a target sentence.
+     In-vocabulary tags whose id doesn't resolve are KEPT and flagged
+     evidence_found=false; a resolved id stores the exact sentence + its offsets;
+  3. questions: an unresolvable answer id DROPS the question (stricter than tags);
   4. passage_function outside the enum → NULL.
 
 Batch mechanics (resumable; jobs run server-side up to 24h — close the script
@@ -71,9 +75,8 @@ import config
 import db
 import gemini_client
 import provenance
+import sentences as sentence_split
 
-GEN_TEMPERATURE = 0.2
-MAX_OUTPUT_TOKENS = 4096  # reasoning + evidence quotes + answer spans need room
 IN_FLIGHT = ("submitted", "running")
 UNFINISHED = ("pending", "submitted", "running", "retrieved")
 
@@ -111,22 +114,10 @@ def fold_text_with_map(text: str) -> tuple[str, list[int]]:
 
 
 def fold_text(text: str) -> str:
+    # Still used by the lexical shortlist lane (attach_shortlists / VocabIndex).
+    # v3.p2 evidence no longer folds/searches quotes — it resolves sentence IDs
+    # (see sentences.resolve_sentence), so the old substring evidence_ok is gone.
     return fold_text_with_map(text)[0]
-
-
-def evidence_ok(evidence: str, folded_passage: str, mapping: list[int]) -> tuple[bool, str | None, int | None, int | None]:
-    """Returns (found, miss_reason, start_offset, end_offset). Offsets are
-    character positions in the ORIGINAL passage text (as sent to Gemini)."""
-    words = (evidence or "").split()
-    if len(words) < config.MIN_EVIDENCE_WORDS:
-        return False, f"evidence shorter than {config.MIN_EVIDENCE_WORDS} words", None, None
-    needle = fold_text(evidence)
-    pos = folded_passage.find(needle)
-    if pos == -1 or not needle:
-        return False, "evidence not found in passage (lenient fold)", None, None
-    start = mapping[pos]
-    end = mapping[pos + len(needle) - 1] + 1
-    return True, None, start, end
 
 
 # ── vocabulary index (shortlist union + prompt context) ─────────────────────
@@ -177,10 +168,14 @@ def load_vocab_index() -> VocabIndex:
 class Passage:
     table: str
     id: str
-    text: str
+    text: str                      # the TARGET text — the ONLY sentence-numbered / citable region
     authorship: str
     questions_allowed: bool
     shortlist: list[str] = field(default_factory=list)
+    # v3.p2: un-numbered CONTEXT shown to the model for understanding only (verse
+    # chunks carry their parent verse translation + adjacent chunks here). Never a
+    # source of evidence — only `text` is split into citable sentences.
+    context: str = ""
 
 
 def _verse_text(translation: str | None, synonyms: str | None, purport: str | None) -> str:
@@ -258,6 +253,55 @@ def load_passages(table: str, ids: list[str]) -> list[Passage]:
                     Passage(table, para.paragraph_id, body[: config.PASSAGE_CHAR_CAP],
                             authorship, provenance.questions_allowed(authorship))
                 )
+    elif table == "verse_chunks":
+        # v3.p2: chunks are Gemini-tagged DIRECTLY. The TARGET is the chunk body
+        # (the only sentence-numbered / citable region); parent-verse translation
+        # and the immediate previous/next chunks are un-numbered CONTEXT so the
+        # model understands the target without tagging the neighbours. Provenance
+        # (and thus questions_allowed) comes from the PARENT VERSE.
+        targets = db.rows(
+            "SELECT c.id::text, c.verse_id::text, c.chunk_number, c.body_text,"
+            "       v.translation, lower(coalesce(ch.book_slug, v.scripture)),"
+            "       v.vedabase_url, ch.canto_or_division, ch.chapter_number"
+            " FROM public.verse_chunks c"
+            " JOIN public.verses v ON v.id = c.verse_id"
+            " LEFT JOIN public.chapters ch ON ch.id = v.chapter_id"
+            " WHERE c.id = ANY(%s::uuid[])",
+            (ids,),
+        )
+        verse_ids = sorted({r[1] for r in targets})
+        siblings: dict[str, list[tuple[int, str]]] = {}
+        if verse_ids:
+            for vid, cnum, body in db.rows(
+                "SELECT verse_id::text, chunk_number, body_text FROM public.verse_chunks"
+                " WHERE verse_id = ANY(%s::uuid[]) ORDER BY verse_id, chunk_number",
+                (verse_ids,),
+            ):
+                siblings.setdefault(vid, []).append((cnum, body or ""))
+        for cid, vid, cnum, body, translation, slug, url, canto, chapter in targets:
+            authorship = provenance.authorship_for_verse(slug, url, canto, chapter)
+            ordered = siblings.get(vid, [])
+            prev_body = next_body = ""
+            for pos, (n, b) in enumerate(ordered):
+                if n == cnum:
+                    if pos > 0:
+                        prev_body = ordered[pos - 1][1]
+                    if pos + 1 < len(ordered):
+                        next_body = ordered[pos + 1][1]
+                    break
+            ctx_parts = []
+            if translation:
+                ctx_parts.append("PARENT VERSE TRANSLATION:\n" + translation.strip())
+            if prev_body:
+                ctx_parts.append("PRECEDING CHUNK:\n" + prev_body.strip())
+            if next_body:
+                ctx_parts.append("FOLLOWING CHUNK:\n" + next_body.strip())
+            context = "\n\n".join(ctx_parts)[: config.PASSAGE_CHAR_CAP]
+            passages.append(
+                Passage(table, cid, (body or "")[: config.PASSAGE_CHAR_CAP],
+                        authorship, provenance.questions_allowed(authorship),
+                        context=context)
+            )
     else:
         raise SystemExit(f"FATAL: load_passages does not send table '{table}' to Gemini")
     return passages
@@ -303,12 +347,23 @@ def attach_shortlists(table: str, passages: list[Passage], vocab: VocabIndex) ->
 
 # ── prompt + schema ─────────────────────────────────────────────────────────
 
-def response_schema(shortlist: list[str], questions_allowed: bool) -> dict:
-    """reasoning comes FIRST (free text before any constrained field —
-    mitigates the documented format-tax of constrained decoding), then the
-    constrained fields, in a pinned propertyOrdering."""
+def _evidence_id_schema(sentence_ids: list[str]) -> dict:
+    """A sentence-id field. When the target has sentences it is a CLOSED ENUM of
+    their ids (S001…) — the same mechanism that constrains tags to the shortlist,
+    so the model cannot emit an out-of-range id. An empty target (no sentences)
+    falls back to a bare STRING (the row will carry zero tags / not_applicable)."""
+    if sentence_ids:
+        return {"type": "STRING", "enum": sentence_ids}
+    return {"type": "STRING"}
+
+
+def response_schema(shortlist: list[str], questions_allowed: bool,
+                    sentence_ids: list[str]) -> dict:
+    """v3.p2: no free-text reasoning field (native LOW thinking replaces the
+    reasoning-first format-tax trick). Evidence is a sentence ID drawn from the
+    numbered TARGET sentences — never copied text."""
+    ev = _evidence_id_schema(sentence_ids)
     properties: dict = {
-        "reasoning": {"type": "STRING"},
         "passage_function": {"type": "STRING", "enum": config.PASSAGE_FUNCTIONS},
         "tags": {
             "type": "ARRAY",
@@ -317,14 +372,14 @@ def response_schema(shortlist: list[str], questions_allowed: bool) -> dict:
                 "type": "OBJECT",
                 "properties": {
                     "tag": {"type": "STRING", "enum": shortlist},
-                    "evidence": {"type": "STRING"},
+                    "evidence_sentence_id": ev,
                 },
-                "required": ["tag", "evidence"],
-                "propertyOrdering": ["tag", "evidence"],
+                "required": ["tag", "evidence_sentence_id"],
+                "propertyOrdering": ["tag", "evidence_sentence_id"],
             },
         },
     }
-    ordering = ["reasoning", "passage_function", "tags"]
+    ordering = ["passage_function", "tags"]
     if questions_allowed:
         properties["questions"] = {
             "type": "ARRAY",
@@ -333,17 +388,17 @@ def response_schema(shortlist: list[str], questions_allowed: bool) -> dict:
                 "type": "OBJECT",
                 "properties": {
                     "question": {"type": "STRING"},
-                    "evidence": {"type": "STRING"},
+                    "evidence_sentence_id": ev,
                 },
-                "required": ["question", "evidence"],
-                "propertyOrdering": ["question", "evidence"],
+                "required": ["question", "evidence_sentence_id"],
+                "propertyOrdering": ["question", "evidence_sentence_id"],
             },
         }
         ordering.append("questions")
     return {
         "type": "OBJECT",
         "properties": properties,
-        "required": ["reasoning", "passage_function", "tags"],
+        "required": ["passage_function", "tags"],
         "propertyOrdering": ordering,
     }
 
@@ -361,7 +416,8 @@ def _candidate_line(slug: str, vocab: VocabIndex) -> str:
     return line
 
 
-def build_prompt(passage: Passage, vocab: VocabIndex) -> str:
+def build_prompt(passage: Passage, vocab: VocabIndex,
+                 sents: list) -> str:
     candidates = "\n".join(
         _candidate_line(slug, vocab) for slug in passage.shortlist if slug in vocab.term_by_slug
     )
@@ -371,50 +427,64 @@ def build_prompt(passage: Passage, vocab: VocabIndex) -> str:
         " search.\n\nCANDIDATE TAGS (closed list — you may ONLY use these slugs;"
         " each shows its scope and what NOT to confuse it with):\n"
         f"{candidates}\n\nRULES:\n"
-        "1. First fill `reasoning`: 2-4 sentences on what this passage is"
-        " actually ABOUT, which candidates truly fit, and which near-misses you"
-        " are rejecting and why. Reason BEFORE you answer.\n"
-        "2. Tag ABOUTNESS only. Do NOT tag a subject the passage merely mentions"
+        "1. Tag ABOUTNESS only. Do NOT tag a subject the passage merely mentions"
         " in passing, quotes from an opponent, or explicitly REJECTS (a passage"
         " arguing against a view is not endorsing it). Choose the MOST SPECIFIC"
         " fitting concepts; do not pad with broad ancestors. Tag a Person, Place"
         " or Scripture only when it is PROMINENT in the passage, never on a"
         " stray mention. ZERO tags is a valid answer — filler or small talk may"
         f" be about nothing; never force tags. Never more than {config.MAX_TAGS}.\n"
-        "3. For EACH tag, quote one EXACT sentence from the passage (verbatim,"
-        " no paraphrase, no ellipsis) that shows the passage discusses that"
-        " subject.\n"
-        "4. `passage_function`: the ONE primary thing this passage DOES, from:"
-        f" {functions}.\n"
+        "2. For EACH tag, set `evidence_sentence_id` to the ID (e.g. S002) of the"
+        " ONE TARGET sentence that best shows the passage is about that subject."
+        " Use ONLY the numbered sentence IDs below — never invent one, never copy"
+        " text.\n"
+        "3. `passage_function`: the ONE primary thing this passage DOES, from:"
+        f" {functions}. Use `not_applicable` for filler, headings, salutations,"
+        " or empty/structural content that does nothing doctrinally.\n"
     )
     if passage.questions_allowed:
         base += (
-            f"5. `questions`: the 0-{config.MAX_QUESTIONS} DISTINCT questions a"
+            f"4. `questions`: the 0-{config.MAX_QUESTIONS} DISTINCT questions a"
             " person might sincerely ask that THIS passage genuinely ANSWERS."
-            " For each, `evidence` = the EXACT contiguous span from the passage"
-            " (verbatim) that contains the answer. NEVER write a question whose"
-            " answer needs outside facts, is only an inference, is far broader"
-            " than the passage, or would present a view the passage rejects or"
-            " negates as if endorsed. ZERO questions is a valid answer.\n"
+            " For each, `evidence_sentence_id` = the ID of the TARGET sentence"
+            " that contains the answer. NEVER write a question whose answer needs"
+            " outside facts, is only an inference, is far broader than the"
+            " passage, or would present a view the passage rejects or negates as"
+            " if endorsed. ZERO questions is a valid answer.\n"
         )
     else:
         base += (
-            "5. This passage is NOT Śrīla Prabhupāda's own words — return"
-            " reasoning, passage_function and topic tags only.\n"
+            "4. This passage is NOT Śrīla Prabhupāda's own words — return"
+            " passage_function and topic tags only.\n"
         )
-    return base + "\nPASSAGE:\n" + passage.text
+    if passage.context:
+        base += (
+            "\nCONTEXT (for understanding only — do NOT cite it; it has no"
+            " sentence IDs and its subject is not necessarily the TARGET's):\n"
+            + passage.context
+        )
+    return (
+        base
+        + "\n\nTARGET PASSAGE (tag/answer ONLY what THIS is about; cite evidence by"
+        " its sentence ID):\n"
+        + sentence_split.render_numbered(sents)
+    )
 
 
 def request_line(passage: Passage, vocab: VocabIndex) -> dict:
+    sents = sentence_split.split_sentences(passage.text)
     return {
         "key": f"{passage.table}|{passage.id}",
         "request": {
-            "contents": [{"parts": [{"text": build_prompt(passage, vocab)}]}],
+            "contents": [{"parts": [{"text": build_prompt(passage, vocab, sents)}]}],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "responseSchema": response_schema(passage.shortlist, passage.questions_allowed),
-                "temperature": GEN_TEMPERATURE,
-                "maxOutputTokens": MAX_OUTPUT_TOKENS,
+                "responseSchema": response_schema(
+                    passage.shortlist, passage.questions_allowed,
+                    sentence_split.sentence_ids(sents),
+                ),
+                "thinkingConfig": {"thinkingLevel": config.THINKING_LEVEL},
+                "maxOutputTokens": config.MAX_OUTPUT_TOKENS,
             },
         },
     }
@@ -422,55 +492,243 @@ def request_line(passage: Passage, vocab: VocabIndex) -> dict:
 
 # ── shard planning (deterministic names, persisted before submission) ───────
 
-def plan_pilot_shards(run_id: str) -> None:
-    """PILOT_SIZE seeded-random passages, stratified proportionally across the
-    five content tables (ORDER BY md5(seed || id) — deterministic for a given
-    config.SAMPLE_SEED, which is recorded in pilot-report.md). The verse_chunks
-    stratum is fulfilled through parent verses — chunks are never sent; their
-    representation is inherited by SQL after apply."""
-    if db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", ("pilot:%",)):
-        print("  pilot shards already planned.", flush=True)
-        return
+# p1 pilot shards used the bare "pilot:" prefix; p2 uses config.PILOT_SHARD_PREFIX
+# ("pilot:p2:"). This LIKE-pair selects the FROZEN p1 shards only.
+_P1_PILOT_LIKE = "pilot:%"
+# Tables p1 actually tagged (verse_chunks were never sent in p1).
+_P1_TABLES = ["verses", "transcript_paragraphs", "prose_paragraphs", "letter_paragraphs"]
+
+
+def _len_expr(table: str) -> str:
+    """Per-table char-length expression for the length-quartile stratification."""
+    if table == "verses":
+        return "length(coalesce(t.translation,'') || coalesce(t.purport,''))"
+    return "length(coalesce(t.body_text,''))"
+
+
+def _largest_remainder(total: int, weights: dict[str, float]) -> dict[str, int]:
+    """Apportion `total` across keys ∝ weights, summing EXACTLY to `total`
+    (largest-remainder method; deterministic tie-break by key)."""
+    keys = [k for k in weights if weights[k] > 0]
+    if total <= 0 or not keys:
+        return {k: 0 for k in weights}
+    s = sum(weights[k] for k in keys)
+    raw = {k: total * weights[k] / s for k in keys}
+    alloc = {k: int(raw[k]) for k in keys}
+    rem = total - sum(alloc.values())
+    order = sorted(keys, key=lambda k: (-(raw[k] - int(raw[k])), k))
+    for k in order[:rem]:
+        alloc[k] += 1
+    return {k: alloc.get(k, 0) for k in weights}
+
+
+def _p1_pilot_ids() -> list[str]:
+    """Every id in the frozen p1 pilot shards (for the fresh-stratum exclusion)."""
+    return [
+        r[0]
+        for r in db.rows(
+            "SELECT DISTINCT unnest(id_list)::text FROM public.tag_batch_jobs"
+            " WHERE shard_key LIKE %s AND shard_key NOT LIKE %s",
+            (_P1_PILOT_LIKE, config.PILOT_SHARD_PREFIX + "%"),
+        )
+    ]
+
+
+def _pilot_forced_failed_ids() -> dict[str, list[str]]:
+    """All p1-failed passages = p1 pilot ids whose content row never got tagged
+    (tags_core IS NULL). These are re-sent in full so p2 re-attempts every failure."""
+    out: dict[str, list[str]] = {}
+    for table in _P1_TABLES:
+        ids = [
+            r[0]
+            for r in db.rows(
+                "WITH p1 AS (SELECT unnest(id_list)::uuid AS id FROM public.tag_batch_jobs"
+                "            WHERE shard_key LIKE %s AND shard_key NOT LIKE %s AND table_name=%s)"
+                f" SELECT t.id::text FROM public.{table} t JOIN p1 ON p1.id=t.id"
+                " WHERE t.tags_core IS NULL ORDER BY t.id",
+                (_P1_PILOT_LIKE, config.PILOT_SHARD_PREFIX + "%", table),
+            )
+        ]
+        if ids:
+            out[table] = ids
+    return out
+
+
+def _pilot_success_slice_ids(target: int, failure_mix: dict[str, int]) -> dict[str, list[str]]:
+    """A p1-SUCCESS comparison slice (rows p1 tagged, tags_core NOT NULL),
+    apportioned across tables to mirror the failure table mix and, within each
+    table, spread across the four length quartiles — so p2 can be compared to p1
+    on similar-profile passages. Seeded-random within each (table, quartile)."""
+    if target <= 0 or not failure_mix:
+        return {}
+    per_table = _largest_remainder(target, {t: float(n) for t, n in failure_mix.items()})
+    out: dict[str, list[str]] = {}
+    bands = max(1, config.PILOT_LENGTH_BANDS)
+    for table, want in per_table.items():
+        if want <= 0:
+            continue
+        per_band = _largest_remainder(want, {str(q): 1.0 for q in range(1, bands + 1)})
+        picked: list[str] = []
+        for q in range(1, bands + 1):
+            k = per_band.get(str(q), 0)
+            if k <= 0:
+                continue
+            picked += [
+                r[0]
+                for r in db.rows(
+                    "WITH p1 AS (SELECT unnest(id_list)::uuid AS id FROM public.tag_batch_jobs"
+                    "            WHERE shard_key LIKE %s AND shard_key NOT LIKE %s AND table_name=%s),"
+                    f" pool AS (SELECT t.id::text AS id, ntile(%s) OVER (ORDER BY {_len_expr(table)}) AS q"
+                    f"          FROM public.{table} t JOIN p1 ON p1.id=t.id WHERE t.tags_core IS NOT NULL)"
+                    " SELECT id FROM pool WHERE q=%s ORDER BY md5(%s || id) LIMIT %s",
+                    (_P1_PILOT_LIKE, config.PILOT_SHARD_PREFIX + "%", table, bands, q, config.SAMPLE_SEED, k),
+                )
+            ]
+        if picked:
+            out[table] = picked
+    return out
+
+
+def _pilot_fresh_stratified_ids(exclude_ids: list[str], remaining: int) -> dict[str, list[str]]:
+    """The FRESH remainder — untagged, embeddable rows across ALL FIVE tables
+    (incl. verse_chunks), excluding every p1 pilot id, stratified by table
+    (∝ live untagged counts) AND length quartile, largest-remainder, seeded-random."""
+    if remaining <= 0:
+        return {}
     live = {
         t: db.table_count(t, "tags_core IS NULL AND embedding_context4 IS NOT NULL")
-        for t in config.CONTENT_TABLES
+        for t in config.GEMINI_TABLES
     }
-    total = sum(live.values()) or 1
-    alloc = {t: round(config.PILOT_SIZE * n / total) for t, n in live.items()}
-    picked: dict[str, list[str]] = {t: [] for t in config.GEMINI_TABLES}
-    for table, want in alloc.items():
-        if want == 0:
+    per_table = _largest_remainder(remaining, {t: float(n) for t, n in live.items()})
+    exclude = exclude_ids or ["00000000-0000-0000-0000-000000000000"]
+    bands = max(1, config.PILOT_LENGTH_BANDS)
+    out: dict[str, list[str]] = {}
+    for table, want in per_table.items():
+        if want <= 0:
             continue
-        if table == "verse_chunks":
-            rows = db.rows(
-                "SELECT DISTINCT v.id::text FROM ("
-                "  SELECT verse_id FROM public.verse_chunks"
-                "  WHERE tags_core IS NULL ORDER BY md5(%s || id::text) LIMIT %s) c"
-                " JOIN public.verses v ON v.id = c.verse_id"
-                " WHERE v.tags_core IS NULL AND v.embedding_context4 IS NOT NULL",
-                (config.SAMPLE_SEED, want),
-            )
-            picked["verses"].extend(r[0] for r in rows)
-        else:
-            rows = db.rows(
-                f"SELECT id::text FROM public.{table}"
-                " WHERE tags_core IS NULL AND embedding_context4 IS NOT NULL"
-                " ORDER BY md5(%s || id::text) LIMIT %s",
-                (config.SAMPLE_SEED, want),
-            )
-            picked[table].extend(r[0] for r in rows)
-    for table, ids in picked.items():
-        ids = sorted(set(ids))
+        per_band = _largest_remainder(want, {str(q): 1.0 for q in range(1, bands + 1)})
+        picked: list[str] = []
+        for q in range(1, bands + 1):
+            k = per_band.get(str(q), 0)
+            if k <= 0:
+                continue
+            picked += [
+                r[0]
+                for r in db.rows(
+                    f"WITH pool AS (SELECT t.id::text AS id, ntile(%s) OVER (ORDER BY {_len_expr(table)}) AS q"
+                    f"              FROM public.{table} t"
+                    "               WHERE t.tags_core IS NULL AND t.embedding_context4 IS NOT NULL"
+                    "                 AND t.id <> ALL(%s::uuid[]))"
+                    " SELECT id FROM pool WHERE q=%s ORDER BY md5(%s || id) LIMIT %s",
+                    (bands, exclude, q, config.SAMPLE_SEED, k),
+                )
+            ]
+        if picked:
+            out[table] = picked
+    return out
+
+
+def plan_pilot_shards(run_id: str) -> None:
+    """Build the EXACT v3.p2 pilot manifest (config.PILOT_SIZE rows), shard it
+    under config.PILOT_SHARD_PREFIX, and record a checksum + cohort sizes in
+    tag_runs.config. Composition: ALL p1-failures + a p1-success comparison slice
+    (matched to the failure table mix + length quartile) + a fresh remainder
+    stratified across all five tables × length quartiles by largest-remainder."""
+    prefix = config.PILOT_SHARD_PREFIX
+    if db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", (prefix + "%",)):
+        print("  p2 pilot shards already planned.", flush=True)
+        return
+
+    failed = _pilot_forced_failed_ids()
+    n_failed = sum(len(v) for v in failed.values())
+    slice_target = max(0, min(config.PILOT_SUCCESS_SLICE, config.PILOT_SIZE - n_failed))
+    success = _pilot_success_slice_ids(slice_target, {t: len(ids) for t, ids in failed.items()})
+    n_success = sum(len(v) for v in success.values())
+    remaining = max(0, config.PILOT_SIZE - n_failed - n_success)
+    fresh = _pilot_fresh_stratified_ids(_p1_pilot_ids(), remaining)
+    n_fresh = sum(len(v) for v in fresh.values())
+
+    picked: dict[str, list[str]] = {t: [] for t in config.GEMINI_TABLES}
+    for cohort in (failed, success, fresh):
+        for table, ids in cohort.items():
+            picked.setdefault(table, []).extend(ids)
+
+    manifest: list[tuple[str, str]] = []  # (table, id) — the checksum basis
+    for table in config.GEMINI_TABLES:
+        ids = sorted(set(picked.get(table, [])))
         if not ids:
             continue
         for index in range(0, len(ids), config.SHARD_SIZE):
             chunk = ids[index : index + config.SHARD_SIZE]
-            _insert_shard(f"pilot:{table}:{index // config.SHARD_SIZE:03d}", table, chunk, run_id)
+            _insert_shard(f"{prefix}{table}:{index // config.SHARD_SIZE:03d}", table, chunk, run_id)
+        manifest += [(table, i) for i in ids]
+
+    checksum = "sha256:" + hashlib.sha256(
+        "\n".join(f"{t}|{i}" for t, i in sorted(manifest)).encode("utf-8")
+    ).hexdigest()[:32]
+    cohorts = {"p1_failed": n_failed, "p1_success_slice": n_success, "fresh": n_fresh}
+    with db.get_pg().cursor() as cur:
+        cur.execute(
+            "UPDATE public.tag_runs SET config = config || %s::jsonb WHERE id=%s::uuid",
+            (json.dumps({
+                "pilot_manifest_sha256": checksum,
+                "pilot_cohorts": cohorts,
+                "pilot_rows": len(manifest),
+            }), run_id),
+        )
     print(
-        f"  pilot planned: {sum(len(v) for v in picked.values())} passages"
-        f" (seeded-random, seed {config.SAMPLE_SEED!r}).",
+        f"  p2 pilot planned: {len(manifest)} passages "
+        f"(failed {n_failed} + success-slice {n_success} + fresh {n_fresh}); "
+        f"seed {config.SAMPLE_SEED!r}; manifest {checksum}.",
         flush=True,
     )
+
+
+def plan_pilot_retry(run_id: str) -> int:
+    """Plan ONE retry generation for every schema-invalid p2 pilot row (from the
+    banked first-pass files). Retry shards live under the pilot prefix
+    ({prefix}retry:{table}:NNN) so they join the pilot stats + file glob. Guarded:
+    if any retry shard already exists this is a no-op (a resume never re-retries)."""
+    prefix = config.PILOT_SHARD_PREFIX
+    if db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", (prefix + "retry:%",)):
+        print("  pilot retry shards already planned.", flush=True)
+        return 0
+    by_table = failed_keys_from_files(prefix)
+    planned = 0
+    for table, ids in by_table.items():
+        ids = sorted(set(ids))
+        for index in range(0, len(ids), config.SHARD_SIZE):
+            chunk = ids[index : index + config.SHARD_SIZE]
+            _insert_shard(f"{prefix}retry:{table}:{index // config.SHARD_SIZE:03d}", table, chunk, run_id)
+            planned += 1
+    total = sum(len(v) for v in by_table.values())
+    if total:
+        print(f"  planned retry for {total} schema-invalid pilot row(s) in {planned} shard(s).", flush=True)
+    return total
+
+
+def failed_keys_from_files(shard_key_prefix: str | None = None) -> dict[str, list[str]]:
+    """Re-parse the banked pilot result files and return, per table, the passage
+    ids whose first-attempt response was schema-invalid (error or unparsed)."""
+    if shard_key_prefix is None:
+        shard_key_prefix = config.PILOT_SHARD_PREFIX
+    pattern = f"{shard_key_prefix.replace(':', '_')}*.results.jsonl"
+    by_table: dict[str, list[str]] = {}
+    for path in sorted(config.SHARDS_DIR.glob(pattern)):
+        # Skip already-retried shard files so we don't retry a retry.
+        if ".retry" in path.name or "_retry_" in path.name:
+            continue
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                key, parsed, _usage, error, _fr, _br = _parse_response_line(line)
+                if not key or "|" not in key:
+                    continue
+                if error or parsed is None:
+                    table, pid = key.split("|", 1)
+                    by_table.setdefault(table, []).append(pid)
+    return by_table
 
 
 def plan_full_shards(run_id: str) -> int:
@@ -486,18 +744,21 @@ def plan_full_shards(run_id: str) -> int:
     )
     planned = 0
     for table in config.GEMINI_TABLES:
-        # Anti-join against every id already covered by a non-failed shard
-        # (NULL-safe and index-friendly — unlike NOT IN over a huge subquery).
+        # v3.p2: coverage is scoped to THIS run's shards (run_id), NOT `tags_core
+        # IS NULL`, so a p2 full run retags every eligible row — including the
+        # ~1,722 rows p1's pilot wrote — superseding the defective p1 pass. Rows
+        # already covered by a non-failed p2 shard (e.g. the p2 pilot) are skipped.
         ids = [
             r[0]
             for r in db.rows(
                 f"WITH covered AS ("
                 f"   SELECT DISTINCT unnest(id_list) AS id FROM public.tag_batch_jobs"
-                f"   WHERE status <> 'failed')"
+                f"   WHERE run_id = %s::uuid AND status <> 'failed')"
                 f" SELECT t.id::text FROM public.{table} t"
                 f" LEFT JOIN covered c ON c.id = t.id"
-                f" WHERE t.tags_core IS NULL AND t.embedding_context4 IS NOT NULL AND c.id IS NULL"
-                f" ORDER BY t.id"
+                f" WHERE t.embedding_context4 IS NOT NULL AND c.id IS NULL"
+                f" ORDER BY t.id",
+                (run_id,),
             )
         ]
         for index in range(0, len(ids), config.SHARD_SIZE):
@@ -518,6 +779,24 @@ def _insert_shard(shard_key: str, table: str, ids: list[str], run_id: str) -> No
             " VALUES (%s, %s, %s::uuid[], %s, %s::uuid) ON CONFLICT (shard_key) DO NOTHING",
             (shard_key, table, ids, len(ids), run_id),
         )
+
+
+def remaining_for_run(run_id: str) -> int:
+    """Eligible rows this run has NOT yet covered (run_id-scoped, matching
+    plan_full_shards). Used by the full run to decide when it is complete."""
+    total = 0
+    for table in config.GEMINI_TABLES:
+        total += int(
+            db.one(
+                f"WITH covered AS (SELECT DISTINCT unnest(id_list) AS id"
+                f"  FROM public.tag_batch_jobs WHERE run_id=%s::uuid AND status <> 'failed')"
+                f" SELECT count(*) FROM public.{table} t LEFT JOIN covered c ON c.id=t.id"
+                f" WHERE t.embedding_context4 IS NOT NULL AND c.id IS NULL",
+                (run_id,),
+            )
+            or 0
+        )
+    return total
 
 
 # ── cost ledger (machine-enforced ceiling) ──────────────────────────────────
@@ -911,6 +1190,16 @@ def classify_schema_failure(error: str | None, finish_reason: str | None,
     return "other"
 
 
+def raw_failure_signal(error: str | None, finish_reason: str | None,
+                       block_reason: str | None) -> str:
+    """The raw model/transport signal for a row the classifier had to bucket as
+    `other` — so an unexpected finishReason/blockReason is LOGGED, not lost."""
+    return (
+        f"finishReason={(finish_reason or '')!r} blockReason={(block_reason or '')!r}"
+        f" error={((error or '')[:200])!r}"
+    )
+
+
 def _parse_response_line(
     line: str,
 ) -> tuple[str | None, dict | None, dict, str | None, str | None, str | None]:
@@ -951,6 +1240,7 @@ def _parse_response_line(
 @dataclass
 class ShardOutcome:
     shard_key: str
+    table: str = ""
     rows: int = 0
     responses: int = 0
     schema_valid: int = 0
@@ -963,27 +1253,29 @@ class ShardOutcome:
     functions_kept: int = 0
     zero_tag_rows: int = 0
     input_tokens: int = 0
-    output_tokens: int = 0
+    output_tokens: int = 0            # candidates + thinking (total BILLABLE output)
+    candidate_tokens: int = 0         # candidatesTokenCount only
+    thought_tokens: int = 0           # thoughtsTokenCount only (billed at output rate)
     per_row_tag_counts: list[int] = field(default_factory=list)
+    # Gated writes, staged (NOT yet committed) so the pilot can validate every
+    # file before touching the DB, then apply all shards in ONE transaction.
+    updates: list[tuple] = field(default_factory=list)
+    evidence_records: list[tuple] = field(default_factory=list)
     # Schema-invalid rows dropped from this shard, bucketed by WHY (the model's
     # own finishReason / blockReason). Sums to (responses - schema_valid - rows
     # skipped for an unknown passage id).
     schema_invalid_reasons: dict[str, int] = field(default_factory=_empty_fail_tally)
+    # Raw finishReason/blockReason strings for rows bucketed `other` (logged, not lost).
+    other_reasons: list[str] = field(default_factory=list)
 
 
-def apply_results(shard_key: str, table: str, results_path, run_id: str,
-                  vocab: VocabIndex) -> ShardOutcome:
-    """Validate + write one shard inside ONE transaction; mark applied only
-    after commit. Writes ONLY new columns (tags_core, questions,
-    fts_expansion_src, passage_function — the trigger derives the tsvectors).
-    Gates: out-of-vocabulary → HARD drop; missing evidence → SOFT (tag kept,
-    evidence_found=false); unevidenced question → dropped; passage_function
-    outside the enum → NULL. Rows whose tags all fail the hard gate get
-    tags_core='{}' so they are never resubmitted."""
-    outcome = ShardOutcome(shard_key=shard_key)
-    updates: list[tuple] = []   # (tags[], questions|None, expansion|None, function|None, id)
-    evidence_records: list[tuple] = []
-
+def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> ShardOutcome:
+    """Parse + gate one shard's results file into staged writes on the returned
+    ShardOutcome — WITHOUT touching the DB. Gates: out-of-vocabulary → HARD drop;
+    unresolvable evidence sentence id → SOFT (tag kept, evidence_found=false);
+    unevidenced question → dropped; passage_function outside the enum → NULL.
+    Evidence is a sentence ID resolved back to the EXACT source sentence text."""
+    outcome = ShardOutcome(shard_key=shard_key, table=table)
     passages = {p.id: p for p in load_passages(table, [
         r[0] for r in db.rows(
             "SELECT unnest(id_list)::text FROM public.tag_batch_jobs WHERE shard_key=%s",
@@ -998,7 +1290,11 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
             key, parsed, usage, error, finish_reason, block_reason = _parse_response_line(line)
             outcome.responses += 1
             outcome.input_tokens += int(usage.get("promptTokenCount") or 0)
-            outcome.output_tokens += int(usage.get("candidatesTokenCount") or 0)
+            cand = int(usage.get("candidatesTokenCount") or 0)
+            thought = int(usage.get("thoughtsTokenCount") or 0)
+            outcome.candidate_tokens += cand
+            outcome.thought_tokens += thought
+            outcome.output_tokens += cand + thought
             if not key or "|" not in (key or ""):
                 continue
             _, passage_id = key.split("|", 1)
@@ -1010,35 +1306,38 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                 # signal before dropping it, so the reason is tallied not lost.
                 bucket = classify_schema_failure(error, finish_reason, block_reason)
                 outcome.schema_invalid_reasons[bucket] += 1
+                if bucket == "other":
+                    outcome.other_reasons.append(raw_failure_signal(error, finish_reason, block_reason))
                 continue
             outcome.schema_valid += 1
 
-            folded, mapping = fold_text_with_map(passage.text)
+            sents = sentence_split.split_sentences(passage.text)
             accepted: list[str] = []
             for item in parsed.get("tags", [])[: config.MAX_TAGS]:
                 if not isinstance(item, dict):
                     continue
                 tag = str(item.get("tag") or "").strip()
-                evidence = str(item.get("evidence") or "").strip()
+                sid = item.get("evidence_sentence_id")
+                sid = sid.strip() if isinstance(sid, str) else None
+                found, ev_text, start, end, miss = sentence_split.resolve_sentence(sid, sents)
                 outcome.tags_returned += 1
                 if tag not in vocab.slugs:
-                    # HARD gate — out-of-vocabulary is never written.
+                    # HARD gate — out-of-vocabulary is never written to tags_core.
                     outcome.tags_out_of_vocab += 1
-                    evidence_records.append(
-                        (table, passage_id, tag, evidence, False, "out of vocabulary", False, None, None)
+                    outcome.evidence_records.append(
+                        (table, passage_id, tag, ev_text, False, "out of vocabulary", found, start, end, sid)
                     )
                     continue
                 if tag in accepted:
                     continue
-                # SOFT gate — the tag is KEPT either way; a miss is flagged
-                # (evidence_found=false) with the miss reason in reject_reason.
-                found, miss_reason, start, end = evidence_ok(evidence, folded, mapping)
+                # SOFT gate — the tag is KEPT either way; a miss (id didn't resolve
+                # to a target sentence) is flagged evidence_found=false.
                 accepted.append(tag)
                 outcome.tags_accepted += 1
                 if not found:
                     outcome.tags_unevidenced_kept += 1
-                evidence_records.append(
-                    (table, passage_id, tag, evidence, True, miss_reason, found, start, end)
+                outcome.evidence_records.append(
+                    (table, passage_id, tag, ev_text, True, miss, found, start, end, sid)
                 )
 
             questions: list[str] = []
@@ -1048,12 +1347,13 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                     if not isinstance(q, dict):
                         continue
                     question = str(q.get("question") or "").strip()
-                    answer_span = str(q.get("evidence") or "").strip()
+                    sid = q.get("evidence_sentence_id")
+                    sid = sid.strip() if isinstance(sid, str) else None
                     if not question or question.lower() in seen:
                         continue
-                    found, _, _, _ = evidence_ok(answer_span, folded, mapping)
+                    found, _, _, _, _ = sentence_split.resolve_sentence(sid, sents)
                     if not found:
-                        # Questions are generated text — unevidenced answers drop.
+                        # Questions are generated text — unevidenced answers drop (strict).
                         outcome.questions_dropped += 1
                         continue
                     seen.add(question.lower())
@@ -1077,7 +1377,7 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                     expansion_lines.setdefault(term["term"], None)
                     for variant in term["variants"]:
                         expansion_lines.setdefault(variant, None)
-            updates.append(
+            outcome.updates.append(
                 (
                     accepted,
                     "\n".join(questions) if questions else None,
@@ -1086,48 +1386,81 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                     passage_id,
                 )
             )
+    outcome.rows = len(outcome.updates)
+    return outcome
 
-    outcome.rows = len(updates)
+
+def _write_outcomes(outcomes: list[ShardOutcome], run_id: str) -> None:
+    """Write a batch of already-gated shards in ONE transaction (content columns +
+    tag_evidence + each shard's applied-status/cost). Used per-shard by the full
+    run and as a single atomic bundle by the pilot — nothing is written unless the
+    whole transaction commits, so a mid-apply failure leaves p1 data untouched."""
     conn = db.get_pg()
     with conn.transaction():
         with conn.cursor() as cur:
-            for start in range(0, len(updates), config.DB_BATCH):
-                cur.executemany(
-                    f"UPDATE public.{table} SET tags_core=%s::text[], questions=%s,"
-                    f" fts_expansion_src=%s, passage_function=%s WHERE id=%s::uuid",
-                    updates[start : start + config.DB_BATCH],
+            for outcome in outcomes:
+                for start in range(0, len(outcome.updates), config.DB_BATCH):
+                    cur.executemany(
+                        f"UPDATE public.{outcome.table} SET tags_core=%s::text[], questions=%s,"
+                        f" fts_expansion_src=%s, passage_function=%s WHERE id=%s::uuid",
+                        outcome.updates[start : start + config.DB_BATCH],
+                    )
+                if outcome.evidence_records:
+                    cur.executemany(
+                        "INSERT INTO public.tag_evidence"
+                        " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason,"
+                        "  evidence_found, evidence_start, evidence_end, evidence_sentence_id)"
+                        " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        [(run_id, *r) for r in outcome.evidence_records],
+                    )
+                cur.execute(
+                    "UPDATE public.tag_batch_jobs SET status='applied', applied_at=%s,"
+                    " cost_input_tok=%s, cost_output_tok=%s, cost_candidate_tok=%s,"
+                    " cost_thought_tok=%s WHERE shard_key=%s",
+                    (datetime.now(timezone.utc), outcome.input_tokens, outcome.output_tokens,
+                     outcome.candidate_tokens, outcome.thought_tokens, outcome.shard_key),
                 )
-            cur.executemany(
-                "INSERT INTO public.tag_evidence"
-                " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason,"
-                "  evidence_found, evidence_start, evidence_end)"
-                " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s)",
-                [(run_id, *r) for r in evidence_records],
-            )
-            cur.execute(
-                "UPDATE public.tag_batch_jobs SET status='applied', applied_at=%s,"
-                " cost_input_tok=%s, cost_output_tok=%s WHERE shard_key=%s",
-                (datetime.now(timezone.utc), outcome.input_tokens, outcome.output_tokens, shard_key),
-            )
+
+
+def _log_shard_invalids(outcome: ShardOutcome) -> None:
     invalid = sum(outcome.schema_invalid_reasons.values())
     if invalid:
         breakdown = ", ".join(
             f"{bucket}={n}" for bucket, n in outcome.schema_invalid_reasons.items() if n
         )
-        print(f"  {shard_key}: {invalid} schema-invalid row(s) — {breakdown}", flush=True)
+        print(f"  {outcome.shard_key}: {invalid} schema-invalid row(s) — {breakdown}", flush=True)
+        for raw in outcome.other_reasons:
+            print(f"    other → {raw}", flush=True)
+
+
+def apply_results(shard_key: str, table: str, results_path, run_id: str,
+                  vocab: VocabIndex) -> ShardOutcome:
+    """Gate + write one shard in its own transaction (the full-run path). The
+    pilot instead gates every shard first and applies them all atomically."""
+    outcome = _gate_shard(shard_key, table, results_path, vocab)
+    _write_outcomes([outcome], run_id)
+    _log_shard_invalids(outcome)
+    return outcome
     return outcome
 
 
-def collect(run_id: str, shard_key_prefix: str = "") -> list[ShardOutcome]:
-    """Poll submitted/running shards until every one is terminal; download,
-    gate and apply results as each finishes. Safe to Ctrl+C and rerun."""
-    vocab = load_vocab_index()
+def collect(run_id: str, shard_key_prefix: str = "", apply: bool = True) -> list[ShardOutcome]:
+    """Poll submitted/running shards until every one is terminal; download the
+    results file for each as it finishes. Safe to Ctrl+C and rerun.
+
+    apply=True (full-run path): gate + write each shard as it lands, per-shard
+    transaction. apply=False (pilot path): download to `retrieved` ONLY — no DB
+    writes — so the files can be validated (and failures retried) BEFORE the
+    single atomic apply_pilot_bundle. In download-only mode `retrieved` is the
+    stop state, so the loop returns once nothing is submitted/running."""
+    vocab = load_vocab_index() if apply else None
     outcomes: list[ShardOutcome] = []
     like = shard_key_prefix + "%"
+    statuses = "('submitted','running','retrieved')" if apply else "('submitted','running')"
     while True:
         jobs = db.rows(
             "SELECT shard_key, table_name, provider_job_id, status FROM public.tag_batch_jobs"
-            " WHERE shard_key LIKE %s AND status IN ('submitted','running','retrieved')"
+            f" WHERE shard_key LIKE %s AND status IN {statuses}"
             " ORDER BY shard_key",
             (like,),
         )
@@ -1137,6 +1470,7 @@ def collect(run_id: str, shard_key_prefix: str = "") -> list[ShardOutcome]:
         for shard_key, table, job_name, status in jobs:
             results_path = config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.results.jsonl"
             if status == "retrieved":
+                # Only reached when apply=True (download-only excludes 'retrieved').
                 outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab))
                 progressed = True
                 continue
@@ -1159,8 +1493,11 @@ def collect(run_id: str, shard_key_prefix: str = "") -> list[ShardOutcome]:
                         "UPDATE public.tag_batch_jobs SET status='retrieved', retrieved_at=%s WHERE shard_key=%s",
                         (datetime.now(timezone.utc), shard_key),
                     )
-                outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab))
-                print(f"  applied {shard_key}", flush=True)
+                if apply:
+                    outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab))
+                    print(f"  applied {shard_key}", flush=True)
+                else:
+                    print(f"  downloaded {shard_key} (not yet applied)", flush=True)
                 progressed = True
             elif state in gemini_client.TERMINAL_STATES:
                 _fail_shard(shard_key, f"batch ended in {state}: {json.dumps(job.get('error') or {})[:300]}")
@@ -1172,6 +1509,52 @@ def collect(run_id: str, shard_key_prefix: str = "") -> list[ShardOutcome]:
                 flush=True,
             )
             time.sleep(config.BATCH_POLL_SECONDS)
+
+
+def apply_pilot_bundle(run_id: str, shard_key_prefix: str, vocab: VocabIndex) -> list[ShardOutcome]:
+    """Gate EVERY retrieved pilot shard (original + retry) and write them all in
+    ONE transaction. Only called after the file scan confirms 100% schema validity,
+    so a first-pass-invalid id is written from its retry shard and no id is written
+    twice. All-or-nothing: a mid-apply failure leaves p1 content + evidence intact."""
+    like = shard_key_prefix + "%"
+    jobs = db.rows(
+        "SELECT shard_key, table_name FROM public.tag_batch_jobs"
+        " WHERE shard_key LIKE %s AND status='retrieved' ORDER BY shard_key",
+        (like,),
+    )
+    outcomes: list[ShardOutcome] = []
+    for shard_key, table in jobs:
+        results_path = config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.results.jsonl"
+        outcomes.append(_gate_shard(shard_key, table, results_path, vocab))
+    _write_outcomes(outcomes, run_id)
+    for outcome in outcomes:
+        _log_shard_invalids(outcome)
+    print(f"  applied {len(outcomes)} pilot shard(s) atomically.", flush=True)
+    return outcomes
+
+
+def pilot_final_failures(shard_key_prefix: str | None = None) -> dict[str, list[str]]:
+    """After the single retry, the ids STILL schema-invalid = first-pass failures
+    not rescued by a valid retry response. Empty ⇒ 100% validity ⇒ safe to apply."""
+    if shard_key_prefix is None:
+        shard_key_prefix = config.PILOT_SHARD_PREFIX
+    first = failed_keys_from_files(shard_key_prefix)  # non-retry files only
+    retry_valid: set[str] = set()
+    retry_pattern = f"{shard_key_prefix.replace(':', '_')}retry_*.results.jsonl"
+    for path in sorted(config.SHARDS_DIR.glob(retry_pattern)):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                key, parsed, _u, error, _fr, _br = _parse_response_line(line)
+                if key and "|" in key and not error and parsed is not None:
+                    retry_valid.add(key)
+    still: dict[str, list[str]] = {}
+    for table, ids in first.items():
+        rem = [pid for pid in ids if f"{table}|{pid}" not in retry_valid]
+        if rem:
+            still[table] = rem
+    return still
 
 
 def _fail_shard(shard_key: str, error: str) -> None:
@@ -1199,7 +1582,7 @@ def _percentile_disc(sorted_values: list[int], p: float) -> int:
     return sorted_values[idx]
 
 
-def scan_pilot_results(shard_key_prefix: str = "pilot:") -> dict:
+def scan_pilot_results(shard_key_prefix: str | None = None) -> dict:
     """Re-scan the banked ``<prefix>*.results.jsonl`` files under SHARDS_DIR and
     recompute — with NO database access, NO Gemini calls and NO cost — BOTH the
     schema-invalid failure buckets (from each row's own finishReason/blockReason)
@@ -1207,21 +1590,25 @@ def scan_pilot_results(shard_key_prefix: str = "pilot:") -> dict:
     as apply_results gates them: out-of-vocabulary is a HARD drop, in-vocab tags
     are deduped and capped at MAX_TAGS).
 
-    Returns {"files", "pattern", "buckets", "stats"}. ``files`` is EMPTY when
-    nothing is banked and ``stats`` is then None — the caller MUST treat that as
-    "cannot validate", never as a clean pass. Evidence-found rate and the live
-    remaining-passage projection are DB-only and intentionally omitted here."""
+    Returns {"files", "pattern", "buckets", "other_reasons", "stats"}. ``files``
+    is EMPTY when nothing is banked and ``stats`` is then None — the caller MUST
+    treat that as "cannot validate", never as a clean pass. Evidence-found rate
+    and the live remaining-passage projection are DB-only and omitted here."""
+    if shard_key_prefix is None:
+        shard_key_prefix = config.PILOT_SHARD_PREFIX
     pattern = f"{shard_key_prefix.replace(':', '_')}*.results.jsonl"
     files = sorted(config.SHARDS_DIR.glob(pattern))
     buckets = _empty_fail_tally()
+    other_reasons: list[str] = []
     if not files:
-        return {"files": [], "pattern": pattern, "buckets": buckets, "stats": None}
+        return {"files": [], "pattern": pattern, "buckets": buckets,
+                "other_reasons": other_reasons, "stats": None}
 
     vocab = load_vocab_index()
     responses = schema_valid = 0
     tags_returned = oov = 0
     zero_tag_rows = functions_kept = questions_returned = 0
-    input_tokens = output_tokens = 0
+    input_tokens = output_tokens = candidate_tokens = thought_tokens = 0
     per_row_tag_counts: list[int] = []
     tag_usage: dict[str, int] = {}
 
@@ -1232,12 +1619,19 @@ def scan_pilot_results(shard_key_prefix: str = "pilot:") -> dict:
                     continue
                 key, parsed, usage, error, finish_reason, block_reason = _parse_response_line(line)
                 input_tokens += int(usage.get("promptTokenCount") or 0)
-                output_tokens += int(usage.get("candidatesTokenCount") or 0)
+                cand = int(usage.get("candidatesTokenCount") or 0)
+                thought = int(usage.get("thoughtsTokenCount") or 0)
+                candidate_tokens += cand
+                thought_tokens += thought
+                output_tokens += cand + thought
                 if not key or "|" not in key:
                     continue
                 responses += 1
                 if error or parsed is None:
-                    buckets[classify_schema_failure(error, finish_reason, block_reason)] += 1
+                    bucket = classify_schema_failure(error, finish_reason, block_reason)
+                    buckets[bucket] += 1
+                    if bucket == "other":
+                        other_reasons.append(raw_failure_signal(error, finish_reason, block_reason))
                     continue
                 schema_valid += 1
                 accepted: list[str] = []
@@ -1283,6 +1677,8 @@ def scan_pilot_results(shard_key_prefix: str = "pilot:") -> dict:
         "zero_tag_rows": zero_tag_rows,
         "input_tokens": input_tokens,
         "output_tokens": output_tokens,
+        "candidate_tokens": candidate_tokens,
+        "thought_tokens": thought_tokens,
         "tags_mean": (sum(per_row_tag_counts) / len(per_row_tag_counts)) if per_row_tag_counts else 0.0,
         "tagged_median": _percentile_disc(tagged, 0.5),
         "tagged_p90": _percentile_disc(tagged, 0.9),
@@ -1293,7 +1689,8 @@ def scan_pilot_results(shard_key_prefix: str = "pilot:") -> dict:
         "vocab_total": vocab_total,
         "max_tag_share": (max_tag_uses / schema_valid) if schema_valid else 0.0,
     }
-    return {"files": [p.name for p in files], "pattern": pattern, "buckets": buckets, "stats": stats}
+    return {"files": [p.name for p in files], "pattern": pattern, "buckets": buckets,
+            "other_reasons": other_reasons, "stats": stats}
 
 
 def pilot_stats_from_db() -> dict:
@@ -1301,12 +1698,19 @@ def pilot_stats_from_db() -> dict:
     outcomes) so validation is correct even when some pilot shards were applied
     by an earlier, interrupted process. schema_valid_rate works because apply
     only UPDATEs rows whose response parsed: unparsed rows keep tags_core NULL.
-    Zero-tag passages are VALID and excluded from the tagged-row median."""
-    planned, real_in, real_out = db.rows(
+    Zero-tag passages are VALID and excluded from the tagged-row median.
+
+    NOTE (v3.p2): schema_valid_rate here is UNRELIABLE when the pilot re-tags rows
+    p1 already wrote (the success slice is already tags_core NOT NULL) — the FILE
+    scan owns the schema gate. This function's schema_valid_rate is only a
+    trivially-passing backstop; the distribution metrics are the real DB gates."""
+    like = config.PILOT_SHARD_PREFIX + "%"
+    planned, real_in, real_out, real_cand, real_thought = db.rows(
         "SELECT coalesce(sum(row_count),0), coalesce(sum(cost_input_tok),0),"
-        "       coalesce(sum(cost_output_tok),0)"
+        "       coalesce(sum(cost_output_tok),0), coalesce(sum(cost_candidate_tok),0),"
+        "       coalesce(sum(cost_thought_tok),0)"
         " FROM public.tag_batch_jobs WHERE shard_key LIKE %s AND status='applied'",
-        ("pilot:%",),
+        (like,),
     )[0]
     per_table_union = " UNION ALL ".join(
         f"SELECT cardinality(t.tags_core) AS n, t.questions IS NOT NULL AS has_q,"
@@ -1330,7 +1734,7 @@ def pilot_stats_from_db() -> dict:
         "        count(*) FILTER (WHERE has_q),"
         "        count(*) FILTER (WHERE has_fn)"
         " FROM c",
-        ("pilot:%",),
+        (like,),
     )[0]
     (updated, tags_mean, tagged_median, tagged_p90, tags_max,
      zero_tag_rows, question_rows, function_rows) = row
@@ -1345,7 +1749,7 @@ def pilot_stats_from_db() -> dict:
             f"   SELECT unnest(t.tags_core) AS tag FROM public.{t} t"
             f"   JOIN pilot p ON p.id = t.id WHERE t.tags_core IS NOT NULL) x"
             " GROUP BY tag",
-            ("pilot:%", t),
+            (like, t),
         ):
             tag_usage[tag] = tag_usage.get(tag, 0) + int(n)
     distinct_tags = len(tag_usage)
@@ -1362,7 +1766,7 @@ def pilot_stats_from_db() -> dict:
         "        count(*) FILTER (WHERE accepted AND evidence_found)"
         " FROM public.tag_evidence e"
         " WHERE EXISTS (SELECT 1 FROM pilot p WHERE p.table_name = e.table_name AND p.id = e.passage_id)",
-        ("pilot:%",),
+        (like,),
     )[0]
     tags_returned, oov, accepted, evidenced = (int(x) for x in ev)
     planned = int(planned)
@@ -1380,6 +1784,8 @@ def pilot_stats_from_db() -> dict:
         "zero_tag_rows": int(zero_tag_rows),
         "input_tokens": int(real_in),
         "output_tokens": int(real_out),
+        "candidate_tokens": int(real_cand),
+        "thought_tokens": int(real_thought),
         "tags_mean": float(tags_mean),
         "tagged_median": int(tagged_median),
         "tagged_p90": int(tagged_p90),
@@ -1393,15 +1799,13 @@ def pilot_stats_from_db() -> dict:
 
 
 def pilot_thresholds_pass(stats: dict) -> list[str]:
-    """Auto-gates: continue automatically when ALL pass; otherwise STOP with
-    pilot-report.md. Evidence-found rate is reported, never gated. There is NO
-    minimum-tag-count gate — zero-tag passages are valid; the tagged-row median
-    must merely sit in a sane band."""
+    """DISTRIBUTION auto-gates only. v3.p2: the schema-validity gate is enforced
+    on the banked FILES before any DB write (first pass ≥ PILOT_MIN_SCHEMA_VALID,
+    100% after one retry) — NOT here, because the DB schema_valid_rate over-reports
+    once the pilot re-tags rows p1 already wrote. Evidence-found rate is reported,
+    never gated. Zero-tag passages are valid; the tagged-row median must merely sit
+    in a sane band."""
     failures = []
-    if stats["schema_valid_rate"] < config.PILOT_MIN_SCHEMA_VALID:
-        failures.append(
-            f"schema_valid_rate {stats['schema_valid_rate']:.3f} < {config.PILOT_MIN_SCHEMA_VALID}"
-        )
     if stats["out_of_vocab_rate"] > config.PILOT_MAX_OUT_OF_VOCAB:
         failures.append(
             f"out_of_vocab_rate {stats['out_of_vocab_rate']:.3f} > {config.PILOT_MAX_OUT_OF_VOCAB}"
@@ -1433,8 +1837,11 @@ def pilot_thresholds_pass(stats: dict) -> list[str]:
     return failures
 
 
-def _pilot_samples(limit: int) -> list[dict]:
-    """Seeded-random passage→tags→evidence samples for the optional human skim."""
+def _pilot_samples(limit: int, run_id: str | None = None) -> list[dict]:
+    """Seeded-random passage→tags→evidence samples for the optional human skim.
+    Evidence is scoped to THIS run so a re-tagged (p1-success-slice) passage shows
+    p2's evidence, not p1's leftover audit rows."""
+    like = config.PILOT_SHARD_PREFIX + "%"
     rows: list[dict] = []
     for t in config.GEMINI_TABLES:
         column = "translation" if t == "verses" else "body_text"
@@ -1445,7 +1852,7 @@ def _pilot_samples(limit: int) -> list[dict]:
             f" FROM public.{t} t JOIN pilot p ON p.id = t.id"
             " WHERE t.tags_core IS NOT NULL AND cardinality(t.tags_core) > 0"
             " ORDER BY md5(%s || t.id::text) LIMIT %s",
-            ("pilot:%", t, config.SAMPLE_SEED, limit),
+            (like, t, config.SAMPLE_SEED, limit),
         ):
             rows.append(
                 {
@@ -1460,13 +1867,17 @@ def _pilot_samples(limit: int) -> list[dict]:
         key=lambda r: hashlib.md5((config.SAMPLE_SEED + r["table"] + r["id"]).encode()).hexdigest()
     )
     rows = rows[:limit]
+    run_filter = " AND run_id = %s::uuid" if run_id else ""
     for row in rows:
+        params = [row["table"], row["id"]]
+        if run_id:
+            params.append(run_id)
         row["evidence"] = db.rows(
             "SELECT tag, coalesce(evidence_found, false), left(coalesce(evidence, ''), 200)"
             " FROM public.tag_evidence"
-            " WHERE table_name = %s AND passage_id = %s::uuid AND accepted"
+            " WHERE table_name = %s AND passage_id = %s::uuid AND accepted" + run_filter +
             " ORDER BY tag",
-            (row["table"], row["id"]),
+            tuple(params),
         )
     return rows
 
@@ -1496,20 +1907,35 @@ def _failure_reason_lines(failure_reasons: dict) -> list[str]:
         n = buckets.get(bucket, 0)
         share = f" ({n / total:.0%})" if total else ""
         lines.append(f"  - `{bucket}`: {n}{share}")
+    other_reasons = failure_reasons.get("other_reasons") or []
+    if other_reasons:
+        lines.append("- Raw signals for `other`-bucketed rows (logged, not lost):")
+        for raw in other_reasons[:50]:
+            lines.append(f"  - {raw}")
     return lines
 
 
 def write_pilot_report(stats: dict, failures: list[str], model: str,
-                       failure_reasons: dict | None = None, offline: bool = False) -> None:
+                       failure_reasons: dict | None = None, offline: bool = False,
+                       run_id: str | None = None, validity: dict | None = None) -> None:
     """Write pilot-report.md. When ``offline`` is True the DB-only sections
     (remaining-passage projection and the random skim samples) are skipped so
     the report can be regenerated with no database access and no cost — used by
     `run_all.py --revalidate-pilot`. ``failure_reasons`` (a scan_pilot_results()
-    result) adds the 'Schema-invalid failure reasons' section."""
-    remaining = None if offline else sum(
-        db.table_count(t, "tags_core IS NULL AND embedding_context4 IS NOT NULL")
-        for t in config.GEMINI_TABLES
-    )
+    result) adds the 'Schema-invalid failure reasons' section. ``validity`` (a
+    live run's file-based first-pass/retry/final schema-validity summary) is the
+    AUTHORITATIVE schema gate; the DB schema_valid_rate is only a backstop.
+    Full-run extrapolation is run_id-scoped (all 5 tables incl. verse_chunks, and
+    p1-written rows count as work p2 must replace)."""
+    if offline:
+        remaining = None
+    elif run_id:
+        remaining = remaining_for_run(run_id)  # honest: p2 retags every eligible row
+    else:
+        remaining = sum(
+            db.table_count(t, "tags_core IS NULL AND embedding_context4 IS NOT NULL")
+            for t in config.GEMINI_TABLES
+        )
     rows = max(stats["rows"], 1)
     per_row_in = stats["input_tokens"] / rows
     per_row_out = stats["output_tokens"] / rows
@@ -1537,13 +1963,26 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
         "",
         f"- Generated: {datetime.now(timezone.utc).isoformat()}"
         + ("  ·  MODE: offline re-validation (no DB / no Gemini / no cost)" if offline else ""),
-        f"- Model: `{model}` · prompt `{config.PROMPT_VERSION}` · MAX_TAGS {config.MAX_TAGS}",
-        f"- Sampling: seeded-random stratified, seed `{config.SAMPLE_SEED}` · pilot size {config.PILOT_SIZE}",
+        f"- Model: `{model}` · prompt `{config.PROMPT_VERSION}`"
+        f" · thinking `{config.THINKING_LEVEL}` · temperature model-default"
+        f" · MAX_TAGS {config.MAX_TAGS} · maxOutputTokens {config.MAX_OUTPUT_TOKENS}",
+        f"- Evidence: sentence-ID (`{sentence_split.SPLITTER_VERSION}`) resolved to source text",
+        f"- Sampling: seeded-random stratified by table × length quartile, seed"
+        f" `{config.SAMPLE_SEED}` · pilot size {config.PILOT_SIZE}",
         f"- Verdict: **{verdict}**",
+        "",
+        "## Schema validity (FILE-based gate — authoritative)",
+        (
+            f"- First pass: {validity['first_pass']:.2%} (gate ≥ {config.PILOT_MIN_SCHEMA_VALID:.1%})"
+            f" · retried {validity['retry_rows']} row(s) once"
+            f" · final: {validity['final']:.2%} (gate = {config.PILOT_FINAL_SCHEMA_VALID:.0%})"
+            if validity else
+            f"- DB backstop schema_valid_rate: {stats['schema_valid_rate']:.1%}"
+            " (file-based gate not available in this mode)"
+        ),
         "",
         "## Quality gates",
         f"- Passages applied: {stats['rows']} (responses: {stats['responses']})",
-        f"- Schema validity: {stats['schema_valid_rate']:.1%} (gate ≥ {config.PILOT_MIN_SCHEMA_VALID:.0%})",
         f"- Out-of-vocabulary rate: {stats['out_of_vocab_rate']:.2%} (gate ≤ {config.PILOT_MAX_OUT_OF_VOCAB:.0%})",
         evidence_line,
         "",
@@ -1564,11 +2003,13 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
         f"- Passages with passage_function: {stats['functions_kept']}",
         questions_line,
         "",
-        "## Real cost (from usageMetadata) and extrapolation",
+        "## Real cost (from usageMetadata — thinking INCLUDED) and extrapolation",
         f"- Pilot tokens: {stats['input_tokens']:,} in / {stats['output_tokens']:,} out"
+        f" (= {stats.get('candidate_tokens', 0):,} candidate + {stats.get('thought_tokens', 0):,} thinking)"
         f" → ${pilot_usd:,.2f} at ${config.GEMINI_BATCH_PRICE_IN_PER_M}/M in,"
         f" ${config.GEMINI_BATCH_PRICE_OUT_PER_M}/M out (batch)",
-        f"- Per-passage average: {per_row_in:,.0f} in / {per_row_out:,.0f} out tokens",
+        f"- Per-passage average: {per_row_in:,.0f} in / {per_row_out:,.0f} out tokens"
+        " (retried rows are billed for both attempts — real spend)",
     ]
     if remaining is None:
         lines.append(
@@ -1576,8 +2017,10 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
             " (offline — needs the DB)"
         )
     else:
+        scope = "not yet tagged by this run (all 5 tables incl. verse_chunks)" if run_id \
+            else "still untagged (all 5 tables incl. verse_chunks)"
         lines += [
-            f"- Remaining Gemini-eligible passages: {remaining:,}",
+            f"- Remaining Gemini-eligible passages {scope}: {remaining:,}",
             f"- **Projected full-run cost: ${projected_usd:,.2f}**"
             f" (ceiling MAX_SPEND_USD = ${config.MAX_SPEND_USD:,.2f})",
         ]
@@ -1594,7 +2037,7 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
         ]
     else:
         lines += ["", f"## {config.PILOT_SAMPLE_ROWS} random samples (optional human skim)", ""]
-        for i, sample in enumerate(_pilot_samples(config.PILOT_SAMPLE_ROWS), 1):
+        for i, sample in enumerate(_pilot_samples(config.PILOT_SAMPLE_ROWS, run_id=run_id), 1):
             lines.append(
                 f"**{i}. {sample['table']} {sample['id']}**"
                 + (f" · function: `{sample['function']}`" if sample["function"] else "")
@@ -1618,12 +2061,13 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
 
 
 def pilot_done() -> bool:
+    like = config.PILOT_SHARD_PREFIX + "%"
     unfinished = db.one(
         "SELECT count(*) FROM public.tag_batch_jobs"
         " WHERE shard_key LIKE %s AND status NOT IN ('applied','failed')",
-        ("pilot:%",),
+        (like,),
     )
     any_pilot = db.one(
-        "SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", ("pilot:%",)
+        "SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", (like,)
     )
     return bool(any_pilot) and not unfinished

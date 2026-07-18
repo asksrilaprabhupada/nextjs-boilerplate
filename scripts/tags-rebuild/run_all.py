@@ -15,6 +15,10 @@ continues exactly where the previous invocation stopped.
                                    schema-invalid rows failed, and rewrite pilot-report.md.
                                    No DB writes, no Gemini calls, no cost. Missing banked
                                    shards are reported as "cannot validate", never clean.
+    python run_all.py --pilot-only run ONLY the v3.p2 pilot (open/freeze runs, validate the
+                                   result files locally, retry failures once, apply on a
+                                   100%% + distribution pass) and STOP before the full run.
+                                   Requires vocabulary.json already built.
 
 Steps (each idempotent):
   1. fts_core backfill               (touch rows WHERE fts_core IS NULL)
@@ -23,16 +27,21 @@ Steps (each idempotent):
   ⛔  THE ONE GATE: review vocabulary.json — terms, scope notes AND the MERGES
       section (veto a merge by editing the file) — then press Enter
       (skipped by --yes)
-  3. pilot                           (2,000 seeded-random stratified passages;
-                                      auto-gates + pilot-report.md with the
-                                      real extrapolated cost + 30 skim samples;
-                                      auto-continue per the standing ruling
-                                      unless a gate fails)
+  3. pilot (v3.p2)                   (EXACT 2,000-row manifest: all p1-failures +
+                                      matched p1-successes + fresh, stratified by
+                                      table × length quartile; validate FILES
+                                      before any DB write; retry schema-invalid
+                                      rows once; require 100% + distribution gates;
+                                      apply atomically; pilot-report.md with true
+                                      cost incl. thinking + full-run extrapolation +
+                                      40 skim samples)
   4. full tagging                    (sharded Gemini Batch; machine-enforced
-                                      MAX_SPEND_USD ceiling; resumable)
-  5. finalize                        (verse_chunks inheritance; tsvector
-                                      verification; GIN indexes CONCURRENTLY;
-                                      hygiene report; completion checklist)
+                                      MAX_SPEND_USD ceiling; run_id-scoped coverage;
+                                      resumable)
+  5. finalize                        (tsvector verification; GIN indexes
+                                      CONCURRENTLY; hygiene report; completion
+                                      checklist — verse_chunks are tagged directly,
+                                      no inheritance step)
 
 The harness only ever writes the NEW columns (tags_core, questions,
 fts_expansion_src, passage_function + their trigger-derived tsvectors) and its
@@ -69,33 +78,102 @@ def gate_vocabulary(skip: bool) -> None:
 
 
 def run_pilot(run_id: str, model: str, vocab_index) -> None:
+    """v3.p2 pilot: validate the banked result FILES locally BEFORE any DB write,
+    auto-retry every schema-invalid row exactly once, require 100% schema validity
+    AND all distribution gates on the files, then apply all 2,000 rows atomically."""
     import tagging
 
+    prefix = config.PILOT_SHARD_PREFIX
     if tagging.pilot_done() and config.PILOT_REPORT_PATH.exists():
         print("Step 3 · pilot: already complete (pilot-report.md exists).", flush=True)
         return
     print(
-        f"Step 3 · pilot ({config.PILOT_SIZE:,} seeded-random stratified passages,"
-        f" seed {config.SAMPLE_SEED!r})…",
+        f"Step 3 · pilot ({config.PILOT_SIZE:,} rows: all p1-failures + matched"
+        f" p1-successes + fresh, seed {config.SAMPLE_SEED!r})…",
         flush=True,
     )
     tagging.plan_pilot_shards(run_id)
     tagging.reconcile()
     tagging.submit_pending(model, vocab_index)
-    tagging.collect(run_id, shard_key_prefix="pilot:")
-    stats = tagging.pilot_stats_from_db()
-    failures = tagging.pilot_thresholds_pass(stats)
-    # Failure buckets come from the banked result files (finishReason/blockReason
-    # aren't in the DB); the DB stats stay the source of truth for the gates.
-    failure_reasons = tagging.scan_pilot_results("pilot:")
-    tagging.write_pilot_report(stats, failures, model, failure_reasons=failure_reasons)
-    if failures:
+
+    # 1) Download results ONLY — no DB writes yet.
+    tagging.collect(run_id, prefix, apply=False)
+
+    # 2) First-pass schema validity (files).
+    scan = tagging.scan_pilot_results(prefix)
+    if not scan["files"] or scan["stats"] is None:
         raise SystemExit(
-            "⛔ PILOT VALIDATION FAILED — run stopped. See "
-            f"{config.PILOT_REPORT_PATH} :: " + "; ".join(failures)
+            f"⛔ PILOT: no banked result files under {config.SHARDS_DIR} to validate —"
+            " cannot proceed (this is NOT a clean pass)."
         )
+    n_manifest = scan["stats"]["responses"]
+    first_pass = scan["stats"]["schema_valid_rate"]
     print(
-        "  pilot PASSED validation — continuing automatically (standing ruling)."
+        f"  first-pass schema validity: {first_pass:.2%} of {n_manifest}"
+        f" (gate ≥ {config.PILOT_MIN_SCHEMA_VALID:.1%})",
+        flush=True,
+    )
+    if first_pass < config.PILOT_MIN_SCHEMA_VALID:
+        tagging.write_pilot_report(
+            scan["stats"],
+            [f"first-pass schema validity {first_pass:.3f} < {config.PILOT_MIN_SCHEMA_VALID}"],
+            model, failure_reasons=scan, run_id=run_id,
+            validity={"first_pass": first_pass, "retry_rows": 0, "final": first_pass},
+        )
+        raise SystemExit(
+            f"⛔ PILOT VALIDATION FAILED — first-pass schema validity {first_pass:.2%}"
+            f" < {config.PILOT_MIN_SCHEMA_VALID:.1%}. No DB writes. See {config.PILOT_REPORT_PATH}"
+        )
+
+    # 3) Retry every schema-invalid row exactly once.
+    retry_rows = tagging.plan_pilot_retry(run_id)
+    if retry_rows:
+        tagging.reconcile()
+        tagging.submit_pending(model, vocab_index)
+        tagging.collect(run_id, prefix, apply=False)
+
+    # 4) Require 100% after the single retry.
+    still = tagging.pilot_final_failures(prefix)
+    n_still = sum(len(v) for v in still.values())
+    final_rate = (n_manifest - n_still) / n_manifest if n_manifest else 0.0
+    validity = {"first_pass": first_pass, "retry_rows": retry_rows, "final": final_rate}
+    scan_final = tagging.scan_pilot_results(prefix)
+    if n_still > 0:
+        tagging.write_pilot_report(
+            scan_final["stats"] or scan["stats"],
+            [f"final schema validity {final_rate:.4f} < {config.PILOT_FINAL_SCHEMA_VALID} "
+             f"({n_still} row(s) still invalid after retry)"],
+            model, failure_reasons=scan_final, run_id=run_id, validity=validity,
+        )
+        raise SystemExit(
+            f"⛔ PILOT VALIDATION FAILED — {n_still} row(s) still schema-invalid after retry"
+            f" (final {final_rate:.2%} < 100%). No DB writes. See {config.PILOT_REPORT_PATH}"
+        )
+
+    # 5) Distribution gates on the FILES — still BEFORE any DB write.
+    dist_failures = tagging.pilot_thresholds_pass(scan_final["stats"])
+    if dist_failures:
+        tagging.write_pilot_report(
+            scan_final["stats"], dist_failures, model,
+            failure_reasons=scan_final, run_id=run_id, validity=validity,
+        )
+        raise SystemExit(
+            "⛔ PILOT VALIDATION FAILED — distribution gate(s): "
+            + "; ".join(dist_failures)
+            + f". No DB writes. See {config.PILOT_REPORT_PATH}"
+        )
+
+    # 6) All gates pass — apply every pilot row in ONE transaction.
+    print(f"  all file-based gates PASS (final validity {final_rate:.2%}) — applying atomically.", flush=True)
+    tagging.apply_pilot_bundle(run_id, prefix, vocab_index)
+
+    # 7) Report from the DB (richer: evidence-found rate + skim samples).
+    stats = tagging.pilot_stats_from_db()
+    tagging.write_pilot_report(
+        stats, [], model, failure_reasons=scan_final, run_id=run_id, validity=validity,
+    )
+    print(
+        "  pilot PASSED validation and applied — continuing automatically (standing ruling)."
         f" Report: {config.PILOT_REPORT_PATH}",
         flush=True,
     )
@@ -117,7 +195,7 @@ def revalidate_pilot() -> int:
         "Re-validating the banked pilot offline (no DB writes · no Gemini · no cost)…",
         flush=True,
     )
-    scan = tagging.scan_pilot_results("pilot:")
+    scan = tagging.scan_pilot_results(config.PILOT_SHARD_PREFIX)
     if not scan["files"]:
         print(
             f"⛔ No banked pilot shard files found under {config.SHARDS_DIR}"
@@ -180,10 +258,9 @@ def run_full(run_id: str, model: str, vocab_index) -> bool:
                 flush=True,
             )
             return False
-        remaining = sum(
-            db.table_count(t, "tags_core IS NULL AND embedding_context4 IS NOT NULL")
-            for t in config.GEMINI_TABLES
-        )
+        # v3.p2: remaining is run_id-scoped (matches plan_full_shards), so a p2
+        # full run retags every eligible row not yet covered by this run.
+        remaining = tagging.remaining_for_run(run_id)
         if remaining == 0:
             print("  full tagging complete — every eligible passage processed.", flush=True)
             return True
@@ -194,6 +271,43 @@ def run_full(run_id: str, model: str, vocab_index) -> bool:
         flush=True,
     )
     return False
+
+
+def pilot_only() -> int:
+    """--pilot-only: run just the v3.p2 pilot and STOP before the full corpus run.
+    Requires vocabulary.json to already be built (the ⛔ vocabulary gate is part of
+    the full pipeline, not this path)."""
+    config.require_keys()
+
+    import audit
+    import gemini_client
+    import tagging
+
+    print("Preflight: confirming the exact current Gemini model string…", flush=True)
+    model = gemini_client.confirm_model()
+    print(f"  model: {model}", flush=True)
+    audit.ensure_audit_tables()
+    if not config.VOCAB_PATH.exists():
+        raise SystemExit(
+            f"FATAL: {config.VOCAB_PATH} is not built. Run the full pipeline through the"
+            " vocabulary step (and its ⛔ review gate) first, then rerun with --pilot-only."
+        )
+    vocab_index = tagging.load_vocab_index()
+    run_id = audit.open_or_create_run(model)
+    superseded = audit.supersede_prior_runs(run_id)
+    if superseded:
+        print(f"  froze {superseded} prior run(s) as superseded by {config.PROMPT_VERSION}.", flush=True)
+    print(f"  tag run: {run_id} · prompt {config.PROMPT_VERSION} · vocab {audit.vocab_version()}", flush=True)
+
+    run_pilot(run_id, model, vocab_index)
+
+    print(
+        f"\nPILOT COMPLETE ({config.PROMPT_VERSION}). The full corpus run was NOT started"
+        f" (--pilot-only). Review {config.PILOT_REPORT_PATH}; run `python run_all.py --resume`"
+        " to continue into full tagging when ready.",
+        flush=True,
+    )
+    return 0
 
 
 def main() -> int:
@@ -209,6 +323,13 @@ def main() -> int:
         help="re-scan banked shards/pilot_*.results.jsonl, recompute the pilot gates +"
         " schema-invalid failure buckets, rewrite pilot-report.md (no DB writes, no Gemini, no cost)",
     )
+    parser.add_argument(
+        "--pilot-only",
+        action="store_true",
+        help="run ONLY the v3.p2 pilot: preflight, open/freeze runs, validate the result files"
+        " locally, retry failures once, apply on a 100%% + distribution pass, write the report,"
+        " then STOP before the full corpus run",
+    )
     args = parser.parse_args()
 
     if args.doctor:
@@ -218,6 +339,9 @@ def main() -> int:
 
     if args.revalidate_pilot:
         return revalidate_pilot()
+
+    if args.pilot_only:
+        return pilot_only()
 
     config.require_keys()
 
@@ -244,6 +368,9 @@ def main() -> int:
 
     vocab_index = tagging.load_vocab_index()
     run_id = audit.open_or_create_run(model)
+    superseded = audit.supersede_prior_runs(run_id)
+    if superseded:
+        print(f"  froze {superseded} prior run(s) as superseded by {config.PROMPT_VERSION}.", flush=True)
     print(f"  tag run: {run_id} · prompt {config.PROMPT_VERSION} · vocab {audit.vocab_version()}", flush=True)
 
     run_pilot(run_id, model, vocab_index)
@@ -252,7 +379,7 @@ def main() -> int:
     if not complete:
         return 3
 
-    print("Step 5 · finalize (inheritance, tsvectors, GIN indexes, hygiene report)…", flush=True)
+    print("Step 5 · finalize (tsvectors, GIN indexes, hygiene report)…", flush=True)
     finalize.run()
 
     ledger = tagging.spend_ledger()
