@@ -116,7 +116,7 @@ def _key() -> str:
 
 def _check(res: requests.Response, what: str) -> dict:
     if not res.ok:
-        raise GeminiError(f"Gemini {what} HTTP {res.status_code}: {res.text[:2000]}")
+        raise GeminiHTTPError(what, res)
     return res.json()
 
 
@@ -249,14 +249,15 @@ def download_file(file_name: str, dest: Path) -> Path:
 
 def create_batch(model: str, input_file_name: str, display_name: str) -> str:
     """Create a batch job over an uploaded request file. Returns the job name
-    ('batches/…'). REST body per the Gemini Batch docs: the uploaded file goes
-    under batch.input_config.requests.file_name."""
+    ('batches/…'). REST body per the Gemini Batch docs: for a file-based batch
+    the uploaded file goes DIRECTLY under batch.input_config.file_name (the
+    'requests' wrapper is only for inline requests, which we don't use)."""
     data = _post(
         f"{config.GEMINI_BASE}/models/{model}:batchGenerateContent",
         {
             "batch": {
                 "display_name": display_name,
-                "input_config": {"requests": {"file_name": input_file_name}},
+                "input_config": {"file_name": input_file_name},
             }
         },
         "batch create",
