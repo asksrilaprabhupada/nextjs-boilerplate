@@ -198,11 +198,20 @@ def _check_budget() -> None:
         "MAX_SPEND_USD",
         f"${config.MAX_SPEND_USD:,.2f} (machine-enforced at shard submission)",
     )
-    _warn(
-        "batch pricing knobs",
-        f"${config.GEMINI_BATCH_PRICE_IN_PER_M}/M in · ${config.GEMINI_BATCH_PRICE_OUT_PER_M}/M out"
-        " — verify against the live price sheet and pin in .env",
-    )
+    pin, pout = config.GEMINI_BATCH_PRICE_IN_PER_M, config.GEMINI_BATCH_PRICE_OUT_PER_M
+    canon = (config.GEMINI_BATCH_PRICE_IN_PER_M_CANONICAL, config.GEMINI_BATCH_PRICE_OUT_PER_M_CANONICAL)
+    if pin <= 0 or pout <= 0:
+        _bad("batch pricing", "absent/zero — set the Gemini Batch price sheet")
+    elif (pin, pout) in config.STALE_BATCH_PRICE_PAIRS:
+        _bad("batch pricing stale", f"${pin}/M · ${pout}/M is the known v3.p1 placeholder")
+    elif (pin, pout) != canon:
+        _bad(
+            "batch pricing mismatch",
+            f"${pin}/M · ${pout}/M ≠ canonical ${canon[0]}/M · ${canon[1]}/M"
+            " — update the code price sheet (config canonical constants) in lock-step",
+        )
+    else:
+        _ok("batch pricing", f"${pin}/M in · ${pout}/M out (batch, canonical)")
     try:
         import tagging
 
@@ -211,8 +220,10 @@ def _check_budget() -> None:
             "spend ledger",
             f"real ${ledger['real_usd']:,.2f} · in-flight est ${ledger['in_flight_est_usd']:,.2f}",
         )
-    except Exception:
-        _warn("spend ledger", "no shard state yet (nothing submitted)")
+    except (Exception, SystemExit):
+        # get_pg() raises SystemExit when DATABASE_URL is absent — a WARN here, not
+        # a crash, so the pricing/ceiling checks above still report cleanly.
+        _warn("spend ledger", "no DB / no shard state yet (nothing submitted)")
 
 
 def run() -> int:

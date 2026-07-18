@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 import config
 import db
+import sentences
 
 AUDIT_DDL = """
 CREATE TABLE IF NOT EXISTS public.tag_runs (
@@ -70,6 +71,15 @@ ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS evidence_end integer;
 ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS run_id uuid;
 ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS est_input_tok bigint DEFAULT 0;
 ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS est_output_tok bigint DEFAULT 0;
+-- v3.p2: cost_output_tok holds TOTAL billable output (candidates + thinking).
+-- The split is stored additively for resumable, transparent reporting.
+ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS cost_candidate_tok bigint DEFAULT 0;
+ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS cost_thought_tok bigint DEFAULT 0;
+
+-- v3.p2: evidence is a sentence ID (S001…) resolved back to the exact source
+-- sentence (stored in `evidence`) + its offsets. The raw returned ID is kept
+-- here for audit; the splitter version is recorded in tag_runs.config.
+ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS evidence_sentence_id text;
 
 -- passage_function (additive, killable, hidden metadata) on the five content
 -- tables — ONE primary value per passage from the closed enum in config.py,
@@ -130,6 +140,16 @@ def open_or_create_run(model: str) -> str:
         "sample_seed": config.SAMPLE_SEED,
         "pilot_size": config.PILOT_SIZE,
         "passage_functions": config.PASSAGE_FUNCTIONS,
+        # v3.p2 run knobs (recorded for cost + reproducibility auditing).
+        "gemini_batch_price_in_per_m": config.GEMINI_BATCH_PRICE_IN_PER_M,
+        "gemini_batch_price_out_per_m": config.GEMINI_BATCH_PRICE_OUT_PER_M,
+        "pricing_source": "code-canonical",
+        "thinking_level": config.THINKING_LEVEL,
+        "temperature": None,
+        "temperature_provenance": "model_default",
+        "max_output_tokens": config.MAX_OUTPUT_TOKENS,
+        "splitter_version": sentences.SPLITTER_VERSION,
+        "thinking_billed_as_output": True,
     }
     with db.get_pg().cursor() as cur:
         cur.execute(
@@ -146,6 +166,22 @@ def finish_run(run_id: str, notes: str = "") -> None:
             "UPDATE public.tag_runs SET finished_at=%s, notes=%s WHERE id=%s::uuid",
             (datetime.now(timezone.utc), notes, run_id),
         )
+
+
+def supersede_prior_runs(current_run_id: str) -> int:
+    """Freeze any UNFINISHED run with a different prompt_version (e.g. the v3.p1
+    pilot) by stamping finished_at + a 'superseded by <this prompt>' note. Its
+    jobs and evidence are retained — only tag_runs bookkeeping is updated. Returns
+    the number of runs superseded. Idempotent (already-finished runs are skipped)."""
+    with db.get_pg().cursor() as cur:
+        cur.execute(
+            "UPDATE public.tag_runs SET finished_at=%s,"
+            " notes=coalesce(nullif(notes,''),'') || %s"
+            " WHERE finished_at IS NULL AND id <> %s::uuid AND prompt_version <> %s",
+            (datetime.now(timezone.utc), f"superseded by {config.PROMPT_VERSION}",
+             current_run_id, config.PROMPT_VERSION),
+        )
+        return cur.rowcount
 
 
 def record_evidence(run_id: str, records: list[tuple]) -> None:
