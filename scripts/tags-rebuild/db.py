@@ -87,13 +87,23 @@ def iter_rows(sql: str, params: Sequence[Any] | None = None, size: int = 2000) -
             yield from cur
 
 
+def _is_non_retryable_http(exc: Exception) -> bool:
+    """A client-side HTTP failure (4xx except 429) never succeeds on retry — a
+    malformed request or bad credentials must fail loudly and immediately, not
+    after 3 wasted attempts. Detected via an int `status` attribute, as carried
+    by gemini_client.GeminiHTTPError."""
+    status = getattr(exc, "status", None)
+    return isinstance(status, int) and 400 <= status < 500 and status != 429
+
+
 def with_retry(fn: Callable[[], Any], what: str, attempts: int = 4) -> Any:
-    """Network retry with exponential backoff (2s, 4s, 8s) — pooler blips happen."""
+    """Network retry with exponential backoff (2s, 4s, 8s) — pooler blips happen.
+    A non-retryable HTTP 4xx (except 429) re-raises immediately without retrying."""
     for attempt in range(attempts):
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 — deliberate catch-all with loud rethrow
-            if attempt == attempts - 1:
+            if attempt == attempts - 1 or _is_non_retryable_http(exc):
                 raise
             wait = 2 ** (attempt + 1)
             print(f"  retry {attempt + 1}/{attempts - 1} for {what} in {wait}s: {exc}", flush=True)
