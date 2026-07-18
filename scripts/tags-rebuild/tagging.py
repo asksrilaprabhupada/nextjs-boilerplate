@@ -864,27 +864,88 @@ def reconcile() -> None:
 
 # ── collection + gates + apply ──────────────────────────────────────────────
 
-def _parse_response_line(line: str) -> tuple[str | None, dict | None, dict, str | None]:
-    """Returns (key, parsed_json, usage, error)."""
+# Normalized buckets a schema-invalid response is classified into, so the
+# pilot report can show WHY rows failed (not just the rate). Order = report
+# order; every bucket is always present in a tally (0 when unseen).
+SCHEMA_FAIL_BUCKETS = (
+    "RECITATION",
+    "MAX_TOKENS",
+    "SAFETY/PROMPT_BLOCKED",
+    "MALFORMED_JSON",
+    "NO_TAGS_ARRAY",
+    "other",
+)
+# Two internal error strings _parse_response_line emits for the JSON symptoms;
+# shared so the classifier maps them without string drift.
+_ERR_NO_SCHEMA_JSON = "response did not contain valid schema JSON"
+_ERR_NO_TAGS_ARRAY = "schema-invalid response (no tags array)"
+# finishReason values that mean the model was cut off for a safety/policy
+# reason (as opposed to RECITATION or MAX_TOKENS, which get their own buckets).
+_SAFETY_FINISH_REASONS = {"SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "IMAGE_SAFETY"}
+
+
+def _empty_fail_tally() -> dict[str, int]:
+    return {bucket: 0 for bucket in SCHEMA_FAIL_BUCKETS}
+
+
+def classify_schema_failure(error: str | None, finish_reason: str | None,
+                            block_reason: str | None) -> str:
+    """Map ONE schema-invalid row to a normalized bucket, preferring the model's
+    OWN termination signal (finishReason / promptFeedback.blockReason) over the
+    JSON symptom: a RECITATION, MAX_TOKENS or SAFETY stop usually ALSO yields
+    unparseable JSON, and the underlying reason is the actionable one. Falls back
+    to the JSON symptom (NO_TAGS_ARRAY / MALFORMED_JSON) when the model gave no
+    signal, and to `other` for transport/API errors."""
+    fr = (finish_reason or "").strip().upper()
+    br = (block_reason or "").strip().upper()
+    if fr == "RECITATION":
+        return "RECITATION"
+    if fr == "MAX_TOKENS":
+        return "MAX_TOKENS"
+    if br or fr in _SAFETY_FINISH_REASONS:
+        return "SAFETY/PROMPT_BLOCKED"
+    if error == _ERR_NO_TAGS_ARRAY:
+        return "NO_TAGS_ARRAY"
+    if error == _ERR_NO_SCHEMA_JSON:
+        return "MALFORMED_JSON"
+    return "other"
+
+
+def _parse_response_line(
+    line: str,
+) -> tuple[str | None, dict | None, dict, str | None, str | None, str | None]:
+    """Returns (key, parsed_json, usage, error, finish_reason, block_reason).
+
+    finish_reason (candidates[0].finishReason) and block_reason
+    (promptFeedback.blockReason) are the model's own termination signals; they
+    are surfaced even for FAILED rows so a schema-invalid row can be classified
+    into a failure bucket instead of being dropped with its reason discarded."""
     try:
         outer = json.loads(line)
     except json.JSONDecodeError:
-        return None, None, {}, "unparseable JSONL line"
+        return None, None, {}, "unparseable JSONL line", None, None
     key = outer.get("key")
     if outer.get("error"):
-        return key, None, {}, json.dumps(outer["error"])[:500]
+        return key, None, {}, json.dumps(outer["error"])[:500], None, None
     response = outer.get("response") or {}
     if response.get("error"):
-        return key, None, {}, json.dumps(response["error"])[:500]
+        return key, None, {}, json.dumps(response["error"])[:500], None, None
     usage = response.get("usageMetadata") or {}
+    block_reason = (response.get("promptFeedback") or {}).get("blockReason") or None
+    candidates = response.get("candidates") or []
+    finish_reason = (
+        candidates[0].get("finishReason")
+        if candidates and isinstance(candidates[0], dict)
+        else None
+    ) or None
     try:
         text = response["candidates"][0]["content"]["parts"][0]["text"]
         parsed = json.loads(text)
     except (KeyError, IndexError, TypeError, json.JSONDecodeError):
-        return key, None, usage, "response did not contain valid schema JSON"
+        return key, None, usage, _ERR_NO_SCHEMA_JSON, finish_reason, block_reason
     if not isinstance(parsed, dict) or not isinstance(parsed.get("tags"), list):
-        return key, None, usage, "schema-invalid response (no tags array)"
-    return key, parsed, usage, None
+        return key, None, usage, _ERR_NO_TAGS_ARRAY, finish_reason, block_reason
+    return key, parsed, usage, None, finish_reason, block_reason
 
 
 @dataclass
@@ -904,6 +965,10 @@ class ShardOutcome:
     input_tokens: int = 0
     output_tokens: int = 0
     per_row_tag_counts: list[int] = field(default_factory=list)
+    # Schema-invalid rows dropped from this shard, bucketed by WHY (the model's
+    # own finishReason / blockReason). Sums to (responses - schema_valid - rows
+    # skipped for an unknown passage id).
+    schema_invalid_reasons: dict[str, int] = field(default_factory=_empty_fail_tally)
 
 
 def apply_results(shard_key: str, table: str, results_path, run_id: str,
@@ -930,7 +995,7 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
         for line in f:
             if not line.strip():
                 continue
-            key, parsed, usage, error = _parse_response_line(line)
+            key, parsed, usage, error, finish_reason, block_reason = _parse_response_line(line)
             outcome.responses += 1
             outcome.input_tokens += int(usage.get("promptTokenCount") or 0)
             outcome.output_tokens += int(usage.get("candidatesTokenCount") or 0)
@@ -938,7 +1003,13 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                 continue
             _, passage_id = key.split("|", 1)
             passage = passages.get(passage_id)
-            if passage is None or error or parsed is None:
+            if passage is None:
+                continue
+            if error or parsed is None:
+                # Schema-invalid row: classify WHY it failed from the model's own
+                # signal before dropping it, so the reason is tallied not lost.
+                bucket = classify_schema_failure(error, finish_reason, block_reason)
+                outcome.schema_invalid_reasons[bucket] += 1
                 continue
             outcome.schema_valid += 1
 
@@ -1038,6 +1109,12 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
                 " cost_input_tok=%s, cost_output_tok=%s WHERE shard_key=%s",
                 (datetime.now(timezone.utc), outcome.input_tokens, outcome.output_tokens, shard_key),
             )
+    invalid = sum(outcome.schema_invalid_reasons.values())
+    if invalid:
+        breakdown = ", ".join(
+            f"{bucket}={n}" for bucket, n in outcome.schema_invalid_reasons.items() if n
+        )
+        print(f"  {shard_key}: {invalid} schema-invalid row(s) — {breakdown}", flush=True)
     return outcome
 
 
@@ -1107,6 +1184,117 @@ def _fail_shard(shard_key: str, error: str) -> None:
 
 
 # ── pilot validation + report ───────────────────────────────────────────────
+
+def _percentile_disc(sorted_values: list[int], p: float) -> int:
+    """Postgres percentile_disc(p): the first value whose 1-based position i
+    satisfies i/N ≥ p. Matches the DB-side pilot median/p90 exactly so the
+    file-recomputed gates line up with pilot_stats_from_db()."""
+    n = len(sorted_values)
+    if n == 0:
+        return 0
+    pos = int(p * n)
+    if p * n > pos:  # ceil for a positive product
+        pos += 1
+    idx = max(0, min(n - 1, pos - 1))
+    return sorted_values[idx]
+
+
+def scan_pilot_results(shard_key_prefix: str = "pilot:") -> dict:
+    """Re-scan the banked ``<prefix>*.results.jsonl`` files under SHARDS_DIR and
+    recompute — with NO database access, NO Gemini calls and NO cost — BOTH the
+    schema-invalid failure buckets (from each row's own finishReason/blockReason)
+    AND the pilot quality gates (tags gated against the local vocabulary exactly
+    as apply_results gates them: out-of-vocabulary is a HARD drop, in-vocab tags
+    are deduped and capped at MAX_TAGS).
+
+    Returns {"files", "pattern", "buckets", "stats"}. ``files`` is EMPTY when
+    nothing is banked and ``stats`` is then None — the caller MUST treat that as
+    "cannot validate", never as a clean pass. Evidence-found rate and the live
+    remaining-passage projection are DB-only and intentionally omitted here."""
+    pattern = f"{shard_key_prefix.replace(':', '_')}*.results.jsonl"
+    files = sorted(config.SHARDS_DIR.glob(pattern))
+    buckets = _empty_fail_tally()
+    if not files:
+        return {"files": [], "pattern": pattern, "buckets": buckets, "stats": None}
+
+    vocab = load_vocab_index()
+    responses = schema_valid = 0
+    tags_returned = oov = 0
+    zero_tag_rows = functions_kept = questions_returned = 0
+    input_tokens = output_tokens = 0
+    per_row_tag_counts: list[int] = []
+    tag_usage: dict[str, int] = {}
+
+    for path in files:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                key, parsed, usage, error, finish_reason, block_reason = _parse_response_line(line)
+                input_tokens += int(usage.get("promptTokenCount") or 0)
+                output_tokens += int(usage.get("candidatesTokenCount") or 0)
+                if not key or "|" not in key:
+                    continue
+                responses += 1
+                if error or parsed is None:
+                    buckets[classify_schema_failure(error, finish_reason, block_reason)] += 1
+                    continue
+                schema_valid += 1
+                accepted: list[str] = []
+                for item in parsed.get("tags", [])[: config.MAX_TAGS]:
+                    if not isinstance(item, dict):
+                        continue
+                    tag = str(item.get("tag") or "").strip()
+                    tags_returned += 1
+                    if tag not in vocab.slugs:  # HARD gate — OOV never counts as used
+                        oov += 1
+                        continue
+                    if tag in accepted:
+                        continue
+                    accepted.append(tag)
+                per_row_tag_counts.append(len(accepted))
+                if not accepted:
+                    zero_tag_rows += 1
+                for tag in accepted:
+                    tag_usage[tag] = tag_usage.get(tag, 0) + 1
+                if str(parsed.get("passage_function") or "").strip() in config.PASSAGE_FUNCTIONS:
+                    functions_kept += 1
+                q_items = parsed.get("questions")
+                if isinstance(q_items, list) and any(
+                    isinstance(q, dict) and str(q.get("question") or "").strip() for q in q_items
+                ):
+                    questions_returned += 1
+
+    tagged = sorted(n for n in per_row_tag_counts if n > 0)
+    distinct_tags = len(tag_usage)
+    singletons = sum(1 for n in tag_usage.values() if n == 1)
+    max_tag_uses = max(tag_usage.values()) if tag_usage else 0
+    vocab_total = int(vocab.term_count or 1)
+    stats = {
+        "rows": schema_valid,
+        "responses": responses,
+        "schema_valid_rate": (schema_valid / responses) if responses else 0.0,
+        "out_of_vocab_rate": (oov / tags_returned) if tags_returned else 0.0,
+        "evidence_found_rate": None,  # DB-only (needs the original passage text)
+        "tags_returned": tags_returned,
+        "tags_accepted": sum(per_row_tag_counts),
+        "questions_kept": questions_returned,  # returned; evidence gate not re-applied offline
+        "functions_kept": functions_kept,
+        "zero_tag_rows": zero_tag_rows,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "tags_mean": (sum(per_row_tag_counts) / len(per_row_tag_counts)) if per_row_tag_counts else 0.0,
+        "tagged_median": _percentile_disc(tagged, 0.5),
+        "tagged_p90": _percentile_disc(tagged, 0.9),
+        "tags_max": max(per_row_tag_counts) if per_row_tag_counts else 0,
+        "distinct_tags": distinct_tags,
+        "singleton_share": (singletons / distinct_tags) if distinct_tags else 0.0,
+        "vocab_coverage": (distinct_tags / vocab_total) if vocab_total else 0.0,
+        "vocab_total": vocab_total,
+        "max_tag_share": (max_tag_uses / schema_valid) if schema_valid else 0.0,
+    }
+    return {"files": [p.name for p in files], "pattern": pattern, "buckets": buckets, "stats": stats}
+
 
 def pilot_stats_from_db() -> dict:
     """Pilot quality metrics recomputed from the DATABASE (not in-memory shard
@@ -1283,8 +1471,42 @@ def _pilot_samples(limit: int) -> list[dict]:
     return rows
 
 
-def write_pilot_report(stats: dict, failures: list[str], model: str) -> None:
-    remaining = sum(
+def _failure_reason_lines(failure_reasons: dict) -> list[str]:
+    """Render the 'Schema-invalid failure reasons' section from a
+    scan_pilot_results() result. Every normalized bucket is listed (0 included)
+    so the full picture is visible; missing banked files are flagged loudly
+    rather than shown as a clean zero."""
+    files = failure_reasons.get("files") or []
+    buckets = failure_reasons.get("buckets") or _empty_fail_tally()
+    total = sum(buckets.values())
+    lines = ["", "## Schema-invalid failure reasons", ""]
+    if not files:
+        lines.append(
+            "- ⚠️ No banked pilot shard files were found"
+            f" (looked for `{failure_reasons.get('pattern', 'pilot_*.results.jsonl')}`"
+            " under `shards/`) — failure reasons could NOT be recomputed. This is"
+            " NOT a clean result: re-run the pilot to regenerate the banked shards."
+        )
+        return lines
+    lines.append(
+        f"- Scanned {len(files)} banked shard file(s); {total} schema-invalid row(s) total,"
+        " bucketed by the model's own `finishReason` / `blockReason`:"
+    )
+    for bucket in SCHEMA_FAIL_BUCKETS:
+        n = buckets.get(bucket, 0)
+        share = f" ({n / total:.0%})" if total else ""
+        lines.append(f"  - `{bucket}`: {n}{share}")
+    return lines
+
+
+def write_pilot_report(stats: dict, failures: list[str], model: str,
+                       failure_reasons: dict | None = None, offline: bool = False) -> None:
+    """Write pilot-report.md. When ``offline`` is True the DB-only sections
+    (remaining-passage projection and the random skim samples) are skipped so
+    the report can be regenerated with no database access and no cost — used by
+    `run_all.py --revalidate-pilot`. ``failure_reasons`` (a scan_pilot_results()
+    result) adds the 'Schema-invalid failure reasons' section."""
+    remaining = None if offline else sum(
         db.table_count(t, "tags_core IS NULL AND embedding_context4 IS NOT NULL")
         for t in config.GEMINI_TABLES
     )
@@ -1292,12 +1514,29 @@ def write_pilot_report(stats: dict, failures: list[str], model: str) -> None:
     per_row_in = stats["input_tokens"] / rows
     per_row_out = stats["output_tokens"] / rows
     pilot_usd = _usd(stats["input_tokens"], stats["output_tokens"])
-    projected_usd = _usd(per_row_in * remaining, per_row_out * remaining)
-    verdict = "PASS — continuing automatically (standing ruling)" if not failures else "FAIL — run stopped"
+    projected_usd = None if remaining is None else _usd(per_row_in * remaining, per_row_out * remaining)
+    if offline:
+        verdict = "PASS (gates recomputed offline)" if not failures else "FAIL (gates recomputed offline)"
+    else:
+        verdict = "PASS — continuing automatically (standing ruling)" if not failures else "FAIL — run stopped"
+    ev = stats.get("evidence_found_rate")
+    evidence_line = (
+        f"- Evidence-found rate: {ev:.1%} (REPORTED — not gated;"
+        " unevidenced in-vocab tags are kept and flagged)"
+        if ev is not None
+        else "- Evidence-found rate: n/a (not recomputed offline — needs the original passage text)"
+    )
+    questions_line = (
+        f"- Passages carrying questions (HIS/Prabhupāda-speaking rows only): {stats['questions_kept']}"
+        if not offline
+        else f"- Passages returning ≥1 question: {stats['questions_kept']}"
+        " (evidence gate not re-applied offline)"
+    )
     lines = [
         "# Pilot report — tags + questions + passage_function combined pass",
         "",
-        f"- Generated: {datetime.now(timezone.utc).isoformat()}",
+        f"- Generated: {datetime.now(timezone.utc).isoformat()}"
+        + ("  ·  MODE: offline re-validation (no DB / no Gemini / no cost)" if offline else ""),
         f"- Model: `{model}` · prompt `{config.PROMPT_VERSION}` · MAX_TAGS {config.MAX_TAGS}",
         f"- Sampling: seeded-random stratified, seed `{config.SAMPLE_SEED}` · pilot size {config.PILOT_SIZE}",
         f"- Verdict: **{verdict}**",
@@ -1306,8 +1545,7 @@ def write_pilot_report(stats: dict, failures: list[str], model: str) -> None:
         f"- Passages applied: {stats['rows']} (responses: {stats['responses']})",
         f"- Schema validity: {stats['schema_valid_rate']:.1%} (gate ≥ {config.PILOT_MIN_SCHEMA_VALID:.0%})",
         f"- Out-of-vocabulary rate: {stats['out_of_vocab_rate']:.2%} (gate ≤ {config.PILOT_MAX_OUT_OF_VOCAB:.0%})",
-        f"- Evidence-found rate: {stats['evidence_found_rate']:.1%} (REPORTED — not gated;"
-        " unevidenced in-vocab tags are kept and flagged)",
+        evidence_line,
         "",
         "## Distribution health",
         f"- Distinct tags used: {stats['distinct_tags']} (gate ≥ {config.PILOT_MIN_DISTINCT_TAGS})",
@@ -1324,38 +1562,59 @@ def write_pilot_report(stats: dict, failures: list[str], model: str) -> None:
         f" (cap {config.MAX_TAGS})",
         f"- Zero-tag passages: {stats['zero_tag_rows']} (valid output)",
         f"- Passages with passage_function: {stats['functions_kept']}",
-        f"- Passages carrying questions (HIS/Prabhupāda-speaking rows only): {stats['questions_kept']}",
+        questions_line,
         "",
         "## Real cost (from usageMetadata) and extrapolation",
         f"- Pilot tokens: {stats['input_tokens']:,} in / {stats['output_tokens']:,} out"
         f" → ${pilot_usd:,.2f} at ${config.GEMINI_BATCH_PRICE_IN_PER_M}/M in,"
         f" ${config.GEMINI_BATCH_PRICE_OUT_PER_M}/M out (batch)",
         f"- Per-passage average: {per_row_in:,.0f} in / {per_row_out:,.0f} out tokens",
-        f"- Remaining Gemini-eligible passages: {remaining:,}",
-        f"- **Projected full-run cost: ${projected_usd:,.2f}**"
-        f" (ceiling MAX_SPEND_USD = ${config.MAX_SPEND_USD:,.2f})",
     ]
+    if remaining is None:
+        lines.append(
+            "- Remaining-passage count & projected full-run cost: skipped"
+            " (offline — needs the DB)"
+        )
+    else:
+        lines += [
+            f"- Remaining Gemini-eligible passages: {remaining:,}",
+            f"- **Projected full-run cost: ${projected_usd:,.2f}**"
+            f" (ceiling MAX_SPEND_USD = ${config.MAX_SPEND_USD:,.2f})",
+        ]
+    if failure_reasons is not None:
+        lines += _failure_reason_lines(failure_reasons)
     if failures:
         lines += ["", "## Threshold failures", *[f"- {f}" for f in failures]]
-    lines += ["", f"## {config.PILOT_SAMPLE_ROWS} random samples (optional human skim)", ""]
-    for i, sample in enumerate(_pilot_samples(config.PILOT_SAMPLE_ROWS), 1):
-        lines.append(
-            f"**{i}. {sample['table']} {sample['id']}**"
-            + (f" · function: `{sample['function']}`" if sample["function"] else "")
-        )
-        lines.append(f"> {sample['snippet']}")
-        for tag, found, evidence in sample["evidence"]:
-            marker = "✓" if found else "∅ (kept, unevidenced)"
-            lines.append(f"- `{tag}` {marker} — “{evidence}”")
-        lines.append("")
+    if offline:
+        lines += [
+            "",
+            f"## {config.PILOT_SAMPLE_ROWS} random samples (optional human skim)",
+            "",
+            "- skipped in offline re-validation (samples are read from the DB).",
+        ]
+    else:
+        lines += ["", f"## {config.PILOT_SAMPLE_ROWS} random samples (optional human skim)", ""]
+        for i, sample in enumerate(_pilot_samples(config.PILOT_SAMPLE_ROWS), 1):
+            lines.append(
+                f"**{i}. {sample['table']} {sample['id']}**"
+                + (f" · function: `{sample['function']}`" if sample["function"] else "")
+            )
+            lines.append(f"> {sample['snippet']}")
+            for tag, found, evidence in sample["evidence"]:
+                marker = "✓" if found else "∅ (kept, unevidenced)"
+                lines.append(f"- `{tag}` {marker} — “{evidence}”")
+            lines.append("")
     with open(config.PILOT_REPORT_PATH, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
     print(f"  wrote {config.PILOT_REPORT_PATH}", flush=True)
-    print(
-        f"  pilot real cost ${pilot_usd:,.2f} → projected full run ${projected_usd:,.2f}"
-        f" (ceiling ${config.MAX_SPEND_USD:,.2f})",
-        flush=True,
-    )
+    if projected_usd is None:
+        print(f"  pilot real cost ${pilot_usd:,.2f} (projection skipped — offline)", flush=True)
+    else:
+        print(
+            f"  pilot real cost ${pilot_usd:,.2f} → projected full run ${projected_usd:,.2f}"
+            f" (ceiling ${config.MAX_SPEND_USD:,.2f})",
+            flush=True,
+        )
 
 
 def pilot_done() -> bool:

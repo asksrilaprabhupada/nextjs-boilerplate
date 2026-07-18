@@ -39,7 +39,18 @@ python run_all.py             # the whole build; stops once, at the ⛔ vocabula
 python run_all.py --resume    # rerun after Ctrl+C / crash / next day — continues in place
 python run_all.py --yes       # skip the ⛔ gate (maintainer's standing one-shot ruling)
 python run_all.py --doctor    # green/red checklist: keys, model string, pooler, counts
+python run_all.py --revalidate-pilot   # re-scan banked shards/pilot_*.results.jsonl,
+                              # recompute the gates + a per-bucket breakdown of WHY
+                              # schema-invalid rows failed, rewrite pilot-report.md.
+                              # No DB writes, no Gemini, no cost. Missing banked shards
+                              # are reported as "cannot validate", never as clean.
 ```
+
+The `--revalidate-pilot` breakdown classifies every schema-invalid response from
+the model's own `finishReason` / `blockReason` into one of
+`RECITATION · MAX_TOKENS · SAFETY/PROMPT_BLOCKED · MALFORMED_JSON · NO_TAGS_ARRAY · other`,
+so a low schema-validity number tells you *why* rows failed rather than just
+that they did. (A live pilot run also writes this section into `pilot-report.md`.)
 
 | Step | What happens | Gate |
 |---|---|---|
@@ -132,7 +143,7 @@ verbatim text.
 
 ## Files
 ```
-run_all.py            orchestrator: --doctor / --resume / --yes
+run_all.py            orchestrator: --doctor / --resume / --yes / --revalidate-pilot
 config.py             .env loading, model strings, tuning, REQUIRED-keys policy
 db.py                 Session-Pooler psycopg + service-key supabase clients
 provenance.json       ⚖ the manifest (single source of truth for gating)
