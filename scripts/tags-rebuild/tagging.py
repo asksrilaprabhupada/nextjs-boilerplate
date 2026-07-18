@@ -43,6 +43,9 @@ Code gates on every response (evidence is stored either way — tag_evidence):
 Batch mechanics (resumable; jobs run server-side up to 24h — close the script
 after submission and rerun later to collect):
   • deterministic shard names ("pilot:verses:000", "transcript_paragraphs:w01:0003");
+  • every shard's JSONL input is capped at config.MAX_SHARD_INPUT_TOKENS (2.5M);
+    an oversized shard is split into token-bounded parts ("…:p00", "…:p01") so
+    each job always fits our 3M enqueued-batch-token queue;
   • the pilot is PILOT_SIZE seeded-random passages, stratified by table
     (seed = config.SAMPLE_SEED, recorded in pilot-report.md);
   • Google job IDs recorded in tag_batch_jobs BEFORE any polling;
@@ -555,25 +558,123 @@ def measured_output_tokens_per_row() -> float:
 
 # ── submission ──────────────────────────────────────────────────────────────
 
-def build_shard_file(shard_key: str, table: str, ids: list[str], vocab: VocabIndex) -> tuple[int, int, int]:
-    """Write shards/<key>.requests.jsonl. Returns (rows_written, est_in, est_out)."""
+@dataclass
+class ShardPart:
+    """One submittable batch job: a shard, or one token-bounded slice of a shard
+    that was too large for the queue and got split."""
+    shard_key: str
+    rows: int
+    est_in: int
+    est_out: int
+
+
+def _est_tokens(raw: str) -> int:
+    return len(raw) // 4  # chars/4 ≈ tokens; includes schema+enum overhead
+
+
+def _build_request_lines(
+    table: str, ids: list[str], vocab: VocabIndex
+) -> tuple[list[tuple[str, str, int]], list[str]]:
+    """Load a shard's rows and return (lines, skipped_ids). `lines` is one
+    (passage_id, raw_json, est_in_tokens) per USABLE passage (one with a
+    candidate shortlist); `skipped_ids` are rows dropped for a missing
+    embedding/shortlist (never sent, but still counted as covered)."""
     passages = load_passages(table, ids)
     attach_shortlists(table, passages, vocab)
-    usable = [p for p in passages if p.shortlist]
-    skipped = len(passages) - len(usable)
-    if skipped:
-        print(f"    {shard_key}: {skipped} rows have no shortlist (missing embedding) — skipped", flush=True)
+    lines: list[tuple[str, str, int]] = []
+    skipped_ids: list[str] = []
+    for passage in passages:
+        if not passage.shortlist:
+            skipped_ids.append(passage.id)
+            continue
+        raw = json.dumps(request_line(passage, vocab), ensure_ascii=False)
+        lines.append((passage.id, raw, _est_tokens(raw)))
+    return lines, skipped_ids
+
+
+def _pack_parts(lines: list[tuple[str, str, int]]) -> list[list[tuple[str, str, int]]]:
+    """Greedy-pack request lines into parts whose summed input tokens each stay
+    ≤ config.MAX_SHARD_INPUT_TOKENS, so every submitted job fits the batch queue.
+    A single line larger than the cap (never happens under PASSAGE_CHAR_CAP) is
+    given its own part rather than dropped. Input order is preserved."""
+    parts: list[list[tuple[str, str, int]]] = []
+    current: list[tuple[str, str, int]] = []
+    current_tok = 0
+    for line in lines:
+        tok = line[2]
+        if current and current_tok + tok > config.MAX_SHARD_INPUT_TOKENS:
+            parts.append(current)
+            current, current_tok = [], 0
+        current.append(line)
+        current_tok += tok
+    if current:
+        parts.append(current)
+    return parts
+
+
+def _write_part_file(shard_key: str, lines: list[tuple[str, str, int]]) -> ShardPart:
+    """Write shards/<key>.requests.jsonl for one packed part."""
     config.SHARDS_DIR.mkdir(parents=True, exist_ok=True)
-    path = config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.requests.jsonl"
     est_in = 0
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        for passage in usable:
-            line = request_line(passage, vocab)
-            raw = json.dumps(line, ensure_ascii=False)
-            est_in += len(raw) // 4  # chars/4 ≈ tokens; includes schema+enum overhead
+    with open(shard_request_path(shard_key), "w", encoding="utf-8", newline="\n") as f:
+        for _pid, raw, tok in lines:
+            est_in += tok
             f.write(raw + "\n")
-    est_out = int(len(usable) * measured_output_tokens_per_row())
-    return len(usable), est_in, est_out
+    est_out = int(len(lines) * measured_output_tokens_per_row())
+    return ShardPart(shard_key, len(lines), est_in, est_out)
+
+
+def build_shard_parts(
+    shard_key: str, table: str, ids: list[str], vocab: VocabIndex, run_id: str | None
+) -> list[ShardPart]:
+    """Build the request JSONL for a pending shard, capping every job's input at
+    config.MAX_SHARD_INPUT_TOKENS so it always fits the 3M batch queue. A shard
+    whose built requests fit the cap is written as-is and returned unchanged. An
+    OVERSIZED shard is split into token-bounded parts: the pending row is
+    transactionally replaced by one pending row per part (deterministic keys
+    '<shard_key>:p00', ':p01', …), each part's file is written, and the parts are
+    returned in order. The union of the parts' id_lists equals the original
+    id_list — rows with no shortlist ride along on the first part — so coverage
+    and reconciliation are unchanged. Returns [] when the shard has no usable
+    rows (the caller fails it). Idempotent on rerun: an already-split part fits
+    the cap and is returned without re-splitting."""
+    lines, skipped_ids = _build_request_lines(table, ids, vocab)
+    if skipped_ids:
+        print(
+            f"    {shard_key}: {len(skipped_ids)} rows have no shortlist"
+            " (missing embedding) — skipped",
+            flush=True,
+        )
+    if not lines:
+        return []
+    parts = _pack_parts(lines)
+    if len(parts) == 1:
+        return [_write_part_file(shard_key, parts[0])]
+
+    # Oversized shard → split. Repartition the DB row atomically FIRST; on a crash
+    # after the commit the pending part rows rebuild idempotently (each part
+    # already fits the cap, so no further split), and coverage is preserved.
+    part_keys = [f"{shard_key}:p{i:02d}" for i in range(len(parts))]
+    part_id_lists = [[pid for pid, _raw, _tok in part] for part in parts]
+    part_id_lists[0].extend(skipped_ids)  # keep union(id_list) == original id_list
+    conn = db.get_pg()
+    with conn.transaction():
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM public.tag_batch_jobs WHERE shard_key=%s", (shard_key,))
+            for part_key, part_ids in zip(part_keys, part_id_lists):
+                cur.execute(
+                    "INSERT INTO public.tag_batch_jobs"
+                    " (shard_key, table_name, id_list, row_count, run_id)"
+                    " VALUES (%s, %s, %s::uuid[], %s, %s::uuid)",
+                    (part_key, table, part_ids, len(part_ids), run_id),
+                )
+    print(
+        f"  split {shard_key}: {len(lines)} requests exceed the"
+        f" {config.MAX_SHARD_INPUT_TOKENS / 1e6:.1f}M-token cap →"
+        f" {len(parts)} parts",
+        flush=True,
+    )
+    return [_write_part_file(part_key, part) for part_key, part in zip(part_keys, parts)]
 
 
 def shard_request_path(shard_key: str) -> Path:
@@ -657,21 +758,62 @@ def _create_batch_draining_queue(
             )
 
 
+def _submit_one(model: str, part: ShardPart, queue_terminal_seen: set[str]) -> bool:
+    """Upload + create one shard's batch job, recording it BEFORE any polling.
+    Returns False (submitting nothing) when the cost ceiling would be exceeded so
+    the caller stops submitting further shards. A full batch queue does NOT stop
+    the run: _create_batch_draining_queue waits for a slot to free."""
+    shard_key = part.shard_key
+    ledger = spend_ledger()
+    projected = ledger["committed_usd"] + _usd(part.est_in, part.est_out)
+    if projected > config.MAX_SPEND_USD:
+        print(
+            f"  ⛔ COST CEILING: submitting {shard_key} would commit"
+            f" ~${projected:,.2f} > MAX_SPEND_USD=${config.MAX_SPEND_USD:,.2f}."
+            " Refusing to submit further shards (collection continues)."
+            " Raise MAX_SPEND_USD in .env only after reviewing spend.",
+            flush=True,
+        )
+        return False
+    display_name = f"{config.BATCH_DISPLAY_PREFIX}:{shard_key}"
+    file_name = db.with_retry(
+        lambda: gemini_client.upload_jsonl(shard_request_path(shard_key), display_name),
+        f"upload {shard_key}",
+    )
+    job_name = _create_batch_draining_queue(
+        model, file_name, display_name, shard_key, queue_terminal_seen
+    )
+    # Record BEFORE polling — a crash after this line is recoverable from the DB
+    # alone; a crash before it is recovered by reconcile().
+    with db.get_pg().cursor() as cur:
+        cur.execute(
+            "UPDATE public.tag_batch_jobs SET provider_job_id=%s, status='submitted',"
+            " submitted_at=%s, est_input_tok=%s, est_output_tok=%s, row_count=%s"
+            " WHERE shard_key=%s",
+            (job_name, datetime.now(timezone.utc), part.est_in, part.est_out, part.rows, shard_key),
+        )
+    print(f"  submitted {shard_key} → {job_name} (~{part.est_in / 1e6:.2f}M in tok)", flush=True)
+    return True
+
+
 def submit_pending(model: str, vocab: VocabIndex) -> None:
     """Submit pending shards while the ceiling allows. Job IDs are recorded in
     tag_batch_jobs immediately on acceptance — BEFORE any polling. A full batch
     queue (HTTP 429) does not crash the run: it waits for in-flight jobs to drain
-    a slot, so a large shard list submits in waves, unattended."""
+    a slot, so a large shard list submits in waves, unattended. Any shard whose
+    built requests exceed config.MAX_SHARD_INPUT_TOKENS is split into
+    token-bounded parts (build_shard_parts) so every job fits the 3M queue."""
     pending = db.rows(
-        "SELECT shard_key, table_name, id_list::text[] FROM public.tag_batch_jobs"
+        "SELECT shard_key, table_name, id_list::text[], run_id::text FROM public.tag_batch_jobs"
         " WHERE status = 'pending' ORDER BY shard_key"
     )
     # Shared across every shard's wait so completions during one shard's wait
     # aren't miscounted as fresh progress for the next.
     queue_terminal_seen: set[str] = set()
-    for shard_key, table, ids in pending:
-        rows_written, est_in, est_out = build_shard_file(shard_key, table, ids, vocab)
-        if rows_written == 0:
+    for shard_key, table, ids, run_id in pending:
+        parts = build_shard_parts(shard_key, table, ids, vocab, run_id)
+        if not parts:
+            # No usable rows: the original (unsplit) row is still present to fail.
             with db.get_pg().cursor() as cur:
                 cur.execute(
                     "UPDATE public.tag_batch_jobs SET status='failed',"
@@ -679,35 +821,9 @@ def submit_pending(model: str, vocab: VocabIndex) -> None:
                     (shard_key,),
                 )
             continue
-        ledger = spend_ledger()
-        projected = ledger["committed_usd"] + _usd(est_in, est_out)
-        if projected > config.MAX_SPEND_USD:
-            print(
-                f"  ⛔ COST CEILING: submitting {shard_key} would commit"
-                f" ~${projected:,.2f} > MAX_SPEND_USD=${config.MAX_SPEND_USD:,.2f}."
-                " Refusing to submit further shards (collection continues)."
-                " Raise MAX_SPEND_USD in .env only after reviewing spend.",
-                flush=True,
-            )
-            return
-        display_name = f"{config.BATCH_DISPLAY_PREFIX}:{shard_key}"
-        file_name = db.with_retry(
-            lambda: gemini_client.upload_jsonl(shard_request_path(shard_key), display_name),
-            f"upload {shard_key}",
-        )
-        job_name = _create_batch_draining_queue(
-            model, file_name, display_name, shard_key, queue_terminal_seen
-        )
-        # Record BEFORE polling — a crash after this line is recoverable from
-        # the DB alone; a crash before it is recovered by reconcile().
-        with db.get_pg().cursor() as cur:
-            cur.execute(
-                "UPDATE public.tag_batch_jobs SET provider_job_id=%s, status='submitted',"
-                " submitted_at=%s, est_input_tok=%s, est_output_tok=%s, row_count=%s"
-                " WHERE shard_key=%s",
-                (job_name, datetime.now(timezone.utc), est_in, est_out, rows_written, shard_key),
-            )
-        print(f"  submitted {shard_key} → {job_name} (~{est_in / 1e6:.2f}M in tok)", flush=True)
+        for part in parts:
+            if not _submit_one(model, part, queue_terminal_seen):
+                return  # cost ceiling reached — remaining parts stay pending
 
 
 def reconcile() -> None:

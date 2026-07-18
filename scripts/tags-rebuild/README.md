@@ -68,6 +68,14 @@ just interprets it):
 ## Batch mechanics (resumable by construction)
 - Deterministic shard names (`pilot:verses:000`, `transcript_paragraphs:w01:0003`);
   each shard's id list is persisted in `tag_batch_jobs` before anything is sent.
+- Every shard's JSONL input is capped at `MAX_SHARD_INPUT_TOKENS` (2.5M). Our
+  Gemini tier allows at most 3M enqueued batch tokens at once, so an oversized
+  shard is split into token-bounded parts (`…:p00`, `…:p01`) before submission —
+  each job always fits the queue.
+- On `RESOURCE_EXHAUSTED` (HTTP 429) when the batch queue is full, submission
+  does **not** crash: it polls in-flight jobs every 5 min and retries the create
+  once one finishes and frees a slot, draining the whole shard list in waves
+  unattended (giving up only after 24h with no job finishing).
 - Google job IDs are recorded in `tag_batch_jobs` **before** polling; on
   restart the harness reconciles against Google's job list (by display name)
   so accepted-but-unrecorded jobs are **recovered, never resubmitted**.

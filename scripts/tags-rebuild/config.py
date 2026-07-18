@@ -121,6 +121,12 @@ SHORTLIST_SEMANTIC = _env_int("SHORTLIST_SEMANTIC", 25)
 SHORTLIST_CAP = _env_int("SHORTLIST_CAP", 40)
 PASSAGE_CHAR_CAP = _env_int("PASSAGE_CHAR_CAP", 20000)  # bound the longest purports
 SHARD_SIZE = _env_int("SHARD_SIZE", 6000)  # passages per Gemini Batch shard
+# Hard cap on a single shard's JSONL INPUT tokens. Our Gemini tier allows at most
+# 3M enqueued batch tokens at once; any shard whose built requests exceed this cap
+# is split into token-bounded parts before submission, so every job always fits
+# the queue (2.5M leaves headroom under the 3M ceiling). chars/4 ≈ tokens — the
+# same estimate used for the cost ledger.
+MAX_SHARD_INPUT_TOKENS = _env_int("MAX_SHARD_INPUT_TOKENS", 2_500_000)
 PILOT_SIZE = _env_int("PILOT_SIZE", 2000)  # seeded-random stratified passages (5 tables)
 BATCH_POLL_SECONDS = _env_int("BATCH_POLL_SECONDS", 60)
 DB_BATCH = _env_int("DB_BATCH", 5000)  # rows per SQL write batch
