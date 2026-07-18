@@ -9,6 +9,12 @@ continues exactly where the previous invocation stopped.
     python run_all.py --resume     rerun/continue (same as above; the flag documents intent)
     python run_all.py --yes        skip the ⛔ vocabulary review gate entirely
                                    (the maintainer's standing one-shot ruling)
+    python run_all.py --revalidate-pilot
+                                   re-scan the ALREADY-banked shards/pilot_*.results.jsonl,
+                                   recompute the pilot gates + a per-bucket breakdown of WHY
+                                   schema-invalid rows failed, and rewrite pilot-report.md.
+                                   No DB writes, no Gemini calls, no cost. Missing banked
+                                   shards are reported as "cannot validate", never clean.
 
 Steps (each idempotent):
   1. fts_core backfill               (touch rows WHERE fts_core IS NULL)
@@ -79,7 +85,10 @@ def run_pilot(run_id: str, model: str, vocab_index) -> None:
     tagging.collect(run_id, shard_key_prefix="pilot:")
     stats = tagging.pilot_stats_from_db()
     failures = tagging.pilot_thresholds_pass(stats)
-    tagging.write_pilot_report(stats, failures, model)
+    # Failure buckets come from the banked result files (finishReason/blockReason
+    # aren't in the DB); the DB stats stay the source of truth for the gates.
+    failure_reasons = tagging.scan_pilot_results("pilot:")
+    tagging.write_pilot_report(stats, failures, model, failure_reasons=failure_reasons)
     if failures:
         raise SystemExit(
             "⛔ PILOT VALIDATION FAILED — run stopped. See "
@@ -90,6 +99,59 @@ def run_pilot(run_id: str, model: str, vocab_index) -> None:
         f" Report: {config.PILOT_REPORT_PATH}",
         flush=True,
     )
+
+
+def revalidate_pilot() -> int:
+    """No-cost re-validation of an ALREADY-banked pilot. Re-scans the banked
+    shards/pilot_*.results.jsonl files, recomputes the pilot gates AND the
+    schema-invalid failure buckets (from each row's own finishReason/blockReason),
+    and rewrites pilot-report.md with the 'Schema-invalid failure reasons'
+    section. NO DB writes, NO Gemini calls, NO cost. Missing banked shards are
+    reported as 'cannot validate' — never as a clean pass.
+
+    Returns 0 when the recomputed gates pass, 1 when they fail, 2 when there is
+    nothing banked to validate."""
+    import tagging
+
+    print(
+        "Re-validating the banked pilot offline (no DB writes · no Gemini · no cost)…",
+        flush=True,
+    )
+    scan = tagging.scan_pilot_results("pilot:")
+    if not scan["files"]:
+        print(
+            f"⛔ No banked pilot shard files found under {config.SHARDS_DIR}"
+            f" (looked for `{scan['pattern']}`). Nothing to re-validate — this is NOT"
+            " a clean result. Run the pilot first (`python run_all.py`), then re-run"
+            " `--revalidate-pilot`.",
+            flush=True,
+        )
+        return 2
+
+    stats = scan["stats"]
+    failures = tagging.pilot_thresholds_pass(stats)
+    tagging.write_pilot_report(
+        stats,
+        failures,
+        model="(offline re-validation — Gemini not queried)",
+        failure_reasons=scan,
+        offline=True,
+    )
+    invalid = sum(scan["buckets"].values())
+    print(
+        f"  scanned {len(scan['files'])} banked shard file(s): {stats['responses']:,} responses,"
+        f" schema-valid {stats['schema_valid_rate']:.1%}, {invalid} schema-invalid.",
+        flush=True,
+    )
+    if invalid:
+        breakdown = ", ".join(f"{bucket}={n}" for bucket, n in scan["buckets"].items() if n)
+        print(f"  schema-invalid failure reasons — {breakdown}", flush=True)
+    if failures:
+        print("⛔ Recomputed gates FAIL: " + "; ".join(failures), flush=True)
+        print(f"  See {config.PILOT_REPORT_PATH}.", flush=True)
+        return 1
+    print(f"  Recomputed gates PASS. See {config.PILOT_REPORT_PATH}.", flush=True)
+    return 0
 
 
 def run_full(run_id: str, model: str, vocab_index) -> bool:
@@ -141,12 +203,21 @@ def main() -> int:
     parser.add_argument("--doctor", action="store_true", help="read-only readiness checks; changes nothing")
     parser.add_argument("--resume", action="store_true", help="continue a previous run (resume is automatic; flag documents intent)")
     parser.add_argument("--yes", action="store_true", help="skip the ⛔ vocabulary review gate (standing one-shot ruling)")
+    parser.add_argument(
+        "--revalidate-pilot",
+        action="store_true",
+        help="re-scan banked shards/pilot_*.results.jsonl, recompute the pilot gates +"
+        " schema-invalid failure buckets, rewrite pilot-report.md (no DB writes, no Gemini, no cost)",
+    )
     args = parser.parse_args()
 
     if args.doctor:
         import doctor
 
         return doctor.run()
+
+    if args.revalidate_pilot:
+        return revalidate_pilot()
 
     config.require_keys()
 
