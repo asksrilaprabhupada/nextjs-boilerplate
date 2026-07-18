@@ -580,13 +580,95 @@ def shard_request_path(shard_key: str) -> Path:
     return config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.requests.jsonl"
 
 
+# ── batch-queue quota: patient waiting instead of crashing on 429 ────────────
+#
+# The Gemini Batch API caps how many jobs may sit queued at once. When that
+# ceiling is hit, create_batch returns HTTP 429 RESOURCE_EXHAUSTED. Rather than
+# crash a long unattended run, we WAIT: poll the already-submitted jobs every
+# QUEUE_QUOTA_POLL_SECONDS; the moment any reaches a terminal state it frees a
+# queue slot, so the failed create is retried. Applied across the whole shard
+# list, a large run drains the queue in waves. Give up only after
+# QUEUE_QUOTA_GIVE_UP_SECONDS of no job finishing to free a slot.
+QUEUE_QUOTA_POLL_SECONDS = 300           # 5 minutes between poll cycles
+QUEUE_QUOTA_GIVE_UP_SECONDS = 24 * 3600  # 24h of no progress → give up
+
+
+def _poll_queue_quota(already_terminal: set[str]) -> bool:
+    """Sleep one poll cycle, then report the state of every already-submitted
+    job. Returns True if a NEW job reached a terminal state since the last cycle
+    (a queue slot was freed → the create is worth retrying). Mutates
+    `already_terminal` with any newly-terminal job ids. Prints exactly one status
+    line: jobs running / done / shards still pending."""
+    time.sleep(QUEUE_QUOTA_POLL_SECONDS)
+    submitted = db.rows(
+        "SELECT provider_job_id FROM public.tag_batch_jobs"
+        " WHERE status = 'submitted' AND provider_job_id IS NOT NULL"
+    )
+    pending = db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE status = 'pending'")
+    running = done = 0
+    freed = False
+    for (job_id,) in submitted:
+        try:
+            job = gemini_client.get_batch(job_id)
+        except Exception:  # noqa: BLE001 — a poll blip must not abort the wait
+            running += 1
+            continue
+        if job["state"] in gemini_client.TERMINAL_STATES or job["done"]:
+            done += 1
+            if job_id not in already_terminal:
+                already_terminal.add(job_id)
+                freed = True
+        else:
+            running += 1
+    print(
+        f"  ⏳ batch queue full — {running} job(s) running, {done} done,"
+        f" {pending} shard(s) still pending; polling again in"
+        f" {QUEUE_QUOTA_POLL_SECONDS // 60}m…",
+        flush=True,
+    )
+    return freed
+
+
+def _create_batch_draining_queue(
+    model: str, file_name: str, display_name: str, shard_key: str, already_terminal: set[str]
+) -> str:
+    """gemini_client.create_batch, but patient about a full batch queue. On HTTP
+    429 (queue quota exhausted) it waits for a submitted job to finish and free a
+    slot instead of crashing; every other error re-raises immediately. Gives up
+    only after QUEUE_QUOTA_GIVE_UP_SECONDS with no job freeing a slot."""
+    no_progress_deadline = time.monotonic() + QUEUE_QUOTA_GIVE_UP_SECONDS
+    while True:
+        try:
+            return db.with_retry(
+                lambda: gemini_client.create_batch(model, file_name, display_name),
+                f"batch create {shard_key}",
+            )
+        except gemini_client.GeminiHTTPError as exc:
+            if exc.status != 429:
+                raise
+        if _poll_queue_quota(already_terminal):
+            no_progress_deadline = time.monotonic() + QUEUE_QUOTA_GIVE_UP_SECONDS
+        elif time.monotonic() >= no_progress_deadline:
+            raise SystemExit(
+                "FATAL: the Gemini batch queue has been full for 24h with no job"
+                " finishing to free a slot — cannot submit further shards now."
+                " Rerun `python run_all.py --resume` once jobs drain to continue"
+                " where this left off (already-submitted work is safe in the DB)."
+            )
+
+
 def submit_pending(model: str, vocab: VocabIndex) -> None:
     """Submit pending shards while the ceiling allows. Job IDs are recorded in
-    tag_batch_jobs immediately on acceptance — BEFORE any polling."""
+    tag_batch_jobs immediately on acceptance — BEFORE any polling. A full batch
+    queue (HTTP 429) does not crash the run: it waits for in-flight jobs to drain
+    a slot, so a large shard list submits in waves, unattended."""
     pending = db.rows(
         "SELECT shard_key, table_name, id_list::text[] FROM public.tag_batch_jobs"
         " WHERE status = 'pending' ORDER BY shard_key"
     )
+    # Shared across every shard's wait so completions during one shard's wait
+    # aren't miscounted as fresh progress for the next.
+    queue_terminal_seen: set[str] = set()
     for shard_key, table, ids in pending:
         rows_written, est_in, est_out = build_shard_file(shard_key, table, ids, vocab)
         if rows_written == 0:
@@ -613,9 +695,8 @@ def submit_pending(model: str, vocab: VocabIndex) -> None:
             lambda: gemini_client.upload_jsonl(shard_request_path(shard_key), display_name),
             f"upload {shard_key}",
         )
-        job_name = db.with_retry(
-            lambda: gemini_client.create_batch(model, file_name, display_name),
-            f"batch create {shard_key}",
+        job_name = _create_batch_draining_queue(
+            model, file_name, display_name, shard_key, queue_terminal_seen
         )
         # Record BEFORE polling — a crash after this line is recoverable from
         # the DB alone; a crash before it is recovered by reconcile().
