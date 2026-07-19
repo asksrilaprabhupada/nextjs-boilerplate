@@ -5,10 +5,11 @@ Raw `requests` against v1beta, matching the app's fetch approach
 (app/lib/16-multi-query.ts). No SDK. All paid traffic in this harness goes
 through the **Batch API** (50% pricing, server-side up to 24h):
 
-  confirm_model()        free models.list read — resolves the exact CURRENT
-                         full-Flash model string for config.GEMINI_MODEL and
-                         asserts it supports batchGenerateContent. Refuses
-                         -lite variants. Used by --doctor and before any run.
+  confirm_model(m)       free models.list read — resolves the exact CURRENT
+                         model string (default config.MODEL_CORE; v3.p3 confirms
+                         BOTH routed models) and asserts it supports
+                         batchGenerateContent. Refuses -lite variants. Used by
+                         --doctor and before any run.
   upload_jsonl(path,dn)  File API resumable upload → "files/…" name
   create_batch(...)      models/{model}:batchGenerateContent with a file
                          input_config → "batches/…" job name
@@ -18,13 +19,14 @@ through the **Batch API** (50% pricing, server-side up to 24h):
                          never resubmitted
   download_file(name)    stream a results file to disk
 
-Request JSONL line:  {"key": "<table>:<uuid>", "request": {GenerateContentRequest}}
+Request JSONL line:  {"key": "<table>|<uuid>", "request": {GenerateContentRequest}}
 Response JSONL line: {"key": ..., "response": {GenerateContentResponse}} | {"key": ..., "error": {...}}
 """
 from __future__ import annotations
 
 import json
 import random
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
@@ -148,20 +150,30 @@ def list_models() -> list[dict]:
             return models
 
 
-def confirm_model() -> str:
-    """Resolve config.GEMINI_MODEL against the LIVE models list and return the
-    exact current model string (without the 'models/' prefix). Loud rules:
+def confirm_model(model: str | None = None) -> str:
+    """Resolve `model` (default config.MODEL_CORE) against the LIVE models list
+    and return the exact current model string (without the 'models/' prefix).
+    v3.p3 calls this for BOTH routed models before any paid run. Loud rules:
+      • must not contain ':' or '_' (shard keys embed the model; the ':' → '_'
+        filename mapping must stay collision-free);
       • must exist and support batchGenerateContent (falls back to
         generateContent support if the API doesn't list batch methods);
-      • must be full Flash — any '-lite' match is refused, never substituted.
+      • must be a FULL model — a '-lite' name segment is refused, never
+        substituted (word-boundary match, so e.g. '-preview' suffixes pass).
     If the configured string isn't listed verbatim, the newest non-lite
     versioned sibling (e.g. gemini-3.5-flash-002) is reported and REFUSED —
     a human pins it in .env; the harness never silently swaps models."""
-    wanted = config.GEMINI_MODEL.removeprefix("models/")
-    if "lite" in wanted.lower():
+    wanted = (model or config.MODEL_CORE).removeprefix("models/")
+    if ":" in wanted or "_" in wanted or not wanted:
         raise SystemExit(
-            f"FATAL: GEMINI_MODEL={wanted!r} is a Lite variant. The brief requires FULL"
-            " Gemini 3.5 Flash — fix GEMINI_MODEL in .env."
+            f"FATAL: model string {wanted!r} may not be empty or contain ':' / '_' —"
+            " it is embedded in shard keys and their filenames."
+        )
+    if re.search(r"(^|-)lite(-|$)", wanted.lower()):
+        raise SystemExit(
+            f"FATAL: model {wanted!r} is a Lite variant. The brief requires FULL"
+            " models on both routes — fix MODEL_CORE/MODEL_STANDARD (or the"
+            " deprecated GEMINI_MODEL alias) in .env."
         )
     models = list_models()
     by_name = {m.get("name", "").removeprefix("models/"): m for m in models}
@@ -179,8 +191,8 @@ def confirm_model() -> str:
         )
         raise SystemExit(
             f"FATAL: model {wanted!r} is not in the live models list.{hint}"
-            " Pin the exact current string in .env (GEMINI_MODEL=...) — the harness"
-            " never swaps models silently."
+            " Pin the exact current string in .env (MODEL_CORE=... / MODEL_STANDARD=...)"
+            " — the harness never swaps models silently."
         )
     methods = entry.get("supportedGenerationMethods") or entry.get("supportedActions") or []
     if methods and not any(m in methods for m in ("batchGenerateContent", "generateContent")):

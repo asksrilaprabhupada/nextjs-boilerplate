@@ -3,6 +3,11 @@ finalize.py — after the tagging data lands: tsvector verification, GIN indexes
 the vocabulary HYGIENE REPORT, and the completion checklist. Step 5 of
 run_all.py; also runnable standalone.
 
+0. (v3.p3) REFUSES to touch anything while any Gemini-eligible passage lacks a
+   resolved row-level outcome in the run (tag_passage_outcomes): applied /
+   skipped_no_shortlist resolve; quarantined rows are UNRESOLVED and block
+   finalize unless the maintainer explicitly passes --accept-quarantine (the
+   rows are listed loudly either way).
 1. (v3.p2) verse_chunks are now Gemini-tagged DIRECTLY, so there is NO parent→
    chunk inheritance step — every content table carries its own tags.
 2. Verify the trigger-maintained tsvectors: every row with questions /
@@ -25,6 +30,7 @@ live search function stay untouched.
 """
 from __future__ import annotations
 
+import argparse
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -183,7 +189,89 @@ def print_completion_checklist() -> None:
     )
 
 
-def run() -> None:
+def assert_run_resolved(run_id: str, allow_quarantined: bool = False) -> None:
+    """REFUSE (SystemExit) unless every Gemini-eligible row has a RESOLVED
+    row-level outcome in this run: applied or skipped_no_shortlist (plus
+    quarantined ONLY under the explicit --accept-quarantine override — those are
+    still listed loudly). v3.p3: this is the finalize gate that makes silent
+    holes impossible — no index/report work happens over an incomplete run."""
+    import tagging
+
+    resolved = list(tagging.RESOLVED_OUTCOMES) + (["quarantined"] if allow_quarantined else [])
+    unresolved_by_table: dict[str, int] = {}
+    for table in config.GEMINI_TABLES:
+        n = int(
+            db.one(
+                f"SELECT count(*) FROM public.{table} t"
+                f" LEFT JOIN public.tag_passage_outcomes o"
+                f"   ON o.run_id = %s::uuid AND o.table_name = %s AND o.passage_id = t.id"
+                f"   AND o.outcome = ANY(%s)"
+                f" WHERE t.embedding_context4 IS NOT NULL AND o.passage_id IS NULL",
+                (run_id, table, resolved),
+            )
+            or 0
+        )
+        if n:
+            unresolved_by_table[table] = n
+    skipped = int(
+        db.one(
+            "SELECT count(*) FROM public.tag_passage_outcomes"
+            " WHERE run_id = %s::uuid AND outcome = 'skipped_no_shortlist'",
+            (run_id,),
+        )
+        or 0
+    )
+    quarantined = int(
+        db.one(
+            "SELECT count(*) FROM public.tag_passage_outcomes"
+            " WHERE run_id = %s::uuid AND outcome = 'quarantined'",
+            (run_id,),
+        )
+        or 0
+    )
+    if skipped:
+        print(
+            f"  note: {skipped} row(s) resolved as skipped_no_shortlist"
+            " (no embedding/shortlist — explicitly listed, never silently covered).",
+            flush=True,
+        )
+    if quarantined:
+        print(f"  ⛔ {quarantined} QUARANTINED (unresolved) row(s) in run {run_id}:", flush=True)
+        for table, pid, model, attempt, failure_class, history in tagging.quarantined_rows(run_id):
+            print(
+                f"    - {table} {pid} · {model} · attempt {attempt}"
+                f" · {failure_class or '?'} · history {history}",
+                flush=True,
+            )
+    if unresolved_by_table:
+        detail = ", ".join(f"{t}: {n:,}" for t, n in unresolved_by_table.items())
+        raise SystemExit(
+            "⛔ FINALIZE REFUSED — this run has Gemini-eligible passages WITHOUT a"
+            f" resolved row-level outcome ({detail}). Rerun `python run_all.py --resume`"
+            " until every passage is applied/skipped"
+            + ("" if allow_quarantined else
+               "; quarantined rows require an explicit --accept-quarantine override")
+            + ". Nothing was finalized."
+        )
+    print(
+        "  row-level completion verified: every eligible passage is resolved"
+        + (f" ({quarantined} quarantined ACCEPTED by override)" if quarantined and allow_quarantined else "")
+        + ".",
+        flush=True,
+    )
+
+
+def run(run_id: str | None = None, allow_quarantined: bool = False) -> None:
+    if run_id is None:
+        import audit
+
+        run_id = audit.latest_run_id_for_prompt()
+        if run_id is None:
+            raise SystemExit(
+                f"⛔ FINALIZE REFUSED — no tag run found for prompt {config.PROMPT_VERSION!r};"
+                " run the pipeline first (finalize never runs over nothing)."
+            )
+    assert_run_resolved(run_id, allow_quarantined=allow_quarantined)
     verify_tsvectors()
     build_indexes()
     hygiene_report()
@@ -191,8 +279,18 @@ def run() -> None:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Step 5 (standalone): finalize the tag run.")
+    parser.add_argument(
+        "--run-id", help="tag run to verify/finalize (default: latest run for this prompt version)"
+    )
+    parser.add_argument(
+        "--accept-quarantine",
+        action="store_true",
+        help="proceed although quarantined (unresolved) rows exist — they are listed loudly",
+    )
+    args = parser.parse_args()
     config.require_keys()
-    run()
+    run(run_id=args.run_id, allow_quarantined=args.accept_quarantine)
     return 0
 
 

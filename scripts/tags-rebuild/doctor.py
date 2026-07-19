@@ -137,11 +137,79 @@ def _check_db() -> bool:
         if audit.audit_tables_exist():
             runs = db.one("SELECT count(*) FROM public.tag_runs")
             evidence = db.one("SELECT count(*) FROM public.tag_evidence")
-            _ok("audit tables (tag_runs / tag_evidence)", f"{runs} runs · {evidence:,} evidence rows")
+            _ok(
+                "audit tables (tag_runs / tag_evidence / tag_passage_outcomes)",
+                f"{runs} runs · {evidence:,} evidence rows",
+            )
         else:
-            _warn("audit tables (tag_runs / tag_evidence)", "not created yet — run_all creates them")
+            _warn(
+                "audit tables (tag_runs / tag_evidence / tag_passage_outcomes)",
+                "not (all) created yet — run_all creates them",
+            )
     except Exception as exc:  # noqa: BLE001
         _bad("audit tables", str(exc)[:200])
+
+    try:
+        has_model_col = bool(
+            db.one(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_schema='public' AND table_name='tag_batch_jobs'"
+                " AND column_name='model'"
+            )
+        )
+        if has_model_col:
+            _ok("tag_batch_jobs.model column", "present (per-shard model + prices recorded)")
+        else:
+            _warn(
+                "tag_batch_jobs.model column",
+                "missing — run_all adds it + backfills legacy rows (additive)",
+            )
+    except Exception as exc:  # noqa: BLE001
+        _bad("tag_batch_jobs.model column", str(exc)[:200])
+
+    try:
+        import routing
+
+        census: dict[str, int] = {r: 0 for r in routing.ROUTES}
+        for table in config.GEMINI_TABLES:
+            join, expr = routing.route_sql(table)
+            for route, n in db.rows(
+                f"SELECT {expr} AS route, count(*) FROM public.{table} t{join}"
+                f" WHERE t.embedding_context4 IS NOT NULL GROUP BY 1"
+            ):
+                census[route] = census.get(route, 0) + int(n)
+        _ok(
+            "routing census (eligible rows)",
+            f"core → {config.MODEL_CORE}: {census.get('core', 0):,}"
+            f" · standard → {config.MODEL_STANDARD}: {census.get('standard', 0):,}",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _bad("routing census", str(exc)[:200])
+
+    try:
+        import audit
+
+        run_id = audit.latest_run_id_for_prompt()
+        if run_id:
+            states = dict(
+                db.rows(
+                    "SELECT outcome, count(*) FROM public.tag_passage_outcomes"
+                    " WHERE run_id=%s::uuid GROUP BY outcome ORDER BY outcome",
+                    (run_id,),
+                )
+            )
+            detail = ", ".join(f"{s}:{n}" for s, n in states.items()) or "no outcome rows yet"
+            if states.get("quarantined"):
+                _bad(
+                    f"row outcomes (run {run_id[:8]}…)",
+                    detail + " — QUARANTINED rows are unresolved; the run is not complete",
+                )
+            else:
+                _ok(f"row outcomes (run {run_id[:8]}…)", detail)
+        else:
+            _warn("row outcomes", f"no {config.PROMPT_VERSION} run yet")
+    except Exception as exc:  # noqa: BLE001
+        _warn("row outcomes", str(exc)[:200])
     return True
 
 
@@ -177,53 +245,92 @@ def _check_artifacts() -> None:
 
 
 def _check_gemini() -> None:
-    print("\nGemini (free models.list — confirms the exact current model string)", flush=True)
+    print("\nGemini (free models.list — confirms BOTH routed model strings)", flush=True)
+    bad_strings = config.invalid_model_strings()
+    if bad_strings:
+        _bad(
+            "model strings",
+            f"{', '.join(repr(m) for m in bad_strings)} contain ':' or '_' — they"
+            " would break the shard-key ↔ filename mapping; fix MODEL_CORE /"
+            " MODEL_STANDARD in .env",
+        )
     if not config.GEMINI_API_KEY:
         _bad("Gemini reachable", "GEMINI_API_KEY missing")
         return
     try:
         import gemini_client
 
-        resolved = gemini_client.confirm_model()
-        _ok("model confirmed", f"GEMINI_MODEL={resolved} (full Flash, batch-capable)")
-    except SystemExit as exc:
-        _bad("model confirmed", str(exc)[:300])
+        for route, wanted in (("core", config.MODEL_CORE), ("standard", config.MODEL_STANDARD)):
+            try:
+                resolved = gemini_client.confirm_model(wanted)
+                _ok(f"route {route} model confirmed", f"{resolved} (full model, batch-capable)")
+            except SystemExit as exc:
+                _bad(f"route {route} model confirmed", str(exc)[:300])
     except Exception as exc:  # noqa: BLE001
         _bad("Gemini reachable", str(exc)[:200])
 
 
 def _check_budget() -> None:
-    print("\nCost ceiling", flush=True)
+    print("\nCost ceiling (per-model batch pricing)", flush=True)
     _ok(
         "MAX_SPEND_USD",
         f"${config.MAX_SPEND_USD:,.2f} (machine-enforced at shard submission)",
     )
-    pin, pout = config.GEMINI_BATCH_PRICE_IN_PER_M, config.GEMINI_BATCH_PRICE_OUT_PER_M
-    canon = (config.GEMINI_BATCH_PRICE_IN_PER_M_CANONICAL, config.GEMINI_BATCH_PRICE_OUT_PER_M_CANONICAL)
-    if pin <= 0 or pout <= 0:
-        _bad("batch pricing", "absent/zero — set the Gemini Batch price sheet")
-    elif (pin, pout) in config.STALE_BATCH_PRICE_PAIRS:
-        _bad("batch pricing stale", f"${pin}/M · ${pout}/M is the known v3.p1 placeholder")
-    elif (pin, pout) != canon:
-        _bad(
-            "batch pricing mismatch",
-            f"${pin}/M · ${pout}/M ≠ canonical ${canon[0]}/M · ${canon[1]}/M"
-            " — update the code price sheet (config canonical constants) in lock-step",
-        )
-    else:
-        _ok("batch pricing", f"${pin}/M in · ${pout}/M out (batch, canonical)")
+    for model in config.ROUTED_MODELS:
+        effective = config.GEMINI_BATCH_PRICES.get(model) or config.batch_prices(model)
+        canon = config.GEMINI_BATCH_PRICES_CANONICAL.get(model)
+        stale = config.STALE_BATCH_PRICE_PAIRS.get(model, set())
+        label = f"batch pricing [{model}]"
+        if effective is None:
+            _bad(label, "NO PINNED PRICE for a routed model — the submitter will refuse;"
+                        " pin it in config.GEMINI_BATCH_PRICES_CANONICAL")
+        elif effective[0] <= 0 or effective[1] <= 0:
+            _bad(label, "absent/zero — set the Gemini Batch price sheet")
+        elif effective in stale:
+            _bad(label + " stale", f"${effective[0]}/M · ${effective[1]}/M is a known stale pair")
+        elif canon is None or effective != canon:
+            _bad(
+                label + " mismatch",
+                f"${effective[0]}/M · ${effective[1]}/M ≠ canonical"
+                + (f" ${canon[0]}/M · ${canon[1]}/M" if canon else " (none pinned)")
+                + " — update the code price map in lock-step",
+            )
+        else:
+            _ok(label, f"${effective[0]}/M in · ${effective[1]}/M out (batch, canonical)")
     try:
+        import db
         import tagging
 
+        unpriced_billed = db.one(
+            "SELECT count(*) FROM public.tag_batch_jobs"
+            " WHERE (price_in_per_m IS NULL OR price_out_per_m IS NULL)"
+            " AND (status IN ('retrieved','applied') OR coalesce(est_input_tok, 0) > 0)"
+        )
+        if unpriced_billed:
+            _bad(
+                "billed rows priced",
+                f"{unpriced_billed} billed historical job(s) have NO recorded prices —"
+                " run `python run_all.py` once so the legacy backfill stamps them",
+            )
+        else:
+            _ok("billed rows priced", "every billed shard row carries its model's recorded prices")
+        by_model = tagging.spend_ledger_by_model()
+        for model, l in by_model.items():
+            _ok(
+                f"spend ledger [{model}]",
+                f"real ${l['real_usd']:,.2f} · in-flight est ${l['in_flight_est_usd']:,.2f}",
+            )
         ledger = tagging.spend_ledger()
         _ok(
-            "spend ledger",
-            f"real ${ledger['real_usd']:,.2f} · in-flight est ${ledger['in_flight_est_usd']:,.2f}",
+            "spend ledger (combined)",
+            f"real ${ledger['real_usd']:,.2f} · in-flight est ${ledger['in_flight_est_usd']:,.2f}"
+            f" · committed ${ledger['committed_usd']:,.2f}",
         )
-    except (Exception, SystemExit):
+    except (Exception, SystemExit) as exc:
         # get_pg() raises SystemExit when DATABASE_URL is absent — a WARN here, not
-        # a crash, so the pricing/ceiling checks above still report cleanly.
-        _warn("spend ledger", "no DB / no shard state yet (nothing submitted)")
+        # a crash, so the pricing/ceiling checks above still report cleanly. The
+        # model-column probe also lands here on a pre-p3 schema.
+        _warn("spend ledger", f"no DB / no shard state yet ({str(exc)[:120] or 'nothing submitted'})")
 
 
 def run() -> int:

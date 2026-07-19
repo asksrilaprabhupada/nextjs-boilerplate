@@ -1,14 +1,26 @@
-# Tags & FTS Rebuild — offline batch harness (v3.p2)
+# Tags & FTS Rebuild — offline batch harness (v3.p3-hybrid)
 
 Offline Python harness for the search-data rebuild. Runs locally or in a
 sandbox, never on Vercel. One command drives the whole build, resumably.
 v3 = the consolidated correction pass folding three independent research
-reviews into the v2 harness. **v3.p2** freezes the v3.p1 pilot and corrects the
-defects it exposed: canonical batch pricing with thinking-token cost accounting,
-`thinkingLevel=LOW` + no free-text reasoning field, **sentence-ID evidence**
-(no quote-copying), **direct verse_chunks tagging** (no inheritance), raw
-failure diagnostics, and a fresh validate-before-write pilot with a one-shot
-retry to 100%.
+reviews into the v2 harness; v3.p2 froze the v3.p1 pilot and fixed the defects
+it exposed (canonical pricing + thinking-token accounting, sentence-ID
+evidence, direct verse_chunks tagging, raw failure diagnostics, the
+validate-before-write pilot). **v3.p3-hybrid**: TWO models, one pipeline —
+core scripture (verses/verse_chunks of Bhagavad-gītā `bg`, Śrīmad-Bhāgavatam
+`sb`, Caitanya-caritāmṛta `cc`) routes to **gemini-3.5-flash**; every other
+passage routes to the 3×-cheaper **gemini-3-flash-preview** — with the SAME
+vocabulary, prompt, response schema and sentence-ID evidence, and an explicit,
+NON-overridable `thinkingLevel=LOW` in every request for BOTH models
+(3 Flash defaults to HIGH thinking — the override is mandatory). Completion is
+now **row-level** (`tag_passage_outcomes`): invalid/missing rows retry once on
+their own model, still-invalid standard rows escalate once to the core model,
+anything left is QUARANTINED (listed, unresolved — the run never claims
+complete and finalize refuses). Real token usage is recorded the moment
+results are RETRIEVED, so the ledger counts every dollar actually spent. A
+NO-DB-WRITE `--bakeoff-model` mode replays the banked p2 pilot requests
+verbatim through any model and writes a comparison report against the banked
+p2 (3.5 Flash) results.
 
 ## What the rebuild does (one paragraph)
 Replace the broken free-form `tags` (359,433 distinct tags on verses, 89%
@@ -36,18 +48,34 @@ the harness reads (process env wins). All five keys are **required**; there is
 no anon-key fallback and the harness fails loudly if any is missing:
 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (service role), `DATABASE_URL`
 (**Session Pooler** DSN, port 5432 — not the 6543 transaction pooler),
-`GEMINI_API_KEY`, `VOYAGE_API_KEY`. Set `MAX_SPEND_USD` too (suggested 500).
+`GEMINI_API_KEY`, `VOYAGE_API_KEY`. Set `MAX_SPEND_USD` too (default 325).
 
 ## Run
 ```
 python run_all.py             # the whole build; stops once, at the ⛔ vocabulary gate
 python run_all.py --resume    # rerun after Ctrl+C / crash / next day — continues in place
 python run_all.py --yes       # skip the ⛔ gate (maintainer's standing one-shot ruling)
-python run_all.py --pilot-only # run ONLY the v3.p2 pilot (validate files → retry once →
-                              # apply on a 100% + distribution pass) then STOP before the
-                              # full corpus run. Requires vocabulary.json already built.
-python run_all.py --doctor    # green/red checklist: keys, model string, pooler, counts,
-                              # + FAILS on absent/stale batch pricing
+python run_all.py --pilot-only # run ONLY the v3.p3 pilot (validate files → retry once on
+                              # the failing model → escalate still-invalid standard rows
+                              # once to the core model → apply on a 100% row-level +
+                              # distribution pass) then STOP before the full corpus run.
+                              # Requires vocabulary.json already built.
+python run_all.py --doctor    # green/red checklist: keys, BOTH routed model strings,
+                              # pooler, counts, routing census, row-outcome states,
+                              # + FAILS on any routed model without a pinned price,
+                              # stale/mismatched pricing, or unpriced billed rows
+python run_all.py --bakeoff-model MODEL [--bakeoff-route all|core|standard]
+                              # NO-DB-WRITE bakeoff: replay the banked p2 pilot request
+                              # files verbatim through MODEL (local state file only) and
+                              # write shards/bakeoff_<model>_<route>_report.md + .json
+                              # vs the banked p2 (3.5 Flash) results: schema validity,
+                              # per-route tag agreement (exact + Jaccard + per-tag
+                              # both/baseline-only/candidate-only), passage_function
+                              # agreement + confusions, seeded question samples, true
+                              # per-model cost. Needs the maintainer-local banked files.
+python run_all.py --accept-quarantine
+                              # explicit override: finish + finalize although quarantined
+                              # (unresolved) rows exist — they are always listed loudly
 python run_all.py --revalidate-pilot   # re-scan banked shards/pilot_*.results.jsonl,
                               # recompute the gates + a per-bucket breakdown of WHY
                               # schema-invalid rows failed, rewrite pilot-report.md.
@@ -66,9 +94,9 @@ that they did. (A live pilot run also writes this section into `pilot-report.md`
 | 1 | `fts_core` backfill — touch rows `WHERE fts_core IS NULL` in batches over `DATABASE_URL`; progress printed; idempotent. | — |
 | 2 | Vocabulary build → `vocabulary.json`: faceted (Concept / Person / Place / Scripture / Practice — **no Sanskrit facet**: one topic = one term, language forms are variants; labels are the word devotees actually use, English by default). Curated seeds (`vocabulary_seeds.json`, incl. `hard_negatives` contrast pairs) + CANDIDATES (chapter titles, mined Sanskrit glosses with particle stoplist + chapter-dispersion check, net-new mining capped ~100) through ONE Gemini naming/dedup path — never straight into the menu. Clustering runs as LENSES (k ∈ {150,300,500} MiniBatchKMeans + one HDBSCAN pass) with **seeded random** stratified sampling (by table; by book within prose; seed recorded); Gemini names each cluster from its nearest AND farthest members and may answer "incoherent — drop"; the 0.1-cosine centroid merge produces **merge PROPOSALS** (applied provisionally, all listed in the `merges` section). Every term gets a one-line **scope note** (covers X; not Y) and `kind: concept|entity` (entities don't count toward the ~400-700 concept expectation — the gate decides, not a round number). Loaded into `vocab_terms` (service key) with Voyage embeddings. | — |
 | ⛔ | **THE ONE GATE:** review `vocabulary.json` — terms + scope notes + MERGES (veto = edit the file), then press Enter. (`--yes` skips.) | ⛔ |
-| 3 | Pilot (**v3.p2**): an EXACT **2,000-row manifest** = ALL p1-failures + a p1-success comparison slice (matched to the failure table mix + length quartile) + a fresh remainder stratified across all five tables × length quartiles by largest-remainder allocation (checksum recorded in `tag_runs.config`). Results are **validated locally BEFORE any DB write**: first-pass schema validity ≥ **99.5%**, then every schema-invalid row is **retried once** and **100%** is required; distribution gates (OOV ≤ .02 · distinct tags ≥ 100 · singleton ≤ 20% · ≥ 60% vocab used · no tag on > 20% of passages · median 3–8 among TAGGED) run on the files too. Only on a full pass are all 2,000 rows applied in **one atomic transaction** (p2 overwrites p1's pilot content writes; p1 evidence is retained under its run_id). `pilot-report.md` gets first-pass-vs-post-retry validity, the raw `finishReason`/`blockReason` for every `other` failure, the TRUE cost (thinking INCLUDED) + honest full-run extrapolation across all five tables, and 40 samples. `--pilot-only` runs just this and stops. | auto |
-| 4 | Full tagging: ONE combined structured Gemini Batch call per passage (full **Gemini 3.5 Flash** — never Lite) with `thinkingConfig.thinkingLevel=LOW` and the model-default temperature returns `passage_function` (closed enum, incl. `not_applicable`), `tags_core` (≤ `MAX_TAGS`) and 0-3 `questions` — **evidence is a sentence ID** drawn from the numbered target sentences (deterministic splitter `asp-sentences-v1`), resolved back to the exact source sentence + offsets (the model never copies text). Candidate shortlist = semantic top-25 ∪ exact alias matches ∪ hard-negative partners, cap ~40. Stance rules: aboutness only; entities only when prominent; ZERO tags valid. Gates: out-of-vocabulary → HARD drop; in-vocab unresolvable-id → KEPT, `evidence_found=false`; unevidenced question → dropped. **`verse_chunks` are tagged DIRECTLY** (target chunk numbered; parent-verse translation + adjacent chunks as un-numbered context; evidence must come from the target). Coverage is **run_id-scoped**, so p2 retags every eligible row. | ceiling |
-| 5 | Finalize: tsvector verification; GIN indexes with `CREATE INDEX CONCURRENTLY`, one at a time, `ANALYZE` after each, invalid-index check; **hygiene report** (`hygiene-report.md`: 0 uses / < 20 uses / > 15% of corpus — report only, nothing auto-deleted); completion checklist incl. the Supabase compute downgrade reminder (LARGE → MICRO, ~$110/month). *(v3.p2: no verse_chunks inheritance step — chunks are tagged directly.)* | — |
+| 3 | Pilot (**v3.p3**): an EXACT **2,000-row manifest** = ALL p1-failures + a p1-success comparison slice (matched to the failure table mix + length quartile) + a fresh remainder stratified across all five tables × length quartiles by largest-remainder allocation (checksum + per-route counts recorded in `tag_runs.config`), **route-split per model**. Results are **validated locally BEFORE any DB content write**: first-pass schema validity is **DIAGNOSTIC** (never an abort); every invalid/**missing** row is **retried once on its own model**, still-invalid standard-route rows **escalate once to the core model**, and **100% row-level validity** is required — still-invalid rows are listed explicitly (the would-be quarantine list) and the run stops with nothing applied. Distribution gates (OOV ≤ .02 · distinct tags ≥ 100 · singleton ≤ 20% · ≥ 60% vocab used · no tag on > 20% of passages · median 3–8 among TAGGED) run on the files too. Only on a full pass are all 2,000 rows applied in **one atomic transaction** (incl. their outcome rows). `pilot-report.md` gets first-pass/retry/escalation validity, the raw `finishReason`/`blockReason` for every `other` failure, the TRUE **per-model** cost (thinking INCLUDED) + per-route full-run extrapolation, and 40 samples. `--pilot-only` runs just this and stops. | auto |
+| 4 | Full tagging: ONE combined structured Gemini Batch call per passage, routed **per passage** (core scripture → full **Gemini 3.5 Flash**; everything else → **Gemini 3 Flash preview** — never Lite on either route) with the NON-overridable `thinkingConfig.thinkingLevel=LOW` and the model-default temperature, returns `passage_function` (closed enum, incl. `not_applicable`), `tags_core` (≤ `MAX_TAGS`) and 0-3 `questions` — **evidence is a sentence ID** drawn from the numbered target sentences (deterministic splitter `asp-sentences-v1`), resolved back to the exact source sentence + offsets (the model never copies text). Candidate shortlist = semantic top-25 ∪ exact alias matches ∪ hard-negative partners, cap ~40. Stance rules: aboutness only; entities only when prominent; ZERO tags valid. Gates: out-of-vocabulary → HARD drop; in-vocab unresolvable-id → KEPT, `evidence_found=false`; unevidenced question → dropped. **`verse_chunks` are tagged DIRECTLY**. Coverage is **ROW-LEVEL** (`tag_passage_outcomes`): a passage counts only with a successfully applied result in this run — never because its id sat in a submitted shard; invalid/missing rows retry once (same model) → standard rows escalate once (core model) → still-invalid rows are **QUARANTINED** (listed; the run is never marked complete while any exist). | ceiling |
+| 5 | Finalize: **REFUSES while any Gemini-eligible passage lacks a resolved outcome** in the run (quarantined rows require an explicit `--accept-quarantine`; skipped-no-shortlist rows are resolved but listed); then tsvector verification; GIN indexes with `CREATE INDEX CONCURRENTLY`, one at a time, `ANALYZE` after each, invalid-index check; **hygiene report** (`hygiene-report.md`: 0 uses / < 20 uses / > 15% of corpus — report only, nothing auto-deleted); completion checklist incl. the Supabase compute downgrade reminder (LARGE → MICRO, ~$110/month). | ⛔ unresolved |
 
 ## Provenance manifest — the single source of truth
 `provenance.json` encodes the reviewed authorship rules; **the harness gates
@@ -86,8 +114,13 @@ just interprets it):
   still gets topic tags + passage_function.
 
 ## Batch mechanics (resumable by construction)
-- Deterministic shard names (`pilot:verses:000`, `transcript_paragraphs:w01:0003`);
-  each shard's id list is persisted in `tag_batch_jobs` before anything is sent.
+- Deterministic shard names embedding the **phase + run token + routed model**
+  (`pilot:p3:<run8>:<model>:verses:000`,
+  `full:p3:<run8>:<model>:transcript_paragraphs:w01:0003`, with `:retry:` /
+  `:esc:` attempt segments) — disjoint from every p1/p2 key AND from any other
+  p3 run's keys, so DB rows and `shards/` files can never collide. Each shard's
+  id list, **model and pinned prices** are persisted in `tag_batch_jobs` before
+  anything is sent; the attempt number is derived from the key.
 - Every shard's JSONL input is capped at `MAX_SHARD_INPUT_TOKENS` (2.5M). Our
   Gemini tier allows at most 3M enqueued batch tokens at once, so an oversized
   shard is split into token-bounded parts (`…:p00`, `…:p01`) before submission —
@@ -101,32 +134,50 @@ just interprets it):
   so accepted-but-unrecorded jobs are **recovered, never resubmitted**.
 - Jobs run server-side up to 24h — close the script after submission and rerun
   `python run_all.py --resume` later to collect and apply.
+- **Real token usage is recorded the moment results are RETRIEVED** (one atomic
+  UPDATE with the download) — a later apply failure can never erase or defer
+  spend, and pilot download-only spend appears in the ledger immediately.
 - A shard is marked `applied` only after its whole write transaction commits —
-  crash re-runs never double-spend. Rows whose tags all failed the hard gate
-  get `tags_core = '{}'` so they are never resubmitted either.
+  crash re-runs never double-spend. Every id in the shard gets a row-level
+  outcome (`applied` / `invalid` / `missing_response` / `skipped_no_shortlist`);
+  schema-valid zero-tag rows get `tags_core = '{}'`.
 
-## Cost ceiling (machine-enforced)
-`MAX_SPEND_USD` in `.env` is a hard ceiling: the submitter tracks real spend
-(from `usageMetadata`) plus estimates for in-flight shards and **refuses to
-submit** past the ceiling — no approvals, no overrides at runtime. **Real spend
-counts `candidatesTokenCount` + `thoughtsTokenCount`** (thinking is billable
-output; the split is stored per shard in `tag_batch_jobs`). Batch pricing
-(`GEMINI_BATCH_PRICE_*_PER_M`) ships as **canonical constants in `config.py`**
-($0.75/M in · $4.50/M out for Gemini 3.5 Flash Batch); `--doctor` **FAILS** (not
-warns) if the effective prices are absent (≤0), the known v3.p1 placeholder
-(0.15/1.25), or differ from the code canonical — an `.env` override must be
-mirrored into the canonical constants.
+## Cost ceiling (machine-enforced; per-model pricing)
+`MAX_SPEND_USD` in `.env` is a hard ceiling (default **325**): the submitter
+tracks real spend (from `usageMetadata`, recorded at retrieval) plus estimates
+for in-flight shards and **refuses to submit** past the ceiling — no approvals,
+no overrides at runtime. **Real spend counts `candidatesTokenCount` +
+`thoughtsTokenCount`** (thinking is billable output; the split is stored per
+shard in `tag_batch_jobs`). Batch pricing ships as a **canonical PER-MODEL map
+in `config.py`** (`GEMINI_BATCH_PRICES_CANONICAL`: gemini-3.5-flash $0.75/M in
+· $4.50/M out; gemini-3-flash-preview $0.25/M in · $1.50/M out); every shard
+row records its model + prices at insert, the ledger prices strictly by those
+**recorded** per-row prices, and pre-p3 rows are backfilled once (they were all
+gemini-3.5-flash). `--doctor` **FAILS** (not warns) if any ROUTED model lacks a
+pinned price, a price is ≤ 0 or a known-stale pair, the effective prices differ
+from the canonical map (per-model `.env` overrides use the
+`GEMINI_BATCH_PRICE_IN_PER_M__<MODEL>` suffix convention and must be mirrored
+into the map), or any billed row has no recorded prices. Bakeoff spend counts
+against the same ceiling (DB committed + the local state-file ledger).
 
 ## Audit storage (never discarded)
-- `tag_runs` — run id, resolved model string, prompt version (`asp-tags-v3.p2`),
-  vocabulary version, config snapshot (sampling seed, **pricing, thinkingLevel,
-  temperature provenance, maxOutputTokens, splitter version, pilot manifest
-  checksum + cohort sizes**), timestamps. A new run supersedes prior unfinished
-  runs (p1 is frozen, its jobs + evidence retained).
+- `tag_runs` — run id, the resolved model fingerprint
+  (`core=<model>;standard=<model>`), prompt version (`asp-tags-v3.p3-hybrid`),
+  vocabulary version, config snapshot (sampling seed, **routing map, per-model
+  batch prices, thinkingLevel, temperature provenance, maxOutputTokens,
+  splitter version, pilot manifest checksum + cohort + per-route sizes**),
+  timestamps. A new run supersedes prior unfinished runs (p1/p2 are frozen,
+  their jobs + evidence retained).
 - `tag_evidence` — every tag the model returned with the **resolved evidence
   sentence** (our exact copy, not the model's text) + the raw `evidence_sentence_id`,
   accepted or rejected (+ reject reason), the soft-gate `evidence_found` flag, and
   character offsets of the sentence into the passage as sent.
+- `tag_passage_outcomes` — **the row-level completion ledger** (v3.p3), one row
+  per (run, table, passage): shard key, model, attempt, outcome (`applied` /
+  `invalid` / `missing_response` / `skipped_no_shortlist` / `quarantined`),
+  failure class, and a `history` jsonb appending every attempt's transition —
+  quarantine reports carry the complete error trail. Planning, completion and
+  the finalize gate read ONLY this table (id-in-a-shard never counts).
 
 ## Safety model (enforced in CODE)
 1. **Closed vocabulary**: the responseSchema constrains tags to each passage's
@@ -162,37 +213,50 @@ verbatim text.
 ## Files
 ```
 run_all.py            orchestrator: --doctor / --resume / --yes / --revalidate-pilot
-config.py             .env loading, model strings, tuning, REQUIRED-keys policy
+                      / --pilot-only / --bakeoff-model / --bakeoff-route / --accept-quarantine
+config.py             .env loading, routed model strings, per-model price map, tuning
+routing.py            core/standard routing rules + SQL fragments (pure, offline-testable)
 db.py                 Session-Pooler psycopg + service-key supabase clients
 provenance.json       ⚖ the manifest (single source of truth for gating)
 provenance.py         manifest interpreter + transcript speaker walk
 vocabulary_seeds.json curated faceted seeds incl. hard-negative contrast pairs (committed)
 build_vocabulary.py   seeds + candidates + multi-view clustering + scope notes → vocabulary.json → vocab_terms
-tagging.py            shards, Batch submit/reconcile/collect, gates, pilot report, cost ceiling
-gemini_client.py      models.list confirm, File API, Batch API (raw HTTP)
+tagging.py            shards, Batch submit/reconcile/collect, gates, row outcomes, pilot report, cost ceiling
+bakeoff.py            NO-DB-WRITE model bakeoff over the banked p2 pilot (local state + report)
+gemini_client.py      models.list confirm (both routed models), File API, Batch API (raw HTTP)
 voyage_client.py      term embeddings (voyage-context-4)
 backfill_fts_core.py  step 1 (also standalone)
-finalize.py           step 5 (also standalone): tsvectors, indexes, hygiene report, checklist
+finalize.py           step 5 (also standalone): unresolved-row gate, tsvectors, indexes, hygiene report
 sentences.py          deterministic sentence splitter (asp-sentences-v1) for sentence-ID evidence
-audit.py              tag_runs / tag_evidence DDL (+ additive passage_function) + run bookkeeping
-doctor.py             read-only readiness checklist
+audit.py              tag_runs / tag_evidence / tag_passage_outcomes DDL + legacy price backfill + run bookkeeping
+doctor.py             read-only readiness checklist (per-model pricing, routing census, outcome states)
 .env.example          template for scripts/tags-rebuild/.env (git-ignored)
 ```
 
-## Status (2026-07-18)
+## Status (2026-07-19)
 - **Phase 2 (columns + support tables): DONE** (migration `20260708120000_…`).
 - **Phase 3 (fts_core trigger + diacritic fix): mechanism DONE + verified.**
 - **Harness v3.p1: DONE**, pilot RAN (run `63c99428…`) and exposed defects.
-- **Harness v3.p2: DONE** (this change) — canonical batch pricing + thinking-token
+- **Harness v3.p2: DONE** — canonical batch pricing + thinking-token
   cost accounting + `--doctor` pricing FAIL; `thinkingLevel=LOW`, no reasoning
   field, `maxOutputTokens=8192`, model-default temperature, `not_applicable`
   passage_function; **sentence-ID evidence** (`asp-sentences-v1`) replacing
   quote-copying; **verse_chunks tagged directly** (inheritance removed); raw
-  `other`-bucket diagnostics; the fresh 2,000-row validate-before-write pilot
-  (all p1-failures + matched successes + quartile-stratified fresh, retry-once to
-  100%, atomic apply) behind `--pilot-only`; run isolation freezes p1. The paid
-  `--pilot-only` run is a maintainer step on the populated local checkout (needs
-  `.env` + `vocabulary.json`). Additive columns (`cost_candidate_tok`,
-  `cost_thought_tok`, `evidence_sentence_id`) are created by the harness at run time.
+  `other`-bucket diagnostics; the fresh 2,000-row validate-before-write pilot.
+  The p2 pilot was downloaded (5 shards `retrieved` in `tag_batch_jobs`) but
+  never applied — its banked request/result files are the bakeoff baseline.
+- **Harness v3.p3-hybrid: DONE** (this change) — TWO-model routing (core
+  bg/sb/cc verses+chunks → gemini-3.5-flash; everything else →
+  gemini-3-flash-preview) with per-model canonical pricing + per-model
+  `--doctor` FAILs; shard keys embed run token + model (no key/file collisions
+  across models or runs); **retrieval-time usage recording** (the ledger counts
+  every retrieved dollar); **row-level completion** via `tag_passage_outcomes`
+  (retry once on own model → escalate standard rows once to core → quarantine,
+  listed, never silently complete; `finalize` refuses while unresolved);
+  non-overridable `thinkingLevel=LOW` for both models; `MAX_SPEND_USD`
+  default 325; the NO-DB-WRITE `--bakeoff-model` mode (verbatim p2 request
+  replay + comparison report). The paid `--pilot-only` and `--bakeoff-model`
+  runs are maintainer steps on the populated local checkout (need `.env`,
+  `vocabulary.json`, and — for the bakeoff — the banked p2 shard files).
 - Phase 6 (search wiring + Vercel preview) and Phase 7 (Deep Study) are
   app/SQL work, not in this harness — separate instruction to follow.
