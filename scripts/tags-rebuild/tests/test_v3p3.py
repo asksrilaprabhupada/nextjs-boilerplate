@@ -175,11 +175,18 @@ def test_usage_from_results_file(tmp_path):
 
 
 def test_costs_recorded_at_retrieval_not_apply():
-    # exactly ONE statement writes real cost columns — the retrieval UPDATE
-    assert TAGGING_SRC.count("cost_input_tok=%s") == 1
+    # cost columns are written at RETRIEVAL (the status='retrieved' flip) and,
+    # for a terminal non-success batch with billed partial output, at
+    # partial-capture (fix #3) — but NEVER at apply.
     assert "SET status='retrieved', retrieved_at=%s," in TAGGING_SRC
-    # the apply statement flips status/applied_at ONLY (no cost columns)
+    # the apply statement flips status/applied_at ONLY (no cost columns).
     assert "SET status='applied', applied_at=%s" in TAGGING_SRC
+    # exactly TWO cost-writing statements: retrieval + expired-partial capture,
+    # and BOTH live outside the apply path (which carries no cost columns).
+    assert TAGGING_SRC.count("cost_input_tok=%s") == 2
+    # the partial-capture path is guarded and lives in the terminal-non-success
+    # branch (never on the apply path).
+    assert "download partial" in TAGGING_SRC
 
 
 # ── outcome state machine (item 3) ───────────────────────────────────────────
@@ -422,3 +429,74 @@ def test_bakeoff_never_writes_the_db():
                  "CREATE TABLE", "ALTER TABLE", "TRUNCATE"):
         assert verb not in src, f"bakeoff.py must never contain {verb!r}"
     assert "ensure_audit_tables" not in src
+
+
+# ── post-implementation review fixes ─────────────────────────────────────────
+
+def test_submit_pending_is_run_scoped():
+    # fix #2: submit_pending must scope pending shards to the ACTIVE run so an
+    # aborted prior run's orphan pending shards are never submitted/paid for by a
+    # new run that will never collect them.
+    assert "def submit_pending(vocab: VocabIndex, run_id: str | None = None)" in TAGGING_SRC
+    assert "AND run_id = %s::uuid" in TAGGING_SRC
+    run_all_src = Path(Path(tagging.__file__).parent / "run_all.py").read_text(encoding="utf-8")
+    # every caller passes the run_id; no bare submit_pending(vocab_index) survives
+    assert "submit_pending(vocab_index)" not in run_all_src
+    assert "submit_pending(vocab_index, run_id)" in run_all_src
+
+
+def test_committed_usd_query_uses_no_p3_only_columns():
+    # fix #1: the bakeoff ceiling floor must be computable on a PRE-p3 schema, so
+    # its DB-committed query may reference neither `model` nor the `price_*`
+    # columns (added only by the p3 audit DDL bakeoff never runs).
+    q = tagging._COMMITTED_LEGACY_SUM
+    assert "price_in_per_m" not in q and "price_out_per_m" not in q
+    assert "model" not in q
+    assert "cost_input_tok" in q and "est_input_tok" in q
+
+
+def test_bakeoff_ceiling_does_not_swallow_query_error_as_zero(tmp_path, monkeypatch):
+    # fix #1: a DB READ error must NOT masquerade as "$0 committed" — the local
+    # spend still counts, and the DB-unreadable path warns loudly. A *successful*
+    # DB read is added on top.
+    monkeypatch.setattr(config, "SHARDS_DIR", tmp_path)  # no sibling state files
+    state = {"model": STD, "route": "standard",
+             "shards": {"s": {"status": "applied", "usage": {"in": 1_000_000, "out": 1_000_000}}}}
+    local = tagging._usd(STD, 1_000_000, 1_000_000)  # 0.25 + 1.50
+
+    monkeypatch.setattr(tagging, "committed_usd_schema_agnostic", lambda: 7.0)
+    assert abs(bakeoff._bakeoff_committed_usd(state, STD) - (7.0 + local)) < 1e-9
+
+    def _boom():
+        raise RuntimeError("column price_in_per_m does not exist")
+    monkeypatch.setattr(tagging, "committed_usd_schema_agnostic", _boom)
+    # DB read failed → DB side treated as 0, but LOCAL spend is still counted
+    # (never a blanket 0 that ignores real spend).
+    assert abs(bakeoff._bakeoff_committed_usd(state, STD) - local) < 1e-9
+
+
+def test_bakeoff_sibling_state_files_counted(tmp_path, monkeypatch):
+    # fix #5: sibling bakeoff state files (other models/routes) count toward the
+    # shared ceiling, each priced at ITS OWN recorded model.
+    monkeypatch.setattr(config, "SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(tagging, "committed_usd_schema_agnostic", lambda: 0.0)
+    # sibling A: core model, 1M/1M real usage
+    bakeoff.save_state(CORE, "core", {"model": CORE, "route": "core",
+        "shards": {"a": {"status": "applied", "usage": {"in": 1_000_000, "out": 1_000_000}}}})
+    # the active run: standard model, its own local spend
+    active = {"model": STD, "route": "standard",
+              "shards": {"b": {"status": "applied", "usage": {"in": 1_000_000, "out": 1_000_000}}}}
+    expected = tagging._usd(CORE, 1_000_000, 1_000_000) + tagging._usd(STD, 1_000_000, 1_000_000)
+    assert abs(bakeoff._bakeoff_committed_usd(active, STD) - expected) < 1e-9
+    # the active run's own file, if already on disk, is NOT double-counted
+    bakeoff.save_state(STD, "standard", active)
+    assert abs(bakeoff._bakeoff_committed_usd(active, STD) - expected) < 1e-9
+
+
+def test_ledger_counts_failed_partial_spend():
+    # fix #3: a batch that ended in a terminal non-success state may have BILLED
+    # partial output whose usage collect() records into cost_* before failing the
+    # shard — so 'failed' must be in the ledger's REAL bucket (clean failures
+    # carry cost_*=0 and contribute nothing).
+    assert "'retrieved','applied','failed'" in tagging._LEDGER_SUMS
+    assert "'retrieved','applied','failed'" in tagging._COMMITTED_LEGACY_SUM

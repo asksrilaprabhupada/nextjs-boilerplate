@@ -1160,8 +1160,14 @@ def _usd(model: str, input_tok: float, output_tok: float) -> float:
 # guards the window before the first p3 ensure_audit_tables() ran; --doctor
 # FAILS if any billed row is still unpriced after that.
 _LEDGER_FALLBACK = config.GEMINI_BATCH_PRICES_CANONICAL["gemini-3.5-flash"]
+# The real bucket counts 'failed' too: a batch that ended in a terminal
+# non-success state (e.g. BATCH_STATE_EXPIRED) may still have produced — and
+# billed for — a partial output file, whose usage collect() records into
+# cost_* before failing the shard. For a clean failure cost_* is 0, so 'failed'
+# contributes nothing; the only effect is that genuinely-billed partial spend
+# is never invisible to the ledger or the ceiling.
 _LEDGER_SUMS = (
-    " coalesce(sum(CASE WHEN status IN ('retrieved','applied') THEN"
+    " coalesce(sum(CASE WHEN status IN ('retrieved','applied','failed') THEN"
     "   cost_input_tok  * coalesce(price_in_per_m,  %(fin)s)  / 1e6"
     " + cost_output_tok * coalesce(price_out_per_m, %(fout)s) / 1e6 END), 0),"
     " coalesce(sum(CASE WHEN status IN ('submitted','running') THEN"
@@ -1180,6 +1186,34 @@ def spend_ledger() -> dict:
         "in_flight_est_usd": float(est_usd),
         "committed_usd": float(real_usd) + float(est_usd),
     }
+
+
+# Committed spend using ONLY columns present on BOTH the p2 and p3 schemas (no
+# model / price_* columns) priced at the canonical core rate. For a read-only
+# ceiling floor computed from a context that never runs the p3 audit DDL (the
+# bakeoff): the full ledger's price_* references would raise "undefined column"
+# on a pre-p3 DB, and that error must never be silently read as $0 spend.
+_COMMITTED_LEGACY_SUM = (
+    " coalesce(sum("
+    "   CASE WHEN status IN ('retrieved','applied','failed')"
+    "     THEN cost_input_tok * %(fin)s / 1e6 + cost_output_tok * %(fout)s / 1e6"
+    "   WHEN status IN ('submitted','running')"
+    "     THEN est_input_tok * %(fin)s / 1e6 + est_output_tok * %(fout)s / 1e6"
+    "   ELSE 0 END), 0)"
+)
+
+
+def committed_usd_schema_agnostic() -> float:
+    """DB committed spend (real + in-flight est) priced at the canonical core
+    (3.5-flash) rate, using only p2/p3-common columns. Over-prices standard-route
+    rows — deliberately conservative for a ceiling floor. Raises on a genuinely
+    unreachable DB (the caller distinguishes that from a $0 result)."""
+    return float(
+        db.rows(
+            "SELECT" + _COMMITTED_LEGACY_SUM + " FROM public.tag_batch_jobs",
+            _LEDGER_PARAMS,
+        )[0][0]
+    )
 
 
 def spend_ledger_by_model() -> dict[str, dict]:
@@ -1478,7 +1512,7 @@ def _submit_one(part: ShardPart, queue_terminal_seen: set[str]) -> bool:
     return True
 
 
-def submit_pending(vocab: VocabIndex) -> None:
+def submit_pending(vocab: VocabIndex, run_id: str | None = None) -> None:
     """Submit pending p3 shards while the ceiling allows, each against its OWN
     recorded model. Job IDs are recorded in tag_batch_jobs immediately on
     acceptance — BEFORE any polling. A full batch queue (HTTP 429) does not
@@ -1487,10 +1521,23 @@ def submit_pending(vocab: VocabIndex) -> None:
     config.MAX_SHARD_INPUT_TOKENS is split into token-bounded parts
     (build_shard_parts) so every job fits the 3M queue. Rows skipped at build
     time (no shortlist/embedding) get explicit `skipped_no_shortlist` outcome
-    rows. Stale pre-p3 pending rows (no recorded model) are never submitted."""
+    rows. Stale pre-p3 pending rows (no recorded model) are never submitted.
+
+    `run_id` scopes submission to the ACTIVE run's own pending shards. Without
+    it, an aborted prior run whose identity changed (new run_id) would leave
+    orphan pending shards that this run would submit and pay for yet never
+    collect (collect() is run-prefix scoped), then re-plan + pay for again. The
+    common resume path reuses the same run_id, so scoping never blocks a legit
+    resume. Callers always pass it; the default is a defensive no-scope fallback."""
+    where = "status = 'pending'"
+    params: tuple = ()
+    if run_id is not None:
+        where += " AND run_id = %s::uuid"
+        params = (run_id,)
     pending = db.rows(
         "SELECT shard_key, table_name, id_list::text[], run_id::text, model"
-        " FROM public.tag_batch_jobs WHERE status = 'pending' ORDER BY shard_key"
+        f" FROM public.tag_batch_jobs WHERE {where} ORDER BY shard_key",
+        params,
     )
     # Shared across every shard's wait so completions during one shard's wait
     # aren't miscounted as fresh progress for the next.
@@ -1992,6 +2039,36 @@ def collect(run_id: str, shard_key_prefix: str = "", apply: bool = True) -> list
                     print(f"  downloaded {shard_key} (not yet applied)", flush=True)
                 progressed = True
             elif state in gemini_client.TERMINAL_STATES:
+                # Terminal non-success (e.g. BATCH_STATE_EXPIRED): the batch may
+                # still have produced — and been BILLED for — a partial output
+                # file. Capture its usage into cost_* (counted by the ledger's
+                # real bucket, which includes 'failed') BEFORE failing the shard,
+                # so billed partial spend is never invisible to the ceiling. The
+                # shard is still failed → its rows re-plan (no silent holes); we
+                # do not apply partial results here (an expired file may be
+                # truncated), only meter the money already spent.
+                if job.get("output_file"):
+                    try:
+                        db.with_retry(
+                            lambda j=job, p=results_path: gemini_client.download_file(j["output_file"], p),
+                            f"download partial {shard_key}",
+                        )
+                        in_tok, out_tok, cand_tok, thought_tok = usage_from_results_file(results_path)
+                        if in_tok or out_tok:
+                            with db.get_pg().cursor() as cur:
+                                cur.execute(
+                                    "UPDATE public.tag_batch_jobs SET cost_input_tok=%s,"
+                                    " cost_output_tok=%s, cost_candidate_tok=%s,"
+                                    " cost_thought_tok=%s WHERE shard_key=%s",
+                                    (in_tok, out_tok, cand_tok, thought_tok, shard_key),
+                                )
+                            print(
+                                f"  captured partial usage from {state} {shard_key}"
+                                f" (~{out_tok / 1e3:.1f}K out tok) before failing", flush=True,
+                            )
+                    except Exception as exc:  # noqa: BLE001 — best-effort metering
+                        print(f"  {shard_key}: no partial output captured from {state}"
+                              f" ({str(exc)[:120]})", flush=True)
                 _fail_shard(shard_key, f"batch ended in {state}: {json.dumps(job.get('error') or {})[:300]}")
                 progressed = True
         if not progressed:
