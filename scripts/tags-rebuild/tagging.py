@@ -44,9 +44,25 @@ Code gates on every response (evidence is stored either way — tag_evidence):
   3. questions: an unresolvable answer id DROPS the question (stricter than tags);
   4. passage_function outside the enum → NULL.
 
+v3.p3-hybrid: TWO models, one pipeline (routing.py): core scripture
+(verses/verse_chunks of bg/sb/cc) → config.MODEL_CORE, everything else →
+config.MODEL_STANDARD. Shard keys embed a short run token + the routed model
+("pilot:p3:<run8>:<model>:verses:000", "full:p3:<run8>:<model>:verses:w01:0000",
+with ":retry:"/":esc:" attempt segments), so p1/p2 keys, other p3 runs, and both
+models' request/result files can never collide. Completion is ROW-LEVEL
+(tag_passage_outcomes): a passage counts as covered ONLY when it has a
+successfully applied result in this run — never because its id appeared in a
+submitted shard. Invalid/missing rows retry once on their own model; standard
+rows still invalid then escalate once to MODEL_CORE; anything still invalid is
+QUARANTINED (unresolved — the run never reports complete and finalize refuses).
+
 Batch mechanics (resumable; jobs run server-side up to 24h — close the script
 after submission and rerun later to collect):
-  • deterministic shard names ("pilot:verses:000", "transcript_paragraphs:w01:0003");
+  • deterministic shard names (see above), model + pinned prices recorded on
+    every tag_batch_jobs row at insert;
+  • real token usage recorded the moment results are RETRIEVED (downloaded) —
+    not at apply — so the spend ledger and ceiling count every dollar actually
+    spent even if a later apply step fails;
   • every shard's JSONL input is capped at config.MAX_SHARD_INPUT_TOKENS (2.5M);
     an oversized shard is split into token-bounded parts ("…:p00", "…:p01") so
     each job always fits our 3M enqueued-batch-token queue;
@@ -75,10 +91,42 @@ import config
 import db
 import gemini_client
 import provenance
+import routing
 import sentences as sentence_split
 
 IN_FLIGHT = ("submitted", "running")
 UNFINISHED = ("pending", "submitted", "running", "retrieved")
+
+# Row-level outcome states that count as RESOLVED for completion. `quarantined`
+# is terminal for planning (no further spend) but deliberately NOT resolved —
+# a run with quarantined rows is never reported complete and finalize refuses.
+RESOLVED_OUTCOMES = ("applied", "skipped_no_shortlist")
+RETRYABLE_OUTCOMES = ("invalid", "missing_response")
+
+
+def run_token(run_id: str) -> str:
+    """Short run discriminator embedded in every p3 shard key, so two p3 runs
+    (e.g. after a vocabulary rebuild) can never collide in tag_batch_jobs or on
+    disk. 8 hex chars of the run uuid — unique enough among a handful of runs."""
+    return run_id.replace("-", "")[:8]
+
+
+def pilot_prefix(run_id: str) -> str:
+    return f"{config.PILOT_SHARD_PREFIX}{run_token(run_id)}:"
+
+
+def full_prefix(run_id: str) -> str:
+    return f"{config.FULL_SHARD_PREFIX}{run_token(run_id)}:"
+
+
+def attempt_for_shard_key(shard_key: str) -> int:
+    """Attempt number is DERIVED from the key (single source of truth): fresh=1,
+    ':retry:'=2, ':esc:'=3. Works for pilot, full-run and ':pNN' part keys."""
+    if ":esc:" in shard_key:
+        return 3
+    if ":retry:" in shard_key:
+        return 2
+    return 1
 
 _QUOTE_MAP = {"‘": "'", "’": "'", "“": '"', "”": '"', "—": "-", "–": "-"}
 
@@ -628,15 +676,35 @@ def _pilot_fresh_stratified_ids(exclude_ids: list[str], remaining: int) -> dict[
     return out
 
 
+def _route_split_ids(table: str, ids: list[str]) -> dict[str, list[str]]:
+    """Split a table's id list by route in SQL (the exact slug expressions
+    load_passages uses). Non-book tables are all 'standard' without a query."""
+    ids = sorted(set(ids))
+    if not ids:
+        return {}
+    if table not in routing.ROUTED_TABLES:
+        return {"standard": ids}
+    join, expr = routing.route_sql(table)
+    out: dict[str, list[str]] = {}
+    for pid, route in db.rows(
+        f"SELECT t.id::text, {expr} FROM public.{table} t{join}"
+        f" WHERE t.id = ANY(%s::uuid[]) ORDER BY t.id",
+        (ids,),
+    ):
+        out.setdefault(route, []).append(pid)
+    return out
+
+
 def plan_pilot_shards(run_id: str) -> None:
-    """Build the EXACT v3.p2 pilot manifest (config.PILOT_SIZE rows), shard it
-    under config.PILOT_SHARD_PREFIX, and record a checksum + cohort sizes in
-    tag_runs.config. Composition: ALL p1-failures + a p1-success comparison slice
-    (matched to the failure table mix + length quartile) + a fresh remainder
-    stratified across all five tables × length quartiles by largest-remainder."""
-    prefix = config.PILOT_SHARD_PREFIX
+    """Build the EXACT pilot manifest (config.PILOT_SIZE rows) with the same
+    cohort/stratification method as p2 — ALL p1-failures + a p1-success
+    comparison slice (matched to the failure table mix + length quartile) + a
+    fresh stratified remainder — under the p3 seed, then ROUTE-SPLIT each
+    table's ids (routing.py) and shard PER MODEL under this run's pilot prefix.
+    Records a checksum + cohort + per-route sizes in tag_runs.config."""
+    prefix = pilot_prefix(run_id)
     if db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", (prefix + "%",)):
-        print("  p2 pilot shards already planned.", flush=True)
+        print("  p3 pilot shards already planned.", flush=True)
         return
 
     failed = _pilot_forced_failed_ids()
@@ -654,14 +722,21 @@ def plan_pilot_shards(run_id: str) -> None:
             picked.setdefault(table, []).extend(ids)
 
     manifest: list[tuple[str, str]] = []  # (table, id) — the checksum basis
+    route_counts: dict[str, int] = {r: 0 for r in routing.ROUTES}
     for table in config.GEMINI_TABLES:
         ids = sorted(set(picked.get(table, [])))
         if not ids:
             continue
-        for index in range(0, len(ids), config.SHARD_SIZE):
-            chunk = ids[index : index + config.SHARD_SIZE]
-            _insert_shard(f"{prefix}{table}:{index // config.SHARD_SIZE:03d}", table, chunk, run_id)
         manifest += [(table, i) for i in ids]
+        for route, route_ids in sorted(_route_split_ids(table, ids).items()):
+            model = routing.model_for_route(route)
+            route_counts[route] = route_counts.get(route, 0) + len(route_ids)
+            for index in range(0, len(route_ids), config.SHARD_SIZE):
+                chunk = route_ids[index : index + config.SHARD_SIZE]
+                _insert_shard(
+                    f"{prefix}{model}:{table}:{index // config.SHARD_SIZE:03d}",
+                    table, chunk, run_id, model,
+                )
 
     checksum = "sha256:" + hashlib.sha256(
         "\n".join(f"{t}|{i}" for t, i in sorted(manifest)).encode("utf-8")
@@ -674,164 +749,473 @@ def plan_pilot_shards(run_id: str) -> None:
                 "pilot_manifest_sha256": checksum,
                 "pilot_cohorts": cohorts,
                 "pilot_rows": len(manifest),
+                "pilot_routes": route_counts,
             }), run_id),
         )
     print(
-        f"  p2 pilot planned: {len(manifest)} passages "
+        f"  p3 pilot planned: {len(manifest)} passages "
         f"(failed {n_failed} + success-slice {n_success} + fresh {n_fresh}); "
+        f"routes core {route_counts.get('core', 0)} / standard {route_counts.get('standard', 0)}; "
         f"seed {config.SAMPLE_SEED!r}; manifest {checksum}.",
         flush=True,
     )
 
 
 def plan_pilot_retry(run_id: str) -> int:
-    """Plan ONE retry generation for every schema-invalid p2 pilot row (from the
-    banked first-pass files). Retry shards live under the pilot prefix
-    ({prefix}retry:{table}:NNN) so they join the pilot stats + file glob. Guarded:
-    if any retry shard already exists this is a no-op (a resume never re-retries)."""
-    prefix = config.PILOT_SHARD_PREFIX
+    """Plan ONE retry generation for every invalid/missing first-attempt pilot
+    row, on the SAME model that failed ({prefix}retry:{model}:{table}:NNN).
+    Guarded: if any retry shard already exists this is a no-op (a resume never
+    re-retries). Returns the number of rows planned for retry."""
+    prefix = pilot_prefix(run_id)
     if db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", (prefix + "retry:%",)):
         print("  pilot retry shards already planned.", flush=True)
         return 0
-    by_table = failed_keys_from_files(prefix)
+    by_model_table = failed_keys_from_files(prefix, run_id=run_id)
     planned = 0
-    for table, ids in by_table.items():
-        ids = sorted(set(ids))
+    for (model, table), ids in sorted(by_model_table.items()):
         for index in range(0, len(ids), config.SHARD_SIZE):
             chunk = ids[index : index + config.SHARD_SIZE]
-            _insert_shard(f"{prefix}retry:{table}:{index // config.SHARD_SIZE:03d}", table, chunk, run_id)
+            _insert_shard(
+                f"{prefix}retry:{model}:{table}:{index // config.SHARD_SIZE:03d}",
+                table, chunk, run_id, model,
+            )
             planned += 1
-    total = sum(len(v) for v in by_table.values())
+    total = sum(len(v) for v in by_model_table.values())
     if total:
-        print(f"  planned retry for {total} schema-invalid pilot row(s) in {planned} shard(s).", flush=True)
+        print(f"  planned retry for {total} invalid/missing pilot row(s) in {planned} shard(s).", flush=True)
     return total
 
 
-def failed_keys_from_files(shard_key_prefix: str | None = None) -> dict[str, list[str]]:
-    """Re-parse the banked pilot result files and return, per table, the passage
-    ids whose first-attempt response was schema-invalid (error or unparsed)."""
-    if shard_key_prefix is None:
-        shard_key_prefix = config.PILOT_SHARD_PREFIX
-    pattern = f"{shard_key_prefix.replace(':', '_')}*.results.jsonl"
-    by_table: dict[str, list[str]] = {}
-    for path in sorted(config.SHARDS_DIR.glob(pattern)):
-        # Skip already-retried shard files so we don't retry a retry.
-        if ".retry" in path.name or "_retry_" in path.name:
+def plan_pilot_escalation(run_id: str) -> int:
+    """Plan ONE escalation generation: STANDARD-route rows still invalid after
+    their same-model retry are re-run once on MODEL_CORE
+    ({prefix}esc:{model_core}:{table}:NNN). Core-route rows have no stronger
+    target — they go to the final-failure list instead. No-op when the two
+    models are identical (env override): there is no distinct escalation
+    target, so the ladder terminates at the retry. Guarded like the retry."""
+    if config.MODEL_CORE == config.MODEL_STANDARD:
+        return 0
+    prefix = pilot_prefix(run_id)
+    if db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE shard_key LIKE %s", (prefix + "esc:%",)):
+        print("  pilot escalation shards already planned.", flush=True)
+        return 0
+    still = pilot_final_failures(prefix, run_id=run_id, include_escalation=False)
+    planned = total = 0
+    for (model, table), ids in sorted(still.items()):
+        if model != config.MODEL_STANDARD:
             continue
+        total += len(ids)
+        for index in range(0, len(ids), config.SHARD_SIZE):
+            chunk = ids[index : index + config.SHARD_SIZE]
+            _insert_shard(
+                f"{prefix}esc:{config.MODEL_CORE}:{table}:{index // config.SHARD_SIZE:03d}",
+                table, chunk, run_id, config.MODEL_CORE,
+            )
+            planned += 1
+    if total:
+        print(
+            f"  planned escalation to {config.MODEL_CORE} for {total} standard-route"
+            f" row(s) in {planned} shard(s).",
+            flush=True,
+        )
+    return total
+
+
+def _valid_and_invalid_keys(paths: list[Path]) -> tuple[set[str], set[str]]:
+    """Scan result files → (valid_keys, invalid_keys) as 'table|id' strings.
+    A key with BOTH a valid and an invalid line counts as valid (first valid
+    response wins — a provider-side duplicate must never burn a row retry)."""
+    valid: set[str] = set()
+    invalid: set[str] = set()
+    for path in paths:
         with open(path, encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
                 key, parsed, _usage, error, _fr, _br = _parse_response_line(line)
-                if not key or "|" not in key:
+                if not key or "|" not in (key or ""):
                     continue
                 if error or parsed is None:
-                    table, pid = key.split("|", 1)
-                    by_table.setdefault(table, []).append(pid)
-    return by_table
+                    invalid.add(key)
+                else:
+                    valid.add(key)
+    return valid, invalid - valid
+
+
+def _pilot_skipped_ids(run_id: str) -> set[tuple[str, str]]:
+    """(table, id) pairs already resolved as skipped_no_shortlist in this run —
+    they never produce response lines and must not count as missing."""
+    return {
+        (t, pid)
+        for t, pid in db.rows(
+            "SELECT table_name, passage_id::text FROM public.tag_passage_outcomes"
+            " WHERE run_id=%s::uuid AND outcome='skipped_no_shortlist'",
+            (run_id,),
+        )
+    }
+
+
+def failed_keys_from_files(shard_key_prefix: str,
+                           run_id: str | None = None) -> dict[tuple[str, str], list[str]]:
+    """First-attempt failures per (model, table) from the banked pilot files:
+    ids whose response was schema-invalid PLUS — when run_id is given — ids in
+    a first-pass shard's id_list with NO response line at all (a missing
+    response counts as invalid; build-time skipped_no_shortlist rows are
+    excluded via their outcome rows). First-pass files are globbed PER KNOWN
+    MODEL ('<base><model>_*' — model strings never contain '_', so the match is
+    unambiguous); retry/esc files carry their own key segment and never match."""
+    base = shard_key_prefix.replace(":", "_")
+    out: dict[tuple[str, str], set[str]] = {}
+    for model in config.ROUTED_MODELS:
+        paths = sorted(config.SHARDS_DIR.glob(f"{base}{model}_*.results.jsonl"))
+        if not paths:
+            continue
+        _valid, invalid = _valid_and_invalid_keys(paths)
+        for key in invalid:
+            table, pid = key.split("|", 1)
+            out.setdefault((model, table), set()).add(pid)
+    if run_id:
+        skipped = _pilot_skipped_ids(run_id)
+        shards = db.rows(
+            "SELECT shard_key, table_name, id_list::text[], model FROM public.tag_batch_jobs"
+            " WHERE shard_key LIKE %s AND shard_key NOT LIKE %s AND shard_key NOT LIKE %s"
+            " AND status IN ('retrieved','applied')",
+            (shard_key_prefix + "%", shard_key_prefix + "retry:%", shard_key_prefix + "esc:%"),
+        )
+        for shard_key, table, ids, model in shards:
+            results = config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.results.jsonl"
+            present: set[str] = set()
+            if results.exists():
+                valid, invalid = _valid_and_invalid_keys([results])
+                present = {k.split("|", 1)[1] for k in (valid | invalid) if "|" in k}
+            for pid in ids:
+                if pid not in present and (table, pid) not in skipped:
+                    out.setdefault((model or "?", table), set()).add(pid)
+    return {key: sorted(ids) for key, ids in out.items() if ids}
+
+
+# SQL guard shared by the retry/escalation lanes: the row must not sit in any
+# unfinished shard of this run (its next attempt is already planned/in flight).
+_NOT_INFLIGHT = (
+    " AND NOT EXISTS (SELECT 1 FROM public.tag_batch_jobs j"
+    "   WHERE j.run_id = o.run_id AND j.table_name = o.table_name"
+    "   AND j.status IN ('pending','submitted','running','retrieved')"
+    "   AND o.passage_id = ANY(j.id_list))"
+)
 
 
 def plan_full_shards(run_id: str) -> int:
-    """Plan a wave of full-run shards over every remaining untagged,
-    embeddable row not already covered by a live shard. Wave numbering keeps
-    names deterministic across restarts. Returns shards planned."""
+    """Plan a wave of full-run shards. v3.p3: coverage is ROW-LEVEL — a passage
+    needs work unless it has an outcome row in tag_passage_outcomes for THIS
+    run (the v3.p2 'id appeared in a shard' coverage was the silent-holes flaw).
+    Three lanes per table, each sharded per model:
+      fresh      — eligible rows with NO outcome row and not in an unfinished
+                   shard of this run, route-split core/standard (routing.py);
+      retry      — invalid/missing rows at attempt 1, retried once on the SAME
+                   model that failed;
+      escalation — STANDARD-route rows still invalid at attempt 2, re-run once
+                   on MODEL_CORE (skipped when the two models are identical).
+    Wave numbering is scoped to this run's keys. Returns shards planned."""
+    prefix = full_prefix(run_id)
     wave = int(
         db.one(
             r"SELECT coalesce(max((regexp_match(shard_key, ':w(\d+):'))[1]::int), 0) + 1"
-            r" FROM public.tag_batch_jobs WHERE shard_key ~ ':w\d+:'"
+            r" FROM public.tag_batch_jobs WHERE shard_key LIKE %s",
+            (prefix + "%",),
         )
         or 1
     )
     planned = 0
-    for table in config.GEMINI_TABLES:
-        # v3.p2: coverage is scoped to THIS run's shards (run_id), NOT `tags_core
-        # IS NULL`, so a p2 full run retags every eligible row — including the
-        # ~1,722 rows p1's pilot wrote — superseding the defective p1 pass. Rows
-        # already covered by a non-failed p2 shard (e.g. the p2 pilot) are skipped.
-        ids = [
-            r[0]
-            for r in db.rows(
-                f"WITH covered AS ("
-                f"   SELECT DISTINCT unnest(id_list) AS id FROM public.tag_batch_jobs"
-                f"   WHERE run_id = %s::uuid AND status <> 'failed')"
-                f" SELECT t.id::text FROM public.{table} t"
-                f" LEFT JOIN covered c ON c.id = t.id"
-                f" WHERE t.embedding_context4 IS NOT NULL AND c.id IS NULL"
-                f" ORDER BY t.id",
-                (run_id,),
-            )
-        ]
+
+    def shard_out(kind_prefix: str, model: str, table: str, ids: list[str]) -> int:
+        n = 0
         for index in range(0, len(ids), config.SHARD_SIZE):
             chunk = ids[index : index + config.SHARD_SIZE]
             _insert_shard(
-                f"{table}:w{wave:02d}:{index // config.SHARD_SIZE:04d}", table, chunk, run_id
+                f"{kind_prefix}{model}:{table}:w{wave:02d}:{index // config.SHARD_SIZE:04d}",
+                table, chunk, run_id, model,
             )
-            planned += 1
+            n += 1
+        return n
+
+    for table in config.GEMINI_TABLES:
+        # Lane 1 — fresh (attempt 1), route-split in SQL.
+        join, expr = routing.route_sql(table)
+        by_route: dict[str, list[str]] = {}
+        for pid, route in db.rows(
+            f"WITH attempted AS (SELECT passage_id FROM public.tag_passage_outcomes"
+            f"   WHERE run_id = %s::uuid AND table_name = %s),"
+            f" inflight AS (SELECT DISTINCT unnest(id_list) AS id FROM public.tag_batch_jobs"
+            f"   WHERE run_id = %s::uuid AND table_name = %s"
+            f"   AND status IN ('pending','submitted','running','retrieved'))"
+            f" SELECT t.id::text, {expr} AS route"
+            f" FROM public.{table} t{join}"
+            f" LEFT JOIN attempted a ON a.passage_id = t.id"
+            f" LEFT JOIN inflight f ON f.id = t.id"
+            f" WHERE t.embedding_context4 IS NOT NULL AND a.passage_id IS NULL AND f.id IS NULL"
+            f" ORDER BY t.id",
+            (run_id, table, run_id, table),
+        ):
+            by_route.setdefault(route, []).append(pid)
+        for route, ids in sorted(by_route.items()):
+            planned += shard_out(prefix, routing.model_for_route(route), table, ids)
+
+        # Lane 2 — retry once on the SAME model that failed.
+        by_model: dict[str, list[str]] = {}
+        for pid, model in db.rows(
+            "SELECT o.passage_id::text, o.model FROM public.tag_passage_outcomes o"
+            " WHERE o.run_id = %s::uuid AND o.table_name = %s"
+            " AND o.outcome IN ('invalid','missing_response') AND o.attempt = 1"
+            + _NOT_INFLIGHT + " ORDER BY o.passage_id",
+            (run_id, table),
+        ):
+            by_model.setdefault(model, []).append(pid)
+        for model, ids in sorted(by_model.items()):
+            planned += shard_out(prefix + "retry:", model, table, ids)
+
+        # Lane 3 — escalate still-invalid STANDARD rows once to MODEL_CORE.
+        if config.MODEL_CORE != config.MODEL_STANDARD:
+            esc_ids = [
+                r[0]
+                for r in db.rows(
+                    "SELECT o.passage_id::text FROM public.tag_passage_outcomes o"
+                    " WHERE o.run_id = %s::uuid AND o.table_name = %s"
+                    " AND o.outcome IN ('invalid','missing_response')"
+                    " AND o.attempt = 2 AND o.model = %s"
+                    + _NOT_INFLIGHT + " ORDER BY o.passage_id",
+                    (run_id, table, config.MODEL_STANDARD),
+                )
+            ]
+            planned += shard_out(prefix + "esc:", config.MODEL_CORE, table, esc_ids)
+
     if planned:
         print(f"  planned {planned} full-run shards (wave {wave}).", flush=True)
     return planned
 
 
-def _insert_shard(shard_key: str, table: str, ids: list[str], run_id: str) -> None:
+def _insert_shard(shard_key: str, table: str, ids: list[str], run_id: str, model: str) -> None:
+    prices = config.batch_prices(model)
+    if prices is None:  # defense in depth behind --doctor: unpriced ⇒ no spend, ever
+        raise SystemExit(
+            f"FATAL: no pinned batch price for model {model!r} — refusing to plan"
+            " shards for it. Pin it in config.GEMINI_BATCH_PRICES_CANONICAL."
+        )
     with db.get_pg().cursor() as cur:
         cur.execute(
-            "INSERT INTO public.tag_batch_jobs (shard_key, table_name, id_list, row_count, run_id)"
-            " VALUES (%s, %s, %s::uuid[], %s, %s::uuid) ON CONFLICT (shard_key) DO NOTHING",
-            (shard_key, table, ids, len(ids), run_id),
+            "INSERT INTO public.tag_batch_jobs"
+            " (shard_key, table_name, id_list, row_count, run_id, model,"
+            "  price_in_per_m, price_out_per_m)"
+            " VALUES (%s, %s, %s::uuid[], %s, %s::uuid, %s, %s, %s)"
+            " ON CONFLICT (shard_key) DO NOTHING",
+            (shard_key, table, ids, len(ids), run_id, model, prices[0], prices[1]),
         )
 
 
-def remaining_for_run(run_id: str) -> int:
-    """Eligible rows this run has NOT yet covered (run_id-scoped, matching
-    plan_full_shards). Used by the full run to decide when it is complete."""
-    total = 0
-    for table in config.GEMINI_TABLES:
-        total += int(
-            db.one(
-                f"WITH covered AS (SELECT DISTINCT unnest(id_list) AS id"
-                f"  FROM public.tag_batch_jobs WHERE run_id=%s::uuid AND status <> 'failed')"
-                f" SELECT count(*) FROM public.{table} t LEFT JOIN covered c ON c.id=t.id"
-                f" WHERE t.embedding_context4 IS NOT NULL AND c.id IS NULL",
-                (run_id,),
-            )
-            or 0
-        )
-    return total
-
-
-# ── cost ledger (machine-enforced ceiling) ──────────────────────────────────
-
-def _usd(input_tok: float, output_tok: float) -> float:
-    return (
-        input_tok / 1e6 * config.GEMINI_BATCH_PRICE_IN_PER_M
-        + output_tok / 1e6 * config.GEMINI_BATCH_PRICE_OUT_PER_M
+def record_outcomes(run_id: str, rows: list[tuple], cur) -> None:
+    """Upsert row-level outcomes inside the CALLER's transaction. `rows` are
+    (table_name, passage_id, shard_key, model, attempt, outcome, failure_class).
+    The guard never downgrades a RESOLVED row (applied / skipped_no_shortlist);
+    every accepted write appends to `history` so quarantine reports keep the
+    full per-attempt error trail."""
+    if not rows:
+        return
+    cur.executemany(
+        "INSERT INTO public.tag_passage_outcomes AS o"
+        " (run_id, table_name, passage_id, shard_key, model, attempt, outcome,"
+        "  failure_class, history)"
+        " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s,"
+        "         jsonb_build_array(jsonb_build_object("
+        "           'attempt', %s::int, 'model', %s::text,"
+        "           'outcome', %s::text, 'failure_class', %s::text)))"
+        " ON CONFLICT (run_id, table_name, passage_id) DO UPDATE SET"
+        "   shard_key = EXCLUDED.shard_key, model = EXCLUDED.model,"
+        "   attempt = greatest(o.attempt, EXCLUDED.attempt),"
+        "   outcome = EXCLUDED.outcome, failure_class = EXCLUDED.failure_class,"
+        "   history = o.history || EXCLUDED.history, updated_at = now()"
+        " WHERE o.outcome NOT IN ('applied','skipped_no_shortlist')",
+        [
+            (run_id, t, pid, sk, model, attempt, outcome, fc, attempt, model, outcome, fc)
+            for (t, pid, sk, model, attempt, outcome, fc) in rows
+        ],
     )
 
 
-def spend_ledger() -> dict:
-    real_in, real_out = db.rows(
-        "SELECT coalesce(sum(cost_input_tok),0), coalesce(sum(cost_output_tok),0)"
-        " FROM public.tag_batch_jobs WHERE status IN ('retrieved','applied')"
-    )[0]
-    est_in, est_out = db.rows(
-        "SELECT coalesce(sum(est_input_tok),0), coalesce(sum(est_output_tok),0)"
-        " FROM public.tag_batch_jobs WHERE status IN ('submitted','running')"
+def is_quarantinable(model: str, attempt: int) -> bool:
+    """Pure mirror of quarantine_exhausted's SQL predicate (kept in lock-step;
+    unit-tested): no recourse left after a failed CORE retry (attempt ≥ 2 on
+    MODEL_CORE — also the terminal rung when the two models are identical) or a
+    failed escalation (attempt ≥ 3)."""
+    return (attempt >= 2 and model == config.MODEL_CORE) or attempt >= 3
+
+
+def quarantine_exhausted(run_id: str) -> int:
+    """Mark rows with no further recourse as `quarantined` (terminal,
+    UNRESOLVED): a failed same-model retry on the CORE model, or a failed
+    escalation (attempt ≥ 3). When MODEL_CORE == MODEL_STANDARD (env override)
+    escalation degenerates and the core-model rule still terminates the ladder
+    at attempt 2. Appends the transition to `history`. Returns rows quarantined."""
+    with db.get_pg().cursor() as cur:
+        cur.execute(
+            "UPDATE public.tag_passage_outcomes o SET outcome='quarantined',"
+            " history = o.history || jsonb_build_array(jsonb_build_object("
+            "   'attempt', o.attempt, 'model', o.model,"
+            "   'outcome', 'quarantined', 'failure_class', o.failure_class)),"
+            " updated_at = now()"
+            " WHERE o.run_id = %s::uuid AND o.outcome IN ('invalid','missing_response')"
+            " AND ((o.attempt >= 2 AND o.model = %s) OR o.attempt >= 3)",
+            (run_id, config.MODEL_CORE),
+        )
+        n = cur.rowcount
+    if n:
+        print(f"  ⛔ quarantined {n} row(s) as UNRESOLVED (retry + escalation exhausted).", flush=True)
+    return n
+
+
+def unresolved_for_run(run_id: str) -> dict:
+    """Row-level completion state for this run:
+      unattempted — eligible rows with NO outcome row and not in an unfinished
+                    shard of this run (still need a first attempt);
+      retryable   — invalid/missing rows the retry/escalation lanes still own;
+      quarantined — terminal, UNRESOLVED (run is never complete while any exist)."""
+    unattempted = 0
+    for table in config.GEMINI_TABLES:
+        unattempted += int(
+            db.one(
+                f"WITH attempted AS (SELECT passage_id FROM public.tag_passage_outcomes"
+                f"   WHERE run_id = %s::uuid AND table_name = %s),"
+                f" inflight AS (SELECT DISTINCT unnest(id_list) AS id FROM public.tag_batch_jobs"
+                f"   WHERE run_id = %s::uuid AND table_name = %s"
+                f"   AND status IN ('pending','submitted','running','retrieved'))"
+                f" SELECT count(*) FROM public.{table} t"
+                f" LEFT JOIN attempted a ON a.passage_id = t.id"
+                f" LEFT JOIN inflight f ON f.id = t.id"
+                f" WHERE t.embedding_context4 IS NOT NULL AND a.passage_id IS NULL"
+                f" AND f.id IS NULL",
+                (run_id, table, run_id, table),
+            )
+            or 0
+        )
+    retryable, quarantined = db.rows(
+        "SELECT count(*) FILTER (WHERE outcome IN ('invalid','missing_response')),"
+        "       count(*) FILTER (WHERE outcome = 'quarantined')"
+        " FROM public.tag_passage_outcomes WHERE run_id = %s::uuid",
+        (run_id,),
     )[0]
     return {
-        "real_usd": _usd(float(real_in), float(real_out)),
-        "in_flight_est_usd": _usd(float(est_in), float(est_out)),
-        "committed_usd": _usd(float(real_in) + float(est_in), float(real_out) + float(est_out)),
+        "unattempted": int(unattempted),
+        "retryable": int(retryable),
+        "quarantined": int(quarantined),
     }
 
 
-def measured_output_tokens_per_row() -> float:
-    row = db.rows(
-        "SELECT coalesce(sum(cost_output_tok),0), coalesce(sum(row_count),0)"
-        " FROM public.tag_batch_jobs WHERE status IN ('retrieved','applied') AND cost_output_tok > 0"
+def quarantined_rows(run_id: str, limit: int = 50) -> list[tuple]:
+    """(table, id, model, attempt, failure_class, history) for the quarantine
+    listing — the explicit, never-silent record of unresolved passages."""
+    return db.rows(
+        "SELECT table_name, passage_id::text, model, attempt, failure_class,"
+        "       history::text"
+        " FROM public.tag_passage_outcomes"
+        " WHERE run_id = %s::uuid AND outcome = 'quarantined'"
+        " ORDER BY table_name, passage_id LIMIT %s",
+        (run_id, limit),
+    )
+
+
+def remaining_by_route(run_id: str) -> dict[str, int]:
+    """Eligible rows with NO outcome row in this run, per route — the honest
+    'work left to pay for' basis of the pilot report's full-run extrapolation."""
+    totals: dict[str, int] = {r: 0 for r in routing.ROUTES}
+    for table in config.GEMINI_TABLES:
+        join, expr = routing.route_sql(table)
+        for route, n in db.rows(
+            f"WITH attempted AS (SELECT passage_id FROM public.tag_passage_outcomes"
+            f"   WHERE run_id = %s::uuid AND table_name = %s)"
+            f" SELECT {expr} AS route, count(*) FROM public.{table} t{join}"
+            f" LEFT JOIN attempted a ON a.passage_id = t.id"
+            f" WHERE t.embedding_context4 IS NOT NULL AND a.passage_id IS NULL"
+            f" GROUP BY 1",
+            (run_id, table),
+        ):
+            totals[route] = totals.get(route, 0) + int(n)
+    return totals
+
+
+# ── cost ledger (machine-enforced ceiling; model-aware in v3.p3) ────────────
+
+def _usd(model: str, input_tok: float, output_tok: float) -> float:
+    """Price a token pair at `model`'s effective Batch prices. An unpriced model
+    is a hard stop — money must never be spent (or estimated) at a guess."""
+    prices = config.batch_prices(model)
+    if prices is None:
+        raise SystemExit(
+            f"FATAL: no pinned batch price for model {model!r} — cannot price its"
+            " tokens. Pin it in config.GEMINI_BATCH_PRICES_CANONICAL."
+        )
+    return input_tok / 1e6 * prices[0] + output_tok / 1e6 * prices[1]
+
+
+# Every shard row records its model + prices at insert, and audit's legacy
+# backfill stamps all pre-p3 rows (they were all gemini-3.5-flash), so the
+# ledger prices strictly by RECORDED per-row prices. The COALESCE fallback only
+# guards the window before the first p3 ensure_audit_tables() ran; --doctor
+# FAILS if any billed row is still unpriced after that.
+_LEDGER_FALLBACK = config.GEMINI_BATCH_PRICES_CANONICAL["gemini-3.5-flash"]
+_LEDGER_SUMS = (
+    " coalesce(sum(CASE WHEN status IN ('retrieved','applied') THEN"
+    "   cost_input_tok  * coalesce(price_in_per_m,  %(fin)s)  / 1e6"
+    " + cost_output_tok * coalesce(price_out_per_m, %(fout)s) / 1e6 END), 0),"
+    " coalesce(sum(CASE WHEN status IN ('submitted','running') THEN"
+    "   est_input_tok  * coalesce(price_in_per_m,  %(fin)s)  / 1e6"
+    " + est_output_tok * coalesce(price_out_per_m, %(fout)s) / 1e6 END), 0)"
+)
+_LEDGER_PARAMS = {"fin": _LEDGER_FALLBACK[0], "fout": _LEDGER_FALLBACK[1]}
+
+
+def spend_ledger() -> dict:
+    real_usd, est_usd = db.rows(
+        "SELECT" + _LEDGER_SUMS + " FROM public.tag_batch_jobs", _LEDGER_PARAMS
     )[0]
-    total_out, total_rows = float(row[0]), float(row[1])
-    if total_rows > 0 and total_out > 0:
-        return total_out / total_rows
+    return {
+        "real_usd": float(real_usd),
+        "in_flight_est_usd": float(est_usd),
+        "committed_usd": float(real_usd) + float(est_usd),
+    }
+
+
+def spend_ledger_by_model() -> dict[str, dict]:
+    """Per-model ledger for --doctor: {model: {real_usd, in_flight_est_usd}}.
+    Rows still unpriced/unstamped (pre-backfill) appear under a loud label."""
+    out: dict[str, dict] = {}
+    for model, real_usd, est_usd in db.rows(
+        "SELECT coalesce(model, '(unstamped legacy — run run_all to backfill)'),"
+        + _LEDGER_SUMS
+        + " FROM public.tag_batch_jobs GROUP BY 1 ORDER BY 1",
+        _LEDGER_PARAMS,
+    ):
+        out[model] = {
+            "real_usd": float(real_usd),
+            "in_flight_est_usd": float(est_usd),
+        }
+    return out
+
+
+def measured_output_tokens_per_row(model: str) -> float:
+    """Measured avg output tokens/row for `model` once real usage exists, else
+    the all-model average, else the pre-pilot estimate — so the cheap standard
+    model's estimates are never inflated by 3.5 Flash history (or vice versa)."""
+    for where, params in (
+        ("AND model = %s", (model,)),
+        ("", ()),
+    ):
+        row = db.rows(
+            "SELECT coalesce(sum(cost_output_tok),0), coalesce(sum(row_count),0)"
+            " FROM public.tag_batch_jobs"
+            f" WHERE status IN ('retrieved','applied') AND cost_output_tok > 0 {where}",
+            params,
+        )[0]
+        total_out, total_rows = float(row[0]), float(row[1])
+        if total_rows > 0 and total_out > 0:
+            return total_out / total_rows
     return float(config.EST_OUTPUT_TOKENS_PER_PASSAGE)
 
 
@@ -840,11 +1224,13 @@ def measured_output_tokens_per_row() -> float:
 @dataclass
 class ShardPart:
     """One submittable batch job: a shard, or one token-bounded slice of a shard
-    that was too large for the queue and got split."""
+    that was too large for the queue and got split. Carries the routed model —
+    the batch is created against it and the ceiling prices its estimate with it."""
     shard_key: str
     rows: int
     est_in: int
     est_out: int
+    model: str
 
 
 def _est_tokens(raw: str) -> int:
@@ -891,7 +1277,7 @@ def _pack_parts(lines: list[tuple[str, str, int]]) -> list[list[tuple[str, str, 
     return parts
 
 
-def _write_part_file(shard_key: str, lines: list[tuple[str, str, int]]) -> ShardPart:
+def _write_part_file(shard_key: str, lines: list[tuple[str, str, int]], model: str) -> ShardPart:
     """Write shards/<key>.requests.jsonl for one packed part."""
     config.SHARDS_DIR.mkdir(parents=True, exist_ok=True)
     est_in = 0
@@ -899,40 +1285,48 @@ def _write_part_file(shard_key: str, lines: list[tuple[str, str, int]]) -> Shard
         for _pid, raw, tok in lines:
             est_in += tok
             f.write(raw + "\n")
-    est_out = int(len(lines) * measured_output_tokens_per_row())
-    return ShardPart(shard_key, len(lines), est_in, est_out)
+    est_out = int(len(lines) * measured_output_tokens_per_row(model))
+    return ShardPart(shard_key, len(lines), est_in, est_out, model)
 
 
 def build_shard_parts(
-    shard_key: str, table: str, ids: list[str], vocab: VocabIndex, run_id: str | None
-) -> list[ShardPart]:
+    shard_key: str, table: str, ids: list[str], vocab: VocabIndex,
+    run_id: str | None, model: str
+) -> tuple[list[ShardPart], list[str]]:
     """Build the request JSONL for a pending shard, capping every job's input at
     config.MAX_SHARD_INPUT_TOKENS so it always fits the 3M batch queue. A shard
     whose built requests fit the cap is written as-is and returned unchanged. An
     OVERSIZED shard is split into token-bounded parts: the pending row is
     transactionally replaced by one pending row per part (deterministic keys
-    '<shard_key>:p00', ':p01', …), each part's file is written, and the parts are
-    returned in order. The union of the parts' id_lists equals the original
-    id_list — rows with no shortlist ride along on the first part — so coverage
-    and reconciliation are unchanged. Returns [] when the shard has no usable
-    rows (the caller fails it). Idempotent on rerun: an already-split part fits
-    the cap and is returned without re-splitting."""
+    '<shard_key>:p00', ':p01', …, each carrying the shard's model + prices),
+    each part's file is written, and the parts are returned in order. The union
+    of the parts' id_lists equals the original id_list — rows with no shortlist
+    ride along on the first part — so reconciliation is unchanged.
+
+    Returns (parts, skipped_ids). skipped_ids are rows with no shortlist /
+    embedding: v3.p3 records them as explicit `skipped_no_shortlist` outcome
+    rows (resolved-but-listed) — NEVER silently 'covered'. parts is [] when the
+    shard has no usable rows (the caller fails it). Idempotent on rerun: an
+    already-split part fits the cap and is returned without re-splitting."""
     lines, skipped_ids = _build_request_lines(table, ids, vocab)
     if skipped_ids:
         print(
             f"    {shard_key}: {len(skipped_ids)} rows have no shortlist"
-            " (missing embedding) — skipped",
+            " (missing embedding) — recorded as skipped_no_shortlist",
             flush=True,
         )
     if not lines:
-        return []
+        return [], skipped_ids
     parts = _pack_parts(lines)
     if len(parts) == 1:
-        return [_write_part_file(shard_key, parts[0])]
+        return [_write_part_file(shard_key, parts[0], model)], skipped_ids
 
     # Oversized shard → split. Repartition the DB row atomically FIRST; on a crash
     # after the commit the pending part rows rebuild idempotently (each part
-    # already fits the cap, so no further split), and coverage is preserved.
+    # already fits the cap, so no further split).
+    prices = config.batch_prices(model)
+    if prices is None:
+        raise SystemExit(f"FATAL: no pinned batch price for model {model!r}.")
     part_keys = [f"{shard_key}:p{i:02d}" for i in range(len(parts))]
     part_id_lists = [[pid for pid, _raw, _tok in part] for part in parts]
     part_id_lists[0].extend(skipped_ids)  # keep union(id_list) == original id_list
@@ -943,9 +1337,11 @@ def build_shard_parts(
             for part_key, part_ids in zip(part_keys, part_id_lists):
                 cur.execute(
                     "INSERT INTO public.tag_batch_jobs"
-                    " (shard_key, table_name, id_list, row_count, run_id)"
-                    " VALUES (%s, %s, %s::uuid[], %s, %s::uuid)",
-                    (part_key, table, part_ids, len(part_ids), run_id),
+                    " (shard_key, table_name, id_list, row_count, run_id, model,"
+                    "  price_in_per_m, price_out_per_m)"
+                    " VALUES (%s, %s, %s::uuid[], %s, %s::uuid, %s, %s, %s)",
+                    (part_key, table, part_ids, len(part_ids), run_id, model,
+                     prices[0], prices[1]),
                 )
     print(
         f"  split {shard_key}: {len(lines)} requests exceed the"
@@ -953,7 +1349,10 @@ def build_shard_parts(
         f" {len(parts)} parts",
         flush=True,
     )
-    return [_write_part_file(part_key, part) for part_key, part in zip(part_keys, parts)]
+    return (
+        [_write_part_file(part_key, part, model) for part_key, part in zip(part_keys, parts)],
+        skipped_ids,
+    )
 
 
 def shard_request_path(shard_key: str) -> Path:
@@ -1037,14 +1436,15 @@ def _create_batch_draining_queue(
             )
 
 
-def _submit_one(model: str, part: ShardPart, queue_terminal_seen: set[str]) -> bool:
-    """Upload + create one shard's batch job, recording it BEFORE any polling.
-    Returns False (submitting nothing) when the cost ceiling would be exceeded so
-    the caller stops submitting further shards. A full batch queue does NOT stop
-    the run: _create_batch_draining_queue waits for a slot to free."""
-    shard_key = part.shard_key
+def _submit_one(part: ShardPart, queue_terminal_seen: set[str]) -> bool:
+    """Upload + create one shard's batch job against the shard's ROUTED model,
+    recording it BEFORE any polling. Returns False (submitting nothing) when the
+    cost ceiling would be exceeded so the caller stops submitting further shards.
+    A full batch queue does NOT stop the run: _create_batch_draining_queue waits
+    for a slot to free."""
+    shard_key, model = part.shard_key, part.model
     ledger = spend_ledger()
-    projected = ledger["committed_usd"] + _usd(part.est_in, part.est_out)
+    projected = ledger["committed_usd"] + _usd(model, part.est_in, part.est_out)
     if projected > config.MAX_SPEND_USD:
         print(
             f"  ⛔ COST CEILING: submitting {shard_key} would commit"
@@ -1071,26 +1471,45 @@ def _submit_one(model: str, part: ShardPart, queue_terminal_seen: set[str]) -> b
             " WHERE shard_key=%s",
             (job_name, datetime.now(timezone.utc), part.est_in, part.est_out, part.rows, shard_key),
         )
-    print(f"  submitted {shard_key} → {job_name} (~{part.est_in / 1e6:.2f}M in tok)", flush=True)
+    print(
+        f"  submitted {shard_key} → {job_name} ({model}, ~{part.est_in / 1e6:.2f}M in tok)",
+        flush=True,
+    )
     return True
 
 
-def submit_pending(model: str, vocab: VocabIndex) -> None:
-    """Submit pending shards while the ceiling allows. Job IDs are recorded in
-    tag_batch_jobs immediately on acceptance — BEFORE any polling. A full batch
-    queue (HTTP 429) does not crash the run: it waits for in-flight jobs to drain
-    a slot, so a large shard list submits in waves, unattended. Any shard whose
-    built requests exceed config.MAX_SHARD_INPUT_TOKENS is split into
-    token-bounded parts (build_shard_parts) so every job fits the 3M queue."""
+def submit_pending(vocab: VocabIndex) -> None:
+    """Submit pending p3 shards while the ceiling allows, each against its OWN
+    recorded model. Job IDs are recorded in tag_batch_jobs immediately on
+    acceptance — BEFORE any polling. A full batch queue (HTTP 429) does not
+    crash the run: it waits for in-flight jobs to drain a slot, so a large shard
+    list submits in waves, unattended. Any shard whose built requests exceed
+    config.MAX_SHARD_INPUT_TOKENS is split into token-bounded parts
+    (build_shard_parts) so every job fits the 3M queue. Rows skipped at build
+    time (no shortlist/embedding) get explicit `skipped_no_shortlist` outcome
+    rows. Stale pre-p3 pending rows (no recorded model) are never submitted."""
     pending = db.rows(
-        "SELECT shard_key, table_name, id_list::text[], run_id::text FROM public.tag_batch_jobs"
-        " WHERE status = 'pending' ORDER BY shard_key"
+        "SELECT shard_key, table_name, id_list::text[], run_id::text, model"
+        " FROM public.tag_batch_jobs WHERE status = 'pending' ORDER BY shard_key"
     )
     # Shared across every shard's wait so completions during one shard's wait
     # aren't miscounted as fresh progress for the next.
     queue_terminal_seen: set[str] = set()
-    for shard_key, table, ids, run_id in pending:
-        parts = build_shard_parts(shard_key, table, ids, vocab, run_id)
+    for shard_key, table, ids, run_id, model in pending:
+        if not model or not (shard_key.startswith(config.PILOT_SHARD_PREFIX)
+                             or shard_key.startswith(config.FULL_SHARD_PREFIX)):
+            print(f"  skipping stale pre-p3 pending shard {shard_key} (never submitted)", flush=True)
+            continue
+        parts, skipped_ids = build_shard_parts(shard_key, table, ids, vocab, run_id, model)
+        if skipped_ids and run_id:
+            with db.get_pg().cursor() as cur:
+                record_outcomes(
+                    run_id,
+                    [(table, pid, shard_key, model, attempt_for_shard_key(shard_key),
+                      "skipped_no_shortlist", "no shortlist/embedding")
+                     for pid in skipped_ids],
+                    cur,
+                )
         if not parts:
             # No usable rows: the original (unsplit) row is still present to fail.
             with db.get_pg().cursor() as cur:
@@ -1101,7 +1520,7 @@ def submit_pending(model: str, vocab: VocabIndex) -> None:
                 )
             continue
         for part in parts:
-            if not _submit_one(model, part, queue_terminal_seen):
+            if not _submit_one(part, queue_terminal_seen):
                 return  # cost ceiling reached — remaining parts stay pending
 
 
@@ -1241,6 +1660,8 @@ def _parse_response_line(
 class ShardOutcome:
     shard_key: str
     table: str = ""
+    model: str = ""                   # routed model recorded on the shard row
+    attempt: int = 1                  # derived from the shard key (retry/esc)
     rows: int = 0
     responses: int = 0
     schema_valid: int = 0
@@ -1267,6 +1688,9 @@ class ShardOutcome:
     schema_invalid_reasons: dict[str, int] = field(default_factory=_empty_fail_tally)
     # Raw finishReason/blockReason strings for rows bucketed `other` (logged, not lost).
     other_reasons: list[str] = field(default_factory=list)
+    # v3.p3 ROW-LEVEL outcomes staged for tag_passage_outcomes:
+    # (table, passage_id, shard_key, model, attempt, outcome, failure_class).
+    outcome_rows: list[tuple] = field(default_factory=list)
 
 
 def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> ShardOutcome:
@@ -1274,14 +1698,24 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
     ShardOutcome — WITHOUT touching the DB. Gates: out-of-vocabulary → HARD drop;
     unresolvable evidence sentence id → SOFT (tag kept, evidence_found=false);
     unevidenced question → dropped; passage_function outside the enum → NULL.
-    Evidence is a sentence ID resolved back to the EXACT source sentence text."""
-    outcome = ShardOutcome(shard_key=shard_key, table=table)
-    passages = {p.id: p for p in load_passages(table, [
-        r[0] for r in db.rows(
-            "SELECT unnest(id_list)::text FROM public.tag_batch_jobs WHERE shard_key=%s",
-            (shard_key,),
-        )
-    ])}
+    Evidence is a sentence ID resolved back to the EXACT source sentence text.
+
+    v3.p3 additionally STAGES a row-level outcome for every id in the shard:
+    valid → applied; schema-invalid → invalid (+failure bucket); id with no
+    response line at all → missing_response. A duplicate key inside one file is
+    resolved FIRST-VALID-WINS (logged; never double-applied, and a provider-side
+    duplicate never burns the row's retry). Build-time-skipped rows are also
+    staged missing_response here, but their resolved `skipped_no_shortlist`
+    outcome row can never be downgraded (record_outcomes guard)."""
+    shard_row = db.rows(
+        "SELECT id_list::text[], model FROM public.tag_batch_jobs WHERE shard_key=%s",
+        (shard_key,),
+    )
+    id_list, model = (shard_row[0] if shard_row else ([], ""))
+    attempt = attempt_for_shard_key(shard_key)
+    outcome = ShardOutcome(shard_key=shard_key, table=table, model=model or "", attempt=attempt)
+    passages = {p.id: p for p in load_passages(table, list(id_list))}
+    resolved_ids: dict[str, bool] = {}  # passage_id → had a schema-valid response
 
     with open(results_path, encoding="utf-8") as f:
         for line in f:
@@ -1301,14 +1735,34 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
             passage = passages.get(passage_id)
             if passage is None:
                 continue
+            if resolved_ids.get(passage_id):
+                # Duplicate key after a valid response: first valid wins.
+                print(f"  {shard_key}: duplicate response line for {key} ignored", flush=True)
+                continue
             if error or parsed is None:
+                if passage_id in resolved_ids:
+                    continue  # already saw an invalid line for this id — keep one outcome
                 # Schema-invalid row: classify WHY it failed from the model's own
                 # signal before dropping it, so the reason is tallied not lost.
                 bucket = classify_schema_failure(error, finish_reason, block_reason)
                 outcome.schema_invalid_reasons[bucket] += 1
                 if bucket == "other":
                     outcome.other_reasons.append(raw_failure_signal(error, finish_reason, block_reason))
+                resolved_ids[passage_id] = False
+                outcome.outcome_rows.append(
+                    (table, passage_id, shard_key, model, attempt, "invalid", bucket)
+                )
                 continue
+            if passage_id in resolved_ids and not resolved_ids[passage_id]:
+                # A valid line after an invalid one for the same id: the valid
+                # response wins — drop the staged invalid outcome for this id.
+                outcome.outcome_rows = [
+                    r for r in outcome.outcome_rows if r[1] != passage_id
+                ]
+            resolved_ids[passage_id] = True
+            outcome.outcome_rows.append(
+                (table, passage_id, shard_key, model, attempt, "applied", None)
+            )
             outcome.schema_valid += 1
 
             sents = sentence_split.split_sentences(passage.text)
@@ -1386,15 +1840,26 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
                     passage_id,
                 )
             )
+    # Ids in the shard with NO response line at all count as failures too
+    # (missing_response → row retry), never as silently covered. Build-time
+    # skipped rows are staged here as well, but their `skipped_no_shortlist`
+    # outcome row is resolved and the upsert guard refuses the downgrade.
+    for pid in id_list:
+        if pid not in resolved_ids:
+            outcome.outcome_rows.append(
+                (table, pid, shard_key, model, attempt, "missing_response", "no_response_line")
+            )
     outcome.rows = len(outcome.updates)
     return outcome
 
 
 def _write_outcomes(outcomes: list[ShardOutcome], run_id: str) -> None:
     """Write a batch of already-gated shards in ONE transaction (content columns +
-    tag_evidence + each shard's applied-status/cost). Used per-shard by the full
-    run and as a single atomic bundle by the pilot — nothing is written unless the
-    whole transaction commits, so a mid-apply failure leaves p1 data untouched."""
+    tag_evidence + row-level outcomes + each shard's applied-status). Used
+    per-shard by the full run and as a single atomic bundle by the pilot —
+    nothing is written unless the whole transaction commits. v3.p3: token costs
+    are NO LONGER written here — they were already recorded at retrieval
+    (collect), so a failed apply can never erase or defer real spend."""
     conn = db.get_pg()
     with conn.transaction():
         with conn.cursor() as cur:
@@ -1413,12 +1878,11 @@ def _write_outcomes(outcomes: list[ShardOutcome], run_id: str) -> None:
                         " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)",
                         [(run_id, *r) for r in outcome.evidence_records],
                     )
+                record_outcomes(run_id, outcome.outcome_rows, cur)
                 cur.execute(
-                    "UPDATE public.tag_batch_jobs SET status='applied', applied_at=%s,"
-                    " cost_input_tok=%s, cost_output_tok=%s, cost_candidate_tok=%s,"
-                    " cost_thought_tok=%s WHERE shard_key=%s",
-                    (datetime.now(timezone.utc), outcome.input_tokens, outcome.output_tokens,
-                     outcome.candidate_tokens, outcome.thought_tokens, outcome.shard_key),
+                    "UPDATE public.tag_batch_jobs SET status='applied', applied_at=%s"
+                    " WHERE shard_key=%s",
+                    (datetime.now(timezone.utc), outcome.shard_key),
                 )
 
 
@@ -1441,7 +1905,27 @@ def apply_results(shard_key: str, table: str, results_path, run_id: str,
     _write_outcomes([outcome], run_id)
     _log_shard_invalids(outcome)
     return outcome
-    return outcome
+
+
+def usage_from_results_file(results_path) -> tuple[int, int, int, int]:
+    """Sum usageMetadata over EVERY line of a downloaded results file:
+    (input, output, candidate, thought) tokens, output = candidates + thinking
+    (both billable). Used at retrieval time so the ledger counts every dollar
+    actually spent the moment the results land — before (and regardless of)
+    any apply step."""
+    input_tok = output_tok = cand_tok = thought_tok = 0
+    with open(results_path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            _key, _parsed, usage, _error, _fr, _br = _parse_response_line(line)
+            input_tok += int(usage.get("promptTokenCount") or 0)
+            cand = int(usage.get("candidatesTokenCount") or 0)
+            thought = int(usage.get("thoughtsTokenCount") or 0)
+            cand_tok += cand
+            thought_tok += thought
+            output_tok += cand + thought
+    return input_tok, output_tok, cand_tok, thought_tok
 
 
 def collect(run_id: str, shard_key_prefix: str = "", apply: bool = True) -> list[ShardOutcome]:
@@ -1488,10 +1972,18 @@ def collect(run_id: str, shard_key_prefix: str = "", apply: bool = True) -> list
                     lambda j=job, p=results_path: gemini_client.download_file(j["output_file"], p),
                     f"download {shard_key}",
                 )
+                # v3.p3: real usage is recorded THE MOMENT results are retrieved
+                # (one atomic UPDATE with the status flip) — the ledger predicate
+                # (status IN retrieved/applied) then counts this spend even if
+                # the apply step later fails or never runs (pilot download-only).
+                in_tok, out_tok, cand_tok, thought_tok = usage_from_results_file(results_path)
                 with db.get_pg().cursor() as cur:
                     cur.execute(
-                        "UPDATE public.tag_batch_jobs SET status='retrieved', retrieved_at=%s WHERE shard_key=%s",
-                        (datetime.now(timezone.utc), shard_key),
+                        "UPDATE public.tag_batch_jobs SET status='retrieved', retrieved_at=%s,"
+                        " cost_input_tok=%s, cost_output_tok=%s, cost_candidate_tok=%s,"
+                        " cost_thought_tok=%s WHERE shard_key=%s",
+                        (datetime.now(timezone.utc), in_tok, out_tok, cand_tok,
+                         thought_tok, shard_key),
                     )
                 if apply:
                     outcomes.append(apply_results(shard_key, table, results_path, run_id, vocab))
@@ -1533,27 +2025,27 @@ def apply_pilot_bundle(run_id: str, shard_key_prefix: str, vocab: VocabIndex) ->
     return outcomes
 
 
-def pilot_final_failures(shard_key_prefix: str | None = None) -> dict[str, list[str]]:
-    """After the single retry, the ids STILL schema-invalid = first-pass failures
-    not rescued by a valid retry response. Empty ⇒ 100% validity ⇒ safe to apply."""
-    if shard_key_prefix is None:
-        shard_key_prefix = config.PILOT_SHARD_PREFIX
-    first = failed_keys_from_files(shard_key_prefix)  # non-retry files only
-    retry_valid: set[str] = set()
-    retry_pattern = f"{shard_key_prefix.replace(':', '_')}retry_*.results.jsonl"
-    for path in sorted(config.SHARDS_DIR.glob(retry_pattern)):
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                if not line.strip():
-                    continue
-                key, parsed, _u, error, _fr, _br = _parse_response_line(line)
-                if key and "|" in key and not error and parsed is not None:
-                    retry_valid.add(key)
-    still: dict[str, list[str]] = {}
-    for table, ids in first.items():
-        rem = [pid for pid in ids if f"{table}|{pid}" not in retry_valid]
+def pilot_final_failures(shard_key_prefix: str, run_id: str | None = None,
+                         include_escalation: bool = True) -> dict[tuple[str, str], list[str]]:
+    """Ids STILL invalid/missing after the rescue ladder, per (model, table):
+    first-attempt failures (schema-invalid + missing responses) not rescued by a
+    valid response in a retry file — nor, when include_escalation, an esc file.
+    Empty ⇒ 100% row-level validity ⇒ safe to apply. The (model, table) key is
+    the FIRST-attempt model, so the caller can see which route still fails."""
+    first = failed_keys_from_files(shard_key_prefix, run_id=run_id)
+    base = shard_key_prefix.replace(":", "_")
+    rescue_globs = [f"{base}retry_*.results.jsonl"]
+    if include_escalation:
+        rescue_globs.append(f"{base}esc_*.results.jsonl")
+    rescue_paths: list[Path] = []
+    for pattern in rescue_globs:
+        rescue_paths.extend(sorted(config.SHARDS_DIR.glob(pattern)))
+    rescued, _still_invalid = _valid_and_invalid_keys(rescue_paths)
+    still: dict[tuple[str, str], list[str]] = {}
+    for (model, table), ids in first.items():
+        rem = [pid for pid in ids if f"{table}|{pid}" not in rescued]
         if rem:
-            still[table] = rem
+            still[(model, table)] = rem
     return still
 
 
@@ -1611,22 +2103,48 @@ def scan_pilot_results(shard_key_prefix: str | None = None) -> dict:
     input_tokens = output_tokens = candidate_tokens = thought_tokens = 0
     per_row_tag_counts: list[int] = []
     tag_usage: dict[str, int] = {}
+    by_model: dict[str, dict] = {}
+    base = shard_key_prefix.replace(":", "_")
+
+    def _model_of(name: str) -> str:
+        # v3.p3 filenames embed the model: <base>[retry_|esc_]<model>_… — model
+        # strings never contain '_', so a prefix match against the known routed
+        # models is unambiguous. Older/foreign files fall to '(unknown)'.
+        rest = name[len(base):] if name.startswith(base) else name
+        for seg in ("retry_", "esc_"):
+            if rest.startswith(seg):
+                rest = rest[len(seg):]
+        for m in config.ROUTED_MODELS:
+            if rest.startswith(m + "_"):
+                return m
+        return "(unknown)"
 
     for path in files:
+        mstats = by_model.setdefault(
+            _model_of(path.name),
+            {"responses": 0, "schema_valid": 0, "rows": 0, "input_tokens": 0,
+             "output_tokens": 0, "candidate_tokens": 0, "thought_tokens": 0},
+        )
         with open(path, encoding="utf-8") as f:
             for line in f:
                 if not line.strip():
                     continue
                 key, parsed, usage, error, finish_reason, block_reason = _parse_response_line(line)
-                input_tokens += int(usage.get("promptTokenCount") or 0)
+                in_tok = int(usage.get("promptTokenCount") or 0)
+                input_tokens += in_tok
                 cand = int(usage.get("candidatesTokenCount") or 0)
                 thought = int(usage.get("thoughtsTokenCount") or 0)
                 candidate_tokens += cand
                 thought_tokens += thought
                 output_tokens += cand + thought
+                mstats["input_tokens"] += in_tok
+                mstats["candidate_tokens"] += cand
+                mstats["thought_tokens"] += thought
+                mstats["output_tokens"] += cand + thought
                 if not key or "|" not in key:
                     continue
                 responses += 1
+                mstats["responses"] += 1
                 if error or parsed is None:
                     bucket = classify_schema_failure(error, finish_reason, block_reason)
                     buckets[bucket] += 1
@@ -1634,6 +2152,8 @@ def scan_pilot_results(shard_key_prefix: str | None = None) -> dict:
                         other_reasons.append(raw_failure_signal(error, finish_reason, block_reason))
                     continue
                 schema_valid += 1
+                mstats["schema_valid"] += 1
+                mstats["rows"] += 1
                 accepted: list[str] = []
                 for item in parsed.get("tags", [])[: config.MAX_TAGS]:
                     if not isinstance(item, dict):
@@ -1688,23 +2208,24 @@ def scan_pilot_results(shard_key_prefix: str | None = None) -> dict:
         "vocab_coverage": (distinct_tags / vocab_total) if vocab_total else 0.0,
         "vocab_total": vocab_total,
         "max_tag_share": (max_tag_uses / schema_valid) if schema_valid else 0.0,
+        "by_model": by_model,
     }
     return {"files": [p.name for p in files], "pattern": pattern, "buckets": buckets,
             "other_reasons": other_reasons, "stats": stats}
 
 
-def pilot_stats_from_db() -> dict:
+def pilot_stats_from_db(shard_key_prefix: str | None = None) -> dict:
     """Pilot quality metrics recomputed from the DATABASE (not in-memory shard
     outcomes) so validation is correct even when some pilot shards were applied
     by an earlier, interrupted process. schema_valid_rate works because apply
     only UPDATEs rows whose response parsed: unparsed rows keep tags_core NULL.
     Zero-tag passages are VALID and excluded from the tagged-row median.
 
-    NOTE (v3.p2): schema_valid_rate here is UNRELIABLE when the pilot re-tags rows
+    NOTE (v3.p2+): schema_valid_rate here is UNRELIABLE when the pilot re-tags rows
     p1 already wrote (the success slice is already tags_core NOT NULL) — the FILE
     scan owns the schema gate. This function's schema_valid_rate is only a
     trivially-passing backstop; the distribution metrics are the real DB gates."""
-    like = config.PILOT_SHARD_PREFIX + "%"
+    like = (shard_key_prefix or config.PILOT_SHARD_PREFIX) + "%"
     planned, real_in, real_out, real_cand, real_thought = db.rows(
         "SELECT coalesce(sum(row_count),0), coalesce(sum(cost_input_tok),0),"
         "       coalesce(sum(cost_output_tok),0), coalesce(sum(cost_candidate_tok),0),"
@@ -1837,11 +2358,12 @@ def pilot_thresholds_pass(stats: dict) -> list[str]:
     return failures
 
 
-def _pilot_samples(limit: int, run_id: str | None = None) -> list[dict]:
+def _pilot_samples(limit: int, run_id: str | None = None,
+                   shard_key_prefix: str | None = None) -> list[dict]:
     """Seeded-random passage→tags→evidence samples for the optional human skim.
     Evidence is scoped to THIS run so a re-tagged (p1-success-slice) passage shows
-    p2's evidence, not p1's leftover audit rows."""
-    like = config.PILOT_SHARD_PREFIX + "%"
+    this run's evidence, not an earlier run's leftover audit rows."""
+    like = (shard_key_prefix or config.PILOT_SHARD_PREFIX) + "%"
     rows: list[dict] = []
     for t in config.GEMINI_TABLES:
         column = "translation" if t == "verses" else "body_text"
@@ -1915,32 +2437,102 @@ def _failure_reason_lines(failure_reasons: dict) -> list[str]:
     return lines
 
 
-def write_pilot_report(stats: dict, failures: list[str], model: str,
+def pilot_cost_by_model(shard_key_prefix: str) -> dict[str, dict]:
+    """Real per-model token sums for the pilot shards (any retrieved/applied
+    status — costs are recorded at retrieval in v3.p3)."""
+    out: dict[str, dict] = {}
+    for model, in_tok, out_tok, rows in db.rows(
+        "SELECT coalesce(model, '(unknown)'), coalesce(sum(cost_input_tok),0),"
+        "       coalesce(sum(cost_output_tok),0), coalesce(sum(row_count),0)"
+        " FROM public.tag_batch_jobs"
+        " WHERE shard_key LIKE %s AND status IN ('retrieved','applied')"
+        " GROUP BY 1 ORDER BY 1",
+        (shard_key_prefix + "%",),
+    ):
+        out[model] = {
+            "input_tokens": int(in_tok),
+            "output_tokens": int(out_tok),
+            "rows": int(rows),
+        }
+    return out
+
+
+def _model_usd(model: str, input_tok: float, output_tok: float) -> float | None:
+    """_usd, but None (instead of a hard stop) for an unpriced/unknown model —
+    report rendering must degrade loudly-but-cleanly, never crash."""
+    prices = config.batch_prices(model)
+    if prices is None:
+        return None
+    return input_tok / 1e6 * prices[0] + output_tok / 1e6 * prices[1]
+
+
+def write_pilot_report(stats: dict, failures: list[str], models,
                        failure_reasons: dict | None = None, offline: bool = False,
-                       run_id: str | None = None, validity: dict | None = None) -> None:
-    """Write pilot-report.md. When ``offline`` is True the DB-only sections
-    (remaining-passage projection and the random skim samples) are skipped so
-    the report can be regenerated with no database access and no cost — used by
+                       run_id: str | None = None, validity: dict | None = None,
+                       unresolved: dict | None = None) -> None:
+    """Write pilot-report.md. ``models`` is the routing dict
+    ({'core': …, 'standard': …}) for live runs or a plain string for offline
+    re-validation. When ``offline`` is True the DB-only sections (remaining-
+    passage projection and the random skim samples) are skipped so the report
+    can be regenerated with no database access and no cost — used by
     `run_all.py --revalidate-pilot`. ``failure_reasons`` (a scan_pilot_results()
     result) adds the 'Schema-invalid failure reasons' section. ``validity`` (a
-    live run's file-based first-pass/retry/final schema-validity summary) is the
+    live run's file-based first-pass/retry/escalation/final summary) is the
     AUTHORITATIVE schema gate; the DB schema_valid_rate is only a backstop.
-    Full-run extrapolation is run_id-scoped (all 5 tables incl. verse_chunks, and
-    p1-written rows count as work p2 must replace)."""
+    ``unresolved`` ({(model, table): [ids]}) lists rows still invalid after
+    retry + escalation — the explicit would-be-quarantine list. Cost lines are
+    PER MODEL at each model's pinned Batch prices; the full-run extrapolation
+    is run_id-scoped and priced PER ROUTE under the p3 routing mix."""
+    if isinstance(models, dict):
+        model_desc = " · ".join(f"{route} `{m}`" for route, m in sorted(models.items()))
+    else:
+        model_desc = f"`{models}`"
+
+    by_model: dict[str, dict] = dict(stats.get("by_model") or {})
+    if not by_model and run_id and not offline:
+        by_model = pilot_cost_by_model(pilot_prefix(run_id))
+    rows = max(stats["rows"], 1)
+    per_row_in = stats["input_tokens"] / rows
+    per_row_out = stats["output_tokens"] / rows
+    pilot_usd = 0.0
+    unpriced_models: list[str] = []
+    for m, tok in by_model.items():
+        usd = _model_usd(m, tok.get("input_tokens", 0), tok.get("output_tokens", 0))
+        if usd is None:
+            unpriced_models.append(m)
+        else:
+            pilot_usd += usd
+
     if offline:
         remaining = None
+        rem_by_route: dict[str, int] = {}
     elif run_id:
-        remaining = remaining_for_run(run_id)  # honest: p2 retags every eligible row
+        rem_by_route = remaining_by_route(run_id)
+        remaining = sum(rem_by_route.values())
     else:
+        rem_by_route = {}
         remaining = sum(
             db.table_count(t, "tags_core IS NULL AND embedding_context4 IS NOT NULL")
             for t in config.GEMINI_TABLES
         )
-    rows = max(stats["rows"], 1)
-    per_row_in = stats["input_tokens"] / rows
-    per_row_out = stats["output_tokens"] / rows
-    pilot_usd = _usd(stats["input_tokens"], stats["output_tokens"])
-    projected_usd = None if remaining is None else _usd(per_row_in * remaining, per_row_out * remaining)
+    projected_usd: float | None = None
+    if remaining is not None:
+        projected_usd = 0.0
+        for route in routing.ROUTES:
+            n = rem_by_route.get(route, 0) if rem_by_route else (
+                remaining if route == "standard" else 0
+            )
+            if not n:
+                continue
+            model = routing.model_for_route(route)
+            tok = by_model.get(model) or {}
+            m_rows = max(int(tok.get("rows") or 0), 1)
+            m_in = (tok.get("input_tokens") or 0) / m_rows if tok else per_row_in
+            m_out = (tok.get("output_tokens") or 0) / m_rows if tok else per_row_out
+            if not tok or not tok.get("output_tokens"):
+                m_in, m_out = per_row_in, per_row_out  # no per-model sample yet
+            usd = _model_usd(model, m_in * n, m_out * n)
+            projected_usd += usd if usd is not None else 0.0
     if offline:
         verdict = "PASS (gates recomputed offline)" if not failures else "FAIL (gates recomputed offline)"
     else:
@@ -1963,19 +2555,23 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
         "",
         f"- Generated: {datetime.now(timezone.utc).isoformat()}"
         + ("  ·  MODE: offline re-validation (no DB / no Gemini / no cost)" if offline else ""),
-        f"- Model: `{model}` · prompt `{config.PROMPT_VERSION}`"
-        f" · thinking `{config.THINKING_LEVEL}` · temperature model-default"
+        f"- Models: {model_desc} · prompt `{config.PROMPT_VERSION}`"
+        f" · thinking `{config.THINKING_LEVEL}` (non-overridable, sent to BOTH models)"
+        f" · temperature model-default"
         f" · MAX_TAGS {config.MAX_TAGS} · maxOutputTokens {config.MAX_OUTPUT_TOKENS}",
         f"- Evidence: sentence-ID (`{sentence_split.SPLITTER_VERSION}`) resolved to source text",
         f"- Sampling: seeded-random stratified by table × length quartile, seed"
         f" `{config.SAMPLE_SEED}` · pilot size {config.PILOT_SIZE}",
         f"- Verdict: **{verdict}**",
         "",
-        "## Schema validity (FILE-based gate — authoritative)",
+        "## Schema validity (FILE-based gate — authoritative; first pass is DIAGNOSTIC)",
         (
-            f"- First pass: {validity['first_pass']:.2%} (gate ≥ {config.PILOT_MIN_SCHEMA_VALID:.1%})"
-            f" · retried {validity['retry_rows']} row(s) once"
-            f" · final: {validity['final']:.2%} (gate = {config.PILOT_FINAL_SCHEMA_VALID:.0%})"
+            f"- First pass: {validity['first_pass']:.2%} (diagnostic — no abort)"
+            f" · retried {validity['retry_rows']} row(s) once on their own model"
+            f" · escalated {validity.get('esc_rows', 0)} standard-route row(s) to"
+            f" `{config.MODEL_CORE}`"
+            f" · final: {validity['final']:.2%} (gate = {config.PILOT_FINAL_SCHEMA_VALID:.0%}"
+            " after retry + escalation)"
             if validity else
             f"- DB backstop schema_valid_rate: {stats['schema_valid_rate']:.1%}"
             " (file-based gate not available in this mode)"
@@ -2006,24 +2602,55 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
         "## Real cost (from usageMetadata — thinking INCLUDED) and extrapolation",
         f"- Pilot tokens: {stats['input_tokens']:,} in / {stats['output_tokens']:,} out"
         f" (= {stats.get('candidate_tokens', 0):,} candidate + {stats.get('thought_tokens', 0):,} thinking)"
-        f" → ${pilot_usd:,.2f} at ${config.GEMINI_BATCH_PRICE_IN_PER_M}/M in,"
-        f" ${config.GEMINI_BATCH_PRICE_OUT_PER_M}/M out (batch)",
+        f" → **${pilot_usd:,.2f}** total (per-model batch prices below)",
         f"- Per-passage average: {per_row_in:,.0f} in / {per_row_out:,.0f} out tokens"
-        " (retried rows are billed for both attempts — real spend)",
+        " (retried/escalated rows are billed for every attempt — real spend)",
     ]
+    for m in sorted(by_model):
+        tok = by_model[m]
+        prices = config.batch_prices(m)
+        usd = _model_usd(m, tok.get("input_tokens", 0), tok.get("output_tokens", 0))
+        if prices is None or usd is None:
+            lines.append(
+                f"- `{m}`: {tok.get('input_tokens', 0):,} in / {tok.get('output_tokens', 0):,} out"
+                " — ⚠️ NO PINNED PRICE (excluded from the USD total; fix the price map)"
+            )
+        else:
+            lines.append(
+                f"- `{m}`: {tok.get('input_tokens', 0):,} in / {tok.get('output_tokens', 0):,} out"
+                f" → ${usd:,.2f} at ${prices[0]}/M in, ${prices[1]}/M out (batch)"
+            )
     if remaining is None:
         lines.append(
             "- Remaining-passage count & projected full-run cost: skipped"
             " (offline — needs the DB)"
         )
     else:
-        scope = "not yet tagged by this run (all 5 tables incl. verse_chunks)" if run_id \
+        scope = "without an outcome in this run (all 5 tables incl. verse_chunks)" if run_id \
             else "still untagged (all 5 tables incl. verse_chunks)"
+        route_mix = (
+            " (" + " · ".join(
+                f"{route} → `{routing.model_for_route(route)}`: {rem_by_route.get(route, 0):,}"
+                for route in routing.ROUTES
+            ) + ")"
+            if rem_by_route else ""
+        )
         lines += [
-            f"- Remaining Gemini-eligible passages {scope}: {remaining:,}",
-            f"- **Projected full-run cost: ${projected_usd:,.2f}**"
+            f"- Remaining Gemini-eligible passages {scope}: {remaining:,}{route_mix}",
+            f"- **Projected full-run cost: ${projected_usd:,.2f}** priced per route"
             f" (ceiling MAX_SPEND_USD = ${config.MAX_SPEND_USD:,.2f})",
         ]
+    if unresolved:
+        n_unresolved = sum(len(v) for v in unresolved.values())
+        lines += [
+            "",
+            f"## Unresolved rows — still invalid after retry + escalation ({n_unresolved})",
+            "",
+            "These rows would be QUARANTINED; the pilot refuses to apply while any exist.",
+        ]
+        for (m, table), ids in sorted(unresolved.items()):
+            shown = ", ".join(ids[:20]) + (" …" if len(ids) > 20 else "")
+            lines.append(f"- `{table}` on `{m}`: {len(ids)} row(s) — {shown}")
     if failure_reasons is not None:
         lines += _failure_reason_lines(failure_reasons)
     if failures:
@@ -2037,7 +2664,11 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
         ]
     else:
         lines += ["", f"## {config.PILOT_SAMPLE_ROWS} random samples (optional human skim)", ""]
-        for i, sample in enumerate(_pilot_samples(config.PILOT_SAMPLE_ROWS, run_id=run_id), 1):
+        sample_prefix = pilot_prefix(run_id) if run_id else None
+        for i, sample in enumerate(
+            _pilot_samples(config.PILOT_SAMPLE_ROWS, run_id=run_id,
+                           shard_key_prefix=sample_prefix), 1,
+        ):
             lines.append(
                 f"**{i}. {sample['table']} {sample['id']}**"
                 + (f" · function: `{sample['function']}`" if sample["function"] else "")
@@ -2060,8 +2691,8 @@ def write_pilot_report(stats: dict, failures: list[str], model: str,
         )
 
 
-def pilot_done() -> bool:
-    like = config.PILOT_SHARD_PREFIX + "%"
+def pilot_done(shard_key_prefix: str | None = None) -> bool:
+    like = (shard_key_prefix or config.PILOT_SHARD_PREFIX) + "%"
     unfinished = db.one(
         "SELECT count(*) FROM public.tag_batch_jobs"
         " WHERE shard_key LIKE %s AND status NOT IN ('applied','failed')",

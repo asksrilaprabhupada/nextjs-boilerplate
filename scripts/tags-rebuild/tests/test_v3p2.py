@@ -109,7 +109,14 @@ def test_len_expr_verses_vs_body():
 # ── cost: thinking is billable output (item 1) ───────────────────────────────
 
 def test_usd_pricing():
-    assert abs(tagging._usd(1_000_000, 1_000_000) - (0.75 + 4.50)) < 1e-9
+    # v3.p3: pricing is model-aware — each routed model at its own pinned pair.
+    assert abs(tagging._usd("gemini-3.5-flash", 1_000_000, 1_000_000) - (0.75 + 4.50)) < 1e-9
+    assert abs(tagging._usd("gemini-3-flash-preview", 1_000_000, 1_000_000) - (0.25 + 1.50)) < 1e-9
+    try:
+        tagging._usd("model-with-no-pinned-price", 1, 1)
+        assert False, "unpinned model must be a hard stop"
+    except SystemExit:
+        pass
 
 
 def test_parse_line_surfaces_thoughts():
@@ -196,19 +203,27 @@ def test_scan_captures_raw_other_reason(tmp_path, monkeypatch):
     assert any("GALAXY_BRAINED" in r for r in res["other_reasons"])
 
 
-# ── doctor pricing gate FAILs (item 1) ───────────────────────────────────────
+# ── doctor pricing gate FAILs (item 1; per-model in v3.p3) ───────────────────
 
-def _budget_failures(monkeypatch, pin, pout):
+def _budget_failures(monkeypatch, prices: dict):
+    """Run doctor._check_budget with an effective per-model price map. A model
+    mapped to None simulates a routed model with NO pinned price at all."""
     import doctor
-    monkeypatch.setattr(config, "GEMINI_BATCH_PRICE_IN_PER_M", pin)
-    monkeypatch.setattr(config, "GEMINI_BATCH_PRICE_OUT_PER_M", pout)
+    monkeypatch.setattr(config, "GEMINI_BATCH_PRICES",
+                        {m: p for m, p in prices.items() if p is not None})
+    monkeypatch.setattr(config, "batch_prices", lambda m: prices.get(m))
     doctor._failures = 0
     doctor._check_budget()
     return doctor._failures
 
 
+_CANON = {"gemini-3.5-flash": (0.75, 4.50), "gemini-3-flash-preview": (0.25, 1.50)}
+
+
 def test_doctor_pricing_fail(monkeypatch):
-    assert _budget_failures(monkeypatch, 0.0, 0.0) >= 1     # absent/zero → FAIL
-    assert _budget_failures(monkeypatch, 0.15, 1.25) >= 1   # known p1 stale → FAIL
-    assert _budget_failures(monkeypatch, 0.75, 9.99) >= 1   # mismatch → FAIL
-    assert _budget_failures(monkeypatch, 0.75, 4.50) == 0   # canonical → OK
+    ok = dict(_CANON)
+    assert _budget_failures(monkeypatch, ok) == 0                       # canonical → OK
+    assert _budget_failures(monkeypatch, {**ok, "gemini-3-flash-preview": None}) >= 1   # unpinned routed model → FAIL
+    assert _budget_failures(monkeypatch, {**ok, "gemini-3.5-flash": (0.0, 0.0)}) >= 1   # absent/zero → FAIL
+    assert _budget_failures(monkeypatch, {**ok, "gemini-3.5-flash": (0.15, 1.25)}) >= 1  # known p1 stale → FAIL
+    assert _budget_failures(monkeypatch, {**ok, "gemini-3-flash-preview": (0.25, 9.99)}) >= 1  # mismatch → FAIL

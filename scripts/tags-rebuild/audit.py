@@ -83,26 +83,68 @@ ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS evidence_sentence_id te
 
 -- passage_function (additive, killable, hidden metadata) on the five content
 -- tables — ONE primary value per passage from the closed enum in config.py,
--- enforced in harness code, never by a constraint. verse_chunks inherit it
--- from their parent verse at finalize.
+-- enforced in harness code, never by a constraint. (v3.p2+: verse_chunks are
+-- tagged directly and carry their own value — no inheritance step.)
 ALTER TABLE public.verses                ADD COLUMN IF NOT EXISTS passage_function text;
 ALTER TABLE public.verse_chunks          ADD COLUMN IF NOT EXISTS passage_function text;
 ALTER TABLE public.prose_paragraphs      ADD COLUMN IF NOT EXISTS passage_function text;
 ALTER TABLE public.transcript_paragraphs ADD COLUMN IF NOT EXISTS passage_function text;
 ALTER TABLE public.letter_paragraphs     ADD COLUMN IF NOT EXISTS passage_function text;
+
+-- v3.p3-hybrid: the routed model + its pinned Batch prices are recorded on
+-- EVERY shard row, so the spend ledger prices each row by what it actually
+-- cost and per-model runs/files can never collide or mis-price each other.
+ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS model text;
+ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS price_in_per_m  numeric;
+ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS price_out_per_m numeric;
+
+-- v3.p3-hybrid: ROW-LEVEL completion. Coverage = "this passage has an outcome
+-- row in this run", NEVER "its id appeared in a submitted shard's id_list"
+-- (the v3.p2 silent-holes flaw). One row per (run, table, passage); `history`
+-- appends every attempt so quarantine reports keep the full error trail.
+CREATE TABLE IF NOT EXISTS public.tag_passage_outcomes (
+  run_id        uuid NOT NULL REFERENCES public.tag_runs(id),
+  table_name    text NOT NULL,
+  passage_id    uuid NOT NULL,
+  shard_key     text NOT NULL,
+  model         text NOT NULL,
+  attempt       int  NOT NULL DEFAULT 1,
+  outcome       text NOT NULL CHECK (outcome IN
+                ('applied','invalid','missing_response','skipped_no_shortlist','quarantined')),
+  failure_class text,
+  history       jsonb NOT NULL DEFAULT '[]'::jsonb,
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (run_id, table_name, passage_id)
+);
+ALTER TABLE public.tag_passage_outcomes ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_tag_passage_outcomes_state
+  ON public.tag_passage_outcomes (run_id, outcome);
 """
+
+# Idempotent legacy backfill: every pre-p3 tag_batch_jobs row (p1/p2) was
+# gemini-3.5-flash (the harness was single-model until v3.p3) — stamp the model
+# + its canonical prices so the ledger prices ALL billed tokens by recorded
+# per-row prices and --doctor can FAIL on any billed-but-unpriced row.
+LEGACY_BACKFILL_SQL = (
+    "UPDATE public.tag_batch_jobs SET model = %s, price_in_per_m = %s, price_out_per_m = %s"
+    " WHERE model IS NULL"
+)
+LEGACY_MODEL = "gemini-3.5-flash"
 
 
 def ensure_audit_tables() -> None:
+    legacy_prices = config.GEMINI_BATCH_PRICES_CANONICAL[LEGACY_MODEL]
     with db.get_pg().cursor() as cur:
         cur.execute(AUDIT_DDL)
+        cur.execute(LEGACY_BACKFILL_SQL, (LEGACY_MODEL, *legacy_prices))
 
 
 def audit_tables_exist() -> bool:
     return bool(
         db.one(
-            "SELECT count(*) = 2 FROM information_schema.tables"
-            " WHERE table_schema='public' AND table_name IN ('tag_runs','tag_evidence')"
+            "SELECT count(*) = 3 FROM information_schema.tables"
+            " WHERE table_schema='public'"
+            " AND table_name IN ('tag_runs','tag_evidence','tag_passage_outcomes')"
         )
     )
 
@@ -116,14 +158,23 @@ def vocab_version() -> str:
     return "sha256:" + hashlib.sha256(config.VOCAB_PATH.read_bytes()).hexdigest()[:16]
 
 
-def open_or_create_run(model: str) -> str:
-    """Reuse the unfinished run with the same model/prompt/vocab identity
+def run_model_fingerprint(model_core: str, model_standard: str) -> str:
+    """The composite stored in tag_runs.model — deterministic, so resume matching
+    (model + prompt_version + vocab_version) works unchanged for hybrid runs."""
+    return f"core={model_core};standard={model_standard}"
+
+
+def open_or_create_run(model_core: str, model_standard: str) -> str:
+    """Reuse the unfinished run with the same models/prompt/vocab identity
     (resume), else register a new tag_runs row. Returns the run id."""
+    import routing
+
     vv = vocab_version()
+    fingerprint = run_model_fingerprint(model_core, model_standard)
     existing = db.one(
         "SELECT id::text FROM public.tag_runs WHERE finished_at IS NULL AND model=%s"
         " AND prompt_version=%s AND vocab_version=%s ORDER BY started_at DESC LIMIT 1",
-        (model, config.PROMPT_VERSION, vv),
+        (fingerprint, config.PROMPT_VERSION, vv),
     )
     if existing:
         return str(existing)
@@ -140,10 +191,18 @@ def open_or_create_run(model: str) -> str:
         "sample_seed": config.SAMPLE_SEED,
         "pilot_size": config.PILOT_SIZE,
         "passage_functions": config.PASSAGE_FUNCTIONS,
-        # v3.p2 run knobs (recorded for cost + reproducibility auditing).
-        "gemini_batch_price_in_per_m": config.GEMINI_BATCH_PRICE_IN_PER_M,
-        "gemini_batch_price_out_per_m": config.GEMINI_BATCH_PRICE_OUT_PER_M,
-        "pricing_source": "code-canonical",
+        # v3.p3-hybrid run knobs (recorded for cost + reproducibility auditing).
+        "routing": {
+            "core_books": sorted(routing.CORE_BOOK_SLUGS),
+            "routed_tables": sorted(routing.ROUTED_TABLES),
+            "model_core": model_core,
+            "model_standard": model_standard,
+        },
+        "batch_prices": {
+            m: {"in_per_m": p[0], "out_per_m": p[1]}
+            for m, p in sorted(config.GEMINI_BATCH_PRICES.items())
+        },
+        "pricing_source": "code-canonical-per-model",
         "thinking_level": config.THINKING_LEVEL,
         "temperature": None,
         "temperature_provenance": "model_default",
@@ -155,9 +214,19 @@ def open_or_create_run(model: str) -> str:
         cur.execute(
             "INSERT INTO public.tag_runs (id, model, prompt_version, vocab_version, max_tags, config)"
             " VALUES (%s::uuid, %s, %s, %s, %s, %s::jsonb)",
-            (run_id, model, config.PROMPT_VERSION, vv, config.MAX_TAGS, json.dumps(snapshot)),
+            (run_id, fingerprint, config.PROMPT_VERSION, vv, config.MAX_TAGS, json.dumps(snapshot)),
         )
     return run_id
+
+
+def latest_run_id_for_prompt(prompt_version: str | None = None) -> str | None:
+    """Most recent run for a prompt version (default: the current one) — used by
+    standalone finalize and the doctor's outcome-state census."""
+    return db.one(
+        "SELECT id::text FROM public.tag_runs WHERE prompt_version=%s"
+        " ORDER BY started_at DESC LIMIT 1",
+        (prompt_version or config.PROMPT_VERSION,),
+    )
 
 
 def finish_run(run_id: str, notes: str = "") -> None:
