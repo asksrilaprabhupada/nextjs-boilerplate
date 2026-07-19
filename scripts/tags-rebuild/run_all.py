@@ -116,7 +116,7 @@ def run_pilot(run_id: str, models: dict, vocab_index) -> None:
     )
     tagging.plan_pilot_shards(run_id)
     tagging.reconcile()
-    tagging.submit_pending(vocab_index)
+    tagging.submit_pending(vocab_index, run_id)
 
     # 1) Download results ONLY — no DB content writes yet. (Real usage IS
     #    recorded at retrieval, so the ledger counts this spend immediately.)
@@ -143,14 +143,14 @@ def run_pilot(run_id: str, models: dict, vocab_index) -> None:
     retry_rows = tagging.plan_pilot_retry(run_id)
     if retry_rows:
         tagging.reconcile()
-        tagging.submit_pending(vocab_index)
+        tagging.submit_pending(vocab_index, run_id)
         tagging.collect(run_id, prefix, apply=False)
 
     # 4) Escalate still-invalid STANDARD-route rows once to MODEL_CORE.
     esc_rows = tagging.plan_pilot_escalation(run_id)
     if esc_rows:
         tagging.reconcile()
-        tagging.submit_pending(vocab_index)
+        tagging.submit_pending(vocab_index, run_id)
         tagging.collect(run_id, prefix, apply=False)
 
     # 5) THE GATE: 100% row-level validity after retry + escalation. Rows still
@@ -294,7 +294,7 @@ def run_full(run_id: str, vocab_index, accept_quarantine: bool = False) -> bool:
     for _ in range(MAX_WAVES_PER_INVOCATION):
         tagging.reconcile()
         tagging.plan_full_shards(run_id)
-        tagging.submit_pending(vocab_index)
+        tagging.submit_pending(vocab_index, run_id)
         in_flight = db.one(
             "SELECT count(*) FROM public.tag_batch_jobs"
             " WHERE run_id = %s::uuid AND status IN ('submitted','running','retrieved')",

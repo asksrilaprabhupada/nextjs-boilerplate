@@ -183,19 +183,62 @@ def save_state(model: str, route: str, state: dict) -> None:
     tmp.replace(path)
 
 
-def _bakeoff_committed_usd(state: dict, model: str) -> float:
-    """Ceiling basis: committed DB spend (read-only ledger) + this bakeoff's own
-    real + in-flight estimated spend from the state file."""
-    try:
-        committed = tagging.spend_ledger()["committed_usd"]
-    except (Exception, SystemExit):
-        committed = 0.0  # no DB reachable — the DB side then can't be spending either
-    for shard in state["shards"].values():
+def _state_local_usd(state: dict) -> float:
+    """Committed spend of one bakeoff state file, priced at ITS OWN recorded
+    model: real usage where present, else the in-flight estimate for
+    submitted/running shards."""
+    m = state.get("model") or ""
+    total = 0.0
+    for shard in state.get("shards", {}).values():
         usage = shard.get("usage") or {}
         if usage:
-            committed += tagging._usd(model, usage.get("in", 0), usage.get("out", 0))
+            total += tagging._usd(m, usage.get("in", 0), usage.get("out", 0))
         elif shard.get("job") and shard.get("status") in ("submitted", "running"):
-            committed += tagging._usd(model, shard.get("est_in", 0), shard.get("est_out", 0))
+            total += tagging._usd(m, shard.get("est_in", 0), shard.get("est_out", 0))
+    return total
+
+
+def _sibling_bakeoff_usd(exclude: Path) -> float:
+    """Committed spend of every OTHER bakeoff state file on disk, each priced at
+    its own model — so concurrent/prior sibling bakeoffs (other models or routes)
+    count toward the shared MAX_SPEND_USD ceiling instead of each ignoring the
+    others. The active run's own file is excluded; its (newer, maybe unsaved)
+    spend is added from the in-memory state by the caller."""
+    total = 0.0
+    for path in sorted(config.SHARDS_DIR.glob("bakeoff_*.state.json")):
+        if path == exclude:
+            continue
+        try:
+            with open(path, encoding="utf-8") as f:
+                total += _state_local_usd(json.load(f))
+        except (OSError, json.JSONDecodeError):
+            continue
+    return total
+
+
+def _bakeoff_committed_usd(state: dict, model: str) -> float:
+    """Ceiling basis for a NO-DB-WRITE bakeoff: committed DB spend + this
+    bakeoff's own spend (in-memory) + every sibling bakeoff's spend on disk.
+
+    DB spend is read with a SCHEMA-AGNOSTIC query (only columns present on both
+    the p2 and p3 schemas, priced at the canonical core rate). Bakeoff never runs
+    the p3 audit DDL, so the full ledger's `price_*` columns may not exist yet —
+    and a query error there must NEVER be silently read as $0 committed spend.
+    Only a genuinely unreachable DB falls back to $0, and it says so loudly."""
+    try:
+        committed = tagging.committed_usd_schema_agnostic()
+    except (Exception, SystemExit) as exc:  # noqa: BLE001
+        committed = 0.0
+        print(
+            f"  ⚠ bakeoff: DB committed spend unreadable ({str(exc)[:150]}) — the"
+            " ceiling floor is treating DB spend as $0. Confirm no paid pipeline"
+            " run is in flight before continuing.",
+            flush=True,
+        )
+    committed += _state_local_usd(state)
+    committed += _sibling_bakeoff_usd(
+        config.bakeoff_state_path(state.get("model", model), state.get("route", "all"))
+    )
     return committed
 
 

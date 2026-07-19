@@ -168,6 +168,34 @@ def _check_db() -> bool:
         _bad("tag_batch_jobs.model column", str(exc)[:200])
 
     try:
+        col_exists = bool(
+            db.one(
+                "SELECT count(*) FROM information_schema.columns"
+                " WHERE table_schema='public' AND table_name='tag_batch_jobs'"
+                " AND column_name='model'"
+            )
+        )
+        if col_exists:
+            unmetered = db.one(
+                "SELECT count(*) FROM public.tag_batch_jobs"
+                " WHERE status IN ('retrieved','applied') AND model IS NOT NULL"
+                " AND coalesce(cost_input_tok,0)=0 AND coalesce(cost_output_tok,0)=0"
+            )
+            if unmetered:
+                _warn(
+                    "billed-but-unmetered shards",
+                    f"{unmetered} retrieved/applied shard(s) carry a stamped model but 0"
+                    " recorded tokens — real spend the ledger cannot see (e.g. legacy p2"
+                    " 'retrieved' shards wrote cost only at apply; their usage lives in the"
+                    " maintainer-local p2 result files). Not auto-backfilled — token counts"
+                    " are never fabricated.",
+                )
+            else:
+                _ok("billed-but-unmetered shards", "none — every billed shard has recorded usage")
+    except Exception as exc:  # noqa: BLE001
+        _bad("billed-but-unmetered shards", str(exc)[:200])
+
+    try:
         import routing
 
         census: dict[str, int] = {r: 0 for r in routing.ROUTES}
