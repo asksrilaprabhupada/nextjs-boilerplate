@@ -313,7 +313,18 @@ def reconcile_state(model: str, route: str, state: dict) -> None:
     save_state(model, route, state)
 
 
+def _inflight_jobs_from_state(state: dict) -> list[str]:
+    """Bakeoff's in-flight provider job ids — the shards already submitted in this
+    NO-DB run (from the local state file). Feeds the queue-drain wait so a full
+    batch queue makes bakeoff WAIT for a slot, exactly like the pipeline."""
+    return [s["job"] for s in state["shards"].values()
+            if s.get("job") and s.get("status") == "submitted"]
+
+
 def submit(model: str, route: str, state: dict) -> None:
+    # Shared across every shard's wait so completions during one shard's wait
+    # aren't miscounted as fresh progress for the next.
+    queue_terminal_seen: set[str] = set()
     for shard_key, shard in sorted(state["shards"].items()):
         if shard["status"] != "pending" or shard["job"]:
             continue
@@ -333,9 +344,11 @@ def submit(model: str, route: str, state: dict) -> None:
             lambda sk=shard_key: gemini_client.upload_jsonl(tagging.shard_request_path(sk), display_name),
             f"bakeoff upload {shard_key}",
         )
-        job_name = db.with_retry(
-            lambda: gemini_client.create_batch(model, file_name, display_name),
-            f"bakeoff batch create {shard_key}",
+        # A full batch queue (HTTP 429) must NOT crash the bakeoff: wait for an
+        # in-flight job to free a slot, polling every 5 min, then retry the create.
+        job_name = tagging._create_batch_draining_queue(
+            model, file_name, display_name, shard_key, queue_terminal_seen,
+            inflight_fn=lambda: _inflight_jobs_from_state(state),
         )
         shard.update(job=job_name, status="submitted")
         save_state(model, route, state)

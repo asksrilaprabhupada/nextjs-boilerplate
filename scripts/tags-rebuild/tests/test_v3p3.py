@@ -32,15 +32,26 @@ TAGGING_SRC = Path(tagging.__file__).read_text(encoding="utf-8")
 # ── routing (item 2) ─────────────────────────────────────────────────────────
 
 def test_route_for_matrix():
+    # The underlying book rule (pure=False) still routes core scripture to core…
     for slug in ("bg", "sb", "cc", "BG", " Sb "):
-        assert routing.route_for("verses", slug) == "core"
-        assert routing.route_for("verse_chunks", slug) == "core"
+        assert routing.route_for("verses", slug, pure=False) == "core"
+        assert routing.route_for("verse_chunks", slug, pure=False) == "core"
     for slug in ("iso", "noi", "unknown", "", None):
-        assert routing.route_for("verses", slug) == "standard"
+        assert routing.route_for("verses", slug, pure=False) == "standard"
     # book routing applies ONLY to verses/verse_chunks — prose of bg is standard
-    assert routing.route_for("prose_paragraphs", "bg") == "standard"
-    assert routing.route_for("transcript_paragraphs", "cc") == "standard"
-    assert routing.route_for("letter_paragraphs", None) == "standard"
+    assert routing.route_for("prose_paragraphs", "bg", pure=False) == "standard"
+    assert routing.route_for("transcript_paragraphs", "cc", pure=False) == "standard"
+    assert routing.route_for("letter_paragraphs", None, pure=False) == "standard"
+
+
+def test_route_for_pure_classification_collapses_book_routing():
+    # v4-tiered: PURE CLASSIFICATION routes EVERYTHING to 'standard' (the Tier-3
+    # model), so escalation to MODEL_CORE only ever happens via the retry ladder.
+    assert config.PURE_CLASSIFICATION is True
+    for table in ("verses", "verse_chunks", "prose_paragraphs"):
+        for slug in ("bg", "sb", "cc", "iso", None):
+            assert routing.route_for(table, slug) == "standard"          # default = pure
+            assert routing.route_for(table, slug, pure=True) == "standard"
 
 
 def test_model_for_route_and_inverse():
@@ -55,16 +66,20 @@ def test_model_for_route_and_inverse():
 
 
 def test_route_sql_fragments():
-    join, expr = routing.route_sql("verses")
+    join, expr = routing.route_sql("verses", pure=False)
     assert "public.chapters" in join and "chapter_id" in join
     assert "coalesce(rc.book_slug, t.scripture)" in expr
     assert "'bg', 'cc', 'sb'" in expr and "'core'" in expr and "'standard'" in expr
-    join, expr = routing.route_sql("verse_chunks")
+    join, expr = routing.route_sql("verse_chunks", pure=False)
     assert "public.verses rv" in join and "rv.verse_id" not in join  # joins ON rv.id = t.verse_id
     assert "rv.id = t.verse_id" in join
     assert "coalesce(rc.book_slug, rv.scripture)" in expr
     for table in ("prose_paragraphs", "transcript_paragraphs", "letter_paragraphs"):
-        assert routing.route_sql(table) == ("", "'standard'")
+        assert routing.route_sql(table, pure=False) == ("", "'standard'")
+    # v4-tiered pure classification: NO book join, everything 'standard'.
+    for table in ("verses", "verse_chunks", "prose_paragraphs"):
+        assert routing.route_sql(table, pure=True) == ("", "'standard'")
+        assert routing.route_sql(table) == ("", "'standard'")           # default = pure
 
 
 def test_model_strings_are_key_safe():
@@ -78,8 +93,8 @@ def test_model_strings_are_key_safe():
 def test_shard_key_scheme_and_no_p2_collision():
     pilot = tagging.pilot_prefix(RUN_ID)
     full = tagging.full_prefix(RUN_ID)
-    assert pilot == f"pilot:p3:{RUN8}:"
-    assert full == f"full:p3:{RUN8}:"
+    assert pilot == f"{config.PILOT_SHARD_PREFIX}{RUN8}:" == f"pilot:v4:{RUN8}:"
+    assert full == f"{config.FULL_SHARD_PREFIX}{RUN8}:" == f"full:v4:{RUN8}:"
     keys = [
         f"{pilot}{CORE}:verses:000",
         f"{pilot}retry:{STD}:prose_paragraphs:000",
@@ -140,19 +155,38 @@ def test_max_spend_default_325():
 
 # ── thinkingLevel LOW: non-overridable, in EVERY request (both models) ───────
 
-def test_thinking_level_constant_and_request_line():
+def test_thinking_level_constant_and_request_line(monkeypatch):
     assert config.THINKING_LEVEL == "LOW"
     vocab = tagging.VocabIndex({
         "term_count": 1,
         "terms": [{"slug": "bhakti", "term": "devotion", "variants": [], "facet": "Concept"}],
     })
+    passage = tagging.Passage(
+        table="verses", id="x", text="One. Two.", authorship="HIS",
+        questions_allowed=True, shortlist=["bhakti"],
+    )
+    # v4-tiered (default): classification-only schema — tags[].slug enum, NO
+    # passage_function, NO questions, small Tier-3 output cap, thinkingLevel LOW.
+    line = tagging.request_line(passage, vocab)
+    gc = line["request"]["generationConfig"]
+    assert gc["thinkingConfig"]["thinkingLevel"] == "LOW"
+    assert gc["maxOutputTokens"] == config.TIER3_MAX_OUTPUT_TOKENS
+    props = gc["responseSchema"]["properties"]
+    assert set(props) == {"tags"}
+    item = props["tags"]["items"]["properties"]
+    assert set(item) == {"slug", "evidence_sentence_id"}
+    assert item["slug"]["enum"] == ["bhakti"]
+    assert gc["responseSchema"]["required"] == ["tags"]
+
+    # The legacy generative schema still exists (questions gated by authorship)
+    # when pure classification is off.
+    monkeypatch.setattr(config, "PURE_CLASSIFICATION", False)
     for questions_allowed in (True, False):
-        passage = tagging.Passage(
+        p = tagging.Passage(
             table="verses", id="x", text="One. Two.", authorship="HIS",
             questions_allowed=questions_allowed, shortlist=["bhakti"],
         )
-        line = tagging.request_line(passage, vocab)
-        gc = line["request"]["generationConfig"]
+        gc = tagging.request_line(p, vocab)["request"]["generationConfig"]
         assert gc["thinkingConfig"]["thinkingLevel"] == "LOW"
         assert ("questions" in gc["responseSchema"]["properties"]) is questions_allowed
 

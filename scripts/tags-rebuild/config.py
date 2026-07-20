@@ -184,8 +184,51 @@ ESTIMATED_ROW_COUNTS = {
 }
 
 # ── Tagging run ─────────────────────────────────────────────────────────────
-PROMPT_VERSION = "asp-tags-v3.p3-hybrid"  # bump whenever the prompt/schema/routing changes
-BATCH_DISPLAY_PREFIX = "asp-tags-v3"  # Google Batch display_name prefix → reconciliation
+PROMPT_VERSION = "asp-tags-v4-tiered"  # bump whenever the prompt/schema/routing changes
+BATCH_DISPLAY_PREFIX = "asp-tags-v4"  # Google Batch display_name prefix → reconciliation
+
+# ── v4-tiered: three-tier classifier (REPLACES the generative approach) ──────
+# The v4 pipeline is PURE CLASSIFICATION over the frozen 251-term vocabulary:
+#   Tier 1 — exact aliases (Person/Place/Scripture)   → free, no LLM
+#   Tier 2 — embedding shortlist (Concept/Practice)    → free, no LLM
+#   Tier 3 — LLM judge over the Tier-2 middle band     → the ONLY paid part
+# Questions + passage_function are DEFERRED (their columns stay; nothing is
+# generated now). PURE_CLASSIFICATION also collapses the core/standard BOOK
+# routing: every row is judged on TIER3_MODEL first and escalates once to
+# TIER3_ESCALATION_MODEL — there is no book-based model choice any more.
+PURE_CLASSIFICATION = (_env("PURE_CLASSIFICATION", "1") not in ("0", "false", "no"))
+# Facet → tier. Person/Place/Scripture are matched by exact alias (Tier 1);
+# Concept/Practice by embedding similarity + LLM judge (Tiers 2-3). (Kept in sync
+# with ENTITY_FACETS below — asserted in tests.)
+TIER1_FACETS = {"Person", "Place", "Scripture"}
+TIER2_FACETS = {"Concept", "Practice"}
+# Tier 2 shortlist depth: the top-N nearest Concept/Practice terms per passage.
+TIER2_TOPK = _env_int("TIER2_TOPK", 12)
+# Tier 2 acceptance bands (cosine similarity, embedding_context4 ↔ vocab_terms).
+# DEFAULTS are the values calibrated against the p1 pilot (run 63c99428…); a live
+# calibration pass recomputes them from tag_evidence and records the result in
+# tag_runs.config + pilot-report.md. Above ACCEPT → auto-assign (method
+# 'semantic'); below REJECT → drop; the middle band goes to the Tier-3 judge.
+TIER2_ACCEPT = _env_float("TIER2_ACCEPT", 0.47)   # ≥ → auto-accept (high precision)
+TIER2_REJECT = _env_float("TIER2_REJECT", 0.22)   # < → auto-drop (preserve recall)
+# Calibration targets — the RULE the calibrator applies to the p1 pilot sweep:
+#   T_accept = smallest threshold whose measured precision ≥ TARGET_ACCEPT_PRECISION
+#   T_reject = largest threshold that still retains ≥ TARGET_REJECT_RECALL of the
+#              in-shortlist positive pilot tags (so auto-drop loses few positives).
+TIER2_TARGET_ACCEPT_PRECISION = _env_float("TIER2_TARGET_ACCEPT_PRECISION", 0.80)
+TIER2_TARGET_REJECT_RECALL = _env_float("TIER2_TARGET_REJECT_RECALL", 0.95)
+# The frozen p1 pilot run whose accepted tags are the calibration ground truth.
+P1_PILOT_RUN_ID = _env("P1_PILOT_RUN_ID") or "63c99428-7ecb-469d-a551-cc99f9585673"
+# Tier 3 is classification-only: {"tags":[{"slug","evidence_sentence_id"}]}. Its
+# output is tiny, so the cap is small (the p3 8192 ceiling was sized for the old
+# tags + questions + passage_function payload). thinkingLevel stays LOW.
+TIER3_MAX_OUTPUT_TOKENS = _env_int("TIER3_MAX_OUTPUT_TOKENS", 512)
+# The Tier-3 model ladder reuses the routed model strings: every row is judged on
+# TIER3_MODEL (gemini-3-flash-preview) and, if still schema-invalid after one
+# retry, escalates ONCE to TIER3_ESCALATION_MODEL (gemini-3.5-flash) before
+# quarantine — the exact retry→escalate→quarantine ladder the p3 machinery runs.
+TIER3_MODEL = MODEL_STANDARD
+TIER3_ESCALATION_MODEL = MODEL_CORE
 MAX_TAGS = _env_int("MAX_TAGS", 12)  # flexible count; responseSchema maxItems hard cap
 MAX_QUESTIONS = _env_int("MAX_QUESTIONS", 3)  # 0-3 per passage; zero is a valid answer
 MIN_EVIDENCE_WORDS = 4               # evidence-sentence floor for the code gate
@@ -215,9 +258,9 @@ DB_BATCH = _env_int("DB_BATCH", 5000)  # rows per SQL write batch
 #   the routed model (tagging.pilot_prefix/full_prefix), so p1's `pilot:%` and
 #   p2's `pilot:p2:%` shards, files and evidence stay frozen, and two p3 runs
 #   can never collide with each other either.
-PILOT_SHARD_PREFIX = "pilot:p3:"
+PILOT_SHARD_PREFIX = "pilot:v4:"  # v4-tiered pilot shards (disjoint from every p1/p2/p3 key)
 P2_PILOT_SHARD_PREFIX = "pilot:p2:"  # FROZEN p2 manifest/results — the bakeoff baseline
-FULL_SHARD_PREFIX = "full:p3:"
+FULL_SHARD_PREFIX = "full:v4:"
 PILOT_SUCCESS_SLICE = _env_int("PILOT_SUCCESS_SLICE", 200)  # p1 successes re-tagged for comparison
 PILOT_LENGTH_BANDS = _env_int("PILOT_LENGTH_BANDS", 4)      # length quartiles for stratification
 

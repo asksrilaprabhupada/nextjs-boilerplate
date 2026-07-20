@@ -393,6 +393,24 @@ def attach_shortlists(table: str, passages: list[Passage], vocab: VocabIndex) ->
         passage.shortlist = base + negatives
 
 
+def attach_shortlists_v4(table: str, passages: list[Passage], vocab: VocabIndex) -> None:
+    """v4-tiered shortlist = the Tier-2 MIDDLE BAND. For each passage, rank the
+    top-TIER2_TOPK Concept/Practice terms by cosine similarity and keep exactly
+    those whose similarity lands in [TIER2_REJECT, TIER2_ACCEPT) — the ambiguous
+    band the judge must resolve. Above ACCEPT was auto-assigned (Tier 2) and
+    below REJECT was dropped, both for free; neither is shown to the model.
+    Deterministic from the stored embeddings + the active thresholds, so it
+    matches the free-tier pass exactly on every resume."""
+    import tiers
+    ids = [p.id for p in passages]
+    shortlists = tiers.tier2_shortlist_for_passages(table, ids, config.TIER2_TOPK)
+    for passage in passages:
+        passage.shortlist = [
+            slug for slug, sim in shortlists.get(passage.id, [])
+            if config.TIER2_REJECT <= sim < config.TIER2_ACCEPT
+        ]
+
+
 # ── prompt + schema ─────────────────────────────────────────────────────────
 
 def _evidence_id_schema(sentence_ids: list[str]) -> dict:
@@ -520,6 +538,8 @@ def build_prompt(passage: Passage, vocab: VocabIndex,
 
 
 def request_line(passage: Passage, vocab: VocabIndex) -> dict:
+    if config.PURE_CLASSIFICATION:
+        return request_line_v4(passage, vocab)
     sents = sentence_split.split_sentences(passage.text)
     return {
         "key": f"{passage.table}|{passage.id}",
@@ -533,6 +553,112 @@ def request_line(passage: Passage, vocab: VocabIndex) -> dict:
                 ),
                 "thinkingConfig": {"thinkingLevel": config.THINKING_LEVEL},
                 "maxOutputTokens": config.MAX_OUTPUT_TOKENS,
+            },
+        },
+    }
+
+
+# ── v4-tiered: the Tier-3 LLM JUDGE (classification only) ────────────────────
+# Questions + passage_function are DEFERRED (no generation now). The judge sees
+# ONLY the Tier-2 middle-band Concept/Practice candidates and confirms which
+# genuinely apply, citing a target sentence id. Output schema is exactly
+# {"tags":[{"slug", "evidence_sentence_id"}]} and nothing else; zero tags valid.
+
+def response_schema_v4(shortlist: list[str], sentence_ids: list[str]) -> dict:
+    """Classification-only schema: an array of {slug, evidence_sentence_id}. Both
+    fields are CLOSED ENUMS (the middle-band slugs; the target sentence ids), so
+    the model can neither invent a tag nor a citation. No passage_function, no
+    questions, no free-text — the whole payload is a shortlist confirmation."""
+    ev = _evidence_id_schema(sentence_ids)
+    return {
+        "type": "OBJECT",
+        "properties": {
+            "tags": {
+                "type": "ARRAY",
+                "maxItems": config.MAX_TAGS,
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "slug": {"type": "STRING", "enum": shortlist},
+                        "evidence_sentence_id": ev,
+                    },
+                    "required": ["slug", "evidence_sentence_id"],
+                    "propertyOrdering": ["slug", "evidence_sentence_id"],
+                },
+            },
+        },
+        "required": ["tags"],
+        "propertyOrdering": ["tags"],
+    }
+
+
+def _candidate_line_v4(slug: str, vocab: VocabIndex, shortlist: set[str]) -> str:
+    """One candidate line for the judge: slug + scope note + the hard-negative
+    partners that are ALSO in this passage's shortlist (per the v4 spec — only
+    shortlisted partners are worth contrasting; nothing outside the middle band
+    is ever shown as a candidate)."""
+    term = vocab.term_by_slug[slug]
+    line = f"- {slug} — \"{term['term']}\" ({term['facet']})"
+    note = (term.get("scope_note") or "").strip()
+    if note:
+        line += f". Scope: {note}"
+    partners = [n for n in vocab.hard_negatives(slug) if n in shortlist]
+    if partners:
+        names = ", ".join(f"{n} (\"{vocab.term_by_slug[n]['term']}\")" for n in partners)
+        line += f". Do NOT confuse with: {names}"
+    return line
+
+
+def build_prompt_v4(passage: Passage, vocab: VocabIndex, sents: list) -> str:
+    shortlist = set(passage.shortlist)
+    candidates = "\n".join(
+        _candidate_line_v4(slug, vocab, shortlist)
+        for slug in passage.shortlist if slug in vocab.term_by_slug
+    )
+    base = (
+        "You are CONFIRMING which candidate subjects a passage from Śrīla"
+        " Prabhupāda's corpus is genuinely about. A shortlist was pre-selected by"
+        " embedding similarity; your job is to keep only the ones that truly"
+        " apply.\n\nCANDIDATE TAGS (closed list — you may ONLY return these"
+        " slugs; each shows its scope and what NOT to confuse it with):\n"
+        f"{candidates}\n\nRULES:\n"
+        "1. Confirm ABOUTNESS only. Keep a candidate ONLY if the passage is"
+        " genuinely about it. Do NOT keep a subject the passage merely mentions"
+        " in passing, quotes from an opponent, or explicitly REJECTS. Prefer the"
+        " MOST SPECIFIC fitting concepts; drop broad ancestors. ZERO tags is a"
+        f" valid answer — never force a tag. Never more than {config.MAX_TAGS}.\n"
+        "2. For EACH kept tag, set `evidence_sentence_id` to the ID (e.g. S002)"
+        " of the ONE TARGET sentence that best shows the passage is about that"
+        " subject. Use ONLY the numbered sentence IDs below — never invent one,"
+        " never copy text.\n"
+    )
+    if passage.context:
+        base += (
+            "\nCONTEXT (for understanding only — do NOT cite it; it has no"
+            " sentence IDs and its subject is not necessarily the TARGET's):\n"
+            + passage.context
+        )
+    return (
+        base
+        + "\n\nTARGET PASSAGE (confirm ONLY what THIS is about; cite evidence by"
+        " its sentence ID):\n"
+        + sentence_split.render_numbered(sents)
+    )
+
+
+def request_line_v4(passage: Passage, vocab: VocabIndex) -> dict:
+    sents = sentence_split.split_sentences(passage.text)
+    return {
+        "key": f"{passage.table}|{passage.id}",
+        "request": {
+            "contents": [{"parts": [{"text": build_prompt_v4(passage, vocab, sents)}]}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": response_schema_v4(
+                    passage.shortlist, sentence_split.sentence_ids(sents),
+                ),
+                "thinkingConfig": {"thinkingLevel": config.THINKING_LEVEL},
+                "maxOutputTokens": config.TIER3_MAX_OUTPUT_TOKENS,
             },
         },
     }
@@ -1279,7 +1405,10 @@ def _build_request_lines(
     candidate shortlist); `skipped_ids` are rows dropped for a missing
     embedding/shortlist (never sent, but still counted as covered)."""
     passages = load_passages(table, ids)
-    attach_shortlists(table, passages, vocab)
+    if config.PURE_CLASSIFICATION:
+        attach_shortlists_v4(table, passages, vocab)
+    else:
+        attach_shortlists(table, passages, vocab)
     lines: list[tuple[str, str, int]] = []
     skipped_ids: list[str] = []
     for passage in passages:
@@ -1406,21 +1535,35 @@ QUEUE_QUOTA_POLL_SECONDS = 300           # 5 minutes between poll cycles
 QUEUE_QUOTA_GIVE_UP_SECONDS = 24 * 3600  # 24h of no progress → give up
 
 
-def _poll_queue_quota(already_terminal: set[str]) -> bool:
+def _inflight_jobs_from_db() -> list[str]:
+    """The pipeline's in-flight provider job ids: every recorded `submitted`
+    shard. Used by the queue-drain wait to detect a freed slot."""
+    return [j for (j,) in db.rows(
+        "SELECT provider_job_id FROM public.tag_batch_jobs"
+        " WHERE status = 'submitted' AND provider_job_id IS NOT NULL"
+    )]
+
+
+def _poll_queue_quota(already_terminal: set[str], inflight_fn=None) -> bool:
     """Sleep one poll cycle, then report the state of every already-submitted
     job. Returns True if a NEW job reached a terminal state since the last cycle
     (a queue slot was freed → the create is worth retrying). Mutates
     `already_terminal` with any newly-terminal job ids. Prints exactly one status
-    line: jobs running / done / shards still pending."""
+    line: jobs running / done / shards still pending.
+
+    `inflight_fn` supplies the current in-flight provider job ids. It defaults to
+    the pipeline's DB view; the NO-DB bakeoff passes a function reading its local
+    state file, so the same patient wait covers bakeoff/pilot/full paths."""
     time.sleep(QUEUE_QUOTA_POLL_SECONDS)
-    submitted = db.rows(
-        "SELECT provider_job_id FROM public.tag_batch_jobs"
-        " WHERE status = 'submitted' AND provider_job_id IS NOT NULL"
-    )
-    pending = db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE status = 'pending'")
+    if inflight_fn is None:
+        submitted = _inflight_jobs_from_db()
+        pending = db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE status = 'pending'")
+    else:
+        submitted = list(inflight_fn())
+        pending = None
     running = done = 0
     freed = False
-    for (job_id,) in submitted:
+    for job_id in submitted:
         try:
             job = gemini_client.get_batch(job_id)
         except Exception:  # noqa: BLE001 — a poll blip must not abort the wait
@@ -1433,22 +1576,27 @@ def _poll_queue_quota(already_terminal: set[str]) -> bool:
                 freed = True
         else:
             running += 1
+    pending_note = f" {pending} shard(s) still pending;" if pending is not None else ""
     print(
         f"  ⏳ batch queue full — {running} job(s) running, {done} done,"
-        f" {pending} shard(s) still pending; polling again in"
-        f" {QUEUE_QUOTA_POLL_SECONDS // 60}m…",
+        f"{pending_note} polling again in {QUEUE_QUOTA_POLL_SECONDS // 60}m…",
         flush=True,
     )
     return freed
 
 
 def _create_batch_draining_queue(
-    model: str, file_name: str, display_name: str, shard_key: str, already_terminal: set[str]
+    model: str, file_name: str, display_name: str, shard_key: str,
+    already_terminal: set[str], inflight_fn=None
 ) -> str:
     """gemini_client.create_batch, but patient about a full batch queue. On HTTP
     429 (queue quota exhausted) it waits for a submitted job to finish and free a
     slot instead of crashing; every other error re-raises immediately. Gives up
-    only after QUEUE_QUOTA_GIVE_UP_SECONDS with no job freeing a slot."""
+    only after QUEUE_QUOTA_GIVE_UP_SECONDS with no job freeing a slot.
+
+    `inflight_fn` (see _poll_queue_quota) makes this reusable by the NO-DB
+    bakeoff path, which tracks its in-flight jobs in a local state file rather
+    than tag_batch_jobs — so bakeoff, pilot and full all wait instead of crashing."""
     no_progress_deadline = time.monotonic() + QUEUE_QUOTA_GIVE_UP_SECONDS
     while True:
         try:
@@ -1459,7 +1607,7 @@ def _create_batch_draining_queue(
         except gemini_client.GeminiHTTPError as exc:
             if exc.status != 429:
                 raise
-        if _poll_queue_quota(already_terminal):
+        if _poll_queue_quota(already_terminal, inflight_fn):
             no_progress_deadline = time.monotonic() + QUEUE_QUOTA_GIVE_UP_SECONDS
         elif time.monotonic() >= no_progress_deadline:
             raise SystemExit(
@@ -1738,6 +1886,9 @@ class ShardOutcome:
     # v3.p3 ROW-LEVEL outcomes staged for tag_passage_outcomes:
     # (table, passage_id, shard_key, model, attempt, outcome, failure_class).
     outcome_rows: list[tuple] = field(default_factory=list)
+    # v4-tiered: passage ids whose tags_core must be re-materialized from
+    # tag_evidence after this shard's Tier-3 rows land (the merge of Tiers 1+2+3).
+    recompute_ids: list[str] = field(default_factory=list)
 
 
 def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> ShardOutcome:
@@ -1762,6 +1913,16 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
     attempt = attempt_for_shard_key(shard_key)
     outcome = ShardOutcome(shard_key=shard_key, table=table, model=model or "", attempt=attempt)
     passages = {p.id: p for p in load_passages(table, list(id_list))}
+    pure = config.PURE_CLASSIFICATION
+    # v4-tiered: cosine sims for BOTH the confidence on each Tier-3 confirmation
+    # AND the middle-band audit trail (candidates the judge dropped). One pgvector
+    # query per shard — the same top-TIER2_TOPK shortlist attach_shortlists_v4 built.
+    sim_by: dict[str, dict[str, float]] = {}
+    if pure and id_list:
+        import tiers
+        for pid, pairs in tiers.tier2_shortlist_for_passages(table, list(id_list)).items():
+            sim_by[pid] = {slug: sim for slug, sim in pairs}
+    tier3_method = "llm_confirmed" if pure else None
     resolved_ids: dict[str, bool] = {}  # passage_id → had a schema-valid response
 
     with open(results_path, encoding="utf-8") as f:
@@ -1817,7 +1978,8 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
             for item in parsed.get("tags", [])[: config.MAX_TAGS]:
                 if not isinstance(item, dict):
                     continue
-                tag = str(item.get("tag") or "").strip()
+                # v4 returns {"slug": …}; the legacy generative schema used "tag".
+                tag = str(item.get("slug") or item.get("tag") or "").strip()
                 sid = item.get("evidence_sentence_id")
                 sid = sid.strip() if isinstance(sid, str) else None
                 found, ev_text, start, end, miss = sentence_split.resolve_sentence(sid, sents)
@@ -1826,20 +1988,43 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
                     # HARD gate — out-of-vocabulary is never written to tags_core.
                     outcome.tags_out_of_vocab += 1
                     outcome.evidence_records.append(
-                        (table, passage_id, tag, ev_text, False, "out of vocabulary", found, start, end, sid)
+                        (table, passage_id, tag, ev_text, False, "out of vocabulary",
+                         found, start, end, sid, tier3_method, None)
                     )
                     continue
                 if tag in accepted:
                     continue
                 # SOFT gate — the tag is KEPT either way; a miss (id didn't resolve
-                # to a target sentence) is flagged evidence_found=false.
+                # to a target sentence) is flagged evidence_found=false. Tier-3
+                # confidence = the embedding similarity that shortlisted the tag.
                 accepted.append(tag)
                 outcome.tags_accepted += 1
                 if not found:
                     outcome.tags_unevidenced_kept += 1
+                conf = sim_by.get(passage_id, {}).get(tag) if pure else None
                 outcome.evidence_records.append(
-                    (table, passage_id, tag, ev_text, True, miss, found, start, end, sid)
+                    (table, passage_id, tag, ev_text, True, miss, found, start, end, sid,
+                     tier3_method, conf)
                 )
+
+            if pure:
+                # Record the judge's NEGATIVE decisions: middle-band candidates it
+                # did NOT confirm (the full Tier-3 decision trail). tags_core is
+                # merged from tag_evidence later; questions + passage_function are
+                # DEFERRED, so no content columns are written from `updates` here.
+                sims = sim_by.get(passage_id, {})
+                confirmed = set(accepted)
+                for slug, sim in sims.items():
+                    if config.TIER2_REJECT <= sim < config.TIER2_ACCEPT and slug not in confirmed:
+                        outcome.evidence_records.append(
+                            (table, passage_id, slug, "", False, "llm_rejected",
+                             False, None, None, None, "llm_confirmed", sim)
+                        )
+                outcome.per_row_tag_counts.append(len(accepted))
+                if not accepted:
+                    outcome.zero_tag_rows += 1
+                outcome.recompute_ids.append(passage_id)
+                continue
 
             questions: list[str] = []
             if passage.questions_allowed:
@@ -1896,7 +2081,7 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
             outcome.outcome_rows.append(
                 (table, pid, shard_key, model, attempt, "missing_response", "no_response_line")
             )
-    outcome.rows = len(outcome.updates)
+    outcome.rows = len(outcome.recompute_ids) if config.PURE_CLASSIFICATION else len(outcome.updates)
     return outcome
 
 
@@ -1904,27 +2089,43 @@ def _write_outcomes(outcomes: list[ShardOutcome], run_id: str) -> None:
     """Write a batch of already-gated shards in ONE transaction (content columns +
     tag_evidence + row-level outcomes + each shard's applied-status). Used
     per-shard by the full run and as a single atomic bundle by the pilot —
-    nothing is written unless the whole transaction commits. v3.p3: token costs
-    are NO LONGER written here — they were already recorded at retrieval
-    (collect), so a failed apply can never erase or defer real spend."""
+    nothing is written unless the whole transaction commits. Token costs are NOT
+    written here — they were already recorded at retrieval (collect), so a failed
+    apply can never erase or defer real spend.
+
+    v4-tiered: Tier-3 rows do NOT write content columns from `updates` (questions
+    + passage_function are DEFERRED). Instead the shard's Tier-3 evidence is
+    inserted, then tags_core is re-materialized from tag_evidence — the merge of
+    Tiers 1+2 (written up front by tiers.apply_free_tiers) and this shard's Tier-3
+    confirmations — via tiers.recompute_tags_core."""
+    pure = config.PURE_CLASSIFICATION
     conn = db.get_pg()
     with conn.transaction():
         with conn.cursor() as cur:
             for outcome in outcomes:
-                for start in range(0, len(outcome.updates), config.DB_BATCH):
-                    cur.executemany(
-                        f"UPDATE public.{outcome.table} SET tags_core=%s::text[], questions=%s,"
-                        f" fts_expansion_src=%s, passage_function=%s WHERE id=%s::uuid",
-                        outcome.updates[start : start + config.DB_BATCH],
-                    )
+                if not pure:
+                    for start in range(0, len(outcome.updates), config.DB_BATCH):
+                        cur.executemany(
+                            f"UPDATE public.{outcome.table} SET tags_core=%s::text[], questions=%s,"
+                            f" fts_expansion_src=%s, passage_function=%s WHERE id=%s::uuid",
+                            outcome.updates[start : start + config.DB_BATCH],
+                        )
                 if outcome.evidence_records:
                     cur.executemany(
                         "INSERT INTO public.tag_evidence"
                         " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason,"
-                        "  evidence_found, evidence_start, evidence_end, evidence_sentence_id)"
-                        " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s)",
+                        "  evidence_found, evidence_start, evidence_end, evidence_sentence_id,"
+                        "  method, confidence)"
+                        " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                         [(run_id, *r) for r in outcome.evidence_records],
                     )
+                if pure and outcome.recompute_ids:
+                    import tiers
+                    for start in range(0, len(outcome.recompute_ids), config.DB_BATCH):
+                        tiers.recompute_tags_core(
+                            cur, run_id, outcome.table,
+                            outcome.recompute_ids[start : start + config.DB_BATCH],
+                        )
                 record_outcomes(run_id, outcome.outcome_rows, cur)
                 cur.execute(
                     "UPDATE public.tag_batch_jobs SET status='applied', applied_at=%s"
@@ -2541,6 +2742,151 @@ def _model_usd(model: str, input_tok: float, output_tok: float) -> float | None:
     if prices is None:
         return None
     return input_tok / 1e6 * prices[0] + output_tok / 1e6 * prices[1]
+
+
+def eligible_passage_count() -> int:
+    """Total Gemini-eligible passages across the corpus (embedding present) — the
+    denominator for the projected full-corpus Tier-3 cost."""
+    total = 0
+    for t in config.GEMINI_TABLES:
+        total += int(db.one(
+            f"SELECT count(*) FROM public.{t} WHERE embedding_context4 IS NOT NULL") or 0)
+    return total
+
+
+def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dict,
+                          models: dict, distribution_failures: list[str] | None = None,
+                          offline: bool = False) -> None:
+    """The v4-tiered pilot report: per-tier counts, the calibrated thresholds +
+    their measured precision/recall, distribution health, PILOT_SAMPLE_ROWS random
+    samples, the TRUE pilot cost (Tiers 1-2 = $0; Tier 3 from usageMetadata) and
+    the projected full-corpus Tier-3 cost. `offline=True` renders the free-tier +
+    calibration sections only (no Tier-3 run yet — e.g. no Gemini key)."""
+    from datetime import datetime, timezone
+    lines: list[str] = []
+    ap = lines.append
+    ap(f"# Pilot report — {config.PROMPT_VERSION}")
+    ap("")
+    ap(f"_Generated {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+       + (" · FREE-TIERS + CALIBRATION ONLY (Tier 3 not run here)_" if offline else "_"))
+    ap("")
+    ap(f"- Pipeline: three-tier classifier over {calibration.get('vocab_total', 251)}-term"
+       " vocabulary; questions + passage_function DEFERRED")
+    ap(f"- Tier-3 model: {models.get('standard')} → escalates once to {models.get('core')}")
+    ap(f"- Evidence: sentence-id ({sentence_split.SPLITTER_VERSION}); MAX_TAGS={config.MAX_TAGS}")
+    ap("")
+
+    # ── Calibration ─────────────────────────────────────────────────────────
+    ap("## Tier-2 threshold calibration (vs the p1 pilot tags)")
+    ap("")
+    ap(f"Ground truth: run `{calibration.get('pilot_run_id')}` accepted Concept/Practice"
+       " tags. Sweep over the top-{} embedding shortlist per passage.".format(calibration.get("topk")))
+    ap("")
+    ap(f"- **T_accept = {calibration['t_accept']:.2f}** — measured precision"
+       f" **{_fmt(calibration.get('accept_precision'))}**"
+       f" (target ≥ {calibration.get('target_accept_precision')}),"
+       f" in-shortlist recall {_fmt(calibration.get('accept_recall_inshortlist'))}")
+    ap(f"- **T_reject = {calibration['t_reject']:.2f}** — retains"
+       f" **{_fmt(calibration.get('reject_recall_retained'))}** of in-shortlist positive"
+       f" tags (target ≥ {calibration.get('target_reject_recall')})")
+    ceiling = calibration.get("shortlist_recall_ceiling")
+    ap(f"- Shortlist recall ceiling: {_fmt(ceiling)} of accepted Concept/Practice pilot"
+       f" tags are reachable by a top-{calibration.get('topk')} embedding shortlist at all"
+       f" ({calibration.get('positives_in_shortlist')}/{calibration.get('positives_total')})")
+    ap("")
+    ap("| candidates | ≥ T_accept (auto-accept) | middle band (judged) | < T_reject (auto-drop) |")
+    ap("|---|---|---|---|")
+    ap(f"| {calibration.get('candidate_pairs')} | {calibration.get('pairs_auto_accepted')}"
+       f" | {calibration.get('pairs_judged')} | {calibration.get('pairs_auto_rejected')} |")
+    ap("")
+
+    # ── Per-tier counts on the pilot manifest ────────────────────────────────
+    ap("## Per-tier counts (pilot manifest)")
+    ap("")
+    ap(f"- Passages processed: **{free.get('passages')}**")
+    ap(f"- Tier 1 — exact aliases: **{free.get('tier1_tags')}** tags on"
+       f" {free.get('tier1_passages')} passages (free, $0)")
+    ap(f"- Tier 2 — auto-accepted (≥ T_accept): **{free.get('tier2_accept_tags')}** tags on"
+       f" {free.get('tier2_accept_passages')} passages (free, $0)")
+    ap(f"- Tier 2 — auto-rejected (< T_reject): **{free.get('auto_rejected_pairs')}** candidate"
+       " pairs dropped (free, $0)")
+    ap(f"- Tier 3 — judged (middle band): **{free.get('judged_pairs')}** candidate pairs across"
+       f" **{free.get('passages_needing_tier3')}** passages (the only paid tier)")
+    ap(f"- Free-tier-only passages (no Tier-3 call): {free.get('free_tier_passages_only')}")
+    ap("")
+
+    # ── Distribution health (merged tags_core) ───────────────────────────────
+    if not offline:
+        try:
+            stats = pilot_stats_from_db(prefix)
+            ap("## Distribution health (merged tags_core — Tiers 1+2+3)")
+            ap("")
+            ap(f"- Passages tagged: {stats['rows']}")
+            ap(f"- Distinct tags used: {stats['distinct_tags']} / {stats['vocab_total']}"
+               f" (coverage {stats['vocab_coverage']:.0%})")
+            ap(f"- Singleton share: {stats['singleton_share']:.0%};"
+               f" max single-tag share: {stats['max_tag_share']:.1%}")
+            ap(f"- Tags/passage (tagged): median {stats['tagged_median']}, p90"
+               f" {stats['tagged_p90']}, max {stats['tags_max']}; zero-tag {stats['zero_tag_rows']}")
+            ap(f"- Out-of-vocab rate: {stats['out_of_vocab_rate']:.2%}")
+            failures = distribution_failures if distribution_failures is not None \
+                else pilot_thresholds_pass(stats)
+            ap(f"- Distribution gates: {'PASS' if not failures else 'FAIL — ' + '; '.join(failures)}")
+            ap("")
+        except Exception as exc:  # noqa: BLE001
+            ap(f"## Distribution health\n\n_unavailable: {exc}_\n")
+
+    # ── Cost + projection ────────────────────────────────────────────────────
+    ap("## Cost (Tiers 1-2 = $0; Tier 3 from usageMetadata)")
+    ap("")
+    if offline:
+        ap("_Tier-3 not run in this environment (no Gemini key). Tiers 1-2 cost $0."
+           " Projected Tier-3 cost is computed from the middle-band volume below._")
+        ap("")
+    else:
+        pilot_tier3 = 0.0
+        by_model = pilot_cost_by_model(prefix)
+        for model, c in by_model.items():
+            usd = _model_usd(model, c["input_tokens"], c["output_tokens"])
+            usd_s = f"${usd:,.2f}" if usd is not None else "UNPRICED"
+            if usd:
+                pilot_tier3 += usd
+            ap(f"- {model}: {c['input_tokens']:,} in + {c['output_tokens']:,} out → {usd_s}"
+               f" ({c['rows']:,} rows)")
+        ap(f"- **True pilot Tier-3 cost: ${pilot_tier3:,.2f}**")
+        ap("")
+        # Projected full corpus: judged-passage rate × eligible passages × per-passage Tier-3 cost.
+        judged_passages = max(1, int(free.get("passages_needing_tier3") or 0))
+        try:
+            eligible = eligible_passage_count()
+            judged_rate = judged_passages / max(1, int(free.get("passages") or 1))
+            per_passage = pilot_tier3 / judged_passages
+            projected = eligible * judged_rate * per_passage
+            ap(f"- Eligible passages (corpus): {eligible:,}; judged-passage rate"
+               f" {judged_rate:.0%} → ~{int(eligible * judged_rate):,} Tier-3 calls")
+            ap(f"- **Projected full-corpus Tier-3 cost: ~${projected:,.2f}**"
+               f" (ceiling MAX_SPEND_USD=${config.MAX_SPEND_USD:,.0f})")
+        except Exception as exc:  # noqa: BLE001
+            ap(f"- Projection unavailable: {exc}")
+        ap("")
+
+    # ── Samples ──────────────────────────────────────────────────────────────
+    if not offline:
+        try:
+            samples = _pilot_samples(config.PILOT_SAMPLE_ROWS, run_id=run_id, shard_key_prefix=prefix)
+            ap(f"## {len(samples)} random samples (human skim)")
+            ap("")
+            for s in samples:
+                ap(f"- **{s['table']}** `{s['id']}` — {', '.join(s['tags']) or '(no tags)'}")
+        except Exception as exc:  # noqa: BLE001
+            ap(f"## Samples\n\n_unavailable: {exc}_")
+
+    config.PILOT_REPORT_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _fmt(x) -> str:
+    """Percent-ish formatter that tolerates None."""
+    return f"{x:.3f}" if isinstance(x, (int, float)) else "n/a"
 
 
 def write_pilot_report(stats: dict, failures: list[str], models,

@@ -81,6 +81,15 @@ ALTER TABLE public.tag_batch_jobs ADD COLUMN IF NOT EXISTS cost_thought_tok bigi
 -- here for audit; the splitter version is recorded in tag_runs.config.
 ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS evidence_sentence_id text;
 
+-- v4-tiered: every tag records WHICH tier assigned it and its confidence.
+--   method='exact_alias'  confidence=1.0             (Tier 1, Person/Place/Scripture)
+--   method='semantic'     confidence=cosine-similarity (Tier 2 auto-accept)
+--   method='llm_confirmed' confidence=NULL           (Tier 3 judge — binary confirm)
+-- Rejected candidates keep accepted=false with a reject_reason (e.g. an out-of-
+-- vocabulary tag, or a Tier-2/Tier-3 drop) so the full decision trail is audited.
+ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS method     text;
+ALTER TABLE public.tag_evidence ADD COLUMN IF NOT EXISTS confidence real;
+
 -- passage_function (additive, killable, hidden metadata) on the five content
 -- tables — ONE primary value per passage from the closed enum in config.py,
 -- enforced in harness code, never by a constraint. (v3.p2+: verse_chunks are
@@ -237,6 +246,18 @@ def finish_run(run_id: str, notes: str = "") -> None:
         )
 
 
+def merge_run_config(run_id: str, extra: dict) -> None:
+    """Shallow-merge `extra` into tag_runs.config (jsonb `||`). Used to record the
+    v4-tiered calibration (chosen thresholds + measured precision/recall) and the
+    free-tier counts on the run, so the audit snapshot is self-describing."""
+    import json
+    with db.get_pg().cursor() as cur:
+        cur.execute(
+            "UPDATE public.tag_runs SET config = config || %s::jsonb WHERE id=%s::uuid",
+            (json.dumps(extra), run_id),
+        )
+
+
 def supersede_prior_runs(current_run_id: str) -> int:
     """Freeze any UNFINISHED run with a different prompt_version (e.g. the v3.p1
     pilot) by stamping finished_at + a 'superseded by <this prompt>' note. Its
@@ -255,7 +276,10 @@ def supersede_prior_runs(current_run_id: str) -> int:
 
 def record_evidence(run_id: str, records: list[tuple]) -> None:
     """records: (table_name, passage_id, tag, evidence, accepted, reject_reason,
-    evidence_found, evidence_start, evidence_end) — matches tagging.apply_results."""
+    evidence_found, evidence_start, evidence_end, evidence_sentence_id, method,
+    confidence) — the canonical tag_evidence tuple (matches tagging._write_outcomes).
+    Kept for standalone/ad-hoc writes; the live pipeline writes evidence inside
+    the atomic apply transaction in tagging._write_outcomes, not here."""
     if not records:
         return
     conn = db.get_pg()
@@ -264,7 +288,8 @@ def record_evidence(run_id: str, records: list[tuple]) -> None:
             cur.executemany(
                 "INSERT INTO public.tag_evidence"
                 " (run_id, table_name, passage_id, tag, evidence, accepted, reject_reason,"
-                "  evidence_found, evidence_start, evidence_end)"
-                " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s)",
+                "  evidence_found, evidence_start, evidence_end, evidence_sentence_id,"
+                "  method, confidence)"
+                " VALUES (%s::uuid, %s, %s::uuid, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 [(run_id, *r) for r in records],
             )

@@ -1,4 +1,44 @@
-# Tags & FTS Rebuild — offline batch harness (v3.p3-hybrid)
+# Tags & FTS Rebuild — offline batch harness (v4-tiered)
+
+> **v4-tiered (current)** replaces the single generative Gemini pass with a
+> **three-tier classifier** over the same frozen 251-term vocabulary. Only the
+> third tier costs money.
+>
+> - **Tier 1 — EXACT ALIASES (free, no LLM).** Person/Place/Scripture terms are
+>   matched by term + variants against the passage sentences (word-boundary,
+>   diacritic-insensitive — the `fold_text`/fts_core normalization). A hit →
+>   `method='exact_alias'`, `confidence=1.0`, evidence = the first matching
+>   sentence (id + offsets).
+> - **Tier 2 — EMBEDDING SHORTLIST (free, no LLM).** Concept/Practice terms are
+>   ranked by cosine similarity (`embedding_context4` ↔ `vocab_terms.embedding`);
+>   top 12 per passage. Two thresholds, **calibrated against the p1 pilot tags**
+>   (run `63c99428…`), band each candidate: ≥ **T_accept** → auto-assign
+>   (`method='semantic'`, `confidence=similarity`); < **T_reject** → drop; the
+>   middle band → Tier 3. Calibrated defaults **T_accept=0.47** (measured
+>   precision 0.80), **T_reject=0.22** (retains 0.96 of in-shortlist positives).
+> - **Tier 3 — LLM JUDGE (the only paid part).** `gemini-3-flash-preview` for all
+>   rows; retry once → escalate once to `gemini-3.5-flash` → quarantine. The
+>   prompt shows ONLY the middle-band candidates (slug + scope note + shortlisted
+>   hard-negative partners); output is exactly
+>   `{"tags":[{"slug","evidence_sentence_id"}]}` (zero tags valid),
+>   `thinkingLevel=LOW`, small output cap (~512). `method='llm_confirmed'`.
+>
+> Book-based **core/standard routing is gone** — this is pure classification, so
+> the ladder is a Tier-3 model escalation, not a per-book choice. **Questions and
+> `passage_function` are DEFERRED** (columns stay; nothing is generated now).
+> **Writes:** `tags_core[]` is the fast merged copy (Tiers 1+2+3, highest
+> confidence first, capped at `MAX_TAGS`, materialized from `tag_evidence`);
+> `tag_evidence` gains **`method` + `confidence`**; `tag_passage_outcomes` tracks
+> completion exactly as in p3. The 251-term vocabulary, sentence splitter,
+> provenance gating, row-level completion, retrieval-time spend accounting and
+> the $325 ceiling all carry over unchanged. `python run_all.py --pilot-only`
+> runs the full tiered pipeline on the existing 2,000-row manifest and STOPS.
+>
+> **Queue-wait fix:** on HTTP 429 (batch queue full) at create time, submission
+> now WAITS — polling in-flight jobs every 5 min and retrying when a slot frees —
+> across **bakeoff, pilot and full** paths (previously bakeoff crashed).
+
+# Legacy harness (v3.p3-hybrid) — retained below for reference
 
 Offline Python harness for the search-data rebuild. Runs locally or in a
 sandbox, never on Vercel. One command drives the whole build, resumably.
@@ -215,7 +255,8 @@ verbatim text.
 run_all.py            orchestrator: --doctor / --resume / --yes / --revalidate-pilot
                       / --pilot-only / --bakeoff-model / --bakeoff-route / --accept-quarantine
 config.py             .env loading, routed model strings, per-model price map, tuning
-routing.py            core/standard routing rules + SQL fragments (pure, offline-testable)
+tiers.py              v4-tiered: Tier-1 exact aliases + Tier-2 shortlist/banding + calibration + merge + free-tier writer
+routing.py            core/standard routing rules + SQL fragments (pure; collapses to 'standard' under v4 PURE_CLASSIFICATION)
 db.py                 Session-Pooler psycopg + service-key supabase clients
 provenance.json       ⚖ the manifest (single source of truth for gating)
 provenance.py         manifest interpreter + transcript speaker walk
@@ -233,7 +274,17 @@ doctor.py             read-only readiness checklist (per-model pricing, routing 
 .env.example          template for scripts/tags-rebuild/.env (git-ignored)
 ```
 
-## Status (2026-07-19)
+## Status (2026-07-20)
+- **Harness v4-tiered: DONE** (this change) — three-tier classifier replacing the
+  generative pass. Tiers 1–2 (exact aliases + embedding shortlist) are free; Tier 3
+  is the LLM judge over the calibrated middle band. `tag_evidence` gains
+  `method`+`confidence`; `tags_core` is the merged Tiers 1+2+3 copy; questions +
+  `passage_function` DEFERRED. Bakeoff now shares the 5-min queue-wait on 429.
+  Free-tiers + calibration were **measured live** (see `PILOT_v4_CALIBRATION.md`):
+  T_accept=0.47 (precision 0.800), T_reject=0.22 (retains 0.962); Tier 1 tagged
+  1,298/1,722 pilot passages for $0; 1,688 passages (98%) fall to the judge;
+  projected full-corpus Tier-3 ≈ $115–215 (< $325). The paid Tier-3 pilot is a
+  keyed maintainer step (`python run_all.py --pilot-only`).
 - **Phase 2 (columns + support tables): DONE** (migration `20260708120000_…`).
 - **Phase 3 (fts_core trigger + diacritic fix): mechanism DONE + verified.**
 - **Harness v3.p1: DONE**, pilot RAN (run `63c99428…`) and exposed defects.
