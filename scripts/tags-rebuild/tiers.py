@@ -239,11 +239,14 @@ def merge_tags(tier1: list[str], tier2_accept: list[str], tier3: list[str],
 
 # ── DB runners (Tier 2 shortlist, calibration, free-tier writer) ─────────────
 
-def _content_embedding_union(alias: str = "pe") -> str:
+def _content_embedding_union() -> str:
     """UNION ALL of (table, id, embedding_context4) over the content tables — the
-    calibration reads pilot passages that span several tables at once."""
+    calibration reads pilot passages that span several tables at once. Rows with
+    no embedding are excluded (they can never be shortlisted, and a NULL sim would
+    crash the float() in _calibration_pairs)."""
     return " UNION ALL ".join(
         f"SELECT '{t}'::text tbl, id, embedding_context4 e FROM public.{t}"
+        f" WHERE embedding_context4 IS NOT NULL"
         for t in config.GEMINI_TABLES
     )
 
@@ -280,10 +283,10 @@ def _calibration_pairs(pilot_run_id: str, topk: int) -> list[tuple[float, bool]]
         " pilot AS (SELECT DISTINCT table_name tbl, passage_id FROM public.tag_evidence"
         "           WHERE run_id = %s::uuid),"
         " cp AS (SELECT slug, embedding FROM public.vocab_terms"
-        "        WHERE embedding IS NOT NULL AND facet = ANY(%s)),"
+        "        WHERE embedding IS NOT NULL AND NOT is_ai AND facet = ANY(%s)),"
         " pos AS (SELECT e.passage_id, e.tag FROM public.tag_evidence e"
         "         JOIN public.vocab_terms v ON v.slug = e.tag"
-        "         WHERE e.run_id = %s::uuid AND e.accepted AND v.facet = ANY(%s)),"
+        "         WHERE e.run_id = %s::uuid AND e.accepted AND NOT v.is_ai AND v.facet = ANY(%s)),"
         " ranked AS (SELECT p.passage_id, cp.slug, 1 - (pe.e <=> cp.embedding) sim,"
         "   row_number() OVER (PARTITION BY p.passage_id ORDER BY pe.e <=> cp.embedding) rk"
         "   FROM pilot p JOIN pe ON pe.tbl = p.tbl AND pe.id = p.passage_id CROSS JOIN cp)"
@@ -312,7 +315,7 @@ def calibrate_tier2_thresholds(pilot_run_id: str | None = None,
     # top-`topk` embedding shortlist can reach at all (its structural limit).
     total_pos = db.one(
         "SELECT count(*) FROM public.tag_evidence e JOIN public.vocab_terms v ON v.slug = e.tag"
-        " WHERE e.run_id = %s::uuid AND e.accepted AND v.facet = ANY(%s)",
+        " WHERE e.run_id = %s::uuid AND e.accepted AND NOT v.is_ai AND v.facet = ANY(%s)",
         (pilot_run_id, sorted(config.TIER2_FACETS)),
     ) or 0
     result["positives_total"] = int(total_pos)
