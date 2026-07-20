@@ -211,6 +211,16 @@ def test_queue_wait_covers_bakeoff():
     assert "def _inflight_jobs_from_db" in TAGGING_SRC
 
 
+def test_both_entrypoints_dispatch_to_v4_pilot():
+    # BOTH `--pilot-only` (pilot_only) AND the full pipeline (main) must branch to
+    # run_pilot_v4 under pure classification — otherwise `python run_all.py` would
+    # silently run the legacy generative pilot and skip calibration + free tiers.
+    import run_all
+    src = Path(run_all.__file__).read_text()
+    assert src.count("run_pilot_v4(run_id, models, vocab_index)") >= 2
+    assert src.count("if config.PURE_CLASSIFICATION:\n        run_pilot_v4") == 2
+
+
 def test_shortlist_query_restricts_to_tier2_facets():
     # Tier 2 ranks ONLY Concept/Practice terms (entities never enter the judge).
     assert "facet = ANY(%s)" in TIERS_SRC

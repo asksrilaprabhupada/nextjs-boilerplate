@@ -39,14 +39,14 @@ Steps (each idempotent):
   ⛔  THE ONE GATE: review vocabulary.json — terms, scope notes AND the MERGES
       section (veto a merge by editing the file) — then press Enter
       (skipped by --yes)
-  3. pilot (v3.p3-hybrid)            (EXACT 2,000-row manifest: all p1-failures +
+  3. pilot (v4-tiered when PURE_CLASSIFICATION, else v3.p3-hybrid)
+                                     (EXACT 2,000-row manifest: all p1-failures +
                                       matched p1-successes + fresh, stratified by
-                                      table × length quartile, ROUTE-SPLIT per
-                                      model; validate FILES before any DB content
-                                      write; first-pass validity is DIAGNOSTIC;
-                                      retry invalid/missing rows once on their own
-                                      model, escalate still-invalid standard rows
-                                      once to MODEL_CORE; require 100% row-level
+                                      table × length quartile. v4: calibrate
+                                      Tier-2 thresholds → apply the free Tiers 1-2
+                                      → judge the middle band with Tier 3, retry
+                                      once then escalate once to MODEL_CORE; require
+                                      100% row-level
                                       validity + distribution gates; apply
                                       atomically; pilot-report.md with per-model
                                       true cost incl. thinking + per-route
@@ -595,7 +595,10 @@ def main() -> int:
         print(f"  froze {superseded} prior run(s) as superseded by {config.PROMPT_VERSION}.", flush=True)
     print(f"  tag run: {run_id} · prompt {config.PROMPT_VERSION} · vocab {audit.vocab_version()}", flush=True)
 
-    run_pilot(run_id, models, vocab_index)
+    if config.PURE_CLASSIFICATION:
+        run_pilot_v4(run_id, models, vocab_index)
+    else:
+        run_pilot(run_id, models, vocab_index)
 
     complete = run_full(run_id, vocab_index, accept_quarantine=args.accept_quarantine)
     if not complete:
