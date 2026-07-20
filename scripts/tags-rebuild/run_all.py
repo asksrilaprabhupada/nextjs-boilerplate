@@ -207,6 +207,93 @@ def run_pilot(run_id: str, models: dict, vocab_index) -> None:
     )
 
 
+def run_pilot_v4(run_id: str, models: dict, vocab_index) -> None:
+    """v4-tiered pilot (PURE CLASSIFICATION): calibrate → plan the 2,000-row
+    manifest → apply the two FREE tiers → run the Tier-3 judge (retry once →
+    escalate once → validity gate → atomic apply) → distribution gates + report.
+    Tiers 1-2 cost $0; only Tier 3 (the middle-band judge) spends. Stops after
+    the pilot — the full corpus is a separate, explicit step."""
+    import audit
+    import sentences
+    import tagging
+    import tiers
+
+    prefix = tagging.pilot_prefix(run_id)
+    if tagging.pilot_done(prefix) and config.PILOT_REPORT_PATH.exists():
+        print("Step 3 · pilot: already complete (pilot-report.md exists).", flush=True)
+        return
+
+    # 1) Calibrate Tier-2 thresholds from the frozen p1 pilot tags (free, no LLM).
+    print("Step 3 · v4-tiered pilot — calibrating Tier-2 thresholds vs the p1 pilot…", flush=True)
+    cal = tiers.calibrate_tier2_thresholds()
+    config.TIER2_ACCEPT = cal["t_accept"]
+    config.TIER2_REJECT = cal["t_reject"]
+    cal["vocab_total"] = vocab_index.term_count
+    audit.merge_run_config(run_id, {
+        "pipeline": "v4-tiered",
+        "splitter": sentences.SPLITTER_VERSION,
+        "tier2_thresholds": {"t_accept": cal["t_accept"], "t_reject": cal["t_reject"]},
+        "tier2_calibration": {k: cal.get(k) for k in (
+            "pilot_run_id", "topk", "accept_precision", "reject_recall_retained",
+            "shortlist_recall_ceiling", "positives_total", "positives_in_shortlist")},
+    })
+    print(f"  T_accept={cal['t_accept']:.2f} (precision {cal.get('accept_precision')}),"
+          f" T_reject={cal['t_reject']:.2f} (retains {cal.get('reject_recall_retained')}"
+          " of in-shortlist positives)", flush=True)
+
+    # 2) Plan the EXACT 2,000-row manifest (same cohort as p3; all rows 'standard').
+    tagging.plan_pilot_shards(run_id)
+
+    # 3) Tiers 1-2 (FREE): exact aliases + auto-accepts → tag_evidence + tags_core.
+    free = tiers.apply_free_tiers(run_id, vocab_index, cal["t_accept"], cal["t_reject"])
+    audit.merge_run_config(run_id, {"free_tiers": free})
+    print(f"  Tiers 1-2 (free, $0): {free['tier1_tags']} exact-alias tags,"
+          f" {free['tier2_accept_tags']} auto-accepts; {free['judged_pairs']} pairs to judge"
+          f" across {free['passages_needing_tier3']} passages", flush=True)
+
+    # 4) Tier 3 (PAID): submit → collect (no apply) → retry once → escalate once.
+    tagging.reconcile()
+    tagging.submit_pending(vocab_index, run_id)
+    tagging.collect(run_id, prefix, apply=False)
+    scan = tagging.scan_pilot_results(prefix)
+    if scan["files"] and scan["stats"]:
+        print(f"  Tier-3 first-pass schema validity: {scan['stats']['schema_valid_rate']:.2%}"
+              " (diagnostic)", flush=True)
+    if tagging.plan_pilot_retry(run_id):
+        tagging.reconcile()
+        tagging.submit_pending(vocab_index, run_id)
+        tagging.collect(run_id, prefix, apply=False)
+    if tagging.plan_pilot_escalation(run_id):
+        tagging.reconcile()
+        tagging.submit_pending(vocab_index, run_id)
+        tagging.collect(run_id, prefix, apply=False)
+
+    # 5) THE GATE: 100% Tier-3 row-level validity after retry + escalation.
+    still = tagging.pilot_final_failures(prefix, run_id=run_id)
+    n_still = sum(len(v) for v in still.values())
+    if n_still > 0:
+        tagging.write_pilot_report_v4(
+            run_id, prefix, cal, free, models,
+            distribution_failures=[f"{n_still} Tier-3 row(s) still invalid after retry + escalation"])
+        raise SystemExit(
+            f"⛔ PILOT: {n_still} Tier-3 row(s) still invalid after retry + escalation."
+            f" Tiers 1-2 are written; Tier-3 was NOT applied. See {config.PILOT_REPORT_PATH}")
+
+    # 6) Apply the Tier-3 judgments atomically — tags_core becomes the merge of
+    #    Tiers 1+2+3 (recomputed from tag_evidence).
+    tagging.apply_pilot_bundle(run_id, prefix, vocab_index)
+
+    # 7) Distribution gates on the MERGED tags_core + the full report.
+    stats = tagging.pilot_stats_from_db(prefix)
+    dist = tagging.pilot_thresholds_pass(stats)
+    tagging.write_pilot_report_v4(run_id, prefix, cal, free, models, distribution_failures=dist)
+    if dist:
+        print(f"  ⚠ distribution gate(s): {'; '.join(dist)} (reported, not rolled back —"
+              " the free tiers are deterministic and Tier-3 passed validity)", flush=True)
+    print("  v4 pilot applied. The full corpus is NOT started (explicit separate step)."
+          f" Report: {config.PILOT_REPORT_PATH}", flush=True)
+
+
 def revalidate_pilot() -> int:
     """No-cost re-validation of an ALREADY-banked pilot. Re-scans the banked
     shards/pilot_*.results.jsonl files, recomputes the pilot gates AND the
@@ -291,6 +378,25 @@ def run_full(run_id: str, vocab_index, accept_quarantine: bool = False) -> bool:
 
     print("Step 4 · full tagging run (row-level completion)…", flush=True)
     prefix = tagging.full_prefix(run_id)
+
+    if config.PURE_CLASSIFICATION:
+        # v4-tiered: calibrate the Tier-2 thresholds (free, deterministic — same
+        # result every resume) and apply the two FREE tiers over the WHOLE corpus
+        # exactly once before the paid Tier-3 wave loop. The guard is a marker in
+        # tag_runs.config so a resume never re-scans all 244k passages.
+        import audit
+        import tiers
+        cal = tiers.calibrate_tier2_thresholds()
+        config.TIER2_ACCEPT, config.TIER2_REJECT = cal["t_accept"], cal["t_reject"]
+        done = db.one("SELECT (config->>'free_tiers_full_done') FROM public.tag_runs WHERE id=%s::uuid",
+                      (run_id,))
+        if not done:
+            print("  applying Tiers 1-2 across the full corpus (free, $0)…", flush=True)
+            summary = tiers.apply_free_tiers(
+                run_id, vocab_index, cal["t_accept"], cal["t_reject"],
+                manifest=tiers.all_eligible_ids())
+            audit.merge_run_config(run_id, {"free_tiers_full": summary, "free_tiers_full_done": True})
+
     for _ in range(MAX_WAVES_PER_INVOCATION):
         tagging.reconcile()
         tagging.plan_full_shards(run_id)
@@ -389,7 +495,10 @@ def pilot_only() -> int:
         print(f"  froze {superseded} prior run(s) as superseded by {config.PROMPT_VERSION}.", flush=True)
     print(f"  tag run: {run_id} · prompt {config.PROMPT_VERSION} · vocab {audit.vocab_version()}", flush=True)
 
-    run_pilot(run_id, models, vocab_index)
+    if config.PURE_CLASSIFICATION:
+        run_pilot_v4(run_id, models, vocab_index)
+    else:
+        run_pilot(run_id, models, vocab_index)
 
     print(
         f"\nPILOT COMPLETE ({config.PROMPT_VERSION}). The full corpus run was NOT started"
