@@ -37,6 +37,14 @@ retains ≥ 0.95 of the in-shortlist positive tags.
   Concept/Practice pilot tags rank inside a top-12 embedding shortlist at all;
   the other ~28% are structurally unreachable by embedding shortlisting (they
   are why Tier 3, not Tier 2, does the heavy lifting).
+- **Shortlist width is a config (`TIER2_SHORTLIST_K`, default 12).** The numbers
+  above are the **pilot** width (k=12), the width the judge mechanism was
+  validated on. The **full run widens to `TIER2_SHORTLIST_K_FULL`=20** and
+  **recalibrates T_accept/T_reject against the k=20 shortlist at full-run start**
+  (identical sweep + targets + p1 ground truth). Measured on the live DB the
+  recall ceiling rises **k12=0.719 → k20=0.823**: width only adds candidates to
+  the middle band the judge resolves — it does not change the row-level gates,
+  which stay active throughout the full run.
 - **Finding:** pure embedding similarity is a *weak* signal for these tags — even
   at cosine ≥ 0.48 precision is only ~0.81. So Tier 2 auto-accepts a tiny
   high-precision head, auto-rejects a low tail, and hands the large ambiguous

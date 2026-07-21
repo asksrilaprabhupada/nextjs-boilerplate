@@ -41,7 +41,10 @@ def test_v4_config_constants():
     assert config.PROMPT_VERSION == "asp-tags-v4-tiered"
     assert config.TIER1_FACETS == config.ENTITY_FACETS == {"Person", "Place", "Scripture"}
     assert config.TIER2_FACETS == {"Concept", "Practice"}
-    assert config.TIER2_TOPK == 12
+    # Tier-2 shortlist width is a config: the pilot default is 12 (the width the
+    # judge mechanism was validated on); the full run widens to 20.
+    assert config.TIER2_SHORTLIST_K == 12
+    assert config.TIER2_SHORTLIST_K_FULL == 20
     assert 0.0 < config.TIER2_REJECT < config.TIER2_ACCEPT < 1.0
     assert config.TIER3_MODEL == config.MODEL_STANDARD == "gemini-3-flash-preview"
     assert config.TIER3_ESCALATION_MODEL == config.MODEL_CORE == "gemini-3.5-flash"
@@ -215,10 +218,13 @@ def test_both_entrypoints_dispatch_to_v4_pilot():
     # BOTH `--pilot-only` (pilot_only) AND the full pipeline (main) must branch to
     # run_pilot_v4 under pure classification — otherwise `python run_all.py` would
     # silently run the legacy generative pilot and skip calibration + free tiers.
+    # Both now thread --accept-quarantine through (trailing `,` after vocab_index).
     import run_all
     src = Path(run_all.__file__).read_text()
-    assert src.count("run_pilot_v4(run_id, models, vocab_index)") >= 2
+    assert src.count("run_pilot_v4(run_id, models, vocab_index") >= 2
     assert src.count("if config.PURE_CLASSIFICATION:\n        run_pilot_v4") == 2
+    # …and both call sites pass the flag explicitly.
+    assert src.count("run_pilot_v4(run_id, models, vocab_index, accept_quarantine=") == 2
 
 
 def test_shortlist_query_restricts_to_tier2_facets():
@@ -226,3 +232,130 @@ def test_shortlist_query_restricts_to_tier2_facets():
     assert "facet = ANY(%s)" in TIERS_SRC
     assert "attach_shortlists_v4" in TAGGING_SRC
     assert "TIER2_REJECT <= sim < config.TIER2_ACCEPT" in TAGGING_SRC
+
+
+# ── Fix 3: shortlist width is a config (default 12; full run widens to 20) ────
+
+def test_shortlist_width_config_replaces_topk():
+    # The active width is the config; the legacy hard-coded TIER2_TOPK is gone from
+    # the code paths (only the back-compat env alias inside config.py may name it).
+    assert "config.TIER2_SHORTLIST_K" in TIERS_SRC and "config.TIER2_TOPK" not in TIERS_SRC
+    assert "config.TIER2_SHORTLIST_K" in TAGGING_SRC and "config.TIER2_TOPK" not in TAGGING_SRC
+
+
+def test_calibration_and_shortlist_default_to_active_width():
+    # Both the calibrator and the shortlist reader default topk to the ACTIVE width,
+    # so setting config.TIER2_SHORTLIST_K (full run) flows to calibration + banding.
+    assert "topk = topk or config.TIER2_SHORTLIST_K" in TIERS_SRC
+    assert TIERS_SRC.count("topk = topk or config.TIER2_SHORTLIST_K") == 2
+
+
+def test_full_run_widens_then_recalibrates():
+    # run_full must set the active width to the FULL value BEFORE it recalibrates,
+    # so calibration sweeps the k=20 shortlist (same sweep, same targets).
+    import run_all
+    src = Path(run_all.__file__).read_text()
+    widen = src.index("config.TIER2_SHORTLIST_K = config.TIER2_SHORTLIST_K_FULL")
+    recal = src.index("cal = tiers.calibrate_tier2_thresholds()", widen)
+    assert 0 <= widen < recal
+    # the recalibrated thresholds + width are recorded for the audit trail.
+    assert "tier2_shortlist_k_full" in src and "tier2_thresholds_full" in src
+
+
+# ── Fix 1 + 2: quarantine listing + --accept-quarantine in the pilot ──────────
+
+def test_pilot_report_v4_renders_quarantine_and_rich_samples():
+    # The v4 report gained the quarantine listing (table · id · per-attempt
+    # finishReason/blockReason history · excerpt) and the raw `other` signal, plus
+    # samples that show method + evidence sentence — all previously missing.
+    assert "def write_pilot_report_v4(" in TAGGING_SRC
+    assert "unresolved: dict | None = None" in TAGGING_SRC
+    assert "accepted_quarantine: bool = False" in TAGGING_SRC
+    assert "## Quarantine — rows still invalid after retry + escalation" in TAGGING_SRC
+    assert "pilot_quarantine_listing(prefix, unresolved)" in TAGGING_SRC
+    assert "_failure_reason_lines(scan_pilot_results(prefix))" in TAGGING_SRC
+    # rich samples: method + evidence sentence per accepted tag.
+    assert "method {method_s} · evidence" in TAGGING_SRC
+    assert "coalesce(method, '')" in TAGGING_SRC
+
+
+def test_pilot_only_and_run_pilot_v4_honor_accept_quarantine():
+    import run_all
+    src = Path(run_all.__file__).read_text()
+    # signatures + plumbing.
+    assert "def run_pilot_v4(run_id: str, models: dict, vocab_index, accept_quarantine: bool = False)" in src
+    assert "def pilot_only(accept_quarantine: bool = False)" in src
+    assert "pilot_only(accept_quarantine=args.accept_quarantine)" in src
+    # refuse ONLY without the flag; otherwise apply + quarantine + continue.
+    assert "if n_still > 0 and not accept_quarantine:" in src
+    assert "quarantined = tagging.quarantine_exhausted(run_id)" in src
+    assert "accepted_quarantine=bool(n_still)" in src
+
+
+def _write(path, lines):
+    path.write_text("".join(lines), encoding="utf-8")
+
+
+def test_pilot_quarantine_listing_reconstructs_full_history(tmp_path, monkeypatch):
+    import json
+
+    prefix = "pilot:v4:abc12345:"
+    base = prefix.replace(":", "_")
+    std, core = config.MODEL_STANDARD, config.MODEL_CORE
+
+    def rline(key, finish=None, block=None, err=None):
+        if err:
+            return json.dumps({"key": key, "error": err}) + "\n"
+        cand = {"content": {"parts": [{"text": "not valid json"}]}}
+        if finish:
+            cand["finishReason"] = finish
+        resp = {"key": key, "response": {"candidates": [cand], "usageMetadata": {}}}
+        if block:
+            resp["response"]["promptFeedback"] = {"blockReason": block}
+        return json.dumps(resp) + "\n"
+
+    # Row A: attempt 1 RECITATION (std) → 2 SAFETY (std) → 3 escalated, RECITATION (core).
+    _write(tmp_path / f"{base}{std}_verses_000.results.jsonl",
+           [rline("verses|A", finish="RECITATION"), rline("verses|B", finish="MAX_TOKENS")])
+    _write(tmp_path / f"{base}retry_{std}_verses_000.results.jsonl",
+           [rline("verses|A", finish="SAFETY"), rline("verses|B")])  # B: no signal → MALFORMED_JSON
+    _write(tmp_path / f"{base}esc_{core}_verses_000.results.jsonl",
+           [rline("verses|A", finish="RECITATION"), rline("verses|B", block="SAFETY")])
+
+    monkeypatch.setattr(config, "SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(tagging, "load_passages", lambda table, ids: [
+        tagging.Passage(table, pid, f"Body of {pid}. " * 20, "HIS", False) for pid in ids])
+
+    still = {(std, "verses"): ["A", "B"]}
+    listing = tagging.pilot_quarantine_listing(prefix, still)
+
+    assert [r["passage_id"] for r in listing] == ["A", "B"]
+    a = next(r for r in listing if r["passage_id"] == "A")
+    # attempts ordered 1→3, reconstructed across first-pass/retry/esc files.
+    assert [x["attempt"] for x in a["attempts"]] == [1, 2, 3]
+    assert [x["bucket"] for x in a["attempts"]] == [
+        "RECITATION", "SAFETY/PROMPT_BLOCKED", "RECITATION"]
+    assert a["attempts"][2]["model"] == core   # attempt 3 escalated to the core model
+    assert a["excerpt"].startswith("Body of A")
+    b = next(r for r in listing if r["passage_id"] == "B")
+    assert [x["bucket"] for x in b["attempts"]] == [
+        "MAX_TOKENS", "MALFORMED_JSON", "SAFETY/PROMPT_BLOCKED"]
+
+
+def test_pilot_quarantine_listing_logs_other_raw_signal(tmp_path, monkeypatch):
+    import json
+
+    prefix = "pilot:v4:def67890:"
+    base = prefix.replace(":", "_")
+    std = config.MODEL_STANDARD
+    # A transport/API error (no JSON symptom, no recognized finish/block reason)
+    # lands in the `other` bucket — its raw signal MUST be kept inline (never lost).
+    line = json.dumps({"key": "verses|Z",
+                       "error": {"code": 503, "message": "backend unavailable"}}) + "\n"
+    _write(tmp_path / f"{base}{std}_verses_000.results.jsonl", [line])
+    monkeypatch.setattr(config, "SHARDS_DIR", tmp_path)
+    monkeypatch.setattr(tagging, "load_passages", lambda table, ids: [])
+    listing = tagging.pilot_quarantine_listing(prefix, {(std, "verses"): ["Z"]})
+    (attempt,) = listing[0]["attempts"]
+    assert attempt["bucket"] == "other"
+    assert "backend unavailable" in attempt["raw"]

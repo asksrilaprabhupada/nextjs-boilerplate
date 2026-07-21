@@ -27,9 +27,12 @@ continues exactly where the previous invocation stopped.
                                    + .json comparing against the banked p2 (3.5 Flash)
                                    results. Needs the maintainer-local banked p2 files.
     python run_all.py --accept-quarantine
-                                   let the run finish + finalize although quarantined
-                                   (unresolved) rows exist — they are listed loudly; every
-                                   other unresolved state still refuses.
+                                   let the PILOT, the full run and finalize proceed although
+                                   quarantined (unresolved) rows exist. In the pilot this
+                                   applies Tier-3 for the resolved rows and records the
+                                   still-invalid rows as unresolved (loudly listed, never
+                                   counted complete) instead of refusing. Every other
+                                   unresolved state still refuses.
 
 Steps (each idempotent):
   1. fts_core backfill               (touch rows WHERE fts_core IS NULL)
@@ -207,12 +210,20 @@ def run_pilot(run_id: str, models: dict, vocab_index) -> None:
     )
 
 
-def run_pilot_v4(run_id: str, models: dict, vocab_index) -> None:
+def run_pilot_v4(run_id: str, models: dict, vocab_index, accept_quarantine: bool = False) -> None:
     """v4-tiered pilot (PURE CLASSIFICATION): calibrate → plan the 2,000-row
     manifest → apply the two FREE tiers → run the Tier-3 judge (retry once →
     escalate once → validity gate → atomic apply) → distribution gates + report.
     Tiers 1-2 cost $0; only Tier 3 (the middle-band judge) spends. Stops after
-    the pilot — the full corpus is a separate, explicit step."""
+    the pilot — the full corpus is a separate, explicit step.
+
+    Row-level validity gate: rows still invalid after retry + escalation are the
+    QUARANTINE list. Without --accept-quarantine the pilot REFUSES (nothing
+    applied) and lists them in full (table · id · per-attempt finishReason/
+    blockReason · excerpt). WITH --accept-quarantine it applies Tier-3 for every
+    RESOLVED row, records the still-invalid rows as `quarantined` (UNRESOLVED,
+    never counted complete, still listed loudly), recomputes the merged tags_core,
+    and regenerates the report with real distribution stats + the random samples."""
     import audit
     import sentences
     import tagging
@@ -268,25 +279,50 @@ def run_pilot_v4(run_id: str, models: dict, vocab_index) -> None:
         tagging.submit_pending(vocab_index, run_id)
         tagging.collect(run_id, prefix, apply=False)
 
-    # 5) THE GATE: 100% Tier-3 row-level validity after retry + escalation.
+    # 5) THE GATE: 100% Tier-3 row-level validity after retry + escalation. Rows
+    #    still invalid are the QUARANTINE list — always listed in full.
     still = tagging.pilot_final_failures(prefix, run_id=run_id)
     n_still = sum(len(v) for v in still.values())
-    if n_still > 0:
+    if n_still > 0 and not accept_quarantine:
+        # Refuse: nothing is applied. The report carries the explicit quarantine
+        # listing (table · id · per-attempt finishReason/blockReason · excerpt) +
+        # the raw signal for every `other`-bucketed row.
         tagging.write_pilot_report_v4(
             run_id, prefix, cal, free, models,
-            distribution_failures=[f"{n_still} Tier-3 row(s) still invalid after retry + escalation"])
+            distribution_failures=[f"{n_still} Tier-3 row(s) still invalid after retry + escalation"],
+            unresolved=still)
         raise SystemExit(
             f"⛔ PILOT: {n_still} Tier-3 row(s) still invalid after retry + escalation."
-            f" Tiers 1-2 are written; Tier-3 was NOT applied. See {config.PILOT_REPORT_PATH}")
+            f" Tiers 1-2 are written; Tier-3 was NOT applied. The still-invalid rows are"
+            f" listed in full in {config.PILOT_REPORT_PATH}. Rerun with --accept-quarantine"
+            " to apply the resolved rows and record these as unresolved.")
 
-    # 6) Apply the Tier-3 judgments atomically — tags_core becomes the merge of
-    #    Tiers 1+2+3 (recomputed from tag_evidence).
+    # 6) Apply the Tier-3 judgments for every RESOLVED row atomically — tags_core
+    #    becomes the merge of Tiers 1+2+3 (recomputed from tag_evidence). Under
+    #    --accept-quarantine with still-invalid rows present, apply_pilot_bundle
+    #    applies only the rows with a valid response; the rest stay `invalid`.
     tagging.apply_pilot_bundle(run_id, prefix, vocab_index)
 
-    # 7) Distribution gates on the MERGED tags_core + the full report.
+    if n_still > 0:
+        # --accept-quarantine: promote the still-invalid rows to `quarantined`
+        # (terminal, UNRESOLVED) and list them loudly. They are recomputed as part
+        # of tags_core (keeping their free Tier-1/2 tags) but never counted complete.
+        quarantined = tagging.quarantine_exhausted(run_id)
+        _print_quarantine(run_id, quarantined or n_still)
+        print(
+            f"  --accept-quarantine: Tier-3 applied for the resolved pilot rows;"
+            f" {n_still} row(s) recorded UNRESOLVED (quarantined) — never counted"
+            " complete. See the report's Quarantine section.",
+            flush=True,
+        )
+
+    # 7) Distribution gates on the MERGED tags_core + the full report (real stats,
+    #    the random samples, and — when present — the quarantine listing).
     stats = tagging.pilot_stats_from_db(prefix)
     dist = tagging.pilot_thresholds_pass(stats)
-    tagging.write_pilot_report_v4(run_id, prefix, cal, free, models, distribution_failures=dist)
+    tagging.write_pilot_report_v4(
+        run_id, prefix, cal, free, models, distribution_failures=dist,
+        unresolved=still if n_still else None, accepted_quarantine=bool(n_still))
     if dist:
         print(f"  ⚠ distribution gate(s): {'; '.join(dist)} (reported, not rolled back —"
               " the free tiers are deterministic and Tier-3 passed validity)", flush=True)
@@ -380,14 +416,34 @@ def run_full(run_id: str, vocab_index, accept_quarantine: bool = False) -> bool:
     prefix = tagging.full_prefix(run_id)
 
     if config.PURE_CLASSIFICATION:
-        # v4-tiered: calibrate the Tier-2 thresholds (free, deterministic — same
-        # result every resume) and apply the two FREE tiers over the WHOLE corpus
-        # exactly once before the paid Tier-3 wave loop. The guard is a marker in
-        # tag_runs.config so a resume never re-scans all 244k passages.
+        # v4-tiered: the full run WIDENS the Tier-2 shortlist (TIER2_SHORTLIST_K →
+        # TIER2_SHORTLIST_K_FULL) before it recalibrates. The pilot validated the
+        # judge MECHANISM at k=12; width only adds candidates (measured shortlist
+        # recall ceiling k=12 → 0.719, k=20 → 0.823) and the row-level gates stay
+        # active. Set the ACTIVE width first so calibration, the free-tier bands and
+        # the Tier-3 middle band all agree on k=TIER2_SHORTLIST_K_FULL.
         import audit
         import tiers
+        config.TIER2_SHORTLIST_K = config.TIER2_SHORTLIST_K_FULL
+        # Recalibrate T_accept/T_reject against the k=TIER2_SHORTLIST_K_FULL shortlist
+        # (same sweep, same targets, same p1 ground truth) — free, deterministic, so
+        # every resume recomputes the identical thresholds.
         cal = tiers.calibrate_tier2_thresholds()
         config.TIER2_ACCEPT, config.TIER2_REJECT = cal["t_accept"], cal["t_reject"]
+        print(
+            f"  full-run Tier-2 shortlist width k={config.TIER2_SHORTLIST_K}"
+            f" (wider than the pilot); recalibrated against the k={cal.get('topk')}"
+            f" shortlist: T_accept={cal['t_accept']:.2f} (precision {cal.get('accept_precision')}),"
+            f" T_reject={cal['t_reject']:.2f} (retains {cal.get('reject_recall_retained')})",
+            flush=True,
+        )
+        audit.merge_run_config(run_id, {
+            "tier2_shortlist_k_full": config.TIER2_SHORTLIST_K,
+            "tier2_thresholds_full": {"t_accept": cal["t_accept"], "t_reject": cal["t_reject"]},
+            "tier2_calibration_full": {k: cal.get(k) for k in (
+                "pilot_run_id", "topk", "accept_precision", "reject_recall_retained",
+                "shortlist_recall_ceiling", "positives_total", "positives_in_shortlist")},
+        })
         done = db.one("SELECT (config->>'free_tiers_full_done') FROM public.tag_runs WHERE id=%s::uuid",
                       (run_id,))
         if not done:
@@ -472,10 +528,12 @@ def confirm_both_models() -> dict:
     return models
 
 
-def pilot_only() -> int:
-    """--pilot-only: run just the v3.p3 pilot and STOP before the full corpus run.
+def pilot_only(accept_quarantine: bool = False) -> int:
+    """--pilot-only: run just the pilot and STOP before the full corpus run.
     Requires vocabulary.json to already be built (the ⛔ vocabulary gate is part of
-    the full pipeline, not this path)."""
+    the full pipeline, not this path). --accept-quarantine is honored here too:
+    the pilot applies Tier-3 for resolved rows and records the rest as unresolved
+    (loudly listed) instead of refusing."""
     config.require_keys()
 
     import audit
@@ -496,7 +554,7 @@ def pilot_only() -> int:
     print(f"  tag run: {run_id} · prompt {config.PROMPT_VERSION} · vocab {audit.vocab_version()}", flush=True)
 
     if config.PURE_CLASSIFICATION:
-        run_pilot_v4(run_id, models, vocab_index)
+        run_pilot_v4(run_id, models, vocab_index, accept_quarantine=accept_quarantine)
     else:
         run_pilot(run_id, models, vocab_index)
 
@@ -547,8 +605,10 @@ def main() -> int:
     parser.add_argument(
         "--accept-quarantine",
         action="store_true",
-        help="let the full run + finalize proceed although quarantined (unresolved) rows exist;"
-        " they are listed loudly — every other unresolved state still refuses",
+        help="let the PILOT, the full run and finalize proceed although quarantined"
+        " (unresolved) rows exist. In the pilot: apply Tier-3 for the resolved rows and"
+        " record the still-invalid rows as unresolved (never counted complete). Quarantined"
+        " rows are always listed loudly; every other unresolved state still refuses",
     )
     args = parser.parse_args()
 
@@ -566,7 +626,7 @@ def main() -> int:
         return bakeoff.run(args.bakeoff_model, args.bakeoff_route)
 
     if args.pilot_only:
-        return pilot_only()
+        return pilot_only(accept_quarantine=args.accept_quarantine)
 
     config.require_keys()
 
@@ -596,7 +656,7 @@ def main() -> int:
     print(f"  tag run: {run_id} · prompt {config.PROMPT_VERSION} · vocab {audit.vocab_version()}", flush=True)
 
     if config.PURE_CLASSIFICATION:
-        run_pilot_v4(run_id, models, vocab_index)
+        run_pilot_v4(run_id, models, vocab_index, accept_quarantine=args.accept_quarantine)
     else:
         run_pilot(run_id, models, vocab_index)
 
