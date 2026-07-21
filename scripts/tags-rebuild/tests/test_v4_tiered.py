@@ -86,11 +86,12 @@ def test_tier1_word_boundary_and_first_sentence_wins():
 # ── Tier 2: banding + calibration ─────────────────────────────────────────────
 
 def test_tier2_band():
-    assert tiers.band(0.60, 0.47, 0.22) == "accept"
-    assert tiers.band(0.47, 0.47, 0.22) == "accept"     # ≥ accept
-    assert tiers.band(0.30, 0.47, 0.22) == "judge"
-    assert tiers.band(0.22, 0.47, 0.22) == "judge"      # ≥ reject → judged, not dropped
-    assert tiers.band(0.21, 0.47, 0.22) == "reject"
+    # v4-tiered.2: the auto-accept band is REMOVED — two bands only. Everything
+    # with label similarity ≥ t_reject is judged; below it is dropped.
+    assert tiers.band(0.60, 0.22) == "judge"
+    assert tiers.band(0.30, 0.22) == "judge"
+    assert tiers.band(0.22, 0.22) == "judge"            # ≥ reject → judged
+    assert tiers.band(0.21, 0.22) == "reject"
 
 
 def test_pick_thresholds_rule():
@@ -231,7 +232,10 @@ def test_shortlist_query_restricts_to_tier2_facets():
     # Tier 2 ranks ONLY Concept/Practice terms (entities never enter the judge).
     assert "facet = ANY(%s)" in TIERS_SRC
     assert "attach_shortlists_v4" in TAGGING_SRC
-    assert "TIER2_REJECT <= sim < config.TIER2_ACCEPT" in TAGGING_SRC
+    # v4-tiered.2: the shortlist IS the reconstructed middle band via middle_band;
+    # the old inline [TIER2_REJECT, TIER2_ACCEPT) upper-bounded filter is GONE.
+    assert "TIER2_REJECT <= sim < config.TIER2_ACCEPT" not in TAGGING_SRC
+    assert "tiers.middle_band(cand.get(passage.id, []), config.TIER2_REJECT)" in TAGGING_SRC
 
 
 # ── Fix 3: shortlist width is a config (default 12; full run widens to 20) ────
@@ -247,6 +251,8 @@ def test_calibration_and_shortlist_default_to_active_width():
     # Both the calibrator and the shortlist reader default topk to the ACTIVE width,
     # so setting config.TIER2_SHORTLIST_K (full run) flows to calibration + banding.
     assert "topk = topk or config.TIER2_SHORTLIST_K" in TIERS_SRC
+    # Two default sites in v4-tiered.2: the calibrator and the union reader
+    # (tier3_candidate_members) — both flow from the ACTIVE width.
     assert TIERS_SRC.count("topk = topk or config.TIER2_SHORTLIST_K") == 2
 
 
@@ -256,7 +262,7 @@ def test_full_run_widens_then_recalibrates():
     import run_all
     src = Path(run_all.__file__).read_text()
     widen = src.index("config.TIER2_SHORTLIST_K = config.TIER2_SHORTLIST_K_FULL")
-    recal = src.index("cal = tiers.calibrate_tier2_thresholds()", widen)
+    recal = src.index("cal = tiers.calibrate_tier2_thresholds(vocab=vocab_index)", widen)
     assert 0 <= widen < recal
     # the recalibrated thresholds + width are recorded for the audit trail.
     assert "tier2_shortlist_k_full" in src and "tier2_thresholds_full" in src
@@ -359,3 +365,121 @@ def test_pilot_quarantine_listing_logs_other_raw_signal(tmp_path, monkeypatch):
     (attempt,) = listing[0]["attempts"]
     assert attempt["bucket"] == "other"
     assert "backend unavailable" in attempt["raw"]
+
+
+# ── v4-tiered.2 — the four quality upgrades + the gate fix ────────────────────
+
+# GATE FIX (1): the most-used-tag distribution ceiling is 0.45 ('krsna' via
+# exact_alias is a genuine, corpus-wide subject — not a distribution defect).
+def test_gate_ceiling_raised_to_045():
+    assert config.PILOT_MAX_TAG_SHARE == 0.45
+    base = {"out_of_vocab_rate": 0.0, "distinct_tags": 200, "singleton_share": 0.0,
+            "vocab_coverage": 0.9, "rows": 100, "zero_tag_rows": 0, "tagged_median": 4}
+    # 0.40 share now PASSES (the old 0.20 gate would have failed it); 0.50 still FAILS.
+    passing = tagging.pilot_thresholds_pass({**base, "max_tag_share": 0.40})
+    failing = tagging.pilot_thresholds_pass({**base, "max_tag_share": 0.50})
+    assert not any("most-used tag" in f for f in passing)
+    assert any("most-used tag" in f for f in failing)
+
+
+# UPGRADE (4): the Tier-2 auto-accept band is REMOVED — Tier 2 is shortlist +
+# reject filter, everything above T_reject is judged, nothing is auto-assigned.
+def test_no_auto_accept_write_in_free_tiers():
+    # The old auto-accept insert tuple (…, METHOD_SEMANTIC, sim) is gone; counts are
+    # computed via the shared middle_band filter instead.
+    assert "METHOD_SEMANTIC, sim)" not in TIERS_SRC
+    assert "middle_band(cand, t_reject)" in TIERS_SRC
+    # …and the free-tier summary still exposes the (now-zero) back-compat keys plus
+    # the new candidate/lexical tallies.
+    assert '"tier2_accept_tags": 0' in TIERS_SRC
+    assert '"lexical_candidate_tags"' in TIERS_SRC and '"candidate_pairs"' in TIERS_SRC
+    # the apply reconstruction records llm_rejected from the reconstructed band.
+    assert "for slug in mid_by.get(passage_id, []):" in TAGGING_SRC
+
+
+def test_middle_band_lexical_bypasses_reject():
+    cand = [("a", 0.50, False), ("b", 0.15, False), ("c", 0.10, True), ("d", None, True)]
+    # a is ≥ reject; b is below; c and d are lexical → judged regardless of sim.
+    assert tiers.middle_band(cand, 0.22) == ["a", "c", "d"]
+
+
+# UPGRADE (2): the LEXICAL shortlist union — a Concept/Practice term whose label/
+# variant literally appears is ALWAYS a candidate, regardless of embedding rank.
+def test_concept_alias_index_matches_concepts_only():
+    ci = tiers.concept_alias_index(_vocab())
+    # 'bhakti' (a Concept variant) matches; 'Krishna' (a Person) does NOT enter the
+    # concept lexical lane; the entity index is its mirror image.
+    assert set(ci.slugs_in(ci._fold("Pure bhakti and Krishna."))) == {"bhakti"}
+    ei = tiers.EntityAliasIndex(_vocab())
+    assert set(ei.slugs_in(ei._fold("Pure bhakti and Krishna."))) == {"krsna"}
+
+
+def test_union_candidates_always_keeps_lexical_even_past_the_cap():
+    members = {"a": 0.9, "b": 0.8, "c": 0.7, "d": 0.6, "e": 0.5}
+    out = tiers.union_candidates(members, lexical={"e"}, cap=3)
+    slugs = [s for s, _sim, _lex in out]
+    assert len(out) == 3 and "e" in slugs            # lexical survives the cap…
+    assert slugs == ["a", "b", "e"]                  # …trimming the higher-sim c/d
+    flags = {s: lex for s, _sim, lex in out}
+    assert flags["e"] is True and flags["a"] is False
+
+
+def test_union_candidates_lexical_without_embedding_rides_along():
+    out = tiers.union_candidates({"a": 0.9}, lexical={"z"}, cap=5)
+    d = {s: (sim, lex) for s, sim, lex in out}
+    assert d["z"] == (None, True) and d["a"] == (0.9, False)
+
+
+# UPGRADE (3): exemplar matching + the union recall-ceiling report.
+def test_v4_2_shortlist_config_constants():
+    assert config.TIER3_CANDIDATE_CAP == 25
+    assert config.TIER3_EXEMPLARS_PER_TERM == 5
+    assert config.TIER3_RECALL_CEILING_K == 20
+
+
+def test_exemplar_and_union_machinery_present():
+    # exemplars are built ONCE from the frozen p1 run into a pg_temp cache; the
+    # union reader joins it (top-K label ∪ top-K max-exemplar ∪ lexical, capped).
+    assert "def ensure_exemplar_cache" in TIERS_SRC
+    assert "CREATE TEMP TABLE _tier3_exemplars" in TIERS_SRC
+    assert "pg_temp._tier3_exemplars" in TIERS_SRC
+    # exemplars are ranked ONLY over accepted passages that HAVE an embedding
+    # (join pe before the per-term row_number), so each term gets up to N REAL ones.
+    assert "embedded AS (SELECT te.tag AS slug, pe.e AS embedding," in TIERS_SRC
+    assert "SELECT slug, embedding FROM embedded WHERE rk <= %s" in TIERS_SRC
+    assert "def tier3_candidate_members" in TIERS_SRC
+    assert "def tier3_shortlist_for_passages" in TIERS_SRC
+    assert "TIER3_EXEMPLARS_PER_TERM" in TIERS_SRC and "TIER3_CANDIDATE_CAP" in TIERS_SRC
+    # unnest(%s::uuid[], %s::text[]) zips the per-passage lexical (pid, slug) pairs.
+    assert "unnest(%s::uuid[], %s::text[])" in TIERS_SRC
+    # BOTH the judge prompt (attach) and the apply reconstruction share the reader.
+    assert TAGGING_SRC.count("tier3_shortlist_for_passages") == 2
+
+
+def test_calibration_reports_union_vs_label_recall_ceiling():
+    assert "def measure_union_recall_ceiling" in TIERS_SRC
+    assert "union_recall_ceiling" in TIERS_SRC and "label_only_recall_ceiling" in TIERS_SRC
+    assert 'result["union_recall"] = measure_union_recall_ceiling(' in TIERS_SRC
+    # measured at K = TIER3_RECALL_CEILING_K (20) and rendered in the pilot report.
+    assert "TIER3_RECALL_CEILING_K" in TIERS_SRC
+    assert "UNION vs label-only" in TAGGING_SRC
+
+
+# UPGRADE (5): TIERED, generous Tier-3 output caps by ladder attempt.
+def test_tier3_output_cap_tiers():
+    assert config.tier3_output_cap(1) == config.TIER3_MAX_OUTPUT_TOKENS == 2048
+    assert config.tier3_output_cap(2) == config.TIER3_MAX_OUTPUT_TOKENS_RETRY == 4096
+    assert config.tier3_output_cap(3) == config.TIER3_MAX_OUTPUT_TOKENS_ESCALATION == 8192
+    # the shard builder derives the cap from the ladder attempt (key-derived), so
+    # quarantine only happens after the attempt-3 (8192) escalation still fails.
+    assert "config.tier3_output_cap(attempt_for_shard_key(shard_key))" in TAGGING_SRC
+
+
+def test_request_line_v4_honors_threaded_output_cap():
+    vocab = tagging.VocabIndex(_vocab())
+    p = tagging.Passage("verses", "x", "One. Two.", "HIS", False, shortlist=["bhakti"])
+    gc = tagging.request_line(p, vocab, max_output_tokens=8192)["request"]["generationConfig"]
+    assert gc["maxOutputTokens"] == 8192
+    # default (no cap threaded) falls back to the first-attempt ceiling.
+    gc0 = tagging.request_line(p, vocab)["request"]["generationConfig"]
+    assert gc0["maxOutputTokens"] == config.TIER3_MAX_OUTPUT_TOKENS == 2048
