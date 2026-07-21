@@ -251,9 +251,9 @@ def test_calibration_and_shortlist_default_to_active_width():
     # Both the calibrator and the shortlist reader default topk to the ACTIVE width,
     # so setting config.TIER2_SHORTLIST_K (full run) flows to calibration + banding.
     assert "topk = topk or config.TIER2_SHORTLIST_K" in TIERS_SRC
-    # v4-tiered.2 adds a third default site: tier3_candidate_members (the union
-    # reader) alongside the calibrator and the label-only shortlist reader.
-    assert TIERS_SRC.count("topk = topk or config.TIER2_SHORTLIST_K") == 3
+    # Two default sites in v4-tiered.2: the calibrator and the union reader
+    # (tier3_candidate_members) — both flow from the ACTIVE width.
+    assert TIERS_SRC.count("topk = topk or config.TIER2_SHORTLIST_K") == 2
 
 
 def test_full_run_widens_then_recalibrates():
@@ -443,6 +443,10 @@ def test_exemplar_and_union_machinery_present():
     assert "def ensure_exemplar_cache" in TIERS_SRC
     assert "CREATE TEMP TABLE _tier3_exemplars" in TIERS_SRC
     assert "pg_temp._tier3_exemplars" in TIERS_SRC
+    # exemplars are ranked ONLY over accepted passages that HAVE an embedding
+    # (join pe before the per-term row_number), so each term gets up to N REAL ones.
+    assert "embedded AS (SELECT te.tag AS slug, pe.e AS embedding," in TIERS_SRC
+    assert "SELECT slug, embedding FROM embedded WHERE rk <= %s" in TIERS_SRC
     assert "def tier3_candidate_members" in TIERS_SRC
     assert "def tier3_shortlist_for_passages" in TIERS_SRC
     assert "TIER3_EXEMPLARS_PER_TERM" in TIERS_SRC and "TIER3_CANDIDATE_CAP" in TIERS_SRC

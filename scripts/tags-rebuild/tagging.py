@@ -2929,9 +2929,14 @@ def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dic
     elif ur.get("error"):
         ap(f"- Union recall ceiling: _unavailable ({ur['error']})_")
     ap("")
-    ap("| candidates | judged (≥ T_reject or lexical) | dropped (< T_reject) |")
+    # Calibration sweep is over the LABEL-only pool used to pick T_reject; under
+    # v4-tiered.2 everything ≥ T_reject is judged, so the judged column is the old
+    # middle band PLUS the former auto-accept head (pairs_judged + pairs_auto_accepted)
+    # — the three columns sum to the candidate total.
+    ap("| calibration candidates (label pool) | judged (≥ T_reject) | dropped (< T_reject) |")
     ap("|---|---|---|")
-    ap(f"| {calibration.get('candidate_pairs')} | {calibration.get('pairs_judged')}"
+    ap(f"| {calibration.get('candidate_pairs')} |"
+       f" {(calibration.get('pairs_judged') or 0) + (calibration.get('pairs_auto_accepted') or 0)}"
        f" | {calibration.get('pairs_auto_rejected')} |")
     ap("")
 

@@ -312,19 +312,20 @@ def _content_embedding_union() -> str:
 def _exemplar_select_sql() -> str:
     """SELECT (slug, embedding) for up to TIER3_EXEMPLARS_PER_TERM p1-accepted
     passage embeddings per Concept/Practice term. Params (in order): the C/P
-    facets, the pilot run id, the per-term cap. The content scan is joined to the
-    accepted-passage ids, so only the exemplar rows are ever materialized."""
+    facets, the pilot run id, the per-term cap. The accepted-passage rows are
+    JOINED to their embeddings BEFORE the per-term row_number, so ranking runs
+    only over passages that actually have an embedding — a term always gets up to
+    N REAL exemplars even if its lowest-id accepted passages lack embeddings."""
     return (
         "WITH cp AS (SELECT slug FROM public.vocab_terms"
         "            WHERE embedding IS NOT NULL AND NOT is_ai AND facet = ANY(%s)),"
-        " picks AS (SELECT te.table_name, te.passage_id, te.tag AS slug,"
+        f" pe AS ({_content_embedding_union()}),"
+        " embedded AS (SELECT te.tag AS slug, pe.e AS embedding,"
         "     row_number() OVER (PARTITION BY te.tag ORDER BY te.passage_id) rk"
         "   FROM public.tag_evidence te JOIN cp ON cp.slug = te.tag"
-        "   WHERE te.run_id = %s::uuid AND te.accepted),"
-        f" pe AS ({_content_embedding_union()})"
-        " SELECT k.slug, pe.e AS embedding"
-        "   FROM picks k JOIN pe ON pe.tbl = k.table_name AND pe.id = k.passage_id"
-        "  WHERE k.rk <= %s"
+        "   JOIN pe ON pe.tbl = te.table_name AND pe.id = te.passage_id"
+        "   WHERE te.run_id = %s::uuid AND te.accepted)"
+        " SELECT slug, embedding FROM embedded WHERE rk <= %s"
     )
 
 
@@ -423,30 +424,6 @@ def tier3_shortlist_for_passages(table: str, passages, concept_index,
         p.id: union_candidates(members.get(p.id, {}), lexical_by_id.get(p.id, []), cap)
         for p in passages
     }
-
-
-def tier2_shortlist_for_passages(table: str, ids: list[str],
-                                 topk: int | None = None) -> dict[str, list[tuple[str, float]]]:
-    """Per passage, the top-`topk` nearest Concept/Practice vocab terms by cosine
-    similarity (embedding_context4 ↔ vocab_terms.embedding), highest first — the
-    LABEL lane in isolation (calibration + the label-only recall-ceiling baseline).
-    Rows with no embedding are absent from the result (→ no Tier-2 candidates)."""
-    topk = topk or config.TIER2_SHORTLIST_K
-    facets = sorted(config.TIER2_FACETS)
-    out: dict[str, list[tuple[str, float]]] = {}
-    for pid, slug, dist in db.rows(
-        f"SELECT p.id::text, sub.slug, sub.dist FROM public.{table} p"
-        f" CROSS JOIN LATERAL ("
-        f"   SELECT slug, embedding <=> p.embedding_context4 AS dist FROM public.vocab_terms"
-        f"   WHERE embedding IS NOT NULL AND NOT is_ai AND facet = ANY(%s)"
-        f"   ORDER BY embedding <=> p.embedding_context4 LIMIT %s) sub"
-        f" WHERE p.id = ANY(%s::uuid[]) AND p.embedding_context4 IS NOT NULL",
-        (facets, topk, ids),
-    ):
-        out.setdefault(pid, []).append((slug, 1.0 - float(dist)))
-    for pid in out:
-        out[pid].sort(key=lambda sp: sp[1], reverse=True)
-    return out
 
 
 def _calibration_pairs(pilot_run_id: str, topk: int) -> list[tuple[float, bool]]:
@@ -576,8 +553,11 @@ def calibrate_tier2_thresholds(pilot_run_id: str | None = None,
     result["topk"] = topk
     # Shortlist recall ceiling: how many accepted Concept/Practice pilot tags a
     # top-`topk` LABEL embedding shortlist can reach at all (its structural limit).
+    # Count DISTINCT (passage, tag) so this denominator matches the union
+    # measurement's (both treat a positive as a (passage, tag) pair, not a row).
     total_pos = db.one(
-        "SELECT count(*) FROM public.tag_evidence e JOIN public.vocab_terms v ON v.slug = e.tag"
+        "SELECT count(DISTINCT (e.passage_id, e.tag))"
+        " FROM public.tag_evidence e JOIN public.vocab_terms v ON v.slug = e.tag"
         " WHERE e.run_id = %s::uuid AND e.accepted AND NOT v.is_ai AND v.facet = ANY(%s)",
         (pilot_run_id, sorted(config.TIER2_FACETS)),
     ) or 0
