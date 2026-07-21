@@ -11,10 +11,15 @@
 >   sentence (id + offsets).
 > - **Tier 2 — EMBEDDING SHORTLIST (free, no LLM).** Concept/Practice terms are
 >   ranked by cosine similarity (`embedding_context4` ↔ `vocab_terms.embedding`);
->   top 12 per passage. Two thresholds, **calibrated against the p1 pilot tags**
->   (run `63c99428…`), band each candidate: ≥ **T_accept** → auto-assign
+>   the top **`TIER2_SHORTLIST_K`** per passage (default **12** in the pilot, the
+>   width the judge mechanism was validated on). The **full run widens this to
+>   `TIER2_SHORTLIST_K_FULL`=20** and recalibrates the thresholds against the k=20
+>   shortlist at full-run start (same sweep, same targets — measured shortlist
+>   recall ceiling k12=0.719 → k20=0.823; width only adds candidates, the
+>   row-level gates stay active). Two thresholds, **calibrated against the p1 pilot
+>   tags** (run `63c99428…`), band each candidate: ≥ **T_accept** → auto-assign
 >   (`method='semantic'`, `confidence=similarity`); < **T_reject** → drop; the
->   middle band → Tier 3. Calibrated defaults **T_accept=0.47** (measured
+>   middle band → Tier 3. Calibrated pilot defaults **T_accept=0.47** (measured
 >   precision 0.80), **T_reject=0.22** (retains 0.96 of in-shortlist positives).
 > - **Tier 3 — LLM JUDGE (the only paid part).** `gemini-3-flash-preview` for all
 >   rows; retry once → escalate once to `gemini-3.5-flash` → quarantine. The
@@ -114,8 +119,13 @@ python run_all.py --bakeoff-model MODEL [--bakeoff-route all|core|standard]
                               # agreement + confusions, seeded question samples, true
                               # per-model cost. Needs the maintainer-local banked files.
 python run_all.py --accept-quarantine
-                              # explicit override: finish + finalize although quarantined
-                              # (unresolved) rows exist — they are always listed loudly
+                              # explicit override: let the PILOT, the full run and finalize
+                              # proceed although quarantined (unresolved) rows exist. In the
+                              # PILOT this applies Tier-3 for the resolved rows and records the
+                              # still-invalid rows as unresolved (never counted complete)
+                              # instead of refusing. Quarantined rows are always listed loudly
+                              # (table · passage_id · per-attempt finishReason/blockReason ·
+                              # excerpt); every other unresolved state still refuses.
 python run_all.py --revalidate-pilot   # re-scan banked shards/pilot_*.results.jsonl,
                               # recompute the gates + a per-bucket breakdown of WHY
                               # schema-invalid rows failed, rewrite pilot-report.md.
@@ -134,7 +144,7 @@ that they did. (A live pilot run also writes this section into `pilot-report.md`
 | 1 | `fts_core` backfill — touch rows `WHERE fts_core IS NULL` in batches over `DATABASE_URL`; progress printed; idempotent. | — |
 | 2 | Vocabulary build → `vocabulary.json`: faceted (Concept / Person / Place / Scripture / Practice — **no Sanskrit facet**: one topic = one term, language forms are variants; labels are the word devotees actually use, English by default). Curated seeds (`vocabulary_seeds.json`, incl. `hard_negatives` contrast pairs) + CANDIDATES (chapter titles, mined Sanskrit glosses with particle stoplist + chapter-dispersion check, net-new mining capped ~100) through ONE Gemini naming/dedup path — never straight into the menu. Clustering runs as LENSES (k ∈ {150,300,500} MiniBatchKMeans + one HDBSCAN pass) with **seeded random** stratified sampling (by table; by book within prose; seed recorded); Gemini names each cluster from its nearest AND farthest members and may answer "incoherent — drop"; the 0.1-cosine centroid merge produces **merge PROPOSALS** (applied provisionally, all listed in the `merges` section). Every term gets a one-line **scope note** (covers X; not Y) and `kind: concept|entity` (entities don't count toward the ~400-700 concept expectation — the gate decides, not a round number). Loaded into `vocab_terms` (service key) with Voyage embeddings. | — |
 | ⛔ | **THE ONE GATE:** review `vocabulary.json` — terms + scope notes + MERGES (veto = edit the file), then press Enter. (`--yes` skips.) | ⛔ |
-| 3 | Pilot (**v3.p3**): an EXACT **2,000-row manifest** = ALL p1-failures + a p1-success comparison slice (matched to the failure table mix + length quartile) + a fresh remainder stratified across all five tables × length quartiles by largest-remainder allocation (checksum + per-route counts recorded in `tag_runs.config`), **route-split per model**. Results are **validated locally BEFORE any DB content write**: first-pass schema validity is **DIAGNOSTIC** (never an abort); every invalid/**missing** row is **retried once on its own model**, still-invalid standard-route rows **escalate once to the core model**, and **100% row-level validity** is required — still-invalid rows are listed explicitly (the would-be quarantine list) and the run stops with nothing applied. Distribution gates (OOV ≤ .02 · distinct tags ≥ 100 · singleton ≤ 20% · ≥ 60% vocab used · no tag on > 20% of passages · median 3–8 among TAGGED) run on the files too. Only on a full pass are all 2,000 rows applied in **one atomic transaction** (incl. their outcome rows). `pilot-report.md` gets first-pass/retry/escalation validity, the raw `finishReason`/`blockReason` for every `other` failure, the TRUE **per-model** cost (thinking INCLUDED) + per-route full-run extrapolation, and 40 samples. `--pilot-only` runs just this and stops. | auto |
+| 3 | Pilot (**v3.p3**): an EXACT **2,000-row manifest** = ALL p1-failures + a p1-success comparison slice (matched to the failure table mix + length quartile) + a fresh remainder stratified across all five tables × length quartiles by largest-remainder allocation (checksum + per-route counts recorded in `tag_runs.config`), **route-split per model**. Results are **validated locally BEFORE any DB content write**: first-pass schema validity is **DIAGNOSTIC** (never an abort); every invalid/**missing** row is **retried once on its own model**, still-invalid standard-route rows **escalate once to the core model**, and **100% row-level validity** is required — still-invalid rows are listed explicitly (the would-be quarantine list) and the run stops with nothing applied. Distribution gates (OOV ≤ .02 · distinct tags ≥ 100 · singleton ≤ 20% · ≥ 60% vocab used · no tag on > 20% of passages · median 3–8 among TAGGED) run on the files too. Only on a full pass are all 2,000 rows applied in **one atomic transaction** (incl. their outcome rows). `pilot-report.md` gets first-pass/retry/escalation validity, an explicit **QUARANTINE listing** of every still-invalid row (table · passage_id · the **full per-attempt `finishReason`/`blockReason` history** · a passage excerpt) with the raw `finishReason`/`blockReason` for every `other` failure, the TRUE **per-model** cost (thinking INCLUDED) + per-route full-run extrapolation, and 40 samples (passage excerpt + tags + method + evidence sentence). Passing **`--accept-quarantine`** in the pilot applies Tier-3 for the resolved rows, records the still-invalid rows as `quarantined` (UNRESOLVED — loudly listed, never counted complete), recomputes the merged `tags_core`, and regenerates the report with real distribution stats + the samples; without it the current refuse (nothing applied) behavior stays. `--pilot-only` runs just this and stops. | auto |
 | 4 | Full tagging: ONE combined structured Gemini Batch call per passage, routed **per passage** (core scripture → full **Gemini 3.5 Flash**; everything else → **Gemini 3 Flash preview** — never Lite on either route) with the NON-overridable `thinkingConfig.thinkingLevel=LOW` and the model-default temperature, returns `passage_function` (closed enum, incl. `not_applicable`), `tags_core` (≤ `MAX_TAGS`) and 0-3 `questions` — **evidence is a sentence ID** drawn from the numbered target sentences (deterministic splitter `asp-sentences-v1`), resolved back to the exact source sentence + offsets (the model never copies text). Candidate shortlist = semantic top-25 ∪ exact alias matches ∪ hard-negative partners, cap ~40. Stance rules: aboutness only; entities only when prominent; ZERO tags valid. Gates: out-of-vocabulary → HARD drop; in-vocab unresolvable-id → KEPT, `evidence_found=false`; unevidenced question → dropped. **`verse_chunks` are tagged DIRECTLY**. Coverage is **ROW-LEVEL** (`tag_passage_outcomes`): a passage counts only with a successfully applied result in this run — never because its id sat in a submitted shard; invalid/missing rows retry once (same model) → standard rows escalate once (core model) → still-invalid rows are **QUARANTINED** (listed; the run is never marked complete while any exist). | ceiling |
 | 5 | Finalize: **REFUSES while any Gemini-eligible passage lacks a resolved outcome** in the run (quarantined rows require an explicit `--accept-quarantine`; skipped-no-shortlist rows are resolved but listed); then tsvector verification; GIN indexes with `CREATE INDEX CONCURRENTLY`, one at a time, `ANALYZE` after each, invalid-index check; **hygiene report** (`hygiene-report.md`: 0 uses / < 20 uses / > 15% of corpus — report only, nothing auto-deleted); completion checklist incl. the Supabase compute downgrade reminder (LARGE → MICRO, ~$110/month). | ⛔ unresolved |
 
@@ -285,6 +295,19 @@ doctor.py             read-only readiness checklist (per-model pricing, routing 
   1,298/1,722 pilot passages for $0; 1,688 passages (98%) fall to the judge;
   projected full-corpus Tier-3 ≈ $115–215 (< $325). The paid Tier-3 pilot is a
   keyed maintainer step (`python run_all.py --pilot-only`).
+- **Pilot-completion fixes (this change):** (1) the pilot report now carries the
+  explicit **QUARANTINE listing** required by design — every still-invalid row
+  after retry + escalation, with table · passage_id · the full per-attempt
+  `finishReason`/`blockReason` history · a passage excerpt, plus the raw signal
+  for every `other`-bucketed row; (2) **`--accept-quarantine` is honored in the
+  pilot** — it applies Tier-3 for the resolved rows, records the still-invalid
+  rows as `quarantined` (UNRESOLVED, never counted complete), recomputes the
+  merged `tags_core`, and regenerates the report with real distribution stats +
+  the 40 samples (excerpt + tags + method + evidence sentence); (3) the Tier-2
+  shortlist width is a config **`TIER2_SHORTLIST_K`** (default 12), and the full
+  run widens it to **`TIER2_SHORTLIST_K_FULL`=20** and **recalibrates
+  T_accept/T_reject against the k=20 shortlist at full-run start** (same sweep,
+  same targets — measured recall ceiling k12=0.719 → k20=0.823).
 - **Phase 2 (columns + support tables): DONE** (migration `20260708120000_…`).
 - **Phase 3 (fts_core trigger + diacritic fix): mechanism DONE + verified.**
 - **Harness v3.p1: DONE**, pilot RAN (run `63c99428…`) and exposed defects.

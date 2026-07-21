@@ -12,7 +12,7 @@ the frozen 251-term vocabulary. Only Tier 3 costs money:
 
   Tier 2 — EMBEDDING SHORTLIST (free). Concept/Practice terms are ranked by
     cosine similarity between the passage `embedding_context4` and
-    `vocab_terms.embedding`; the top TIER2_TOPK per passage form the shortlist.
+    `vocab_terms.embedding`; the top TIER2_SHORTLIST_K per passage form the shortlist.
     Two thresholds (calibrated against the p1 pilot tags) band each candidate:
     ≥ T_accept → auto-assign (method='semantic', confidence=similarity);
     < T_reject → drop; in between → the Tier-3 judge (tagging.py).
@@ -256,7 +256,7 @@ def tier2_shortlist_for_passages(table: str, ids: list[str],
     """Per passage, the top-`topk` nearest Concept/Practice vocab terms by cosine
     similarity (embedding_context4 ↔ vocab_terms.embedding), highest first. Rows
     with no embedding are absent from the result (→ no Tier-2 candidates)."""
-    topk = topk or config.TIER2_TOPK
+    topk = topk or config.TIER2_SHORTLIST_K
     facets = sorted(config.TIER2_FACETS)
     out: dict[str, list[tuple[str, float]]] = {}
     for pid, slug, dist in db.rows(
@@ -305,7 +305,7 @@ def calibrate_tier2_thresholds(pilot_run_id: str | None = None,
     ONLY tag_evidence + the stored embeddings — no LLM, no cost. Returns the
     thresholds, measured precision/recall, per-band counts and the sweep."""
     pilot_run_id = pilot_run_id or config.P1_PILOT_RUN_ID
-    topk = topk or config.TIER2_TOPK
+    topk = topk or config.TIER2_SHORTLIST_K
     pairs = _calibration_pairs(pilot_run_id, topk)
     result = pick_thresholds(
         pairs, config.TIER2_TARGET_ACCEPT_PRECISION, config.TIER2_TARGET_REJECT_RECALL)

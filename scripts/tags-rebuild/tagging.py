@@ -395,7 +395,7 @@ def attach_shortlists(table: str, passages: list[Passage], vocab: VocabIndex) ->
 
 def attach_shortlists_v4(table: str, passages: list[Passage], vocab: VocabIndex) -> None:
     """v4-tiered shortlist = the Tier-2 MIDDLE BAND. For each passage, rank the
-    top-TIER2_TOPK Concept/Practice terms by cosine similarity and keep exactly
+    top-TIER2_SHORTLIST_K Concept/Practice terms by cosine similarity and keep exactly
     those whose similarity lands in [TIER2_REJECT, TIER2_ACCEPT) — the ambiguous
     band the judge must resolve. Above ACCEPT was auto-assigned (Tier 2) and
     below REJECT was dropped, both for free; neither is shown to the model.
@@ -403,7 +403,7 @@ def attach_shortlists_v4(table: str, passages: list[Passage], vocab: VocabIndex)
     matches the free-tier pass exactly on every resume."""
     import tiers
     ids = [p.id for p in passages]
-    shortlists = tiers.tier2_shortlist_for_passages(table, ids, config.TIER2_TOPK)
+    shortlists = tiers.tier2_shortlist_for_passages(table, ids, config.TIER2_SHORTLIST_K)
     for passage in passages:
         passage.shortlist = [
             slug for slug, sim in shortlists.get(passage.id, [])
@@ -1916,7 +1916,7 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
     pure = config.PURE_CLASSIFICATION
     # v4-tiered: cosine sims for BOTH the confidence on each Tier-3 confirmation
     # AND the middle-band audit trail (candidates the judge dropped). One pgvector
-    # query per shard — the same top-TIER2_TOPK shortlist attach_shortlists_v4 built.
+    # query per shard — the same top-TIER2_SHORTLIST_K shortlist attach_shortlists_v4 built.
     sim_by: dict[str, dict[str, float]] = {}
     if pure and id_list:
         import tiers
@@ -2282,10 +2282,13 @@ def collect(run_id: str, shard_key_prefix: str = "", apply: bool = True) -> list
 
 
 def apply_pilot_bundle(run_id: str, shard_key_prefix: str, vocab: VocabIndex) -> list[ShardOutcome]:
-    """Gate EVERY retrieved pilot shard (original + retry) and write them all in
-    ONE transaction. Only called after the file scan confirms 100% schema validity,
-    so a first-pass-invalid id is written from its retry shard and no id is written
-    twice. All-or-nothing: a mid-apply failure leaves p1 content + evidence intact."""
+    """Gate EVERY retrieved pilot shard (original + retry + esc) and write them all
+    in ONE transaction. On a clean pass (100% row-level validity) a first-pass-invalid
+    id is written from its retry/esc shard and no id is written twice. Under
+    --accept-quarantine it is also called WITH still-invalid rows present: those rows
+    simply carry an `invalid`/`missing_response` outcome (no content) — the caller then
+    promotes them to `quarantined` — while every RESOLVED row is applied normally.
+    All-or-nothing: a mid-apply failure leaves prior content + evidence intact."""
     like = shard_key_prefix + "%"
     jobs = db.rows(
         "SELECT shard_key, table_name FROM public.tag_batch_jobs"
@@ -2352,6 +2355,106 @@ def _percentile_disc(sorted_values: list[int], p: float) -> int:
     return sorted_values[idx]
 
 
+def _rest_after_base(name: str, base: str) -> str:
+    return name[len(base):] if name.startswith(base) else name
+
+
+def _attempt_from_filename(name: str, base: str) -> int:
+    """Attempt number from a banked result filename: `esc_`→3, `retry_`→2, else 1.
+    The filename mirror of attempt_for_shard_key (keys use ':', files use '_')."""
+    rest = _rest_after_base(name, base)
+    if rest.startswith("esc_"):
+        return 3
+    if rest.startswith("retry_"):
+        return 2
+    return 1
+
+
+def _model_from_filename(name: str, base: str) -> str:
+    """The routed model embedded in a banked result filename
+    (``<base>[retry_|esc_]<model>_…``). Model strings never contain '_', so the
+    prefix match against the known routed models is unambiguous; older/foreign
+    files fall to '(unknown)'."""
+    rest = _rest_after_base(name, base)
+    for seg in ("retry_", "esc_"):
+        if rest.startswith(seg):
+            rest = rest[len(seg):]
+    for m in config.ROUTED_MODELS:
+        if rest.startswith(m + "_"):
+            return m
+    return "(unknown)"
+
+
+def pilot_quarantine_listing(shard_key_prefix: str,
+                             still: dict[tuple[str, str], list[str]],
+                             excerpt_chars: int = 240) -> list[dict]:
+    """The explicit, never-silent QUARANTINE record required by design: one dict
+    per row still invalid/missing after retry + escalation, carrying
+
+      - ``table`` + ``passage_id``,
+      - ``attempts`` — the FULL per-attempt failure history reconstructed from the
+        banked shard files: ``{attempt, model, finish_reason, block_reason,
+        bucket, raw}`` for each attempt, ordered attempt 1→3 (the raw
+        finishReason/blockReason signal is kept inline for `other`-bucketed
+        attempts so nothing is lost), and
+      - ``excerpt`` — a short passage excerpt (from the DB).
+
+    The FILES supply the history (present in both the refuse and the
+    --accept-quarantine paths, before any tag_passage_outcomes rows exist); the DB
+    supplies the excerpt. Sorted by (table, passage_id). No Gemini calls, no cost."""
+    targets: dict[str, dict] = {}
+    ids_by_table: dict[str, set[str]] = {}
+    for (model, table), ids in still.items():
+        for pid in ids:
+            targets[f"{table}|{pid}"] = {
+                "table": table, "passage_id": pid, "first_model": model,
+                "attempts": [], "excerpt": "",
+            }
+            ids_by_table.setdefault(table, set()).add(pid)
+    if not targets:
+        return []
+    base = shard_key_prefix.replace(":", "_")
+    for path in sorted(config.SHARDS_DIR.glob(f"{base}*.results.jsonl")):
+        attempt = _attempt_from_filename(path.name, base)
+        model = _model_from_filename(path.name, base)
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                key, parsed, _usage, error, fr, br = _parse_response_line(line)
+                rec = targets.get(key) if key else None
+                if rec is None or not (error or parsed is None):
+                    continue  # only a FAILING line for a target key belongs here
+                if any(a["attempt"] == attempt for a in rec["attempts"]):
+                    continue  # provider-duplicate line for the same attempt
+                bucket = classify_schema_failure(error, fr, br)
+                rec["attempts"].append({
+                    "attempt": attempt, "model": model,
+                    "finish_reason": fr, "block_reason": br, "bucket": bucket,
+                    "raw": raw_failure_signal(error, fr, br) if bucket == "other" else None,
+                })
+    for table, pids in ids_by_table.items():
+        try:
+            excerpts = {
+                p.id: " ".join((p.text or "").split())[:excerpt_chars]
+                for p in load_passages(table, sorted(pids))
+            }
+        except Exception as exc:  # noqa: BLE001 — a report must never crash on a text read
+            print(f"  (quarantine excerpt read failed for {table}: {str(exc)[:120]})", flush=True)
+            excerpts = {}
+        for pid in pids:
+            rec = targets[f"{table}|{pid}"]
+            rec["excerpt"] = excerpts.get(pid, "")
+            rec["attempts"].sort(key=lambda a: a["attempt"])
+            if not rec["attempts"]:
+                # No response line in any file → the row was a pure missing_response.
+                rec["attempts"] = [{
+                    "attempt": 1, "model": rec["first_model"], "finish_reason": None,
+                    "block_reason": None, "bucket": "missing_response", "raw": None,
+                }]
+    return sorted(targets.values(), key=lambda r: (r["table"], r["passage_id"]))
+
+
 def scan_pilot_results(shard_key_prefix: str | None = None) -> dict:
     """Re-scan the banked ``<prefix>*.results.jsonl`` files under SHARDS_DIR and
     recompute — with NO database access, NO Gemini calls and NO cost — BOTH the
@@ -2384,22 +2487,9 @@ def scan_pilot_results(shard_key_prefix: str | None = None) -> dict:
     by_model: dict[str, dict] = {}
     base = shard_key_prefix.replace(":", "_")
 
-    def _model_of(name: str) -> str:
-        # v3.p3 filenames embed the model: <base>[retry_|esc_]<model>_… — model
-        # strings never contain '_', so a prefix match against the known routed
-        # models is unambiguous. Older/foreign files fall to '(unknown)'.
-        rest = name[len(base):] if name.startswith(base) else name
-        for seg in ("retry_", "esc_"):
-            if rest.startswith(seg):
-                rest = rest[len(seg):]
-        for m in config.ROUTED_MODELS:
-            if rest.startswith(m + "_"):
-                return m
-        return "(unknown)"
-
     for path in files:
         mstats = by_model.setdefault(
-            _model_of(path.name),
+            _model_from_filename(path.name, base),
             {"responses": 0, "schema_valid": 0, "rows": 0, "input_tokens": 0,
              "output_tokens": 0, "candidate_tokens": 0, "thought_tokens": 0},
         )
@@ -2673,10 +2763,11 @@ def _pilot_samples(limit: int, run_id: str | None = None,
         if run_id:
             params.append(run_id)
         row["evidence"] = db.rows(
-            "SELECT tag, coalesce(evidence_found, false), left(coalesce(evidence, ''), 200)"
+            "SELECT tag, coalesce(evidence_found, false), left(coalesce(evidence, ''), 200),"
+            "       coalesce(method, '')"
             " FROM public.tag_evidence"
             " WHERE table_name = %s AND passage_id = %s::uuid AND accepted" + run_filter +
-            " ORDER BY tag",
+            " ORDER BY confidence DESC NULLS LAST, tag",
             tuple(params),
         )
     return rows
@@ -2756,12 +2847,24 @@ def eligible_passage_count() -> int:
 
 def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dict,
                           models: dict, distribution_failures: list[str] | None = None,
-                          offline: bool = False) -> None:
+                          offline: bool = False,
+                          unresolved: dict | None = None,
+                          accepted_quarantine: bool = False) -> None:
     """The v4-tiered pilot report: per-tier counts, the calibrated thresholds +
     their measured precision/recall, distribution health, PILOT_SAMPLE_ROWS random
-    samples, the TRUE pilot cost (Tiers 1-2 = $0; Tier 3 from usageMetadata) and
-    the projected full-corpus Tier-3 cost. `offline=True` renders the free-tier +
-    calibration sections only (no Tier-3 run yet — e.g. no Gemini key)."""
+    samples (passage excerpt + tags + per-tag method + evidence sentence), the TRUE
+    pilot cost (Tiers 1-2 = $0; Tier 3 from usageMetadata) and the projected
+    full-corpus Tier-3 cost. `offline=True` renders the free-tier + calibration
+    sections only (no Tier-3 run yet — e.g. no Gemini key).
+
+    ``unresolved`` ({(model, table): [ids]}) is the set of rows STILL invalid after
+    retry + escalation. When present the report renders the explicit QUARANTINE
+    listing (table · passage_id · full per-attempt finishReason/blockReason history ·
+    a passage excerpt) AND the schema-invalid failure buckets with the raw signal
+    for every `other`-bucketed row — the never-silent record required by design.
+    ``accepted_quarantine`` toggles the section's framing between "the pilot refused
+    to apply" (default) and "--accept-quarantine: resolved rows applied; these
+    recorded UNRESOLVED, never counted complete"."""
     from datetime import datetime, timezone
     lines: list[str] = []
     ap = lines.append
@@ -2774,6 +2877,9 @@ def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dic
        " vocabulary; questions + passage_function DEFERRED")
     ap(f"- Tier-3 model: {models.get('standard')} → escalates once to {models.get('core')}")
     ap(f"- Evidence: sentence-id ({sentence_split.SPLITTER_VERSION}); MAX_TAGS={config.MAX_TAGS}")
+    ap(f"- Tier-2 shortlist width: k={calibration.get('topk', config.TIER2_SHORTLIST_K)}"
+       f" (pilot default {config.TIER2_SHORTLIST_K}; full run widens to"
+       f" {config.TIER2_SHORTLIST_K_FULL} and recalibrates)")
     ap("")
 
     # ── Calibration ─────────────────────────────────────────────────────────
@@ -2836,6 +2942,56 @@ def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dic
         except Exception as exc:  # noqa: BLE001
             ap(f"## Distribution health\n\n_unavailable: {exc}_\n")
 
+    # ── Quarantine — rows still invalid after retry + escalation ─────────────
+    # Required by design: every still-invalid row is listed explicitly with its
+    # table, passage_id, the FULL per-attempt finishReason/blockReason history, and
+    # a short passage excerpt. Never silent — in BOTH the refuse path and the
+    # --accept-quarantine path.
+    if unresolved:
+        n_unresolved = sum(len(v) for v in unresolved.values())
+        ap(f"## Quarantine — rows still invalid after retry + escalation ({n_unresolved})")
+        ap("")
+        if accepted_quarantine:
+            ap("**--accept-quarantine.** Tier-3 was applied for every RESOLVED row; the"
+               " rows below have NO valid Tier-3 response after the full retry +"
+               " escalation ladder. They are recorded as `quarantined` (UNRESOLVED) and"
+               " are NEVER counted complete — listed here in full, never silently dropped.")
+        else:
+            ap("The pilot REFUSES to apply while any of these exist — **nothing was"
+               " written**. Review them, then rerun with `--accept-quarantine` to apply"
+               " the resolved rows and record these as unresolved. Every attempt's raw"
+               " termination signal is shown below; nothing is silently dropped.")
+        ap("")
+        try:
+            listing = pilot_quarantine_listing(prefix, unresolved)
+        except Exception as exc:  # noqa: BLE001 — a report must never crash
+            listing = []
+            ap(f"_quarantine detail unavailable: {exc}_")
+        for rec in listing:
+            ap(f"- **{rec['table']}** `{rec['passage_id']}`")
+            for a in rec["attempts"]:
+                sig = " · ".join(filter(None, [
+                    f"finishReason={a['finish_reason']}" if a["finish_reason"] else "",
+                    f"blockReason={a['block_reason']}" if a["block_reason"] else "",
+                    f"bucket={a['bucket']}",
+                    f"raw={a['raw']}" if a.get("raw") else "",
+                ]))
+                ap(f"  - attempt {a['attempt']} `{a['model']}` — {sig}")
+            ap(f"  - excerpt: “{rec['excerpt']}”" if rec["excerpt"] else "  - excerpt: (unavailable)")
+        ap("")
+
+    # ── Schema-invalid failure reasons (buckets + raw `other` signals) ───────
+    # Always rendered for a live run so the raw signal for anything bucketed
+    # `other` is LOGGED (not just the quarantined rows — any invalid attempt,
+    # including rows later rescued by a retry, is bucketed here).
+    if not offline:
+        try:
+            for ln in _failure_reason_lines(scan_pilot_results(prefix)):
+                ap(ln)
+            ap("")
+        except Exception as exc:  # noqa: BLE001
+            ap(f"## Schema-invalid failure reasons\n\n_unavailable: {exc}_\n")
+
     # ── Cost + projection ────────────────────────────────────────────────────
     ap("## Cost (Tiers 1-2 = $0; Tier 3 from usageMetadata)")
     ap("")
@@ -2870,14 +3026,23 @@ def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dic
             ap(f"- Projection unavailable: {exc}")
         ap("")
 
-    # ── Samples ──────────────────────────────────────────────────────────────
+    # ── Samples (passage excerpt + tags + per-tag method + evidence sentence) ─
     if not offline:
         try:
             samples = _pilot_samples(config.PILOT_SAMPLE_ROWS, run_id=run_id, shard_key_prefix=prefix)
             ap(f"## {len(samples)} random samples (human skim)")
             ap("")
-            for s in samples:
-                ap(f"- **{s['table']}** `{s['id']}` — {', '.join(s['tags']) or '(no tags)'}")
+            for i, s in enumerate(samples, 1):
+                ap(f"**{i}. {s['table']}** `{s['id']}` — {', '.join(s['tags']) or '(no tags)'}"
+                   + (f" · function: `{s['function']}`" if s.get("function") else ""))
+                if s.get("snippet"):
+                    ap(f"> {s['snippet']}")
+                for tag, found, evidence, method in s.get("evidence", []):
+                    marker = "✓" if found else "∅ (kept, unevidenced)"
+                    method_s = f"`{method}`" if method else "`?`"
+                    ev_s = f" — “{evidence}”" if evidence else ""
+                    ap(f"- `{tag}` · method {method_s} · evidence {marker}{ev_s}")
+                ap("")
         except Exception as exc:  # noqa: BLE001
             ap(f"## Samples\n\n_unavailable: {exc}_")
 
@@ -3097,7 +3262,7 @@ def write_pilot_report(stats: dict, failures: list[str], models,
                 + (f" · function: `{sample['function']}`" if sample["function"] else "")
             )
             lines.append(f"> {sample['snippet']}")
-            for tag, found, evidence in sample["evidence"]:
+            for tag, found, evidence, _method in sample["evidence"]:
                 marker = "✓" if found else "∅ (kept, unevidenced)"
                 lines.append(f"- `{tag}` {marker} — “{evidence}”")
             lines.append("")

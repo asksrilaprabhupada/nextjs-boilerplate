@@ -202,8 +202,21 @@ PURE_CLASSIFICATION = (_env("PURE_CLASSIFICATION", "1") not in ("0", "false", "n
 # with ENTITY_FACETS below — asserted in tests.)
 TIER1_FACETS = {"Person", "Place", "Scripture"}
 TIER2_FACETS = {"Concept", "Practice"}
-# Tier 2 shortlist depth: the top-N nearest Concept/Practice terms per passage.
-TIER2_TOPK = _env_int("TIER2_TOPK", 12)
+# Tier 2 shortlist depth: the top-K nearest Concept/Practice terms per passage —
+# the candidate pool the bands (and the Tier-3 middle band) are drawn from. This
+# is the ACTIVE width; the pilot keeps the default 12 (the width the judge
+# mechanism was validated on) and the full run widens it to TIER2_SHORTLIST_K_FULL
+# (run_all.run_full sets TIER2_SHORTLIST_K = TIER2_SHORTLIST_K_FULL before it
+# recalibrates the thresholds, so calibration + free tiers + the Tier-3 middle
+# band all agree on the same width). Measured shortlist recall ceiling on the live
+# DB: k=12 → 0.719, k=20 → 0.823 — width only adds candidates; the row-level gates
+# stay active. (Legacy env alias TIER2_TOPK still read for back-compat.)
+TIER2_SHORTLIST_K = _env_int("TIER2_SHORTLIST_K", _env_int("TIER2_TOPK", 12))
+# The width the FULL corpus run uses (wider than the pilot: more candidates reach
+# the judge). run_full switches TIER2_SHORTLIST_K to this and recalibrates
+# T_accept/T_reject against the k=TIER2_SHORTLIST_K_FULL shortlist (same sweep,
+# same targets) at full-run start.
+TIER2_SHORTLIST_K_FULL = _env_int("TIER2_SHORTLIST_K_FULL", 20)
 # Tier 2 acceptance bands (cosine similarity, embedding_context4 ↔ vocab_terms).
 # DEFAULTS are the values calibrated against the p1 pilot (run 63c99428…); a live
 # calibration pass recomputes them from tag_evidence and records the result in
