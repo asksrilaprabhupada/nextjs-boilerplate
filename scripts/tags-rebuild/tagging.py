@@ -394,21 +394,20 @@ def attach_shortlists(table: str, passages: list[Passage], vocab: VocabIndex) ->
 
 
 def attach_shortlists_v4(table: str, passages: list[Passage], vocab: VocabIndex) -> None:
-    """v4-tiered shortlist = the Tier-2 MIDDLE BAND. For each passage, rank the
-    top-TIER2_SHORTLIST_K Concept/Practice terms by cosine similarity and keep exactly
-    those whose similarity lands in [TIER2_REJECT, TIER2_ACCEPT) — the ambiguous
-    band the judge must resolve. Above ACCEPT was auto-assigned (Tier 2) and
-    below REJECT was dropped, both for free; neither is shown to the model.
-    Deterministic from the stored embeddings + the active thresholds, so it
-    matches the free-tier pass exactly on every resume."""
+    """v4-tiered.2 shortlist = the Tier-3 candidate list. For each passage build the
+    UNION of three lanes — top-TIER2_SHORTLIST_K by LABEL similarity, top-K by
+    MAX-EXEMPLAR similarity, and every C/P term that LITERALLY appears — deduped and
+    capped at TIER3_CANDIDATE_CAP, then keep the middle band: label similarity ≥
+    TIER2_REJECT OR a lexical hit (a literal appearance is always judged). There is
+    no auto-accept band any more, so EVERYTHING above T_reject is shown to the judge.
+    Deterministic from the frozen p1 exemplars + stored embeddings + the active
+    threshold, so it matches the free-tier counter and the apply reconstruction
+    exactly on every resume."""
     import tiers
-    ids = [p.id for p in passages]
-    shortlists = tiers.tier2_shortlist_for_passages(table, ids, config.TIER2_SHORTLIST_K)
+    concept_index = tiers.concept_alias_index(tiers.build_vocab_dict(vocab))
+    cand = tiers.tier3_shortlist_for_passages(table, passages, concept_index)
     for passage in passages:
-        passage.shortlist = [
-            slug for slug, sim in shortlists.get(passage.id, [])
-            if config.TIER2_REJECT <= sim < config.TIER2_ACCEPT
-        ]
+        passage.shortlist = tiers.middle_band(cand.get(passage.id, []), config.TIER2_REJECT)
 
 
 # ── prompt + schema ─────────────────────────────────────────────────────────
@@ -537,9 +536,10 @@ def build_prompt(passage: Passage, vocab: VocabIndex,
     )
 
 
-def request_line(passage: Passage, vocab: VocabIndex) -> dict:
+def request_line(passage: Passage, vocab: VocabIndex,
+                 max_output_tokens: int | None = None) -> dict:
     if config.PURE_CLASSIFICATION:
-        return request_line_v4(passage, vocab)
+        return request_line_v4(passage, vocab, max_output_tokens)
     sents = sentence_split.split_sentences(passage.text)
     return {
         "key": f"{passage.table}|{passage.id}",
@@ -646,7 +646,8 @@ def build_prompt_v4(passage: Passage, vocab: VocabIndex, sents: list) -> str:
     )
 
 
-def request_line_v4(passage: Passage, vocab: VocabIndex) -> dict:
+def request_line_v4(passage: Passage, vocab: VocabIndex,
+                    max_output_tokens: int | None = None) -> dict:
     sents = sentence_split.split_sentences(passage.text)
     return {
         "key": f"{passage.table}|{passage.id}",
@@ -658,7 +659,9 @@ def request_line_v4(passage: Passage, vocab: VocabIndex) -> dict:
                     passage.shortlist, sentence_split.sentence_ids(sents),
                 ),
                 "thinkingConfig": {"thinkingLevel": config.THINKING_LEVEL},
-                "maxOutputTokens": config.TIER3_MAX_OUTPUT_TOKENS,
+                # TIERED cap by ladder attempt (2048 → 4096 → 8192); the first-attempt
+                # default (config.TIER3_MAX_OUTPUT_TOKENS) when none is threaded in.
+                "maxOutputTokens": max_output_tokens or config.TIER3_MAX_OUTPUT_TOKENS,
             },
         },
     }
@@ -1398,12 +1401,14 @@ def _est_tokens(raw: str) -> int:
 
 
 def _build_request_lines(
-    table: str, ids: list[str], vocab: VocabIndex
+    table: str, ids: list[str], vocab: VocabIndex, max_output_tokens: int | None = None
 ) -> tuple[list[tuple[str, str, int]], list[str]]:
     """Load a shard's rows and return (lines, skipped_ids). `lines` is one
     (passage_id, raw_json, est_in_tokens) per USABLE passage (one with a
     candidate shortlist); `skipped_ids` are rows dropped for a missing
-    embedding/shortlist (never sent, but still counted as covered)."""
+    embedding/shortlist (never sent, but still counted as covered).
+    `max_output_tokens` is the TIERED Tier-3 cap for this shard's ladder attempt
+    (build_shard_parts derives it from the shard key)."""
     passages = load_passages(table, ids)
     if config.PURE_CLASSIFICATION:
         attach_shortlists_v4(table, passages, vocab)
@@ -1415,7 +1420,7 @@ def _build_request_lines(
         if not passage.shortlist:
             skipped_ids.append(passage.id)
             continue
-        raw = json.dumps(request_line(passage, vocab), ensure_ascii=False)
+        raw = json.dumps(request_line(passage, vocab, max_output_tokens), ensure_ascii=False)
         lines.append((passage.id, raw, _est_tokens(raw)))
     return lines, skipped_ids
 
@@ -1470,8 +1475,13 @@ def build_shard_parts(
     embedding: v3.p3 records them as explicit `skipped_no_shortlist` outcome
     rows (resolved-but-listed) — NEVER silently 'covered'. parts is [] when the
     shard has no usable rows (the caller fails it). Idempotent on rerun: an
-    already-split part fits the cap and is returned without re-splitting."""
-    lines, skipped_ids = _build_request_lines(table, ids, vocab)
+    already-split part fits the cap and is returned without re-splitting.
+
+    The Tier-3 maxOutputTokens cap is TIERED by the shard's ladder attempt
+    (derived from its key): first pass 2048, same-model retry 4096, escalation
+    8192 — so a MAX_TOKENS truncation is always given more room before quarantine."""
+    max_output_tokens = config.tier3_output_cap(attempt_for_shard_key(shard_key))
+    lines, skipped_ids = _build_request_lines(table, ids, vocab, max_output_tokens)
     if skipped_ids:
         print(
             f"    {shard_key}: {len(skipped_ids)} rows have no shortlist"
@@ -1914,14 +1924,20 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
     outcome = ShardOutcome(shard_key=shard_key, table=table, model=model or "", attempt=attempt)
     passages = {p.id: p for p in load_passages(table, list(id_list))}
     pure = config.PURE_CLASSIFICATION
-    # v4-tiered: cosine sims for BOTH the confidence on each Tier-3 confirmation
-    # AND the middle-band audit trail (candidates the judge dropped). One pgvector
-    # query per shard — the same top-TIER2_SHORTLIST_K shortlist attach_shortlists_v4 built.
-    sim_by: dict[str, dict[str, float]] = {}
+    # v4-tiered.2: reconstruct the EXACT Tier-3 candidate list attach_shortlists_v4
+    # built (union of top-K label, top-K exemplar, lexical → the middle band) so we
+    # have both the LABEL similarity for each confirmation's confidence AND the
+    # judged-but-dropped audit trail. Deterministic from the frozen p1 exemplars +
+    # stored embeddings + the active threshold, so it matches on every resume.
+    sim_by: dict[str, dict[str, float | None]] = {}
+    mid_by: dict[str, list[str]] = {}
     if pure and id_list:
         import tiers
-        for pid, pairs in tiers.tier2_shortlist_for_passages(table, list(id_list)).items():
-            sim_by[pid] = {slug: sim for slug, sim in pairs}
+        concept_index = tiers.concept_alias_index(tiers.build_vocab_dict(vocab))
+        cand_by = tiers.tier3_shortlist_for_passages(table, list(passages.values()), concept_index)
+        for pid, cand in cand_by.items():
+            sim_by[pid] = {slug: sim for slug, sim, _is_lex in cand}
+            mid_by[pid] = tiers.middle_band(cand, config.TIER2_REJECT)
     tier3_method = "llm_confirmed" if pure else None
     resolved_ids: dict[str, bool] = {}  # passage_id → had a schema-valid response
 
@@ -2008,17 +2024,18 @@ def _gate_shard(shard_key: str, table: str, results_path, vocab: VocabIndex) -> 
                 )
 
             if pure:
-                # Record the judge's NEGATIVE decisions: middle-band candidates it
-                # did NOT confirm (the full Tier-3 decision trail). tags_core is
-                # merged from tag_evidence later; questions + passage_function are
-                # DEFERRED, so no content columns are written from `updates` here.
+                # Record the judge's NEGATIVE decisions: candidates in the Tier-3
+                # candidate list (the reconstructed middle band) it did NOT confirm
+                # (the full Tier-3 decision trail). tags_core is merged from
+                # tag_evidence later; questions + passage_function are DEFERRED, so
+                # no content columns are written from `updates` here.
                 sims = sim_by.get(passage_id, {})
                 confirmed = set(accepted)
-                for slug, sim in sims.items():
-                    if config.TIER2_REJECT <= sim < config.TIER2_ACCEPT and slug not in confirmed:
+                for slug in mid_by.get(passage_id, []):
+                    if slug not in confirmed:
                         outcome.evidence_records.append(
                             (table, passage_id, slug, "", False, "llm_rejected",
-                             False, None, None, None, "llm_confirmed", sim)
+                             False, None, None, None, "llm_confirmed", sims.get(slug))
                         )
                 outcome.per_row_tag_counts.append(len(accepted))
                 if not accepted:
@@ -2888,22 +2905,34 @@ def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dic
     ap(f"Ground truth: run `{calibration.get('pilot_run_id')}` accepted Concept/Practice"
        " tags. Sweep over the top-{} embedding shortlist per passage.".format(calibration.get("topk")))
     ap("")
-    ap(f"- **T_accept = {calibration['t_accept']:.2f}** — measured precision"
-       f" **{_fmt(calibration.get('accept_precision'))}**"
-       f" (target ≥ {calibration.get('target_accept_precision')}),"
-       f" in-shortlist recall {_fmt(calibration.get('accept_recall_inshortlist'))}")
     ap(f"- **T_reject = {calibration['t_reject']:.2f}** — retains"
        f" **{_fmt(calibration.get('reject_recall_retained'))}** of in-shortlist positive"
-       f" tags (target ≥ {calibration.get('target_reject_recall')})")
+       f" tags (target ≥ {calibration.get('target_reject_recall')}). Everything above"
+       " T_reject (plus every lexical hit) goes to the Tier-3 judge.")
+    ap(f"- _Diagnostic only:_ T_accept = {calibration['t_accept']:.2f} reaches measured"
+       f" precision {_fmt(calibration.get('accept_precision'))} on"
+       f" {calibration.get('pairs_auto_accepted')} candidate(s) — **v4-tiered.2 REMOVED"
+       " the auto-accept band** (0.800 precision on too few tags was below our bar);"
+       " nothing is auto-assigned. T_accept is retained as a reported precision head.")
     ceiling = calibration.get("shortlist_recall_ceiling")
-    ap(f"- Shortlist recall ceiling: {_fmt(ceiling)} of accepted Concept/Practice pilot"
-       f" tags are reachable by a top-{calibration.get('topk')} embedding shortlist at all"
+    ap(f"- Shortlist recall ceiling (label-only, k={calibration.get('topk')}): {_fmt(ceiling)}"
+       f" of accepted Concept/Practice pilot tags are reachable at all"
        f" ({calibration.get('positives_in_shortlist')}/{calibration.get('positives_total')})")
+    ur = calibration.get("union_recall") or {}
+    if ur and "error" not in ur:
+        ap(f"- **Recall ceiling at K={ur.get('recall_ceiling_k')} — UNION vs label-only:**"
+           f" union (label ∪ max-exemplar ∪ lexical) **{_fmt(ur.get('union_recall_ceiling'))}**"
+           f" ({ur.get('union_reached')}/{ur.get('positives_total')}) vs label-only"
+           f" {_fmt(ur.get('label_only_recall_ceiling'))} ({ur.get('label_reached')}/"
+           f"{ur.get('positives_total')}); {ur.get('lexical_reached')} positive(s) reached"
+           " by a literal (lexical) appearance")
+    elif ur.get("error"):
+        ap(f"- Union recall ceiling: _unavailable ({ur['error']})_")
     ap("")
-    ap("| candidates | ≥ T_accept (auto-accept) | middle band (judged) | < T_reject (auto-drop) |")
-    ap("|---|---|---|---|")
-    ap(f"| {calibration.get('candidate_pairs')} | {calibration.get('pairs_auto_accepted')}"
-       f" | {calibration.get('pairs_judged')} | {calibration.get('pairs_auto_rejected')} |")
+    ap("| candidates | judged (≥ T_reject or lexical) | dropped (< T_reject) |")
+    ap("|---|---|---|")
+    ap(f"| {calibration.get('candidate_pairs')} | {calibration.get('pairs_judged')}"
+       f" | {calibration.get('pairs_auto_rejected')} |")
     ap("")
 
     # ── Per-tier counts on the pilot manifest ────────────────────────────────
@@ -2912,12 +2941,14 @@ def write_pilot_report_v4(run_id: str, prefix: str, calibration: dict, free: dic
     ap(f"- Passages processed: **{free.get('passages')}**")
     ap(f"- Tier 1 — exact aliases: **{free.get('tier1_tags')}** tags on"
        f" {free.get('tier1_passages')} passages (free, $0)")
-    ap(f"- Tier 2 — auto-accepted (≥ T_accept): **{free.get('tier2_accept_tags')}** tags on"
-       f" {free.get('tier2_accept_passages')} passages (free, $0)")
-    ap(f"- Tier 2 — auto-rejected (< T_reject): **{free.get('auto_rejected_pairs')}** candidate"
-       " pairs dropped (free, $0)")
-    ap(f"- Tier 3 — judged (middle band): **{free.get('judged_pairs')}** candidate pairs across"
-       f" **{free.get('passages_needing_tier3')}** passages (the only paid tier)")
+    ap(f"- Tier 2 — candidate list (union of label ∪ max-exemplar ∪ lexical, capped at"
+       f" {config.TIER3_CANDIDATE_CAP}): **{free.get('candidate_pairs')}** candidate pairs,"
+       f" of which **{free.get('lexical_candidate_tags')}** are literal (lexical) hits."
+       " The auto-accept band is REMOVED — Tier 2 writes nothing.")
+    ap(f"- Tier 2 — reject filter (< T_reject, non-lexical): **{free.get('auto_rejected_pairs')}**"
+       " candidate pairs dropped (free, $0)")
+    ap(f"- Tier 3 — judged (≥ T_reject or lexical): **{free.get('judged_pairs')}** candidate pairs"
+       f" across **{free.get('passages_needing_tier3')}** passages (the only paid tier)")
     ap(f"- Free-tier-only passages (no Tier-3 call): {free.get('free_tier_passages_only')}")
     ap("")
 

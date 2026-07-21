@@ -214,15 +214,37 @@ TIER2_FACETS = {"Concept", "Practice"}
 TIER2_SHORTLIST_K = _env_int("TIER2_SHORTLIST_K", _env_int("TIER2_TOPK", 12))
 # The width the FULL corpus run uses (wider than the pilot: more candidates reach
 # the judge). run_full switches TIER2_SHORTLIST_K to this and recalibrates
-# T_accept/T_reject against the k=TIER2_SHORTLIST_K_FULL shortlist (same sweep,
-# same targets) at full-run start.
+# T_reject against the k=TIER2_SHORTLIST_K_FULL shortlist (same sweep, same
+# targets) at full-run start.
 TIER2_SHORTLIST_K_FULL = _env_int("TIER2_SHORTLIST_K_FULL", 20)
-# Tier 2 acceptance bands (cosine similarity, embedding_context4 ↔ vocab_terms).
-# DEFAULTS are the values calibrated against the p1 pilot (run 63c99428…); a live
-# calibration pass recomputes them from tag_evidence and records the result in
-# tag_runs.config + pilot-report.md. Above ACCEPT → auto-assign (method
-# 'semantic'); below REJECT → drop; the middle band goes to the Tier-3 judge.
-TIER2_ACCEPT = _env_float("TIER2_ACCEPT", 0.47)   # ≥ → auto-accept (high precision)
+# v4-tiered.2 candidate shortlist — the Tier-3 candidate list is the UNION of
+# three lanes, deduped and capped at TIER3_CANDIDATE_CAP:
+#   • top-TIER2_SHORTLIST_K Concept/Practice terms by LABEL embedding similarity;
+#   • top-TIER2_SHORTLIST_K by MAX-EXEMPLAR similarity — exemplars are up to
+#     TIER3_EXEMPLARS_PER_TERM p1-accepted passage embeddings per term (run
+#     P1_PILOT_RUN_ID), so a term is reachable when a passage looks like the
+#     passages that term was actually applied to, not only like its label;
+#   • every C/P term whose label/variant LITERALLY appears in the passage
+#     (word-boundary, diacritic-insensitive — the same fold Tier 1 uses),
+#     regardless of embedding rank.
+# Lexical hits are ALWAYS kept (they bypass both the top-K cutoff and the
+# T_reject filter). Everything else with label similarity ≥ T_reject is judged;
+# below T_reject is dropped. There is NO auto-accept band any more (v4-tiered.2:
+# it measured 0.800 precision on only 92 tags — below our bar) — Tier 2 is now
+# purely shortlist construction + the reject filter, and EVERYTHING above
+# T_reject goes to the Tier-3 judge.
+TIER3_CANDIDATE_CAP = _env_int("TIER3_CANDIDATE_CAP", 25)
+TIER3_EXEMPLARS_PER_TERM = _env_int("TIER3_EXEMPLARS_PER_TERM", 5)
+# K used for the calibration recall-ceiling comparison (union vs label-only).
+TIER3_RECALL_CEILING_K = _env_int("TIER3_RECALL_CEILING_K", 20)
+# Tier-2 reject threshold (cosine similarity, embedding_context4 ↔ vocab_terms).
+# DEFAULT is the value calibrated against the p1 pilot (run 63c99428…); a live
+# calibration pass recomputes it from tag_evidence and records the result in
+# tag_runs.config + pilot-report.md. Below REJECT → drop; ≥ REJECT (or a lexical
+# hit) → the Tier-3 judge.
+# TIER2_ACCEPT is RETAINED as a DIAGNOSTIC ONLY (the precision-head threshold the
+# calibration sweep still reports); nothing is auto-assigned at it in v4-tiered.2.
+TIER2_ACCEPT = _env_float("TIER2_ACCEPT", 0.47)   # diagnostic precision head (NOT auto-accepted)
 TIER2_REJECT = _env_float("TIER2_REJECT", 0.22)   # < → auto-drop (preserve recall)
 # Calibration targets — the RULE the calibrator applies to the p1 pilot sweep:
 #   T_accept = smallest threshold whose measured precision ≥ TARGET_ACCEPT_PRECISION
@@ -232,10 +254,33 @@ TIER2_TARGET_ACCEPT_PRECISION = _env_float("TIER2_TARGET_ACCEPT_PRECISION", 0.80
 TIER2_TARGET_REJECT_RECALL = _env_float("TIER2_TARGET_REJECT_RECALL", 0.95)
 # The frozen p1 pilot run whose accepted tags are the calibration ground truth.
 P1_PILOT_RUN_ID = _env("P1_PILOT_RUN_ID") or "63c99428-7ecb-469d-a551-cc99f9585673"
-# Tier 3 is classification-only: {"tags":[{"slug","evidence_sentence_id"}]}. Its
-# output is tiny, so the cap is small (the p3 8192 ceiling was sized for the old
-# tags + questions + passage_function payload). thinkingLevel stays LOW.
-TIER3_MAX_OUTPUT_TOKENS = _env_int("TIER3_MAX_OUTPUT_TOKENS", 512)
+# Tier 3 is classification-only: {"tags":[{"slug","evidence_sentence_id"}]}.
+# v4-tiered.2: TIERED, GENEROUS maxOutputTokens by ladder ATTEMPT (a safety
+# ceiling, not a target). thinkingLevel stays LOW. A row is quarantined only
+# after the FULL ladder — first pass → same-model retry → gemini-3.5-flash
+# escalation — has run, so a truncated (finishReason=MAX_TOKENS) classification
+# is always given more room before it is abandoned:
+#   attempt 1 (first pass)            → TIER3_MAX_OUTPUT_TOKENS        (2048)
+#   attempt 2 (same-model retry)      → TIER3_MAX_OUTPUT_TOKENS_RETRY  (4096)
+#   attempt 3 (gemini-3.5-flash esc.) → TIER3_MAX_OUTPUT_TOKENS_ESCALATION (8192)
+# TIER3_MAX_OUTPUT_TOKENS is the FIRST-attempt cap — the value the request
+# builder falls back to when no attempt-specific cap is threaded in.
+TIER3_MAX_OUTPUT_TOKENS = _env_int("TIER3_MAX_OUTPUT_TOKENS", 2048)
+TIER3_MAX_OUTPUT_TOKENS_RETRY = _env_int("TIER3_MAX_OUTPUT_TOKENS_RETRY", 4096)
+TIER3_MAX_OUTPUT_TOKENS_ESCALATION = _env_int("TIER3_MAX_OUTPUT_TOKENS_ESCALATION", 8192)
+
+
+def tier3_output_cap(attempt: int) -> int:
+    """maxOutputTokens for a Tier-3 request by ladder ATTEMPT (derived from the
+    shard key by tagging.attempt_for_shard_key): 1 = first pass, 2 = same-model
+    retry, 3 = escalation. Monotone and generous so a MAX_TOKENS truncation
+    always gets more room before the row is quarantined — quarantine happens
+    ONLY after the attempt-3 (8192) escalation still fails."""
+    if attempt >= 3:
+        return TIER3_MAX_OUTPUT_TOKENS_ESCALATION
+    if attempt == 2:
+        return TIER3_MAX_OUTPUT_TOKENS_RETRY
+    return TIER3_MAX_OUTPUT_TOKENS
 # The Tier-3 model ladder reuses the routed model strings: every row is judged on
 # TIER3_MODEL (gemini-3-flash-preview) and, if still schema-invalid after one
 # retry, escalates ONCE to TIER3_ESCALATION_MODEL (gemini-3.5-flash) before
@@ -310,7 +355,12 @@ PILOT_MAX_OUT_OF_VOCAB = _env_float("PILOT_MAX_OUT_OF_VOCAB", 0.02)
 PILOT_MIN_DISTINCT_TAGS = _env_int("PILOT_MIN_DISTINCT_TAGS", 100)   # "in the hundreds"
 PILOT_MAX_SINGLETON_SHARE = _env_float("PILOT_MAX_SINGLETON_SHARE", 0.20)  # of used terms
 PILOT_MIN_VOCAB_COVERAGE = _env_float("PILOT_MIN_VOCAB_COVERAGE", 0.60)  # terms used ≥ once
-PILOT_MAX_TAG_SHARE = _env_float("PILOT_MAX_TAG_SHARE", 0.20)  # no tag on >20% of passages
+# v4-tiered.2: ceiling raised 0.20 → 0.45. The most-used tag is 'krsna', assigned
+# by Tier-1 exact_alias, and Śrīla Prabhupāda's corpus is GENUINELY about Kṛṣṇa —
+# a Kṛṣṇa mention on a large share of passages is correct, not a distribution
+# defect. The gate still catches a tag that has metastasized onto the near-whole
+# corpus (> 45%).
+PILOT_MAX_TAG_SHARE = _env_float("PILOT_MAX_TAG_SHARE", 0.45)  # no tag on >45% of passages
 PILOT_MEDIAN_TAGS_MIN = _env_int("PILOT_MEDIAN_TAGS_MIN", 3)   # median among TAGGED rows
 PILOT_MEDIAN_TAGS_MAX = _env_int("PILOT_MEDIAN_TAGS_MAX", 8)   # (zero-tag rows excluded)
 PILOT_SAMPLE_ROWS = _env_int("PILOT_SAMPLE_ROWS", 40)  # passage→tags→evidence skim samples (30-50)

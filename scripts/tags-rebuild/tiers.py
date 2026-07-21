@@ -10,16 +10,21 @@ the frozen 251-term vocabulary. Only Tier 3 costs money:
     lane uses). A hit assigns the tag with method='exact_alias', confidence=1.0,
     evidence = the FIRST matching sentence (id + offsets).
 
-  Tier 2 — EMBEDDING SHORTLIST (free). Concept/Practice terms are ranked by
-    cosine similarity between the passage `embedding_context4` and
-    `vocab_terms.embedding`; the top TIER2_SHORTLIST_K per passage form the shortlist.
-    Two thresholds (calibrated against the p1 pilot tags) band each candidate:
-    ≥ T_accept → auto-assign (method='semantic', confidence=similarity);
-    < T_reject → drop; in between → the Tier-3 judge (tagging.py).
+  Tier 2 — CANDIDATE SHORTLIST + REJECT FILTER (free). The Concept/Practice
+    candidate list is the UNION of three lanes, deduped and capped at
+    TIER3_CANDIDATE_CAP: (a) the top-TIER2_SHORTLIST_K terms by LABEL embedding
+    similarity; (b) the top-TIER2_SHORTLIST_K by MAX-EXEMPLAR similarity
+    (exemplars = up to TIER3_EXEMPLARS_PER_TERM p1-accepted passage embeddings
+    per term); (c) every term whose label/variant LITERALLY appears in the
+    passage (the same fold Tier 1 uses), regardless of embedding rank. The single
+    calibrated threshold T_reject then filters: a candidate is dropped when its
+    label similarity < T_reject (unless it is a lexical hit, which is always
+    kept); everything else goes to the Tier-3 judge. v4-tiered.2 REMOVED the
+    auto-accept band — nothing is assigned method='semantic' any more.
 
-  Tier 3 — LLM JUDGE (paid; lives in tagging.py). Only the middle-band
-    Concept/Practice candidates are shown to the model, which confirms which
-    genuinely apply (method='llm_confirmed').
+  Tier 3 — LLM JUDGE (paid; lives in tagging.py). Only the Tier-2 candidate list
+    is shown to the model, which confirms which genuinely apply
+    (method='llm_confirmed').
 
 This module owns the two FREE tiers, the calibration, the merge, and the
 row-level free-tier writer. The paid Tier-3 batch machinery, gating and
@@ -41,8 +46,9 @@ METHOD_EXACT_ALIAS = "exact_alias"
 METHOD_SEMANTIC = "semantic"
 METHOD_LLM_CONFIRMED = "llm_confirmed"
 
-# Tier-2 band labels.
-BAND_ACCEPT = "accept"
+# Tier-2 band labels. v4-tiered.2 has only TWO bands (the auto-accept band was
+# removed): everything with label similarity ≥ T_reject is judged, the rest is
+# dropped.
 BAND_JUDGE = "judge"
 BAND_REJECT = "reject"
 
@@ -59,14 +65,18 @@ class Tier1Hit:
 
 
 class EntityAliasIndex:
-    """Word-boundary, diacritic-insensitive alias matcher for the Tier-1 facets
-    (Person/Place/Scripture). Mirrors tagging.VocabIndex's alias regex but is
-    RESTRICTED to entity terms, so a Concept/Practice term never leaks into the
-    free exact-alias lane (those go through Tiers 2-3)."""
+    """Word-boundary, diacritic-insensitive alias matcher over a chosen set of
+    facets. Mirrors tagging.VocabIndex's alias regex but is RESTRICTED to the
+    `facets` passed in (default the Tier-1 entity facets), so a Concept/Practice
+    term never leaks into the free exact-alias lane — while the SAME machinery,
+    pointed at TIER2_FACETS (see `concept_alias_index`), powers the v4-tiered.2
+    LEXICAL shortlist lane (a C/P term literally present is always a candidate)."""
 
-    def __init__(self, vocabulary: dict) -> None:
+    def __init__(self, vocabulary: dict, facets: set[str] | None = None) -> None:
         import tagging  # lazy: reuse the canonical fold (fts_core-style normalization)
 
+        facets = config.TIER1_FACETS if facets is None else facets
+        self.facets = facets
         self._fold = tagging.fold_text
         self.facet_by_slug: dict[str, str] = {}
         alias_map: dict[str, str] = {}
@@ -74,7 +84,7 @@ class EntityAliasIndex:
             facet = term.get("facet")
             slug = term["slug"]
             self.facet_by_slug[slug] = facet
-            if facet not in config.TIER1_FACETS:
+            if facet not in facets:
                 continue
             for alias in [term["term"], *term.get("variants", [])]:
                 folded = tagging.fold_text(alias)
@@ -94,6 +104,14 @@ class EntityAliasIndex:
         for m in self.alias_regex.finditer(folded_text):
             found.setdefault(self.alias_to_slug[m.group(0)], None)
         return list(found)
+
+
+def concept_alias_index(vocabulary: dict) -> "EntityAliasIndex":
+    """Alias matcher RESTRICTED to the Tier-2 facets (Concept/Practice) — the
+    LEXICAL shortlist lane. A C/P term whose label/variant literally appears in a
+    passage (word-boundary, diacritic-insensitive, the same fold as Tier 1) is
+    ALWAYS a Tier-3 candidate, regardless of embedding rank."""
+    return EntityAliasIndex(vocabulary, facets=config.TIER2_FACETS)
 
 
 def tier1_hits(sentences: list, index: EntityAliasIndex) -> list[Tier1Hit]:
@@ -116,14 +134,50 @@ def tier1_hits(sentences: list, index: EntityAliasIndex) -> list[Tier1Hit]:
 
 # ── Tier 2: banding + calibration (pure) ─────────────────────────────────────
 
-def band(sim: float, t_accept: float, t_reject: float) -> str:
-    """Band a candidate by cosine similarity: ≥ t_accept auto-accept; < t_reject
-    auto-drop; otherwise the middle band → the Tier-3 judge."""
-    if sim >= t_accept:
-        return BAND_ACCEPT
-    if sim < t_reject:
-        return BAND_REJECT
-    return BAND_JUDGE
+def band(sim: float, t_reject: float) -> str:
+    """Band a candidate by LABEL cosine similarity. v4-tiered.2 has no auto-accept
+    band: ≥ t_reject → the Tier-3 judge; < t_reject → auto-drop. (Lexical hits
+    bypass this filter entirely — see `middle_band` — and are always judged.)"""
+    return BAND_JUDGE if sim >= t_reject else BAND_REJECT
+
+
+# ── v4-tiered.2 candidate union (pure) ───────────────────────────────────────
+
+def union_candidates(members: dict[str, float | None], lexical, cap: int
+                     ) -> list[tuple[str, float | None, bool]]:
+    """The Tier-3 candidate list for one passage: the union of the embedding lanes
+    (`members` maps every top-K label / top-K exemplar slug to its LABEL cosine
+    similarity) and the `lexical` hits, deduped and capped at `cap`.
+
+    Returns (slug, label_sim, is_lexical) highest-label-sim first (slug tie-break).
+    LEXICAL hits are NEVER trimmed by the cap — they are kept in full and the
+    remaining room is filled with the highest-similarity non-lexical members. A
+    lexical hit with no embedding similarity (no term embedding) still rides along
+    with label_sim=None so a literal appearance is never silently discarded."""
+    lexical = set(lexical)
+    slugs = set(members) | lexical
+
+    def sortkey(slug: str):
+        sim = members.get(slug)
+        return (-(sim if sim is not None else -1.0), slug)
+
+    ranked = sorted(slugs, key=sortkey)
+    lex_first = [s for s in ranked if s in lexical]
+    others = [s for s in ranked if s not in lexical]
+    room = max(cap - len(lex_first), 0)
+    kept = sorted(lex_first + others[:room], key=sortkey)
+    return [(s, members.get(s), s in lexical) for s in kept]
+
+
+def middle_band(candidates: list[tuple[str, float | None, bool]], t_reject: float) -> list[str]:
+    """The slugs that go to the Tier-3 judge: every union candidate whose LABEL
+    similarity is ≥ t_reject, PLUS every lexical hit (a literal appearance is
+    always judged regardless of embedding similarity). Order is preserved."""
+    out: list[str] = []
+    for slug, sim, is_lex in candidates:
+        if is_lex or (sim is not None and sim >= t_reject):
+            out.append(slug)
+    return out
 
 
 def _grid(lo: float, hi: float, step: float) -> list[float]:
@@ -222,14 +276,16 @@ def pick_thresholds(pairs: list[tuple[float, bool]],
 
 # ── merge (pure) ─────────────────────────────────────────────────────────────
 
-def merge_tags(tier1: list[str], tier2_accept: list[str], tier3: list[str],
+def merge_tags(tier1: list[str], tier2: list[str], tier3: list[str],
                cap: int) -> list[str]:
     """The fast merged tags_core copy: Tier 1 (highest-confidence exact aliases)
-    first, then Tier-2 auto-accepts, then Tier-3 confirmations — deduped in that
-    priority order and capped at `cap`."""
+    first, then the Tier-2 group (EMPTY in v4-tiered.2 — the auto-accept band was
+    removed), then Tier-3 confirmations — deduped in that priority order and capped
+    at `cap`. (tag_evidence remains the source of truth; recompute_tags_core is the
+    authoritative merge — this pure helper is kept for its priority/dedupe/cap tests.)"""
     out: list[str] = []
     seen: set[str] = set()
-    for group in (tier1, tier2_accept, tier3):
+    for group in (tier1, tier2, tier3):
         for slug in group:
             if slug not in seen:
                 seen.add(slug)
@@ -251,11 +307,130 @@ def _content_embedding_union() -> str:
     )
 
 
+# ── v4-tiered.2 exemplar cache (p1-accepted passage embeddings per C/P term) ──
+
+def _exemplar_select_sql() -> str:
+    """SELECT (slug, embedding) for up to TIER3_EXEMPLARS_PER_TERM p1-accepted
+    passage embeddings per Concept/Practice term. Params (in order): the C/P
+    facets, the pilot run id, the per-term cap. The content scan is joined to the
+    accepted-passage ids, so only the exemplar rows are ever materialized."""
+    return (
+        "WITH cp AS (SELECT slug FROM public.vocab_terms"
+        "            WHERE embedding IS NOT NULL AND NOT is_ai AND facet = ANY(%s)),"
+        " picks AS (SELECT te.table_name, te.passage_id, te.tag AS slug,"
+        "     row_number() OVER (PARTITION BY te.tag ORDER BY te.passage_id) rk"
+        "   FROM public.tag_evidence te JOIN cp ON cp.slug = te.tag"
+        "   WHERE te.run_id = %s::uuid AND te.accepted),"
+        f" pe AS ({_content_embedding_union()})"
+        " SELECT k.slug, pe.e AS embedding"
+        "   FROM picks k JOIN pe ON pe.tbl = k.table_name AND pe.id = k.passage_id"
+        "  WHERE k.rk <= %s"
+    )
+
+
+_exemplar_cache_run: str | None = None
+
+
+def ensure_exemplar_cache(pilot_run_id: str | None = None) -> int:
+    """Build (once per connection) the pg_temp table `_tier3_exemplars(slug,
+    embedding)` — up to TIER3_EXEMPLARS_PER_TERM p1-accepted passage embeddings per
+    Concept/Practice term. The exemplars are a FIXED asset derived from the frozen
+    p1 run, so they are computed once and reused for every shard's shortlist rather
+    than re-scanned per shard. Idempotent: rebuilt only when the cached run id
+    changes or the temp table is gone (a reconnected pooler session). Returns the
+    exemplar row count."""
+    global _exemplar_cache_run
+    pilot_run_id = pilot_run_id or config.P1_PILOT_RUN_ID
+    present = db.one("SELECT to_regclass('pg_temp._tier3_exemplars') IS NOT NULL")
+    if _exemplar_cache_run == pilot_run_id and present:
+        return int(db.one("SELECT count(*) FROM pg_temp._tier3_exemplars") or 0)
+    conn = db.get_pg()
+    with conn.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS _tier3_exemplars")
+        cur.execute(
+            "CREATE TEMP TABLE _tier3_exemplars AS " + _exemplar_select_sql(),
+            (sorted(config.TIER2_FACETS), pilot_run_id, config.TIER3_EXEMPLARS_PER_TERM),
+        )
+    _exemplar_cache_run = pilot_run_id
+    return int(db.one("SELECT count(*) FROM pg_temp._tier3_exemplars") or 0)
+
+
+def tier3_candidate_members(table: str, ids: list[str],
+                            lexical_by_id: dict[str, list[str]] | None = None,
+                            topk: int | None = None) -> dict[str, dict[str, float]]:
+    """Per passage, the LABEL cosine similarity of every candidate slug in the
+    UNION of the three lanes: top-`topk` by label similarity ∪ top-`topk` by
+    max-exemplar similarity (from the pg_temp exemplar cache) ∪ the passed-in
+    `lexical_by_id` (passage → [slug]) hits. Returns {pid: {slug: label_sim}}; a
+    lexical slug whose term has no embedding is simply absent (union_candidates
+    still keeps it, with label_sim=None). Rows with no passage embedding are
+    absent (→ no candidates)."""
+    topk = topk or config.TIER2_SHORTLIST_K
+    ensure_exemplar_cache()
+    facets = sorted(config.TIER2_FACETS)
+    lex_pids: list[str] = []
+    lex_slugs: list[str] = []
+    for pid, slugs in (lexical_by_id or {}).items():
+        for s in slugs:
+            lex_pids.append(pid)
+            lex_slugs.append(s)
+    out: dict[str, dict[str, float]] = {}
+    for pid, slug, lsim in db.rows(
+        "WITH cp AS (SELECT slug, embedding FROM public.vocab_terms"
+        "            WHERE embedding IS NOT NULL AND NOT is_ai AND facet = ANY(%s)),"
+        f" p AS (SELECT id, embedding_context4 emb FROM public.{table}"
+        "       WHERE id = ANY(%s::uuid[]) AND embedding_context4 IS NOT NULL),"
+        " lbl AS (SELECT p.id pid, s.slug, s.lsim FROM p CROSS JOIN LATERAL ("
+        "     SELECT slug, 1 - (embedding <=> p.emb) lsim FROM cp"
+        "     ORDER BY embedding <=> p.emb LIMIT %s) s),"
+        " exl AS (SELECT pid, slug, lsim FROM ("
+        "     SELECT pid, slug, lsim,"
+        "       row_number() OVER (PARTITION BY pid ORDER BY xsim DESC) rk FROM ("
+        "       SELECT p.id pid, cp.slug, min(1 - (cp.embedding <=> p.emb)) lsim,"
+        "              max(1 - (x.embedding <=> p.emb)) xsim"
+        "         FROM p CROSS JOIN cp JOIN pg_temp._tier3_exemplars x ON x.slug = cp.slug"
+        "        GROUP BY p.id, cp.slug) a) b WHERE rk <= %s),"
+        " lex AS (SELECT l.pid, l.slug, 1 - (cp.embedding <=> p.emb) lsim"
+        "     FROM unnest(%s::uuid[], %s::text[]) AS l(pid, slug)"
+        "     JOIN p ON p.id = l.pid JOIN cp ON cp.slug = l.slug)"
+        " SELECT u.pid::text, u.slug, max(u.lsim) FROM ("
+        "     SELECT pid, slug, lsim FROM lbl"
+        "     UNION ALL SELECT pid, slug, lsim FROM exl"
+        "     UNION ALL SELECT pid, slug, lsim FROM lex) u"
+        " GROUP BY u.pid, u.slug",
+        (facets, ids, topk, topk, lex_pids, lex_slugs),
+    ):
+        out.setdefault(pid, {})[slug] = float(lsim)
+    return out
+
+
+def tier3_shortlist_for_passages(table: str, passages, concept_index,
+                                 topk: int | None = None, cap: int | None = None
+                                 ) -> dict[str, list[tuple[str, float | None, bool]]]:
+    """The v4-tiered.2 Tier-3 candidate list per passage: union(top-K label,
+    top-K exemplar, lexical) capped at `cap`, as (slug, label_sim, is_lexical).
+    The SINGLE source of the candidate list — the free-tier counter, the judge
+    prompt (attach_shortlists_v4) and the apply reconstruction (the llm_rejected
+    trail) all call this so they agree exactly on every resume. `passages` are
+    Passage objects (their `.text` feeds the lexical lane); `concept_index` is a
+    concept_alias_index over the same vocabulary."""
+    cap = cap or config.TIER3_CANDIDATE_CAP
+    lexical_by_id: dict[str, list[str]] = {
+        p.id: concept_index.slugs_in(concept_index._fold(p.text)) for p in passages
+    }
+    members = tier3_candidate_members(table, [p.id for p in passages], lexical_by_id, topk)
+    return {
+        p.id: union_candidates(members.get(p.id, {}), lexical_by_id.get(p.id, []), cap)
+        for p in passages
+    }
+
+
 def tier2_shortlist_for_passages(table: str, ids: list[str],
                                  topk: int | None = None) -> dict[str, list[tuple[str, float]]]:
     """Per passage, the top-`topk` nearest Concept/Practice vocab terms by cosine
-    similarity (embedding_context4 ↔ vocab_terms.embedding), highest first. Rows
-    with no embedding are absent from the result (→ no Tier-2 candidates)."""
+    similarity (embedding_context4 ↔ vocab_terms.embedding), highest first — the
+    LABEL lane in isolation (calibration + the label-only recall-ceiling baseline).
+    Rows with no embedding are absent from the result (→ no Tier-2 candidates)."""
     topk = topk or config.TIER2_SHORTLIST_K
     facets = sorted(config.TIER2_FACETS)
     out: dict[str, list[tuple[str, float]]] = {}
@@ -299,11 +474,99 @@ def _calibration_pairs(pilot_run_id: str, topk: int) -> list[tuple[float, bool]]
     return [(float(sim), bool(is_pos)) for sim, is_pos in rows]
 
 
+def _pilot_passage_texts(pilot_run_id: str) -> dict[str, dict[str, str]]:
+    """{table: {passage_id: text}} for every passage carrying an accepted C/P tag
+    in the pilot run — the calibration ground-truth passages, loaded once for the
+    LEXICAL lane of the recall-ceiling measurement."""
+    import tagging
+    by_table: dict[str, list[str]] = {}
+    for tbl, pid in db.rows(
+        "SELECT DISTINCT e.table_name, e.passage_id::text FROM public.tag_evidence e"
+        " JOIN public.vocab_terms v ON v.slug = e.tag"
+        " WHERE e.run_id = %s::uuid AND e.accepted AND NOT v.is_ai AND v.facet = ANY(%s)",
+        (pilot_run_id, sorted(config.TIER2_FACETS)),
+    ):
+        by_table.setdefault(tbl, []).append(pid)
+    out: dict[str, dict[str, str]] = {}
+    for tbl, ids in by_table.items():
+        out[tbl] = {p.id: p.text for p in tagging.load_passages(tbl, ids)}
+    return out
+
+
+def measure_union_recall_ceiling(pilot_run_id: str, vocab_dict: dict,
+                                 k: int | None = None) -> dict:
+    """Measure the recall ceiling of the v4-tiered.2 UNION shortlist (top-k label ∪
+    top-k max-exemplar ∪ lexical) vs the LABEL-ONLY top-k shortlist, over the
+    accepted Concept/Practice pilot tags, at K = `k` (default TIER3_RECALL_CEILING_K
+    = 20). A positive is 'reached' when it lands inside the shortlist at all — the
+    structural limit no downstream judge can exceed. Reads only stored embeddings +
+    tag_evidence + passage text (no LLM, no cost)."""
+    k = k or config.TIER3_RECALL_CEILING_K
+    ensure_exemplar_cache(pilot_run_id)
+    facets = sorted(config.TIER2_FACETS)
+    # Embedding lanes: per accepted (passage, tag), is it inside the top-k LABEL
+    # shortlist and/or the top-k MAX-EXEMPLAR shortlist?
+    rows = db.rows(
+        f"WITH pe AS ({_content_embedding_union()}),"
+        " cp AS (SELECT slug, embedding FROM public.vocab_terms"
+        "        WHERE embedding IS NOT NULL AND NOT is_ai AND facet = ANY(%s)),"
+        " pos AS (SELECT DISTINCT e.table_name tbl, e.passage_id, e.tag FROM public.tag_evidence e"
+        "         JOIN public.vocab_terms v ON v.slug = e.tag"
+        "         WHERE e.run_id = %s::uuid AND e.accepted AND NOT v.is_ai AND v.facet = ANY(%s)),"
+        " pilot AS (SELECT DISTINCT tbl, passage_id FROM pos),"
+        " lab AS (SELECT pl.passage_id, cp.slug,"
+        "     row_number() OVER (PARTITION BY pl.passage_id ORDER BY (pe.e <=> cp.embedding)) rk"
+        "   FROM pilot pl JOIN pe ON pe.tbl = pl.tbl AND pe.id = pl.passage_id CROSS JOIN cp),"
+        " exm AS (SELECT passage_id, slug,"
+        "     row_number() OVER (PARTITION BY passage_id ORDER BY xsim DESC) rk FROM ("
+        "     SELECT pl.passage_id, cp.slug, max(1 - (x.embedding <=> pe.e)) xsim"
+        "       FROM pilot pl JOIN pe ON pe.tbl = pl.tbl AND pe.id = pl.passage_id"
+        "            CROSS JOIN cp JOIN pg_temp._tier3_exemplars x ON x.slug = cp.slug"
+        "      GROUP BY pl.passage_id, cp.slug) z)"
+        " SELECT pos.passage_id::text, pos.tag,"
+        "   EXISTS (SELECT 1 FROM lab WHERE lab.passage_id = pos.passage_id"
+        "           AND lab.slug = pos.tag AND lab.rk <= %s),"
+        "   EXISTS (SELECT 1 FROM exm WHERE exm.passage_id = pos.passage_id"
+        "           AND exm.slug = pos.tag AND exm.rk <= %s)"
+        " FROM pos",
+        (facets, pilot_run_id, facets, k, k),
+    )
+    # Lexical lane (Python: needs passage text + the C/P alias index).
+    ci = concept_alias_index(vocab_dict)
+    lexical_positives: set[tuple[str, str]] = set()
+    for _tbl, id_text in _pilot_passage_texts(pilot_run_id).items():
+        for pid, text in id_text.items():
+            for slug in ci.slugs_in(ci._fold(text or "")):
+                lexical_positives.add((pid, slug))
+    total = len(rows)
+    label_reached = union_reached = lexical_reached = 0
+    for pid, tag, in_label, in_exem in rows:
+        is_lex = (pid, tag) in lexical_positives
+        if in_label:
+            label_reached += 1
+        if is_lex:
+            lexical_reached += 1
+        if in_label or in_exem or is_lex:
+            union_reached += 1
+    return {
+        "recall_ceiling_k": k,
+        "positives_total": total,
+        "label_reached": label_reached,
+        "union_reached": union_reached,
+        "lexical_reached": lexical_reached,
+        "label_only_recall_ceiling": (label_reached / total) if total else None,
+        "union_recall_ceiling": (union_reached / total) if total else None,
+    }
+
+
 def calibrate_tier2_thresholds(pilot_run_id: str | None = None,
-                               topk: int | None = None) -> dict:
-    """Calibrate (T_accept, T_reject) against the frozen p1 pilot tags. Reads
-    ONLY tag_evidence + the stored embeddings — no LLM, no cost. Returns the
-    thresholds, measured precision/recall, per-band counts and the sweep."""
+                               topk: int | None = None, vocab=None) -> dict:
+    """Calibrate T_reject against the frozen p1 pilot tags (T_accept is retained as
+    a DIAGNOSTIC precision head only — v4-tiered.2 auto-accepts nothing). Reads ONLY
+    tag_evidence + the stored embeddings + (for the union recall ceiling) passage
+    text — no LLM, no cost. Returns the thresholds, measured precision/recall,
+    per-band counts, the sweep, and — when `vocab` is supplied — the UNION vs
+    label-only recall ceiling at K=TIER3_RECALL_CEILING_K."""
     pilot_run_id = pilot_run_id or config.P1_PILOT_RUN_ID
     topk = topk or config.TIER2_SHORTLIST_K
     pairs = _calibration_pairs(pilot_run_id, topk)
@@ -312,7 +575,7 @@ def calibrate_tier2_thresholds(pilot_run_id: str | None = None,
     result["pilot_run_id"] = pilot_run_id
     result["topk"] = topk
     # Shortlist recall ceiling: how many accepted Concept/Practice pilot tags a
-    # top-`topk` embedding shortlist can reach at all (its structural limit).
+    # top-`topk` LABEL embedding shortlist can reach at all (its structural limit).
     total_pos = db.one(
         "SELECT count(*) FROM public.tag_evidence e JOIN public.vocab_terms v ON v.slug = e.tag"
         " WHERE e.run_id = %s::uuid AND e.accepted AND NOT v.is_ai AND v.facet = ANY(%s)",
@@ -321,6 +584,15 @@ def calibrate_tier2_thresholds(pilot_run_id: str | None = None,
     result["positives_total"] = int(total_pos)
     result["shortlist_recall_ceiling"] = (
         result["positives_in_shortlist"] / total_pos if total_pos else None)
+    # v4-tiered.2: the UNION recall ceiling (top-K label ∪ top-K max-exemplar ∪
+    # lexical) vs label-only, at K=TIER3_RECALL_CEILING_K — quantifies how much the
+    # exemplar + lexical lanes widen reachability beyond the label shortlist.
+    if vocab is not None:
+        try:
+            result["union_recall"] = measure_union_recall_ceiling(
+                pilot_run_id, build_vocab_dict(vocab))
+        except Exception as exc:  # noqa: BLE001 — a reported metric, never fatal
+            result["union_recall"] = {"error": str(exc)}
     return result
 
 
@@ -371,23 +643,31 @@ def all_eligible_ids() -> dict[str, list[str]]:
 
 def apply_free_tiers(run_id: str, vocab, t_accept: float, t_reject: float,
                      chunk: int = 500, manifest: dict | None = None) -> dict:
-    """Run Tiers 1-2 over every planned passage and WRITE their results (free, no
-    LLM): Tier-1 exact-alias hits + Tier-2 auto-accepts become accepted
-    tag_evidence rows (with method + confidence), and tags_core is materialized
-    from tag_evidence. Middle-band Concept/Practice candidates are NOT written —
-    they are recomputed deterministically at Tier-3 build time (attach_shortlists
-    in tagging.py). Idempotent: it deletes only its OWN (exact_alias/semantic)
-    evidence for these passages before rewriting, leaving any Tier-3 rows intact.
+    """Run the free tiers over every planned passage and WRITE their results (no
+    LLM). v4-tiered.2 writes ONLY Tier-1 exact-alias hits (accepted tag_evidence,
+    method='exact_alias'); the auto-accept band is REMOVED, so NOTHING is assigned
+    method='semantic' any more. The Tier-3 candidate list (union of top-K label,
+    top-K exemplar, and lexical lanes, filtered by T_reject) is recomputed
+    deterministically at build time (attach_shortlists_v4 in tagging.py) and its
+    per-band counts are tallied here for the report. `t_accept` is accepted for
+    signature stability but is NOT used for banding. Idempotent: it deletes only
+    its OWN (exact_alias/semantic) evidence for these passages before rewriting —
+    the stale-semantic delete also cleans up any auto-accepts from an earlier v4.1
+    run — leaving any Tier-3 rows intact.
 
     Returns per-tier counts for pilot-report.md."""
     import tagging  # lazy (avoids an import cycle)
 
-    entity_index = EntityAliasIndex(build_vocab_dict(vocab))
+    vocab_dict = build_vocab_dict(vocab)
+    entity_index = EntityAliasIndex(vocab_dict)
+    concept_index = concept_alias_index(vocab_dict)
     summary = {
         "passages": 0, "tier1_tags": 0, "tier1_passages": 0,
+        # Retained (always 0) for report/back-compat: the auto-accept band is gone.
         "tier2_accept_tags": 0, "tier2_accept_passages": 0,
         "judged_pairs": 0, "passages_needing_tier3": 0,
         "auto_rejected_pairs": 0, "free_tier_passages_only": 0,
+        "lexical_candidate_tags": 0, "candidate_pairs": 0,
         "t_accept": t_accept, "t_reject": t_reject,
     }
     if manifest is None:
@@ -397,7 +677,8 @@ def apply_free_tiers(run_id: str, vocab, t_accept: float, t_reject: float,
         for start in range(0, len(ids), chunk):
             batch = ids[start:start + chunk]
             passages = tagging.load_passages(table, batch)
-            shortlists = tier2_shortlist_for_passages(table, batch)
+            # The SAME union candidate list the judge will see (attach_shortlists_v4).
+            shortlists = tier3_shortlist_for_passages(table, passages, concept_index)
             evidence: list[tuple] = []
             for passage in passages:
                 sents = sentence_split.split_sentences(passage.text)
@@ -410,25 +691,14 @@ def apply_free_tiers(run_id: str, vocab, t_accept: float, t_reject: float,
                                      True, h.start, h.end, h.sentence_id,
                                      METHOD_EXACT_ALIAS, 1.0))
                 summary["tier1_tags"] += len(hits)
-                # Tier 2 — embedding shortlist bands.
-                sl = shortlists.get(passage.id, [])
-                had_accept = False
-                had_judge = False
-                for slug, sim in sl:
-                    b = band(sim, t_accept, t_reject)
-                    if b == BAND_ACCEPT:
-                        evidence.append((table, passage.id, slug, "", True, None,
-                                         False, None, None, None, METHOD_SEMANTIC, sim))
-                        summary["tier2_accept_tags"] += 1
-                        had_accept = True
-                    elif b == BAND_JUDGE:
-                        summary["judged_pairs"] += 1
-                        had_judge = True
-                    else:
-                        summary["auto_rejected_pairs"] += 1
-                if had_accept:
-                    summary["tier2_accept_passages"] += 1
-                if had_judge:
+                # Tier 2 — union candidate list + reject filter (no auto-accept).
+                cand = shortlists.get(passage.id, [])
+                judged = set(middle_band(cand, t_reject))
+                summary["candidate_pairs"] += len(cand)
+                summary["judged_pairs"] += len(judged)
+                summary["lexical_candidate_tags"] += sum(1 for _s, _sim, is_lex in cand if is_lex)
+                summary["auto_rejected_pairs"] += sum(1 for s, _sim, _l in cand if s not in judged)
+                if judged:
                     summary["passages_needing_tier3"] += 1
                 else:
                     summary["free_tier_passages_only"] += 1

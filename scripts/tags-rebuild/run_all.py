@@ -234,33 +234,40 @@ def run_pilot_v4(run_id: str, models: dict, vocab_index, accept_quarantine: bool
         print("Step 3 · pilot: already complete (pilot-report.md exists).", flush=True)
         return
 
-    # 1) Calibrate Tier-2 thresholds from the frozen p1 pilot tags (free, no LLM).
+    # 1) Calibrate the Tier-2 reject threshold from the frozen p1 pilot tags (free,
+    #    no LLM). `vocab` in → the calibrator also measures the UNION vs label-only
+    #    recall ceiling at K=20 (exemplar + lexical reachability).
     print("Step 3 · v4-tiered pilot — calibrating Tier-2 thresholds vs the p1 pilot…", flush=True)
-    cal = tiers.calibrate_tier2_thresholds()
-    config.TIER2_ACCEPT = cal["t_accept"]
+    cal = tiers.calibrate_tier2_thresholds(vocab=vocab_index)
+    config.TIER2_ACCEPT = cal["t_accept"]  # diagnostic only (nothing auto-accepted)
     config.TIER2_REJECT = cal["t_reject"]
     cal["vocab_total"] = vocab_index.term_count
     audit.merge_run_config(run_id, {
-        "pipeline": "v4-tiered",
+        "pipeline": "v4-tiered.2",
         "splitter": sentences.SPLITTER_VERSION,
-        "tier2_thresholds": {"t_accept": cal["t_accept"], "t_reject": cal["t_reject"]},
+        "tier2_thresholds": {"t_reject": cal["t_reject"], "t_accept_diagnostic": cal["t_accept"]},
         "tier2_calibration": {k: cal.get(k) for k in (
             "pilot_run_id", "topk", "accept_precision", "reject_recall_retained",
-            "shortlist_recall_ceiling", "positives_total", "positives_in_shortlist")},
+            "shortlist_recall_ceiling", "positives_total", "positives_in_shortlist",
+            "union_recall")},
     })
-    print(f"  T_accept={cal['t_accept']:.2f} (precision {cal.get('accept_precision')}),"
-          f" T_reject={cal['t_reject']:.2f} (retains {cal.get('reject_recall_retained')}"
-          " of in-shortlist positives)", flush=True)
+    ur = cal.get("union_recall") or {}
+    print(f"  T_reject={cal['t_reject']:.2f} (retains {cal.get('reject_recall_retained')}"
+          " of in-shortlist positives); union recall ceiling"
+          f" {ur.get('union_recall_ceiling')} vs label-only"
+          f" {ur.get('label_only_recall_ceiling')} at K={ur.get('recall_ceiling_k')}", flush=True)
 
     # 2) Plan the EXACT 2,000-row manifest (same cohort as p3; all rows 'standard').
     tagging.plan_pilot_shards(run_id)
 
-    # 3) Tiers 1-2 (FREE): exact aliases + auto-accepts → tag_evidence + tags_core.
+    # 3) Free tiers: Tier-1 exact aliases → tag_evidence + tags_core; Tier-2 tallies
+    #    the union candidate list + reject filter (no auto-accept writes any more).
     free = tiers.apply_free_tiers(run_id, vocab_index, cal["t_accept"], cal["t_reject"])
     audit.merge_run_config(run_id, {"free_tiers": free})
-    print(f"  Tiers 1-2 (free, $0): {free['tier1_tags']} exact-alias tags,"
-          f" {free['tier2_accept_tags']} auto-accepts; {free['judged_pairs']} pairs to judge"
-          f" across {free['passages_needing_tier3']} passages", flush=True)
+    print(f"  Free tiers (free, $0): {free['tier1_tags']} exact-alias tags;"
+          f" {free['candidate_pairs']} candidates ({free['lexical_candidate_tags']} lexical);"
+          f" {free['judged_pairs']} pairs to judge across {free['passages_needing_tier3']}"
+          " passages", flush=True)
 
     # 4) Tier 3 (PAID): submit → collect (no apply) → retry once → escalate once.
     tagging.reconcile()
@@ -425,24 +432,28 @@ def run_full(run_id: str, vocab_index, accept_quarantine: bool = False) -> bool:
         import audit
         import tiers
         config.TIER2_SHORTLIST_K = config.TIER2_SHORTLIST_K_FULL
-        # Recalibrate T_accept/T_reject against the k=TIER2_SHORTLIST_K_FULL shortlist
-        # (same sweep, same targets, same p1 ground truth) — free, deterministic, so
-        # every resume recomputes the identical thresholds.
-        cal = tiers.calibrate_tier2_thresholds()
+        # Recalibrate T_reject against the k=TIER2_SHORTLIST_K_FULL shortlist (same
+        # sweep, same target, same p1 ground truth) — free, deterministic, so every
+        # resume recomputes the identical threshold. `vocab` in → union recall ceiling.
+        cal = tiers.calibrate_tier2_thresholds(vocab=vocab_index)
         config.TIER2_ACCEPT, config.TIER2_REJECT = cal["t_accept"], cal["t_reject"]
+        ur = cal.get("union_recall") or {}
         print(
             f"  full-run Tier-2 shortlist width k={config.TIER2_SHORTLIST_K}"
             f" (wider than the pilot); recalibrated against the k={cal.get('topk')}"
-            f" shortlist: T_accept={cal['t_accept']:.2f} (precision {cal.get('accept_precision')}),"
-            f" T_reject={cal['t_reject']:.2f} (retains {cal.get('reject_recall_retained')})",
+            f" shortlist: T_reject={cal['t_reject']:.2f} (retains"
+            f" {cal.get('reject_recall_retained')}); union recall ceiling"
+            f" {ur.get('union_recall_ceiling')} vs label-only"
+            f" {ur.get('label_only_recall_ceiling')} at K={ur.get('recall_ceiling_k')}",
             flush=True,
         )
         audit.merge_run_config(run_id, {
             "tier2_shortlist_k_full": config.TIER2_SHORTLIST_K,
-            "tier2_thresholds_full": {"t_accept": cal["t_accept"], "t_reject": cal["t_reject"]},
+            "tier2_thresholds_full": {"t_reject": cal["t_reject"], "t_accept_diagnostic": cal["t_accept"]},
             "tier2_calibration_full": {k: cal.get(k) for k in (
                 "pilot_run_id", "topk", "accept_precision", "reject_recall_retained",
-                "shortlist_recall_ceiling", "positives_total", "positives_in_shortlist")},
+                "shortlist_recall_ceiling", "positives_total", "positives_in_shortlist",
+                "union_recall")},
         })
         done = db.one("SELECT (config->>'free_tiers_full_done') FROM public.tag_runs WHERE id=%s::uuid",
                       (run_id,))
