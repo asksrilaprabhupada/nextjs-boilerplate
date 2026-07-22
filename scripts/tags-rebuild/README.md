@@ -171,14 +171,26 @@ just interprets it):
   p3 run's keys, so DB rows and `shards/` files can never collide. Each shard's
   id list, **model and pinned prices** are persisted in `tag_batch_jobs` before
   anything is sent; the attempt number is derived from the key.
-- Every shard's JSONL input is capped at `MAX_SHARD_INPUT_TOKENS` (2.5M). Our
-  Gemini tier allows at most 3M enqueued batch tokens at once, so an oversized
-  shard is split into token-bounded parts (`…:p00`, `…:p01`) before submission —
-  each job always fits the queue.
+- Every shard's JSONL input is capped at `SHARD_MAX_INPUT_TOKENS` (default
+  400K; renamed from `MAX_SHARD_INPUT_TOKENS`). Our Gemini tier allows at most
+  3M enqueued batch tokens at once, so the small cap lets ~6 jobs sit in the
+  queue concurrently instead of one 2.5M job blocking every other shard; an
+  oversized shard is split into token-bounded parts (`…:p00`, `…:p01`) before
+  submission. Each wave **discards and re-plans** shards still in `pending`
+  status at the current cap (never touching submitted/retrieved/applied shards),
+  so changing the dial takes effect on resume.
 - On `RESOURCE_EXHAUSTED` (HTTP 429) when the batch queue is full, submission
   does **not** crash: it polls in-flight jobs every 5 min and retries the create
   once one finishes and frees a slot, draining the whole shard list in waves
-  unattended (giving up only after 24h with no job finishing).
+  unattended (giving up only after 24h with no job finishing). A queue-full 429
+  is expected behaviour, not an error — it logs one short
+  `queue full — waiting for space` line per wait cycle, never the JSON error
+  body (non-429 errors keep their full bodies).
+- While waiting on batch jobs the harness prints a **live progress line every
+  30s** — applied passages / total eligible with %, shards done + in flight,
+  and real spend so far (e.g. `12,480/244,148 passages (5.1%) · shards 8/53
+  done, 2 in flight · $4.20`) — read cheaply from the DB; Google's job states
+  are still polled at the existing interval.
 - Google job IDs are recorded in `tag_batch_jobs` **before** polling; on
   restart the harness reconciles against Google's job list (by display name)
   so accepted-but-unrecorded jobs are **recovered, never resubmitted**.
