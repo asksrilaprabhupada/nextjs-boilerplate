@@ -211,7 +211,7 @@ def test_queue_wait_covers_bakeoff():
     assert "def _inflight_jobs_from_state" in BAKEOFF_SRC
     assert "gemini_client.create_batch" not in BAKEOFF_SRC   # only via the helper now
     # the helper accepts an inflight_fn so pilot/full/bakeoff share one wait.
-    assert "def _poll_queue_quota(already_terminal: set[str], inflight_fn=None, run_id=None)" in TAGGING_SRC
+    assert "def _poll_queue_quota(already_terminal: set[str], inflight_fn=None, run_id=None," in TAGGING_SRC
     assert "def _inflight_jobs_from_db" in TAGGING_SRC
 
 

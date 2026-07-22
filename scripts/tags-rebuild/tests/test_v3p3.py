@@ -471,12 +471,12 @@ def test_submit_pending_is_run_scoped():
     # fix #2: submit_pending must scope pending shards to the ACTIVE run so an
     # aborted prior run's orphan pending shards are never submitted/paid for by a
     # new run that will never collect them.
-    assert "def submit_pending(vocab: VocabIndex, run_id: str | None = None)" in TAGGING_SRC
+    assert "def submit_pending(vocab: VocabIndex, run_id: str | None = None," in TAGGING_SRC
     assert "AND run_id = %s::uuid" in TAGGING_SRC
     run_all_src = Path(Path(tagging.__file__).parent / "run_all.py").read_text(encoding="utf-8")
     # every caller passes the run_id; no bare submit_pending(vocab_index) survives
     assert "submit_pending(vocab_index)" not in run_all_src
-    assert "submit_pending(vocab_index, run_id)" in run_all_src
+    assert "submit_pending(vocab_index, run_id," in run_all_src
 
 
 def test_committed_usd_query_uses_no_p3_only_columns():

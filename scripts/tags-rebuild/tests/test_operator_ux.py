@@ -119,7 +119,7 @@ def test_wait_ticks_every_30s_without_changing_the_poll_interval(monkeypatch, ca
     assert tagging.PROGRESS_LINE_SECONDS == 30
     sleeps = []
     monkeypatch.setattr(tagging.time, "sleep", lambda s: sleeps.append(s))
-    monkeypatch.setattr(tagging, "run_progress_line", lambda run_id: "PROGRESS")
+    monkeypatch.setattr(tagging, "run_progress_line", lambda run_id, shard_prefix="": "PROGRESS")
     tagging._wait_with_progress(300, "run-1")  # one 5-min queue-wait cycle
     assert sum(sleeps) == 300 and set(sleeps) == {30}   # full interval, 30s ticks
     assert capsys.readouterr().out.count("PROGRESS") == 10
@@ -133,7 +133,7 @@ def test_wait_ticks_every_30s_without_changing_the_poll_interval(monkeypatch, ca
 def test_progress_read_failures_never_abort_a_wait(monkeypatch, capsys):
     monkeypatch.setattr(tagging.time, "sleep", lambda s: None)
 
-    def blow_up(run_id):
+    def blow_up(run_id, shard_prefix=""):
         raise RuntimeError("db blip")
 
     monkeypatch.setattr(tagging, "run_progress_line", blow_up)
@@ -157,8 +157,10 @@ def test_progress_line_reads_cheap_run_scoped_counts():
 def test_both_wait_paths_use_the_progress_sleep():
     # collect's poll sleep and the queue-full drain both tick; the raw sleeps on
     # those intervals are gone, and the Google poll cadence constants are intact.
-    assert "_wait_with_progress(config.BATCH_POLL_SECONDS, run_id)" in TAGGING_SRC
-    assert "_wait_with_progress(QUEUE_QUOTA_POLL_SECONDS, run_id)" in TAGGING_SRC
+    # Both now pass the active phase's shard prefix so the line's "done" count is
+    # scoped to that phase's shards.
+    assert "_wait_with_progress(config.BATCH_POLL_SECONDS, run_id, shard_key_prefix)" in TAGGING_SRC
+    assert "_wait_with_progress(QUEUE_QUOTA_POLL_SECONDS, run_id, shard_prefix)" in TAGGING_SRC
     assert "time.sleep(config.BATCH_POLL_SECONDS)" not in TAGGING_SRC
     assert "time.sleep(QUEUE_QUOTA_POLL_SECONDS)" not in TAGGING_SRC
     assert tagging.QUEUE_QUOTA_POLL_SECONDS == 300

@@ -117,9 +117,15 @@ def run_pilot(run_id: str, models: dict, vocab_index) -> None:
         f" core → {models['core']} / standard → {models['standard']})…",
         flush=True,
     )
+    # Interleave download-only collection with submission so a full batch queue
+    # drains itself (download to `retrieved`; the pilot applies atomically later).
+    def collect_finished_pilot_shards() -> int:
+        return tagging.collect_terminal_once(run_id, prefix, None, apply=False)
+
     tagging.plan_pilot_shards(run_id)
     tagging.reconcile()
-    tagging.submit_pending(vocab_index, run_id)
+    tagging.submit_pending(vocab_index, run_id,
+                           collect_fn=collect_finished_pilot_shards, shard_prefix=prefix)
 
     # 1) Download results ONLY — no DB content writes yet. (Real usage IS
     #    recorded at retrieval, so the ledger counts this spend immediately.)
@@ -146,14 +152,16 @@ def run_pilot(run_id: str, models: dict, vocab_index) -> None:
     retry_rows = tagging.plan_pilot_retry(run_id)
     if retry_rows:
         tagging.reconcile()
-        tagging.submit_pending(vocab_index, run_id)
+        tagging.submit_pending(vocab_index, run_id,
+                               collect_fn=collect_finished_pilot_shards, shard_prefix=prefix)
         tagging.collect(run_id, prefix, apply=False)
 
     # 4) Escalate still-invalid STANDARD-route rows once to MODEL_CORE.
     esc_rows = tagging.plan_pilot_escalation(run_id)
     if esc_rows:
         tagging.reconcile()
-        tagging.submit_pending(vocab_index, run_id)
+        tagging.submit_pending(vocab_index, run_id,
+                               collect_fn=collect_finished_pilot_shards, shard_prefix=prefix)
         tagging.collect(run_id, prefix, apply=False)
 
     # 5) THE GATE: 100% row-level validity after retry + escalation. Rows still
@@ -270,8 +278,16 @@ def run_pilot_v4(run_id: str, models: dict, vocab_index, accept_quarantine: bool
           " passages", flush=True)
 
     # 4) Tier 3 (PAID): submit → collect (no apply) → retry once → escalate once.
+    #    Interleave download-only collection with submission so a full batch queue
+    #    drains itself: the sweep downloads finished pilot shards to `retrieved`
+    #    (freeing enqueued-token quota) without applying — the pilot still applies
+    #    every shard atomically later. Keyed off recorded job ids: never resubmits.
+    def collect_finished_pilot_shards() -> int:
+        return tagging.collect_terminal_once(run_id, prefix, None, apply=False)
+
     tagging.reconcile()
-    tagging.submit_pending(vocab_index, run_id)
+    tagging.submit_pending(vocab_index, run_id,
+                           collect_fn=collect_finished_pilot_shards, shard_prefix=prefix)
     tagging.collect(run_id, prefix, apply=False)
     scan = tagging.scan_pilot_results(prefix)
     if scan["files"] and scan["stats"]:
@@ -279,11 +295,13 @@ def run_pilot_v4(run_id: str, models: dict, vocab_index, accept_quarantine: bool
               " (diagnostic)", flush=True)
     if tagging.plan_pilot_retry(run_id):
         tagging.reconcile()
-        tagging.submit_pending(vocab_index, run_id)
+        tagging.submit_pending(vocab_index, run_id,
+                               collect_fn=collect_finished_pilot_shards, shard_prefix=prefix)
         tagging.collect(run_id, prefix, apply=False)
     if tagging.plan_pilot_escalation(run_id):
         tagging.reconcile()
-        tagging.submit_pending(vocab_index, run_id)
+        tagging.submit_pending(vocab_index, run_id,
+                               collect_fn=collect_finished_pilot_shards, shard_prefix=prefix)
         tagging.collect(run_id, prefix, apply=False)
 
     # 5) THE GATE: 100% Tier-3 row-level validity after retry + escalation. Rows
@@ -464,10 +482,21 @@ def run_full(run_id: str, vocab_index, accept_quarantine: bool = False) -> bool:
                 manifest=tiers.all_eligible_ids())
             audit.merge_run_config(run_id, {"free_tiers_full": summary, "free_tiers_full_done": True})
 
+    # Interleave collection with submission: whenever the batch queue fills mid
+    # submission, this sweep downloads + applies whatever full-run shards have
+    # already SUCCEEDED — freeing enqueued-token quota so submission resumes AND
+    # advancing applied progress. It keys off recorded provider_job_ids, so it
+    # never resubmits or double-bills. The run therefore continuously plans a
+    # wave → submits what fits → collects whatever has finished → submits more,
+    # instead of submitting everything before any collection begins.
+    def collect_finished_full_shards() -> int:
+        return tagging.collect_terminal_once(run_id, prefix, vocab_index, apply=True)
+
     for _ in range(MAX_WAVES_PER_INVOCATION):
         tagging.reconcile()
         tagging.plan_full_shards(run_id)
-        tagging.submit_pending(vocab_index, run_id)
+        tagging.submit_pending(vocab_index, run_id,
+                               collect_fn=collect_finished_full_shards, shard_prefix=prefix)
         in_flight = db.one(
             "SELECT count(*) FROM public.tag_batch_jobs"
             " WHERE run_id = %s::uuid AND status IN ('submitted','running','retrieved')",
