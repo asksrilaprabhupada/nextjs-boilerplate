@@ -128,6 +128,29 @@ def test_collect_terminal_once_one_shard_blip_does_not_abort_the_sweep(monkeypat
     assert tagging.collect_terminal_once("run-1", "full:v4:r:", vocab="V", apply=True) == 1
 
 
+def test_collect_sleeps_on_a_pure_running_flip_cycle(monkeypatch):
+    # Pacing regression guard: a cycle whose only change is submitted->running must
+    # NOT count as progress — collect() still sleeps its poll interval instead of
+    # busy-polling get_batch during job ramp-up (the pre-refactor behavior).
+    calls = {"rows": 0}
+
+    def fake_rows(sql, params):
+        calls["rows"] += 1
+        return ([("full:v4:r:0000", "verses", "prov/1", "submitted")]
+                if calls["rows"] == 1 else [])
+
+    monkeypatch.setattr(tagging.db, "rows", fake_rows)
+    monkeypatch.setattr(tagging.db, "with_retry", lambda fn, *a, **k: fn())
+    monkeypatch.setattr(tagging.db, "get_pg", lambda: _FakePG([]))
+    monkeypatch.setattr(tagging.gemini_client, "get_batch",
+                        lambda name: {"state": "BATCH_STATE_RUNNING", "done": False})
+    waits = []
+    monkeypatch.setattr(tagging, "_wait_with_progress", lambda *a, **k: waits.append(a))
+
+    assert tagging.collect("run-1", "full:v4:r:", apply=False) == []
+    assert len(waits) == 1  # slept once on the running-only cycle (no busy-poll)
+
+
 # ── _poll_queue_quota: collection is what frees the slot ─────────────────────
 def test_queue_wait_frees_a_slot_by_collecting(monkeypatch):
     monkeypatch.setattr(tagging, "_wait_with_progress", lambda *a, **k: None)

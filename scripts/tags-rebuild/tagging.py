@@ -2447,7 +2447,11 @@ def collect(run_id: str, shard_key_prefix: str = "", apply: bool = True) -> list
                 shard_key, table, job_name, status, run_id, vocab, apply)
             if outcome is not None:
                 outcomes.append(outcome)
-            if signal != "waiting":
+            # Only a shard actually consumed this cycle (downloaded/applied/failed)
+            # counts as progress. A bare submitted→running flip does NOT — matching
+            # the pre-refactor pacing: a cycle that merely observed jobs ramping up
+            # still sleeps BATCH_POLL_SECONDS instead of busy-polling get_batch.
+            if signal in ("applied", "retrieved", "failed"):
                 progressed = True
         if not progressed:
             print(
