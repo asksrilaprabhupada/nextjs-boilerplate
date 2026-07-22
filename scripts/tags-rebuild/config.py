@@ -300,9 +300,10 @@ SHARD_SIZE = _env_int("SHARD_SIZE", 6000)  # passages per Gemini Batch shard
 # Hard cap on a single shard's JSONL INPUT tokens. Our Gemini tier allows at most
 # 3M enqueued batch tokens at once; any shard whose built requests exceed this cap
 # is split into token-bounded parts before submission, so every job always fits
-# the queue (2.5M leaves headroom under the 3M ceiling). chars/4 ≈ tokens — the
-# same estimate used for the cost ledger.
-MAX_SHARD_INPUT_TOKENS = _env_int("MAX_SHARD_INPUT_TOKENS", 2_500_000)
+# the queue. Small on purpose: at 400K about 6 jobs sit in the queue concurrently,
+# instead of one 2.5M job blocking every other shard. chars/4 ≈ tokens — the
+# same estimate used for the cost ledger. (Renamed from MAX_SHARD_INPUT_TOKENS.)
+SHARD_MAX_INPUT_TOKENS = _env_int("SHARD_MAX_INPUT_TOKENS", 400_000)
 PILOT_SIZE = _env_int("PILOT_SIZE", 2000)  # exact deterministic manifest (see tagging.plan_pilot_shards)
 BATCH_POLL_SECONDS = _env_int("BATCH_POLL_SECONDS", 60)
 DB_BATCH = _env_int("DB_BATCH", 5000)  # rows per SQL write batch

@@ -63,9 +63,10 @@ after submission and rerun later to collect):
   • real token usage recorded the moment results are RETRIEVED (downloaded) —
     not at apply — so the spend ledger and ceiling count every dollar actually
     spent even if a later apply step fails;
-  • every shard's JSONL input is capped at config.MAX_SHARD_INPUT_TOKENS (2.5M);
-    an oversized shard is split into token-bounded parts ("…:p00", "…:p01") so
-    each job always fits our 3M enqueued-batch-token queue;
+  • every shard's JSONL input is capped at config.SHARD_MAX_INPUT_TOKENS
+    (default 400K); an oversized shard is split into token-bounded parts
+    ("…:p00", "…:p01") so several jobs share our 3M enqueued-batch-token queue
+    concurrently instead of one giant job blocking it;
   • the pilot is PILOT_SIZE seeded-random passages, stratified by table
     (seed = config.SAMPLE_SEED, recorded in pilot-report.md);
   • Google job IDs recorded in tag_batch_jobs BEFORE any polling;
@@ -1044,8 +1045,29 @@ def plan_full_shards(run_id: str) -> int:
                    model that failed;
       escalation — STANDARD-route rows still invalid at attempt 2, re-run once
                    on MODEL_CORE (skipped when the two models are identical).
-    Wave numbering is scoped to this run's keys. Returns shards planned."""
+    Wave numbering is scoped to this run's keys. Returns shards planned.
+
+    Shards still 'pending' were sized under whatever SHARD_MAX_INPUT_TOKENS was
+    in force when they were planned, so each wave DISCARDS them first and
+    re-plans their rows at the current size. Only never-accepted pending rows
+    (provider_job_id IS NULL) are discarded — submitted/running/retrieved/
+    applied/failed shards are never touched, and the caller runs reconcile()
+    first so an accepted-but-unrecorded job has already been adopted."""
     prefix = full_prefix(run_id)
+    with db.get_pg().cursor() as cur:
+        cur.execute(
+            "DELETE FROM public.tag_batch_jobs WHERE run_id = %s::uuid"
+            " AND shard_key LIKE %s AND status = 'pending'"
+            " AND provider_job_id IS NULL",
+            (run_id, prefix + "%"),
+        )
+        discarded = cur.rowcount
+    if discarded:
+        print(
+            f"  discarded {discarded} pending shard(s) — re-planning at the current"
+            f" {config.SHARD_MAX_INPUT_TOKENS:,}-token shard cap.",
+            flush=True,
+        )
     wave = int(
         db.one(
             r"SELECT coalesce(max((regexp_match(shard_key, ':w(\d+):'))[1]::int), 0) + 1"
@@ -1427,7 +1449,7 @@ def _build_request_lines(
 
 def _pack_parts(lines: list[tuple[str, str, int]]) -> list[list[tuple[str, str, int]]]:
     """Greedy-pack request lines into parts whose summed input tokens each stay
-    ≤ config.MAX_SHARD_INPUT_TOKENS, so every submitted job fits the batch queue.
+    ≤ config.SHARD_MAX_INPUT_TOKENS, so every submitted job fits the batch queue.
     A single line larger than the cap (never happens under PASSAGE_CHAR_CAP) is
     given its own part rather than dropped. Input order is preserved."""
     parts: list[list[tuple[str, str, int]]] = []
@@ -1435,7 +1457,7 @@ def _pack_parts(lines: list[tuple[str, str, int]]) -> list[list[tuple[str, str, 
     current_tok = 0
     for line in lines:
         tok = line[2]
-        if current and current_tok + tok > config.MAX_SHARD_INPUT_TOKENS:
+        if current and current_tok + tok > config.SHARD_MAX_INPUT_TOKENS:
             parts.append(current)
             current, current_tok = [], 0
         current.append(line)
@@ -1462,7 +1484,7 @@ def build_shard_parts(
     run_id: str | None, model: str
 ) -> tuple[list[ShardPart], list[str]]:
     """Build the request JSONL for a pending shard, capping every job's input at
-    config.MAX_SHARD_INPUT_TOKENS so it always fits the 3M batch queue. A shard
+    config.SHARD_MAX_INPUT_TOKENS so it always fits the 3M batch queue. A shard
     whose built requests fit the cap is written as-is and returned unchanged. An
     OVERSIZED shard is split into token-bounded parts: the pending row is
     transactionally replaced by one pending row per part (deterministic keys
@@ -1518,7 +1540,7 @@ def build_shard_parts(
                 )
     print(
         f"  split {shard_key}: {len(lines)} requests exceed the"
-        f" {config.MAX_SHARD_INPUT_TOKENS / 1e6:.1f}M-token cap →"
+        f" {config.SHARD_MAX_INPUT_TOKENS:,}-token cap →"
         f" {len(parts)} parts",
         flush=True,
     )
@@ -1532,14 +1554,94 @@ def shard_request_path(shard_key: str) -> Path:
     return config.SHARDS_DIR / f"{shard_key.replace(':', '_')}.requests.jsonl"
 
 
+# ── live progress line (30s cadence while waiting on batch jobs) ─────────────
+#
+# Every wait on Google (collect's poll sleep, the queue-full drain) prints one
+# cheap DB-only progress line every PROGRESS_LINE_SECONDS so the operator can
+# watch a multi-hour run move. Google's job states are still polled at the
+# existing interval — ONLY the line refreshes faster, from two indexed queries.
+PROGRESS_LINE_SECONDS = 30
+
+_eligible_total_cache: int | None = None
+
+
+def _eligible_total() -> int:
+    """Total Gemini-eligible passages (embedding present) across all tables —
+    constant for the life of a run, so computed once and cached; the 30s tick
+    then costs only the two small queries in run_progress_line."""
+    global _eligible_total_cache
+    if _eligible_total_cache is None:
+        _eligible_total_cache = sum(
+            int(db.one(
+                f"SELECT count(*) FROM public.{table}"
+                " WHERE embedding_context4 IS NOT NULL"
+            ) or 0)
+            for table in config.GEMINI_TABLES
+        )
+    return _eligible_total_cache
+
+
+def format_progress_line(applied: int, total: int, shards_done: int,
+                         shards_total: int, in_flight: int, real_usd: float) -> str:
+    pct = (applied / total * 100.0) if total else 0.0
+    return (
+        f"{applied:,}/{total:,} passages ({pct:.1f}%)"
+        f" · shards {shards_done}/{shards_total} done, {in_flight} in flight"
+        f" · ${real_usd:,.2f}"
+    )
+
+
+def run_progress_line(run_id: str) -> str:
+    """One live status line for the current run, read cheaply from the DB:
+    passages with an applied Tier-3 result / total eligible, shard progress,
+    and REAL spend so far (retrieved/applied/failed usage at recorded prices)."""
+    applied = int(db.one(
+        "SELECT count(*) FROM public.tag_passage_outcomes"
+        " WHERE run_id = %s::uuid AND outcome = 'applied'",
+        (run_id,),
+    ) or 0)
+    shards_done, in_flight, shards_total, real_usd = db.rows(
+        "SELECT count(*) FILTER (WHERE status = 'applied'),"
+        "       count(*) FILTER (WHERE status IN ('submitted','running','retrieved')),"
+        "       count(*),"
+        "       coalesce(sum(CASE WHEN status IN ('retrieved','applied','failed') THEN"
+        "         cost_input_tok  * coalesce(price_in_per_m,  %(fin)s) / 1e6"
+        "       + cost_output_tok * coalesce(price_out_per_m, %(fout)s) / 1e6 END), 0)"
+        " FROM public.tag_batch_jobs WHERE run_id = %(run)s::uuid",
+        {**_LEDGER_PARAMS, "run": run_id},
+    )[0]
+    return format_progress_line(applied, _eligible_total(), int(shards_done),
+                                int(shards_total), int(in_flight), float(real_usd))
+
+
+def _wait_with_progress(total_seconds: float, run_id: str | None) -> None:
+    """Sleep one Google poll interval (the polling cadence itself is unchanged),
+    printing the run's progress line every PROGRESS_LINE_SECONDS. Without run
+    context (the NO-DB bakeoff) it is a plain sleep; a failed progress read is
+    swallowed — a status nicety must never abort a wait."""
+    if run_id is None:
+        time.sleep(total_seconds)
+        return
+    remaining = float(total_seconds)
+    while remaining > 0:
+        step = min(PROGRESS_LINE_SECONDS, remaining)
+        time.sleep(step)
+        remaining -= step
+        try:
+            print(f"  {run_progress_line(run_id)}", flush=True)
+        except Exception:  # noqa: BLE001 — progress is best-effort, never fatal
+            pass
+
+
 # ── batch-queue quota: patient waiting instead of crashing on 429 ────────────
 #
 # The Gemini Batch API caps how many jobs may sit queued at once. When that
-# ceiling is hit, create_batch returns HTTP 429 RESOURCE_EXHAUSTED. Rather than
-# crash a long unattended run, we WAIT: poll the already-submitted jobs every
-# QUEUE_QUOTA_POLL_SECONDS; the moment any reaches a terminal state it frees a
-# queue slot, so the failed create is retried. Applied across the whole shard
-# list, a large run drains the queue in waves. Give up only after
+# ceiling is hit, create_batch returns HTTP 429 RESOURCE_EXHAUSTED — EXPECTED
+# backpressure, not an error (never worth its JSON body in the log). Rather
+# than crash a long unattended run, we WAIT: poll the already-submitted jobs
+# every QUEUE_QUOTA_POLL_SECONDS; the moment any reaches a terminal state it
+# frees a queue slot, so the failed create is retried. Applied across the whole
+# shard list, a large run drains the queue in waves. Give up only after
 # QUEUE_QUOTA_GIVE_UP_SECONDS of no job finishing to free a slot.
 QUEUE_QUOTA_POLL_SECONDS = 300           # 5 minutes between poll cycles
 QUEUE_QUOTA_GIVE_UP_SECONDS = 24 * 3600  # 24h of no progress → give up
@@ -1554,70 +1656,61 @@ def _inflight_jobs_from_db() -> list[str]:
     )]
 
 
-def _poll_queue_quota(already_terminal: set[str], inflight_fn=None) -> bool:
-    """Sleep one poll cycle, then report the state of every already-submitted
-    job. Returns True if a NEW job reached a terminal state since the last cycle
+def _poll_queue_quota(already_terminal: set[str], inflight_fn=None, run_id=None) -> bool:
+    """Wait one poll cycle, then check the state of every already-submitted job.
+    Returns True if a NEW job reached a terminal state since the last cycle
     (a queue slot was freed → the create is worth retrying). Mutates
-    `already_terminal` with any newly-terminal job ids. Prints exactly one status
-    line: jobs running / done / shards still pending.
+    `already_terminal` with any newly-terminal job ids. A full queue is expected
+    backpressure: the ONLY line it prints is one short "queue full" note per
+    cycle (plus the 30s progress ticks when run context is available) — never
+    an error body, never a wall of status.
 
     `inflight_fn` supplies the current in-flight provider job ids. It defaults to
     the pipeline's DB view; the NO-DB bakeoff passes a function reading its local
     state file, so the same patient wait covers bakeoff/pilot/full paths."""
-    time.sleep(QUEUE_QUOTA_POLL_SECONDS)
-    if inflight_fn is None:
-        submitted = _inflight_jobs_from_db()
-        pending = db.one("SELECT count(*) FROM public.tag_batch_jobs WHERE status = 'pending'")
-    else:
-        submitted = list(inflight_fn())
-        pending = None
-    running = done = 0
+    print("  queue full — waiting for space", flush=True)
+    _wait_with_progress(QUEUE_QUOTA_POLL_SECONDS, run_id)
+    submitted = _inflight_jobs_from_db() if inflight_fn is None else list(inflight_fn())
     freed = False
     for job_id in submitted:
         try:
             job = gemini_client.get_batch(job_id)
         except Exception:  # noqa: BLE001 — a poll blip must not abort the wait
-            running += 1
             continue
         if job["state"] in gemini_client.TERMINAL_STATES or job["done"]:
-            done += 1
             if job_id not in already_terminal:
                 already_terminal.add(job_id)
                 freed = True
-        else:
-            running += 1
-    pending_note = f" {pending} shard(s) still pending;" if pending is not None else ""
-    print(
-        f"  ⏳ batch queue full — {running} job(s) running, {done} done,"
-        f"{pending_note} polling again in {QUEUE_QUOTA_POLL_SECONDS // 60}m…",
-        flush=True,
-    )
     return freed
 
 
 def _create_batch_draining_queue(
     model: str, file_name: str, display_name: str, shard_key: str,
-    already_terminal: set[str], inflight_fn=None
+    already_terminal: set[str], inflight_fn=None, run_id=None
 ) -> str:
     """gemini_client.create_batch, but patient about a full batch queue. On HTTP
-    429 (queue quota exhausted) it waits for a submitted job to finish and free a
-    slot instead of crashing; every other error re-raises immediately. Gives up
-    only after QUEUE_QUOTA_GIVE_UP_SECONDS with no job freeing a slot.
+    429 (queue quota exhausted — expected behaviour, so retry_429=False keeps its
+    JSON body out of the log) it waits for a submitted job to finish and free a
+    slot instead of crashing; every other error re-raises immediately, full body
+    intact. Gives up only after QUEUE_QUOTA_GIVE_UP_SECONDS with no job freeing
+    a slot.
 
     `inflight_fn` (see _poll_queue_quota) makes this reusable by the NO-DB
     bakeoff path, which tracks its in-flight jobs in a local state file rather
-    than tag_batch_jobs — so bakeoff, pilot and full all wait instead of crashing."""
+    than tag_batch_jobs — so bakeoff, pilot and full all wait instead of crashing.
+    `run_id` (when the caller has one) powers the 30s progress line during the wait."""
     no_progress_deadline = time.monotonic() + QUEUE_QUOTA_GIVE_UP_SECONDS
     while True:
         try:
             return db.with_retry(
                 lambda: gemini_client.create_batch(model, file_name, display_name),
                 f"batch create {shard_key}",
+                retry_429=False,
             )
         except gemini_client.GeminiHTTPError as exc:
             if exc.status != 429:
                 raise
-        if _poll_queue_quota(already_terminal, inflight_fn):
+        if _poll_queue_quota(already_terminal, inflight_fn, run_id=run_id):
             no_progress_deadline = time.monotonic() + QUEUE_QUOTA_GIVE_UP_SECONDS
         elif time.monotonic() >= no_progress_deadline:
             raise SystemExit(
@@ -1628,7 +1721,8 @@ def _create_batch_draining_queue(
             )
 
 
-def _submit_one(part: ShardPart, queue_terminal_seen: set[str]) -> bool:
+def _submit_one(part: ShardPart, queue_terminal_seen: set[str],
+                run_id: str | None = None) -> bool:
     """Upload + create one shard's batch job against the shard's ROUTED model,
     recording it BEFORE any polling. Returns False (submitting nothing) when the
     cost ceiling would be exceeded so the caller stops submitting further shards.
@@ -1652,7 +1746,8 @@ def _submit_one(part: ShardPart, queue_terminal_seen: set[str]) -> bool:
         f"upload {shard_key}",
     )
     job_name = _create_batch_draining_queue(
-        model, file_name, display_name, shard_key, queue_terminal_seen
+        model, file_name, display_name, shard_key, queue_terminal_seen,
+        run_id=run_id,
     )
     # Record BEFORE polling — a crash after this line is recoverable from the DB
     # alone; a crash before it is recovered by reconcile().
@@ -1676,7 +1771,7 @@ def submit_pending(vocab: VocabIndex, run_id: str | None = None) -> None:
     acceptance — BEFORE any polling. A full batch queue (HTTP 429) does not
     crash the run: it waits for in-flight jobs to drain a slot, so a large shard
     list submits in waves, unattended. Any shard whose built requests exceed
-    config.MAX_SHARD_INPUT_TOKENS is split into token-bounded parts
+    config.SHARD_MAX_INPUT_TOKENS is split into token-bounded parts
     (build_shard_parts) so every job fits the 3M queue. Rows skipped at build
     time (no shortlist/embedding) get explicit `skipped_no_shortlist` outcome
     rows. Stale pre-p3 pending rows (no recorded model) are never submitted.
@@ -1725,7 +1820,7 @@ def submit_pending(vocab: VocabIndex, run_id: str | None = None) -> None:
                 )
             continue
         for part in parts:
-            if not _submit_one(part, queue_terminal_seen):
+            if not _submit_one(part, queue_terminal_seen, run_id=run_id):
                 return  # cost ceiling reached — remaining parts stay pending
 
 
@@ -2295,7 +2390,7 @@ def collect(run_id: str, shard_key_prefix: str = "", apply: bool = True) -> list
                 " (Ctrl+C is safe; rerun later with --resume to keep collecting)",
                 flush=True,
             )
-            time.sleep(config.BATCH_POLL_SECONDS)
+            _wait_with_progress(config.BATCH_POLL_SECONDS, run_id)
 
 
 def apply_pilot_bundle(run_id: str, shard_key_prefix: str, vocab: VocabIndex) -> list[ShardOutcome]:

@@ -96,14 +96,19 @@ def _is_non_retryable_http(exc: Exception) -> bool:
     return isinstance(status, int) and 400 <= status < 500 and status != 429
 
 
-def with_retry(fn: Callable[[], Any], what: str, attempts: int = 4) -> Any:
+def with_retry(fn: Callable[[], Any], what: str, attempts: int = 4,
+               retry_429: bool = True) -> Any:
     """Network retry with exponential backoff (2s, 4s, 8s) — pooler blips happen.
-    A non-retryable HTTP 4xx (except 429) re-raises immediately without retrying."""
+    A non-retryable HTTP 4xx (except 429) re-raises immediately without retrying.
+    retry_429=False re-raises HTTP 429 immediately AND silently too — for batch
+    create, where a 429 means the queue is full: expected backpressure the caller
+    waits out patiently, not an error worth printing (let alone its JSON body)."""
     for attempt in range(attempts):
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 — deliberate catch-all with loud rethrow
-            if attempt == attempts - 1 or _is_non_retryable_http(exc):
+            if (attempt == attempts - 1 or _is_non_retryable_http(exc)
+                    or (not retry_429 and getattr(exc, "status", None) == 429)):
                 raise
             wait = 2 ** (attempt + 1)
             print(f"  retry {attempt + 1}/{attempts - 1} for {what} in {wait}s: {exc}", flush=True)

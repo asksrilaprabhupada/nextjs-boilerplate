@@ -283,7 +283,7 @@ def _plan_shards(model: str, route: str, requests: dict[str, str],
             current, current_tok = [], 0
         for raw in lines:
             tok = len(raw) // 4
-            if current and (current_tok + tok > config.MAX_SHARD_INPUT_TOKENS
+            if current and (current_tok + tok > config.SHARD_MAX_INPUT_TOKENS
                             or len(current) >= config.SHARD_SIZE):
                 flush()
             current.append(raw)
