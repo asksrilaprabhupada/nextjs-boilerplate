@@ -180,10 +180,57 @@ def wait_for_competitor(table: str) -> None:
         waited += COMPETITOR_POLL_SECONDS
 
 
+def vector_index_warning(table: str) -> str | None:
+    """Warn when this table's vector index is too big to cache, which turns the
+    backfill from minutes into days.
+
+    This UPDATE cannot be HOT (fts_expansion is GIN-indexed), so every row is
+    re-inserted into EVERY index on the table — including any HNSW vector index,
+    whose insert walks a graph doing hundreds of random page reads. While that
+    graph fits in shared_buffers the walk is cache-resident and cheap; once it
+    doesn't, each read becomes network-attached disk IO and the per-row cost
+    explodes by two orders of magnitude.
+
+    Measured on this project's live DB, same query, same code path:
+        letter_paragraphs      152 MB HNSW / 256 MB buffers → ~0.015 s/row
+        transcript_paragraphs  1128 MB HNSW / 256 MB buffers → 1.69 s/row
+                               (25 rows = 42.3 s, 72,568 buffer reads —
+                                ~2,900 random page reads PER ROW)
+    That is ~65 h for 140k rows instead of ~35 min. The fix is not query tuning
+    (the whole read phase is 382 ms per 5,000 rows); it is making the index
+    cacheable — temporarily raise the instance size, run this, scale back."""
+    row = db.rows(
+        "SELECT coalesce(sum(pg_relation_size(i.indexname::regclass)), 0)"
+        " FROM pg_indexes i"
+        " WHERE i.tablename = %s AND i.indexdef ILIKE '%%hnsw%%'",
+        (table,),
+    )
+    hnsw_bytes = int(row[0][0]) if row else 0
+    if not hnsw_bytes:
+        return None
+    buffers = int(db.one("SELECT setting::bigint * 8192 FROM pg_settings"
+                         " WHERE name = 'shared_buffers'") or 0)
+    if not buffers or hnsw_bytes <= buffers:
+        return None
+    return (
+        f"{table}: HNSW vector index is {hnsw_bytes/2**20:,.0f} MB but"
+        f" shared_buffers is only {buffers/2**20:,.0f} MB.\n"
+        f"    Every updated row is re-inserted into it (this UPDATE cannot be"
+        f" HOT), and the graph walk cannot be cached, so expect on the order of"
+        f" SECONDS per row rather than milliseconds — days, not minutes.\n"
+        f"    Recommended: temporarily raise the instance size so the index"
+        f" fits in RAM, run this, then scale back down. Progress is committed"
+        f" per batch, so stopping now and resuming later loses nothing."
+    )
+
+
 def build_table(table: str, batch: int) -> int:
     """Batch-build fts_expansion for one table until no unbuilt rows remain.
     Each batch is its own committed transaction. Returns rows written."""
     wait_for_competitor(table)
+    warning = vector_index_warning(table)
+    if warning:
+        print(f"  ⚠ {warning}", flush=True)
     tagged, built, todo = counts(table)
     if todo == 0:
         print(f"  ✓ {table}: already complete ({built:,}/{tagged:,}) — nothing to do",
