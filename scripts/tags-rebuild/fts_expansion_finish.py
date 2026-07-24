@@ -75,11 +75,25 @@ TAGGED = "cardinality(tags_core) > 0"
 # `tgt` carries tags_core forward so `src` never touches the table a second
 # time. The obvious phrasing — re-joining {table} inside `src` to read
 # v.tags_core — makes the planner merge-join the whole table: an index scan of
-# ALL 144,424 transcript rows plus heap access, on EVERY batch. Observed live:
-# that phrasing spent 12 minutes in the read phase without writing a single
-# tuple (heap size and n_tup_upd both flat), so no batch ever committed.
-# Carrying the array through the CTE reduces `src` to pure computation over
-# BATCH rows and lets the UPDATE be a nested loop of BATCH primary-key lookups.
+# ALL 144,424 transcript rows plus heap access, on EVERY batch. Carrying the
+# array through the CTE instead reduces `src` to pure computation over BATCH
+# rows and lets the UPDATE be a nested loop of BATCH primary-key lookups.
+# Measured on the live DB (EXPLAIN ANALYZE, 5,000 rows): the whole read phase of
+# this phrasing is 382 ms.
+#
+# That 382 ms is the point: batch wall-clock is NOT the query. On
+# transcript_paragraphs a 5,000-row batch takes ~10-11 minutes, essentially all
+# of it in the WRITE phase — the table carries 11 indexes totalling 1.3 GB, of
+# which a 1.1 GB HNSW vector index dominates, and every updated row must be
+# re-inserted into all of them. The update cannot be HOT (and so cannot skip the
+# indexes) because fts_expansion is itself GIN-indexed. Consequences worth
+# knowing before running this on a big table:
+#   • batch SIZE barely affects total time — cost is per ROW, not per batch;
+#   • ~140k rows therefore costs ~5 h, and no query tuning will change that;
+#   • do NOT infer progress from pg_relation_size or pg_stat_user_tables
+#     mid-batch. n_tup_upd only flushes at COMMIT, and the heap can stay flat
+#     because new row versions reuse free space. The only honest progress signal
+#     is a committed batch — i.e. the built/todo counts moving.
 BATCH_SQL = """
 WITH tgt AS MATERIALIZED (
   SELECT id, tags_core FROM public.{table}
