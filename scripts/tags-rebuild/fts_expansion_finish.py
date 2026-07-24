@@ -72,21 +72,28 @@ TAGGED = "cardinality(tags_core) > 0"
 # `tgt`, so the LIMIT changes no results) drops the estimate to BATCH and the
 # planner switches to a nested loop over BATCH primary-key lookups.
 # Measured on the live DB: total plan cost 138,459 → 26,825.
+# `tgt` carries tags_core forward so `src` never touches the table a second
+# time. The obvious phrasing — re-joining {table} inside `src` to read
+# v.tags_core — makes the planner merge-join the whole table: an index scan of
+# ALL 144,424 transcript rows plus heap access, on EVERY batch. Observed live:
+# that phrasing spent 12 minutes in the read phase without writing a single
+# tuple (heap size and n_tup_upd both flat), so no batch ever committed.
+# Carrying the array through the CTE reduces `src` to pure computation over
+# BATCH rows and lets the UPDATE be a nested loop of BATCH primary-key lookups.
 BATCH_SQL = """
 WITH tgt AS MATERIALIZED (
-  SELECT id FROM public.{table}
+  SELECT id, tags_core FROM public.{table}
   WHERE cardinality(tags_core) > 0
     AND length(fts_expansion::text) <= 2
   LIMIT %(batch)s
 ), src AS MATERIALIZED (
-  SELECT v.id, string_agg(DISTINCT x.w, E'\\n') AS s
-  FROM public.{table} v
-  JOIN tgt ON tgt.id = v.id
-  CROSS JOIN LATERAL unnest(v.tags_core) AS t(slug)
+  SELECT tgt.id, string_agg(DISTINCT x.w, E'\\n') AS s
+  FROM tgt
+  CROSS JOIN LATERAL unnest(tgt.tags_core) AS t(slug)
   JOIN public.vocab_terms vt ON vt.slug = t.slug
   CROSS JOIN LATERAL unnest(
       array[vt.term] || coalesce(vt.variants,'{{}}')) AS x(w)
-  GROUP BY v.id
+  GROUP BY tgt.id
   LIMIT %(batch)s
 )
 UPDATE public.{table} v
