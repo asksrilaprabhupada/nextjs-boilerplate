@@ -259,6 +259,11 @@ CREATE INDEX IF NOT EXISTS idx_qev_run     ON public.question_evidence (run_id);
 
 
 def ensure_schema() -> None:
+    """Idempotent DDL. ADD COLUMN needs ACCESS EXCLUSIVE, and a *pending* lock
+    request queues every later reader behind it — so if one of these tables is
+    busy (an fts_expansion backfill can hold it for hours) an unguarded ALTER
+    would stall the live site rather than just waiting its turn. lock_timeout
+    makes us fail fast and say which table is busy instead."""
     alters = "\n".join(
         f"ALTER TABLE public.{t} ADD COLUMN IF NOT EXISTS speaker text,"
         f" ADD COLUMN IF NOT EXISTS speaker_evidence text;"
@@ -266,7 +271,22 @@ def ensure_schema() -> None:
     )
     conn = db.get_pg()
     with conn.cursor() as cur:
-        cur.execute(DDL.format(speaker_alters=alters))
+        cur.execute("SET lock_timeout = '10s'")
+        try:
+            cur.execute(DDL.format(speaker_alters=alters))
+        except Exception as exc:  # noqa: BLE001 — re-raised with the actionable hint
+            if "lock" not in str(exc).lower():
+                raise
+            raise SystemExit(
+                f"FATAL: could not add the speaker columns — a table is busy"
+                f" ({exc}).\n  Something long-running holds it (an"
+                f" fts_expansion backfill takes hours on transcript_paragraphs)."
+                f"\n  Wait for it to finish, then rerun. We deliberately do NOT"
+                f" queue for the lock: a pending ACCESS EXCLUSIVE request blocks"
+                f" every reader behind it, including the live site."
+            ) from exc
+        finally:
+            cur.execute("SET lock_timeout = '0'")
     SHARDS_DIR.mkdir(parents=True, exist_ok=True)
 
 
