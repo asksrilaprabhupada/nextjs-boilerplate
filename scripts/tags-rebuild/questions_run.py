@@ -830,6 +830,47 @@ def plan_pilot(run_id: str, strata: dict[tuple[str, str], int]) -> int:
 # 7 — cost ledger + submission
 # ═══════════════════════════════════════════════════════════════════════════
 
+def preflight_estimate(strata: dict[tuple[str, str], int], sample: int = 60) -> float:
+    """FREE, before a single paid call: build real requests for a small sample of
+    each stratum, measure their actual size, and project the full-run input cost.
+
+    Input is the predictable half of the bill — the prompt and JSON schema are a
+    fixed ~1,400 tokens on every one of 244,148 requests — so this catches an
+    unaffordable run before even the pilot is submitted. Output tokens are still
+    a guess here (the pilot measures them for real), so the number printed is a
+    FLOOR plus an estimate, never a promise."""
+    est_out_per_row = float(config._env_int("QUESTIONS_EST_OUTPUT_TOKENS", 420))
+    total = 0.0
+    print("\n  pre-flight cost projection (input measured, output estimated)")
+    print(f"  {'stratum':<34} {'rows':>9} {'in/row':>8} {'est $':>10}")
+    print(f"  {'-'*34} {'-'*9} {'-'*8} {'-'*10}")
+    for (table, model), population in sorted(strata.items()):
+        frm = FROM_CLAUSE[table]
+        pred = CORE_PREDICATE.get(table)
+        where = "TRUE" if not pred else (pred if model == MODEL_36 else f"NOT ({pred})")
+        ids = [r[0] for r in db.rows(
+            f"SELECT v.id::text FROM {frm} WHERE {where}"
+            f" ORDER BY md5(%s || v.id::text) LIMIT %s", (SAMPLE_SEED, sample))]
+        if not ids:
+            continue
+        passages = load_passages(table, ids)
+        per_row = sum(est_tokens(json.dumps(request_line(p), ensure_ascii=False))
+                      for p in passages) / len(passages)
+        cost = usd(model, per_row * population, est_out_per_row * population)
+        total += cost
+        print(f"  {table + '/' + model_tag(model):<34} {population:>9,}"
+              f" {per_row:>8,.0f} {cost:>10,.2f}")
+    print(f"  {'TOTAL':<34} {sum(strata.values()):>9,} {'':>8} {total:>10,.2f}")
+    if total > PILOT_AUTO_CONTINUE_USD:
+        print(f"\n  ⚠ projected ${total:,.2f} already exceeds the"
+              f" ${PILOT_AUTO_CONTINUE_USD:,.2f} auto-continue threshold."
+              f"\n    The pilot will measure the real number; if it agrees, the run"
+              f" will STOP and wait for you."
+              f"\n    Levers: raise QUESTIONS_PILOT_AUTO_CONTINUE_USD, shorten the"
+              f" prompt, or route more rows to {MODEL_3}.")
+    return total
+
+
 def spend_ledger() -> dict:
     """Real (billed) + in-flight (estimated) spend, priced at each shard's OWN
     recorded prices. Scoped to question_batch_jobs — the tags run's spend is a
@@ -1918,8 +1959,10 @@ def main() -> int:
 
     run_id = open_run()
     strata = route_counts()
+    assert_routing_totals(strata)
     counts_before = column_counts()
     print_counts("before", counts_before)
+    preflight_estimate(strata)
 
     if not args.full:
         metrics = do_pilot(run_id, strata)
