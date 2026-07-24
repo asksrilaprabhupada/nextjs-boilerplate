@@ -43,6 +43,101 @@
 > now WAITS — polling in-flight jobs every 5 min and retrying when a slot frees —
 > across **bakeoff, pilot and full** paths (previously bakeoff crashed).
 
+# Final column build — `fts_expansion`, `questions`, `passage_function`, `speaker`
+
+Two standalone scripts finish the last database columns. They are **separate
+pipelines** from the tagging harness above: their own state, their own cost
+ledger, their own shard files. Neither ever reads or writes `tags`, `tags_core`,
+`fts` or `fts_core`.
+
+## STEP 0 — `fts_expansion_finish.py` (free, no API calls)
+
+Resolves every `tags_core` slug through `vocab_terms` into its term + variants,
+newline-joins them into `fts_expansion_src`, and stores
+`to_tsvector('english_unaccent', …)` in `fts_expansion`.
+
+```bash
+python fts_expansion_finish.py                    # every content table
+python fts_expansion_finish.py --tables letter_paragraphs
+python fts_expansion_finish.py --verify           # coverage report, writes nothing
+```
+
+- **Batched at 5,000 rows, committed per batch** — the work queue is a query
+  ("tagged but unexpanded"), not a cursor, so an interrupted run resumes simply
+  by being rerun. Nothing is tracked in a state file.
+- **Never competes.** Before starting a table it looks for another session
+  already updating it in `pg_stat_activity` and *waits* — two writers on the same
+  rows only block each other.
+- **Verifies loudly.** Built count must equal the `cardinality(tags_core) > 0`
+  count for every table, or the script exits non-zero.
+- ⏱ On `transcript_paragraphs` expect **~10 min per 5,000 rows** (≈4-5 h for the
+  full table). The cost is index maintenance, not the query: the table carries a
+  **1.1 GB HNSW vector index**, and because `fts_expansion` is itself GIN-indexed
+  the update can never be HOT, so every row re-inserts into all 11 indexes.
+
+## STEPS 1-4 — `questions_run.py`
+
+Generates `questions`, `passage_function`, `speaker` and `speaker_evidence` for
+all **244,148** passages, then builds `questions_fts`.
+
+```bash
+python questions_run.py               # pilot → gate → full → fts → report
+python questions_run.py --resume      # continue after closing the laptop
+python questions_run.py --pilot-only  # stop after the billing pilot
+python questions_run.py --verify      # assertions + counts, no API calls
+```
+
+**Model routing** (asserted against live counts before anything is submitted —
+a mismatch stops the run rather than silently covering a different row set):
+
+| model | rows | scope |
+|---|---:|---|
+| `gemini-3.6-flash` | 43,232 | verses + verse_chunks whose (parent) scripture is BG/SB/CC |
+| `gemini-3-flash` | 200,916 | everything else |
+| **total** | **244,148** | every row; none skipped |
+
+**⚠ Breaking change.** `gemini-3.6-flash` no longer accepts `temperature`,
+`top_p` or `top_k` (silently ignored) and *raises* on frequency/presence
+penalties. `generation_config()` is the single place a sampling knob could
+enter, and it sends none of them for **either** model; `tests/test_questions_run.py`
+walks the built request and fails if one appears. Every request is a single
+`role="user"` turn — the final input turn is never `role="model"`.
+
+**Not paying twice for purports.** 11,945 verses have their purport *also* split
+across `verse_chunks`, and every chunk gets its own request. A verse that has
+chunks is therefore sent as translation + synonyms only; a verse with no chunks
+is sent as translation + purport. Every row still gets its own request.
+
+**Cost.** Batch prices are pinned per model in `.env` (already the halved batch
+rates), and the OUT rate applies to **thinking tokens** too — the ledger counts
+`candidates + thoughts` as output, so it can never undercount the bill.
+`MAX_SPEND_USD` (default **500**) is checked before *every* shard submission; a
+shard that would breach it is not submitted and submission stops, while
+collection continues.
+
+**STEP 2, the mandatory billing pilot** (~$3): 2,000 rows, seeded-random,
+stratified across all five tables *and* both models, with a floor per stratum so
+the 111 standard-route verses are actually represented rather than rounded away.
+It reports **actually billed** input/output/thinking tokens per row per model and
+extrapolates the full-run cost **stratum-wise** (input length varies hugely
+between a transcript paragraph and a full purport, so one blended average would
+misestimate). Extrapolated total **≤ $220 auto-continues**; above that the run
+stops with `questions-pilot-report.md`. It also reports the zero-question rate by
+table, mean questions/row, the meta-reference rate (gate: < 1%), the rate at
+which `support_quote` is not an exact substring of the passage (gate: < 1%), and
+the speaker/function distributions.
+
+**STEP 3's hard assertions** — the check that would have caught the silent field
+drop in the last run. A response missing `questions`, `function` or `speaker` is
+**invalid and retried**, never written as a partial row; an *empty* question list
+is valid, a *missing* field is not. After applying, the run asserts 244,148 rows
+processed and non-null `questions` / `passage_function` / `speaker` on every one,
+prints per-table counts before and after, and exits non-zero if anything is
+short.
+
+Fine-grained labels are kept deliberately: **16 function labels + `unclear`**.
+They collapse to any coarser scheme later in SQL for free. This is not re-run.
+
 # Legacy harness (v3.p3-hybrid) — retained below for reference
 
 Offline Python harness for the search-data rebuild. Runs locally or in a
