@@ -62,13 +62,23 @@ TAGGED = "cardinality(tags_core) > 0"
 
 # One batch. Identical shape for every table; the table name is interpolated
 # (never user input — it comes from config.CONTENT_TABLES).
+#
+# The two AS MATERIALIZED hints and the LIMIT on `src` are load-bearing, not
+# decoration. Without them the planner has no idea `src` is small: it estimates
+# the GROUP BY at the table's n_distinct for id (144,424 on
+# transcript_paragraphs) rather than the ≤ BATCH groups it can actually produce,
+# and so joins the final UPDATE with a MERGE JOIN that index-scans the ENTIRE
+# table — every batch, all 28 of them. Bounding `src` (which can never exceed
+# `tgt`, so the LIMIT changes no results) drops the estimate to BATCH and the
+# planner switches to a nested loop over BATCH primary-key lookups.
+# Measured on the live DB: total plan cost 138,459 → 26,825.
 BATCH_SQL = """
-WITH tgt AS (
+WITH tgt AS MATERIALIZED (
   SELECT id FROM public.{table}
   WHERE cardinality(tags_core) > 0
     AND length(fts_expansion::text) <= 2
-  LIMIT %s
-), src AS (
+  LIMIT %(batch)s
+), src AS MATERIALIZED (
   SELECT v.id, string_agg(DISTINCT x.w, E'\\n') AS s
   FROM public.{table} v
   JOIN tgt ON tgt.id = v.id
@@ -77,6 +87,7 @@ WITH tgt AS (
   CROSS JOIN LATERAL unnest(
       array[vt.term] || coalesce(vt.variants,'{{}}')) AS x(w)
   GROUP BY v.id
+  LIMIT %(batch)s
 )
 UPDATE public.{table} v
 SET fts_expansion_src = src.s,
@@ -167,7 +178,7 @@ def build_table(table: str, batch: int) -> int:
     while True:
         t0 = time.monotonic()
         with conn.cursor() as cur:
-            cur.execute(sql, (batch,))
+            cur.execute(sql, {"batch": batch})
             n = cur.rowcount
         if not n:
             break
