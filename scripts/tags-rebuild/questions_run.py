@@ -115,7 +115,7 @@ MAX_ATTEMPTS = 3  # first pass + 2 retries before a row is reported unresolved
 # Pilot (STEP 2).
 PILOT_SIZE = config._env_int("QUESTIONS_PILOT_SIZE", 2000)
 PILOT_FLOOR_PER_STRATUM = 100     # so every table AND both models get real signal
-PILOT_AUTO_CONTINUE_USD = config._env_float("QUESTIONS_PILOT_AUTO_CONTINUE_USD", 220.0)
+PILOT_AUTO_CONTINUE_USD = config._env_float("QUESTIONS_PILOT_AUTO_CONTINUE_USD", 320.0)
 PILOT_MAX_META_REFERENCE = 0.01   # must be under 1%
 PILOT_MAX_QUOTE_MISMATCH = 0.01   # must be under 1%
 SAMPLE_SEED = config._env("QUESTIONS_SAMPLE_SEED") or "asp-questions-v1"
