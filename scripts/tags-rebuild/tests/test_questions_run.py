@@ -10,6 +10,8 @@ are expensive or irreversible to get wrong:
   • the purport de-duplication that stops us paying twice for 11,945 purports;
   • the response validator — the check that would have caught the silent field
     drop in the last run;
+  • the NUL/control-character sanitizing, without which one stray byte in one
+    answer aborts the whole shard's write transaction;
   • the money math, including thinking tokens billed at the OUTPUT rate.
 """
 import json
@@ -376,6 +378,164 @@ def test_write_batches_by_chunk_not_by_column(monkeypatch):
     assert len(updates) == 2
     for sql in updates:
         assert "speaker_evidence = d.se" in sql
+
+
+# ── NUL / control characters in model output ────────────────────────────────
+#
+# The crash this guards against: one stray 0x00 in one answer raised
+#     psycopg.DataError: PostgreSQL text fields cannot contain NUL (0x00) bytes
+# inside apply_outcome — and because a shard is written in a single transaction,
+# it took every already-paid-for row in that shard down with it. Sanitizing
+# happens where the parsed response becomes row values (validate_row), so these
+# tests drive the real path: parsed result → validate_row → apply_outcome.
+
+class _StrictCursor:
+    """Stands in for psycopg: a NUL anywhere in a parameter is an error, and a
+    lone surrogate cannot be encoded to UTF-8 at all."""
+
+    def __init__(self, log, params):
+        self.log, self.params = log, params
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        for p in params or []:
+            if isinstance(p, str):
+                if "\x00" in p:
+                    raise ValueError("PostgreSQL text fields cannot contain"
+                                     " NUL (0x00) bytes")
+                p.encode("utf-8")  # lone surrogates raise here, as in psycopg
+        self.log.append(" ".join(str(sql).split()))
+        self.params.append(list(params or []))
+        self.rowcount = 1
+
+
+class _StrictConn(_FakeConn):
+    def __init__(self):
+        super().__init__()
+        self.params: list[list] = []
+
+    def cursor(self):
+        return _StrictCursor(self.log, self.params)
+
+
+def _dirty_payload():
+    """A complete, valid answer with a NUL in every model-produced string, plus
+    a bare control code and a lone surrogate — unstorable for the same reason."""
+    return _good_payload(
+        speaker="explicit_prabhupada\x00",
+        speaker_evidence="Prabh\x00upāda: the soul is eternal\x07",
+        questions=[{"support_quote": "the soul\x00 is eternal",
+                    "question": "What is\x00 the soul?\ud800"}],
+        function="expl\x00ains",
+        function_evidence="he defines\x00 the term",
+    )
+
+
+def _dirty_text_payload():
+    """The shape that actually crashed the run: the enum labels came back clean,
+    the free text did not — so with nothing sanitizing it the byte travels all
+    the way to the UPDATE and raises there."""
+    return _good_payload(
+        speaker_evidence="Prabh\x00upāda: the soul is eternal\x07",
+        questions=[{"support_quote": "the soul\x00 is eternal",
+                    "question": "What is\x00 the soul?\ud800"}],
+        function_evidence="he defines\x00 the term",
+    )
+
+
+def _apply_strict(monkeypatch, rows_, phase):
+    conn = _StrictConn()
+    monkeypatch.setattr(qr.db, "get_pg", lambda: conn)
+    monkeypatch.setattr(qr, "prewarm_table_indexes", lambda table: None)
+    outcome = qr.ShardOutcome("q-pilot-abcdef12-verses-m36-a1-000", "verses",
+                              qr.MODEL_36)
+    outcome.applied = rows_
+    written = qr.apply_outcome(outcome, "00000000-0000-0000-0000-000000000000",
+                               phase)
+    return conn, written
+
+
+@pytest.mark.parametrize("payload", [_dirty_payload, _dirty_text_payload])
+def test_a_nul_byte_reaches_the_write_stripped(monkeypatch, payload):
+    """The regression test: feed a parsed result containing \\x00 through the
+    apply path — the write must succeed and the byte must be gone.
+
+    phase='pilot' so the question_evidence insert runs too: `questions` is
+    jsonb, which rejects an escaped \\u0000 even where text would not."""
+    qr.SANITIZE_STATS.update(rows=0, fields=0, chars=0)
+    row, reason = qr.validate_row("verses", "11111111-2222-3333-4444-555555555555",
+                                  payload())
+    assert reason is None and row is not None
+
+    conn, written = _apply_strict(monkeypatch, [row], "pilot")
+
+    assert written == 1
+    strings = [p for params in conn.params for p in params if isinstance(p, str)]
+    assert strings, "no string parameters reached the write"
+    for p in strings:
+        assert "\x00" not in p
+        assert "\\u0000" not in p, "the jsonb payload still carries it escaped"
+        p.encode("utf-8")  # nothing unencodable got through either
+
+
+def test_the_strict_cursor_would_have_caught_the_original_crash(monkeypatch):
+    """Proves the harness above is a real check and not a no-op: a row that
+    nothing sanitized still explodes exactly the way the run did."""
+    row, _ = qr.validate_row("verses", "id", _good_payload())
+    row.speaker_evidence = "Prabhupāda:\x00 the soul is eternal"
+    with pytest.raises(ValueError, match="NUL"):
+        _apply_strict(monkeypatch, [row], "full")
+
+
+def test_sanitizing_leaves_the_answer_itself_intact():
+    row, _ = qr.validate_row("verses", "id", _dirty_payload())
+    assert row.speaker == "explicit_prabhupada"
+    assert row.function == "explains"
+    assert row.speaker_evidence == "Prabhupāda: the soul is eternal"
+    assert row.function_evidence == "he defines the term"
+    assert row.questions == [{"support_quote": "the soul is eternal",
+                              "question": "What is the soul?"}]
+
+
+def test_a_nul_inside_an_enum_label_costs_the_byte_not_the_row():
+    """The row is already paid for, so recovering it beats retrying it."""
+    dirty_speaker = _good_payload(speaker="explicit_pr\x00abhupada")
+    assert qr.validate_row("verses", "id", dirty_speaker)[0] is not None
+    dirty_function = _good_payload(function="expla\x00ins")
+    assert qr.validate_row("verses", "id", dirty_function)[0] is not None
+
+
+def test_sanitizer_keeps_tabs_newlines_and_real_text():
+    """questions_text() joins on "\\n" and evidence quotes passages with real
+    line breaks — stripping those would corrupt every value, not just dirty
+    ones."""
+    assert qr.sanitize_text("a\nb\tc\r\nd") == "a\nb\tc\r\nd"
+    assert qr.sanitize_text("Kṛṣṇa — the Supreme Personality") == \
+        "Kṛṣṇa — the Supreme Personality"
+    assert qr.sanitize_text("") == ""
+
+
+def test_the_counter_counts_rows_not_fields():
+    qr.SANITIZE_STATS.update(rows=0, fields=0, chars=0)
+
+    clean, _ = qr.validate_row("verses", "a", _good_payload())
+    assert clean.sanitized is False
+    assert qr.SANITIZE_STATS["rows"] == 0
+
+    dirty, _ = qr.validate_row("verses", "b", _dirty_payload())
+    assert dirty.sanitized is True
+    assert qr.SANITIZE_STATS["rows"] == 1
+    assert qr.SANITIZE_STATS["fields"] == 6   # every model string in the payload
+    assert qr.SANITIZE_STATS["chars"] == 8    # 6 NULs + \x07 + the lone surrogate
+
+    qr.validate_row("verses", "c", _dirty_payload())
+    assert qr.SANITIZE_STATS["rows"] == 2
 
 
 # ── response parsing + usage metering ───────────────────────────────────────

@@ -1150,6 +1150,7 @@ class RowResult:
     questions: list[dict]
     function: str
     function_evidence: str
+    sanitized: bool = False  # at least one unstorable character was removed
 
 
 @dataclass
@@ -1188,6 +1189,53 @@ def _parse_response_line(line: str) -> tuple[str | None, dict | None, dict, str 
         return key, None, usage, f"non-JSON response (finishReason={finish})"
 
 
+# Characters PostgreSQL will not store, stripped from every model-produced
+# string before it becomes a row value.
+#
+# NUL (0x00) is the one that bit us: psycopg raises
+#     DataError: PostgreSQL text fields cannot contain NUL (0x00) bytes
+# and because apply_outcome() writes a whole shard in ONE transaction, a single
+# stray byte in a single answer aborts the write for every row in that shard —
+# already paid for, and re-collected only because the results file survives on
+# disk. jsonb is stricter still — it rejects an escaped \u0000 outright — so
+# the pilot's question_evidence insert fails on the same byte even where a
+# text column would not.
+#
+# The rest of the C0/C1 range is not a hard error in Postgres, but it is never
+# legitimate model output and it would survive into questions_fts and into
+# anything that renders the text, so it goes at the same time. Lone surrogates
+# (U+D800–U+DFFF) come through json.loads intact but cannot be encoded to UTF-8
+# at all — psycopg raises UnicodeEncodeError on them — so they are stripped for
+# exactly the same reason as NUL.
+#
+# TAB / LF / CR are kept deliberately: questions_text() joins questions on "\n",
+# and evidence quotes passages that contain real line breaks.
+_UNSTORABLE_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff]")
+
+# Cleaning is never silent — a rising count means the model is emitting junk and
+# we want that visible in the run log. Process-local by design: the DB ledger
+# (question_batch_jobs) is not touched, so nothing here can affect resume or
+# resubmission. Reported per shard by apply_outcome() and per phase by
+# run_phase(). "rows" counts rows that went on to validate; "fields"
+# counts every cleaned string, including those in rows rejected later.
+SANITIZE_STATS = {"rows": 0, "fields": 0, "chars": 0}
+
+
+def sanitize_text(value: str) -> str:
+    """Strip everything Postgres cannot store from ONE model-produced string,
+    counting what was removed in SANITIZE_STATS["fields"] / ["chars"].
+
+    Anything that is not a string is returned untouched — validate_row's enum
+    and type checks are what reject those."""
+    if not isinstance(value, str):
+        return value
+    cleaned = _UNSTORABLE_RE.sub("", value)
+    if cleaned != value:
+        SANITIZE_STATS["fields"] += 1
+        SANITIZE_STATS["chars"] += len(value) - len(cleaned)
+    return cleaned
+
+
 def validate_row(table: str, passage_id: str, parsed: dict
                  ) -> tuple[RowResult | None, str | None]:
     """Reject anything that is not a COMPLETE answer.
@@ -1195,17 +1243,25 @@ def validate_row(table: str, passage_id: str, parsed: dict
     This is the check that would have caught the silent field drop in the last
     run: a response missing `questions`, `function` or `speaker` is INVALID and
     is retried — it is never written as a partial row and never counted as done.
-    An EMPTY questions list is valid; a MISSING questions field is not."""
+    An EMPTY questions list is valid; a MISSING questions field is not.
+
+    This is also the ONE place a parsed response turns into row values, so it is
+    the one place every model-produced string is sanitized (see sanitize_text) —
+    a NUL byte reaching apply_outcome() aborts the whole shard's transaction."""
     if not isinstance(parsed, dict):
         return None, "response is not an object"
     for required in ("speaker", "speaker_evidence", "eligible", "questions",
                      "function", "function_evidence"):
         if required not in parsed:
             return None, f"missing field '{required}'"
-    speaker = parsed["speaker"]
+    dirty_fields = SANITIZE_STATS["fields"]
+    # Sanitized BEFORE the enum check on purpose: a control byte that landed
+    # inside an otherwise valid label should cost us that byte, not a whole
+    # paid-for row.
+    speaker = sanitize_text(parsed["speaker"])
     if speaker not in SPEAKERS:
         return None, f"speaker not in enum: {str(speaker)[:40]!r}"
-    function = parsed["function"]
+    function = sanitize_text(parsed["function"])
     if function not in FUNCTIONS:
         return None, f"function not in enum: {str(function)[:40]!r}"
     raw_questions = parsed["questions"]
@@ -1217,17 +1273,25 @@ def validate_row(table: str, passage_id: str, parsed: dict
     for item in raw_questions:
         if not isinstance(item, dict):
             return None, "question item is not an object"
-        q = (item.get("question") or "").strip()
+        q = sanitize_text(item.get("question") or "").strip()
         if not q:
             continue  # a blank question is dropped, not a reason to fail the row
-        questions.append({"support_quote": (item.get("support_quote") or "").strip(),
-                          "question": q})
+        questions.append(
+            {"support_quote": sanitize_text(item.get("support_quote") or "").strip(),
+             "question": q})
+    # Sanitize before the cap so removed junk does not eat the 4,000-char budget.
+    speaker_evidence = sanitize_text(str(parsed.get("speaker_evidence") or ""))[:4000]
+    function_evidence = sanitize_text(str(parsed.get("function_evidence") or ""))[:4000]
+    sanitized = SANITIZE_STATS["fields"] > dirty_fields
+    if sanitized:
+        SANITIZE_STATS["rows"] += 1
     return RowResult(
         table=table, passage_id=passage_id, speaker=speaker,
-        speaker_evidence=str(parsed.get("speaker_evidence") or "")[:4000],
+        speaker_evidence=speaker_evidence,
         eligible=bool(parsed["eligible"]), questions=questions,
         function=function,
-        function_evidence=str(parsed.get("function_evidence") or "")[:4000],
+        function_evidence=function_evidence,
+        sanitized=sanitized,
     ), None
 
 
@@ -1333,6 +1397,11 @@ def apply_outcome(outcome: ShardOutcome, run_id: str, phase: str) -> int:
     it explicitly as well."""
     if not outcome.applied:
         return 0
+    dirty = sum(1 for r in outcome.applied if r.sanitized)
+    if dirty:
+        print(f"    sanitized {dirty:,}/{len(outcome.applied):,} row(s) in"
+              f" {outcome.shard_key} — removed control characters PostgreSQL"
+              f" cannot store (NUL and friends)", flush=True)
     prewarm_table_indexes(outcome.table)
     conn = db.get_pg()
     written = 0
@@ -1913,6 +1982,12 @@ def final_report(run_id: str, counts_before: dict, counts_after: dict,
         "SELECT coalesce(sum(invalid_rows),0) FROM public.question_batch_jobs"
         " WHERE run_id=%s::uuid", (run_id,))
     lines.append(f"- rows rejected by the validator (retried): **{int(invalid):,}**")
+    lines.append(f"- rows whose model output needed sanitizing (NUL / control"
+                 f" characters removed before the write):"
+                 f" **{SANITIZE_STATS['rows']:,}**"
+                 f" ({SANITIZE_STATS['chars']:,} characters in"
+                 f" {SANITIZE_STATS['fields']:,} strings; counted for this"
+                 f" process, so a resumed run reports only its own share)")
     if problems:
         lines.append("")
         lines.append("### ❌ ASSERTION FAILURES")
@@ -1928,6 +2003,19 @@ def final_report(run_id: str, counts_before: dict, counts_after: dict,
 # 12 — phases + CLI
 # ═══════════════════════════════════════════════════════════════════════════
 
+def print_sanitize_summary(phase: str) -> None:
+    """How much model output had to be cleaned before Postgres would take it.
+    Zero is the normal case, so this says nothing unless there is something to
+    say. Cumulative for this process — a --resume run reports only what it
+    collected itself."""
+    if not SANITIZE_STATS["rows"]:
+        return
+    print(f"  ⚠ {phase}: {SANITIZE_STATS['rows']:,} row(s) needed sanitizing —"
+          f" {SANITIZE_STATS['chars']:,} character(s) PostgreSQL cannot store"
+          f" removed from {SANITIZE_STATS['fields']:,} model string(s)",
+          flush=True)
+
+
 def run_phase(run_id: str, phase: str) -> None:
     """Submit → collect → retry unresolved, until the phase has nothing left."""
     for _wave in range(MAX_ATTEMPTS):
@@ -1936,7 +2024,8 @@ def run_phase(run_id: str, phase: str) -> None:
                        collect_fn=lambda: len(collect(run_id, phase, block=False)))
         collect(run_id, phase, block=True)
         if not replan_unresolved(run_id, phase):
-            return
+            break
+    print_sanitize_summary(phase)
 
 
 def do_pilot(run_id: str, strata: dict) -> dict:
