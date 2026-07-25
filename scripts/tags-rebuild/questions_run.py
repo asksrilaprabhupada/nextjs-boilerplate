@@ -1269,6 +1269,59 @@ def questions_text(questions: list[dict]) -> str:
     return "\n".join(q["question"] for q in questions)
 
 
+_PREWARMED: set[str] = set()
+
+
+def prewarm_table_indexes(table: str) -> None:
+    """Pull `table`'s vector indexes into shared_buffers before we start writing
+    to it. Once per table per process.
+
+    Writing `questions`/`passage_function`/`speaker` cannot be a HOT update
+    (questions_fts is GIN-indexed), so EVERY row written is re-inserted into
+    EVERY index on the table — including the HNSW vector index, even though we
+    never touch the embedding. An HNSW insert walks the graph over thousands of
+    random pages, so whether that graph is resident decides whether this run
+    takes minutes or days. Measured on this project's DB during the
+    fts_expansion backfill, same SQL, only cache state differing:
+    1.69 s/row cold versus 14.9 ms/row prewarmed — 114x. With 244,148 rows to
+    write here, that is the difference between ~30 minutes and weeks.
+
+    Best-effort: a missing pg_prewarm extension or a permissions error only
+    costs speed, never correctness, so it warns rather than failing the run."""
+    if table in _PREWARMED:
+        return
+    _PREWARMED.add(table)
+    try:
+        indexes = db.rows(
+            "SELECT i.indexname, pg_relation_size(i.indexname::regclass)"
+            " FROM pg_indexes i"
+            " WHERE i.tablename = %s"
+            "   AND (i.indexdef ILIKE '%%hnsw%%' OR i.indexdef ILIKE '%%ivfflat%%')"
+            " ORDER BY pg_relation_size(i.indexname::regclass) DESC",
+            (table,),
+        )
+        if not indexes:
+            return
+        if not db.one("SELECT 1 FROM pg_extension WHERE extname = 'pg_prewarm'"):
+            print(f"    note: pg_prewarm not installed — writes to {table} may be"
+                  f" slow until the cache warms (CREATE EXTENSION pg_prewarm;)",
+                  flush=True)
+            return
+        buffers = int(db.one("SELECT setting::bigint * 8192 FROM pg_settings"
+                             " WHERE name = 'shared_buffers'") or 0)
+        total = sum(int(s) for _n, s in indexes)
+        if buffers and total > buffers:
+            print(f"    ⚠ {table}: vector indexes total {total/2**20:,.0f} MB vs"
+                  f" shared_buffers {buffers/2**20:,.0f} MB — writes will thrash."
+                  f" Consider a larger instance for the duration of this run.",
+                  flush=True)
+        for name, size in indexes:
+            db.one("SELECT pg_prewarm(%s, 'buffer')", (name,))
+            print(f"    prewarmed {name} ({int(size)/2**20:,.0f} MB)", flush=True)
+    except Exception as exc:  # noqa: BLE001 — speed-only optimisation
+        print(f"    note: could not prewarm {table} ({exc}) — continuing", flush=True)
+
+
 def apply_outcome(outcome: ShardOutcome, run_id: str, phase: str) -> int:
     """Write one shard's rows in a single transaction. UPDATE ... FROM (VALUES …)
     so 6,000 rows go in a handful of statements rather than 6,000 round-trips.
@@ -1278,6 +1331,7 @@ def apply_outcome(outcome: ShardOutcome, run_id: str, phase: str) -> int:
     it explicitly as well."""
     if not outcome.applied:
         return 0
+    prewarm_table_indexes(outcome.table)
     conn = db.get_pg()
     written = 0
     with conn.transaction():
@@ -1729,6 +1783,7 @@ def build_questions_fts(batch: int = 5000) -> None:
     print("\n  STEP 4 — building questions_fts")
     conn = db.get_pg()
     for table in TABLES:
+        prewarm_table_indexes(table)
         written = 0
         rounds = 0
         while True:
