@@ -180,47 +180,93 @@ def wait_for_competitor(table: str) -> None:
         waited += COMPETITOR_POLL_SECONDS
 
 
+def _vector_indexes(table: str) -> list[tuple[str, int]]:
+    """(index_name, bytes) for every HNSW/IVFFlat vector index on `table`."""
+    return [
+        (name, int(size))
+        for name, size in db.rows(
+            "SELECT i.indexname, pg_relation_size(i.indexname::regclass)"
+            " FROM pg_indexes i"
+            " WHERE i.tablename = %s"
+            "   AND (i.indexdef ILIKE '%%hnsw%%' OR i.indexdef ILIKE '%%ivfflat%%')"
+            " ORDER BY pg_relation_size(i.indexname::regclass) DESC",
+            (table,),
+        )
+    ]
+
+
+def _shared_buffers_bytes() -> int:
+    return int(db.one("SELECT setting::bigint * 8192 FROM pg_settings"
+                      " WHERE name = 'shared_buffers'") or 0)
+
+
+def prewarm_vector_indexes(table: str) -> None:
+    """Pull this table's vector indexes into shared_buffers BEFORE the backfill.
+
+    This is the single highest-leverage step in the whole script, and it is not
+    optional on a big table. The UPDATE cannot be HOT (fts_expansion is itself
+    GIN-indexed), so every row is re-inserted into EVERY index — including the
+    HNSW vector index, whose insert walks a graph doing thousands of random page
+    reads. Whether that walk is cache-resident or hits disk changes the per-row
+    cost by two orders of magnitude.
+
+    Measured on this project's live DB — the SAME 25-row batch, same SQL, only
+    the cache state differing:
+
+        shared_buffers   cache state    time/25 rows   disk reads   per row
+        256 MB           warm-ish       42,295 ms      72,568       1.69 s
+        2 GB             cold           41,338 ms      77,104       1.65 s
+        2 GB             warming        9,946 ms       25,776       398 ms
+        2 GB             PREWARMED         372 ms         181      14.9 ms
+
+    That last row is a 114x speedup: ~35 minutes for 140k rows instead of ~65
+    hours. Note rows 2 and 3 — simply resizing the instance bought almost
+    nothing until the index was actually resident, which is why this runs
+    pg_prewarm explicitly rather than trusting the cache to warm itself.
+
+    Requires the pg_prewarm extension; degrades to a warning if unavailable."""
+    indexes = _vector_indexes(table)
+    if not indexes:
+        return
+    buffers = _shared_buffers_bytes()
+    total = sum(size for _n, size in indexes)
+    have_prewarm = bool(db.one(
+        "SELECT 1 FROM pg_extension WHERE extname = 'pg_prewarm'"))
+
+    if not have_prewarm:
+        print(f"    pg_prewarm not installed — skipping cache warm-up."
+              f" Expect the first batches to be slow while the cache fills"
+              f" (CREATE EXTENSION pg_prewarm; to fix).", flush=True)
+        return
+    if buffers and total > buffers:
+        print(f"    ⚠ {table}: vector indexes total {total/2**20:,.0f} MB but"
+              f" shared_buffers is {buffers/2**20:,.0f} MB — they cannot all stay"
+              f" resident, so the backfill will thrash and may run for HOURS"
+              f" rather than minutes. Raise the instance size before continuing;"
+              f" progress is committed per batch, so stopping now loses nothing.",
+              flush=True)
+    for name, size in indexes:
+        pages = db.one("SELECT pg_prewarm(%s, 'buffer')", (name,))
+        print(f"    prewarmed {name} ({size/2**20:,.0f} MB,"
+              f" {int(pages or 0):,} pages) into shared_buffers", flush=True)
+
+
 def vector_index_warning(table: str) -> str | None:
-    """Warn when this table's vector index is too big to cache, which turns the
-    backfill from minutes into days.
-
-    This UPDATE cannot be HOT (fts_expansion is GIN-indexed), so every row is
-    re-inserted into EVERY index on the table — including any HNSW vector index,
-    whose insert walks a graph doing hundreds of random page reads. While that
-    graph fits in shared_buffers the walk is cache-resident and cheap; once it
-    doesn't, each read becomes network-attached disk IO and the per-row cost
-    explodes by two orders of magnitude.
-
-    Measured on this project's live DB, same query, same code path:
-        letter_paragraphs      152 MB HNSW / 256 MB buffers → ~0.015 s/row
-        transcript_paragraphs  1128 MB HNSW / 256 MB buffers → 1.69 s/row
-                               (25 rows = 42.3 s, 72,568 buffer reads —
-                                ~2,900 random page reads PER ROW)
-    That is ~65 h for 140k rows instead of ~35 min. The fix is not query tuning
-    (the whole read phase is 382 ms per 5,000 rows); it is making the index
-    cacheable — temporarily raise the instance size, run this, scale back."""
-    row = db.rows(
-        "SELECT coalesce(sum(pg_relation_size(i.indexname::regclass)), 0)"
-        " FROM pg_indexes i"
-        " WHERE i.tablename = %s AND i.indexdef ILIKE '%%hnsw%%'",
-        (table,),
-    )
-    hnsw_bytes = int(row[0][0]) if row else 0
-    if not hnsw_bytes:
+    """Pre-run check: vector indexes that cannot fit in shared_buffers. Kept
+    separate from prewarm_vector_indexes so --verify can report without writing."""
+    indexes = _vector_indexes(table)
+    if not indexes:
         return None
-    buffers = int(db.one("SELECT setting::bigint * 8192 FROM pg_settings"
-                         " WHERE name = 'shared_buffers'") or 0)
-    if not buffers or hnsw_bytes <= buffers:
+    buffers = _shared_buffers_bytes()
+    total = sum(size for _n, size in indexes)
+    if not buffers or total <= buffers:
         return None
     return (
-        f"{table}: HNSW vector index is {hnsw_bytes/2**20:,.0f} MB but"
-        f" shared_buffers is only {buffers/2**20:,.0f} MB.\n"
-        f"    Every updated row is re-inserted into it (this UPDATE cannot be"
-        f" HOT), and the graph walk cannot be cached, so expect on the order of"
-        f" SECONDS per row rather than milliseconds — days, not minutes.\n"
-        f"    Recommended: temporarily raise the instance size so the index"
-        f" fits in RAM, run this, then scale back down. Progress is committed"
-        f" per batch, so stopping now and resuming later loses nothing."
+        f"{table}: vector indexes total {total/2**20:,.0f} MB but shared_buffers"
+        f" is only {buffers/2**20:,.0f} MB. Every updated row is re-inserted into"
+        f" them (this UPDATE cannot be HOT) and the graph walk cannot be cached,"
+        f" so expect SECONDS per row rather than milliseconds — measured 1.69 s/row"
+        f" vs 14.9 ms/row once resident. Raise the instance size first."
     )
 
 
@@ -238,6 +284,7 @@ def build_table(table: str, batch: int) -> int:
         return 0
 
     print(f"  {table}: {todo:,} rows to build ({built:,}/{tagged:,} done)", flush=True)
+    prewarm_vector_indexes(table)
     conn = db.get_pg()  # autocommit=True → each execute() is its own transaction
     sql = BATCH_SQL.format(table=table)
     written = 0
