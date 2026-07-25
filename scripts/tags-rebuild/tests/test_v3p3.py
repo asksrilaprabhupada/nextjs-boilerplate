@@ -149,8 +149,9 @@ def test_ledger_prices_by_recorded_columns():
     assert tagging._LEDGER_FALLBACK == config.GEMINI_BATCH_PRICES_CANONICAL[CORE]
 
 
-def test_max_spend_default_325():
-    assert config.MAX_SPEND_USD == 325.0
+def test_max_spend_default_380():
+    """The approved budget, shared with questions_run.py (one env var)."""
+    assert config.MAX_SPEND_USD == 380.0
 
 
 # ── thinkingLevel LOW: non-overridable, in EVERY request (both models) ───────

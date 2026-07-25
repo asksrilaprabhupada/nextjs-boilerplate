@@ -111,7 +111,8 @@ is sent as translation + purport. Every row still gets its own request.
 **Cost.** Batch prices are pinned per model in `.env` (already the halved batch
 rates), and the OUT rate applies to **thinking tokens** too — the ledger counts
 `candidates + thoughts` as output, so it can never undercount the bill.
-`MAX_SPEND_USD` (default **500**) is checked before *every* shard submission; a
+`MAX_SPEND_USD` (default **380**, the approved budget — the same single variable
+the tagging harness uses) is checked before *every* shard submission; a
 shard that would breach it is not submitted and submission stops, while
 collection continues.
 
@@ -121,7 +122,7 @@ the 111 standard-route verses are actually represented rather than rounded away.
 It reports **actually billed** input/output/thinking tokens per row per model and
 extrapolates the full-run cost **stratum-wise** (input length varies hugely
 between a transcript paragraph and a full purport, so one blended average would
-misestimate). Extrapolated total **≤ $320 auto-continues**; above that the run
+misestimate). Extrapolated total **≤ $360 auto-continues**; above that the run
 stops with `questions-pilot-report.md`. It also reports the zero-question rate by
 table, mean questions/row, the meta-reference rate (gate: < 1%), the rate at
 which `support_quote` is not an exact substring of the passage (gate: < 1%), and
@@ -188,7 +189,9 @@ the harness reads (process env wins). All five keys are **required**; there is
 no anon-key fallback and the harness fails loudly if any is missing:
 `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (service role), `DATABASE_URL`
 (**Session Pooler** DSN, port 5432 — not the 6543 transaction pooler),
-`GEMINI_API_KEY`, `VOYAGE_API_KEY`. Set `MAX_SPEND_USD` too (default 325).
+`GEMINI_API_KEY`, `VOYAGE_API_KEY`. Set `MAX_SPEND_USD` too (default 380) —
+declare it **once**; it is the single ceiling for this harness *and* for
+`questions_run.py`.
 
 ## Run
 ```
@@ -300,7 +303,7 @@ just interprets it):
   schema-valid zero-tag rows get `tags_core = '{}'`.
 
 ## Cost ceiling (machine-enforced; per-model pricing)
-`MAX_SPEND_USD` in `.env` is a hard ceiling (default **325**): the submitter
+`MAX_SPEND_USD` in `.env` is a hard ceiling (default **380**): the submitter
 tracks real spend (from `usageMetadata`, recorded at retrieval) plus estimates
 for in-flight shards and **refuses to submit** past the ceiling — no approvals,
 no overrides at runtime. **Real spend counts `candidatesTokenCount` +
@@ -435,7 +438,7 @@ doctor.py             read-only readiness checklist (per-model pricing, routing 
   (retry once on own model → escalate standard rows once to core → quarantine,
   listed, never silently complete; `finalize` refuses while unresolved);
   non-overridable `thinkingLevel=LOW` for both models; `MAX_SPEND_USD`
-  default 325; the NO-DB-WRITE `--bakeoff-model` mode (verbatim p2 request
+  default 380; the NO-DB-WRITE `--bakeoff-model` mode (verbatim p2 request
   replay + comparison report). The paid `--pilot-only` and `--bakeoff-model`
   runs are maintainer steps on the populated local checkout (need `.env`,
   `vocabulary.json`, and — for the bakeoff — the banked p2 shard files).

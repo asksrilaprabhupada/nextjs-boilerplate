@@ -85,8 +85,10 @@ PRICES: dict[str, tuple[float, float]] = {
     ),
 }
 
-# Machine-enforced ceiling, checked before every shard submission.
-MAX_SPEND_USD = config._env_float("MAX_SPEND_USD", 500.0)
+# Machine-enforced ceiling, checked before every shard submission. Same env var
+# (and now the same default) as the tagging harness in config.py — one budget
+# covers both pipelines, so a .env override applies to both.
+MAX_SPEND_USD = config._env_float("MAX_SPEND_USD", 380.0)
 
 # The routing contract. These are ASSERTED against live counts before the full
 # run submits anything — if the corpus changed, the run stops rather than
@@ -115,7 +117,7 @@ MAX_ATTEMPTS = 3  # first pass + 2 retries before a row is reported unresolved
 # Pilot (STEP 2).
 PILOT_SIZE = config._env_int("QUESTIONS_PILOT_SIZE", 2000)
 PILOT_FLOOR_PER_STRATUM = 100     # so every table AND both models get real signal
-PILOT_AUTO_CONTINUE_USD = config._env_float("QUESTIONS_PILOT_AUTO_CONTINUE_USD", 320.0)
+PILOT_AUTO_CONTINUE_USD = config._env_float("QUESTIONS_PILOT_AUTO_CONTINUE_USD", 360.0)
 PILOT_MAX_META_REFERENCE = 0.01   # must be under 1%
 PILOT_MAX_QUOTE_MISMATCH = 0.01   # must be under 1%
 SAMPLE_SEED = config._env("QUESTIONS_SAMPLE_SEED") or "asp-questions-v1"

@@ -16,6 +16,7 @@ import json
 
 import pytest
 
+import config
 import questions_run as qr
 
 
@@ -446,8 +447,12 @@ def test_unpriced_model_is_a_hard_stop():
         qr.prices_for("gemini-nonexistent")
 
 
-def test_ceiling_default_is_500():
-    assert qr.MAX_SPEND_USD == 500.0
+def test_ceiling_default_is_380():
+    """The approved budget. MAX_SPEND_USD is ONE env var shared with the tagging
+    harness, so the two modules must pin the same default — a split default means
+    the effective ceiling depends on which module happens to read it."""
+    assert qr.MAX_SPEND_USD == 380.0
+    assert config.MAX_SPEND_USD == qr.MAX_SPEND_USD
 
 
 # ── pilot manifest allocation ───────────────────────────────────────────────
@@ -479,10 +484,13 @@ def test_pilot_size_is_2000():
     assert qr.PILOT_SIZE == 2000
 
 
-def test_auto_continue_threshold_is_320():
-    """Raised 220 → 320 for the approved ~$313 run: the pilot's extrapolation
-    must clear the approved number, or the gate stops a run that was signed off."""
-    assert qr.PILOT_AUTO_CONTINUE_USD == 320.0
+def test_auto_continue_threshold_is_360():
+    """Raised 320 → 360 for the approved ~$313 run: the pilot's extrapolation
+    must clear the approved number, or the gate stops a run that was signed off.
+    It stays BELOW the $380 ceiling — a gate at or above the ceiling would wave
+    through a full run that submission then refuses part-way."""
+    assert qr.PILOT_AUTO_CONTINUE_USD == 360.0
+    assert qr.PILOT_AUTO_CONTINUE_USD < qr.MAX_SPEND_USD
 
 
 # ── meta-reference detector ─────────────────────────────────────────────────
