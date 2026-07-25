@@ -106,6 +106,14 @@ def test_every_table_is_routed_somewhere():
         assert qr.model_for(table, None) in (qr.MODEL_36, qr.MODEL_3)
 
 
+def test_routed_model_strings_are_exact():
+    """The literal strings are the contract. The cheap model is `gemini-3-flash`
+    — NOT `gemini-3.0-flash`, which is a different (nonexistent) id and would be
+    rejected by confirm_model after the plan was already built."""
+    assert qr.MODEL_36 == "gemini-3.6-flash"
+    assert qr.MODEL_3 == "gemini-3-flash"
+
+
 def test_assert_routing_totals_rejects_a_changed_corpus():
     good = {("verses", qr.MODEL_36): qr.EXPECTED_CORE,
             ("transcript_paragraphs", qr.MODEL_3): qr.EXPECTED_STANDARD}
@@ -285,6 +293,90 @@ def test_empty_questions_store_as_empty_string_not_null():
     assert qr.questions_text([]) is not None
 
 
+# ── the write path: ONE pass per row per table ──────────────────────────────
+#
+# Writing these columns can never be a HOT update (questions_fts is GIN-indexed),
+# so every row written re-inserts into every index on the table — including the
+# 1.1 GB HNSW vector index on transcript_paragraphs. A second pass over that
+# table costs roughly five hours of index maintenance for nothing, so the four
+# columns MUST go down in a single UPDATE. This test is the guard.
+
+class _Noop:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeCursor:
+    def __init__(self, log):
+        self.log = log
+        self.rowcount = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.log.append(" ".join(str(sql).split()))
+        self.rowcount = 1
+
+
+class _FakeConn:
+    def __init__(self):
+        self.log: list[str] = []
+
+    def cursor(self):
+        return _FakeCursor(self.log)
+
+    def transaction(self):
+        return _Noop()
+
+
+def _row(i):
+    return qr.RowResult(
+        table="transcript_paragraphs", passage_id=f"id{i}",
+        speaker="explicit_prabhupada", speaker_evidence="Prabhupāda: ...",
+        eligible=True,
+        questions=[{"support_quote": "s", "question": "What is bhakti?"}],
+        function="explains", function_evidence="because ...")
+
+
+def _apply(monkeypatch, rows_):
+    conn = _FakeConn()
+    monkeypatch.setattr(qr.db, "get_pg", lambda: conn)
+    monkeypatch.setattr(qr, "prewarm_table_indexes", lambda table: None)
+    outcome = qr.ShardOutcome("q-full-abcdef12-transcript_paragraphs-m3-a1-000",
+                              "transcript_paragraphs", qr.MODEL_3)
+    outcome.applied = rows_
+    qr.apply_outcome(outcome, "00000000-0000-0000-0000-000000000000", "full")
+    return [s for s in conn.log if s.startswith("UPDATE public.transcript_paragraphs")]
+
+
+def test_all_four_columns_go_down_in_one_update(monkeypatch):
+    updates = _apply(monkeypatch, [_row(i) for i in range(3)])
+    assert len(updates) == 1, (
+        f"expected ONE UPDATE over transcript_paragraphs, got {len(updates)}"
+        " — a per-column pass costs ~5h of index maintenance each")
+    sql = updates[0]
+    for assignment in ("questions = d.q", "passage_function = d.fn",
+                       "speaker = d.sp", "speaker_evidence = d.se"):
+        assert assignment in sql, f"the single UPDATE lost {assignment!r}"
+
+
+def test_write_batches_by_chunk_not_by_column(monkeypatch):
+    """More rows than DB_WRITE_CHUNK split by ROWS (one UPDATE per chunk), never
+    by column — the count must track the chunking, not the four columns."""
+    n = qr.DB_WRITE_CHUNK + 1
+    updates = _apply(monkeypatch, [_row(i) for i in range(n)])
+    assert len(updates) == 2
+    for sql in updates:
+        assert "speaker_evidence = d.se" in sql
+
+
 # ── response parsing + usage metering ───────────────────────────────────────
 
 def _response_line(payload, prompt=100, cand=40, thoughts=25):
@@ -387,8 +479,10 @@ def test_pilot_size_is_2000():
     assert qr.PILOT_SIZE == 2000
 
 
-def test_auto_continue_threshold_is_220():
-    assert qr.PILOT_AUTO_CONTINUE_USD == 220.0
+def test_auto_continue_threshold_is_320():
+    """Raised 220 → 320 for the approved ~$313 run: the pilot's extrapolation
+    must clear the approved number, or the gate stops a run that was signed off."""
+    assert qr.PILOT_AUTO_CONTINUE_USD == 320.0
 
 
 # ── meta-reference detector ─────────────────────────────────────────────────

@@ -121,7 +121,7 @@ the 111 standard-route verses are actually represented rather than rounded away.
 It reports **actually billed** input/output/thinking tokens per row per model and
 extrapolates the full-run cost **stratum-wise** (input length varies hugely
 between a transcript paragraph and a full purport, so one blended average would
-misestimate). Extrapolated total **≤ $220 auto-continues**; above that the run
+misestimate). Extrapolated total **≤ $320 auto-continues**; above that the run
 stops with `questions-pilot-report.md`. It also reports the zero-question rate by
 table, mean questions/row, the meta-reference rate (gate: < 1%), the rate at
 which `support_quote` is not an exact substring of the passage (gate: < 1%), and
