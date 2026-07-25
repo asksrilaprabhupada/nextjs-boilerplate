@@ -89,8 +89,10 @@ VOYAGE_URL = "https://api.voyageai.com/v1/contextualizedembeddings"
 # ── Cost ceiling (machine-enforced) ─────────────────────────────────────────
 # The submitter refuses to submit a shard once (real spend so far + estimates
 # for in-flight work + the new shard's estimate) would exceed this. Set it in
-# .env — 325 is the v3.p3-hybrid default. No approval flow can raise it at runtime.
-MAX_SPEND_USD = _env_float("MAX_SPEND_USD", 325.0)
+# .env — 380 is the approved budget. No approval flow can raise it at runtime.
+# ONE env var, TWO pipelines: questions_run.py reads the same MAX_SPEND_USD and
+# pins the same default, so a .env value applies to both. Keep them in lock-step.
+MAX_SPEND_USD = _env_float("MAX_SPEND_USD", 380.0)
 # Gemini Batch pricing per 1M tokens (batch = 50% of interactive), PER MODEL
 # (v3.p3-hybrid). The CANONICAL map below is the current Batch price sheet for
 # both routed models, pinned in code and shipped as the defaults — `--doctor`
