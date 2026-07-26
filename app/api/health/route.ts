@@ -27,7 +27,14 @@ interface ContractRow {
   rpc_name: string;
   present: boolean;
   overloads: number;
-  security_definer: boolean | null;
+  result_matches: boolean;
+  security_invoker: boolean;
+  search_path_pinned: boolean;
+  ef_search_pinned: boolean;
+  service_role_executable: boolean;
+  publicly_executable: boolean;
+  /** Everything above, ANDed. The only field the decision actually needs. */
+  compatible: boolean;
 }
 
 type SearchHealth = "available" | "unavailable";
@@ -71,17 +78,36 @@ export async function GET() {
     return healthResponse("unavailable", requestId);
   }
 
-  const missing = rows.filter(r => !r.present).map(r => r.rpc_name);
-  const ambiguous = rows.filter(r => r.overloads > 1).map(r => r.rpc_name);
+  // `compatible` is the real question, and it subsumes presence. A function can
+  // exist and still be unusable: a drifted return type breaks the caller's
+  // column mapping, a lost service_role grant makes every call fail, and a
+  // semantic lane without a pinned ef_search silently loses recall.
+  //
+  // Checking only `present` would let this endpoint report healthy in exactly
+  // those cases — the same shape of false reassurance that let the original
+  // outage run for a day.
+  const incompatible = rows.filter(r => !r.compatible);
 
-  if (missing.length > 0 || ambiguous.length > 0) {
+  if (incompatible.length > 0) {
     console.error(
       JSON.stringify({
         level: "error",
         event: "health.contract_broken",
         requestId,
-        missing,
-        ambiguous,
+        // Reasons, not just names, so the log alone explains the failure.
+        broken: incompatible.map(r => ({
+          rpc: r.rpc_name,
+          why: [
+            !r.present && "absent",
+            r.overloads > 1 && `${r.overloads} overloads`,
+            !r.result_matches && "return type drift",
+            !r.security_invoker && "security definer",
+            !r.search_path_pinned && "search_path unpinned",
+            !r.ef_search_pinned && "ef_search unpinned",
+            !r.service_role_executable && "service_role cannot execute",
+            r.publicly_executable && "publicly executable",
+          ].filter(Boolean),
+        })),
       }),
     );
     return healthResponse("unavailable", requestId);

@@ -1,0 +1,61 @@
+-- ============================================================================
+-- Make the health check cover the pipeline that is actually serving
+-- ============================================================================
+--
+-- THE GAP
+--
+-- search_rpc_contract_v1 listed only the 23 legacy RPCs. /api/health reads it
+-- to decide whether the deployment can serve a search. With
+-- DEEP_RESEARCH_V2_ENABLED on, the pipeline actually serving is V2 -- so a
+-- dropped or drifted batch function would leave health reporting "healthy"
+-- while every search returned 503.
+--
+-- A health check that cannot fail for the code path in production is the same
+-- false reassurance that let the original outage run for a day: HTTP 200, no
+-- crash, zero results.
+--
+-- THE CHANGE
+--
+-- The manifest now covers 30 RPCs -- the 23 legacy plus the seven V2 functions:
+--   search_verses_hybrid_batch_v2, search_verse_chunks_hybrid_batch_v2,
+--   search_prose_hybrid_batch_v2, search_transcripts_hybrid_batch_v2,
+--   search_letters_hybrid_batch_v2, resolve_vocabulary_terms_v1,
+--   format_verse_reference
+--
+-- The five batch functions are marked needs_ef_search, so losing the pinned
+-- hnsw.ef_search on any of them is a contract failure rather than a silent
+-- recall regression.
+--
+-- Verified after apply: 30/30 compatible.
+--
+-- ALSO: verse_refs security_invoker
+--
+-- public.verse_refs was flagged by advisor 0010 (SECURITY DEFINER view) at
+-- ERROR level. It is a read-only view over verses JOIN chapters, and both
+-- tables carry `public read` SELECT policies with qual = true, so
+-- security_invoker changes nothing any caller can see. Confirmed the advisor
+-- finding clears; the database now reports zero ERROR-level findings.
+--
+-- The remaining advisor findings are deliberate or not ours to change:
+--   INFO  rls_enabled_no_policy on popular_queries / search_logs / vocab_terms
+--         -- correct: RLS on with no policy is deny-all to anon, and these are
+--         service-role-only tables
+--   WARN  extension_in_public for unaccent -- load-bearing for the
+--         public.english_unaccent text search configuration every full-text
+--         lane names explicitly. Moving it would break search.
+--   WARN  extension_in_public for pg_prewarm -- operational tooling
+--   WARN  rls_policy_always_true on feedback / citation_clicks -- deliberate,
+--         anonymous devotees submit those
+--   WARN  vulnerable_postgres_version -- a platform upgrade, the owner's call
+--
+-- Forward-only. No table, column, index or corpus changes.
+-- ============================================================================
+
+-- Applied to the live database via execute_sql (apply_migration is not trusted
+-- on this project). The resulting definitions are recorded in
+-- supabase_migrations.schema_migrations under version 20260726200000; read them
+-- back with:
+--
+--     SELECT pg_get_functiondef(oid) FROM pg_proc WHERE proname = 'search_rpc_contract_v1';
+--     SELECT pg_get_viewdef('public.verse_refs'::regclass, true);
+--     SELECT reloptions FROM pg_class WHERE relname = 'verse_refs';
