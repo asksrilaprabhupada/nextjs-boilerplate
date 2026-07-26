@@ -9,7 +9,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "verify:contract": "node scripts/verify-search-contract.mjs",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "eval:gold": "node scripts/evaluate-search.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
@@ -17,6 +18,7 @@
     "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
+    "@vercel/functions": "^3.7.6",
     "framer-motion": "^12.38.0",
     "next": "^16.2.1",
     "postcss": "^8.5.8",
