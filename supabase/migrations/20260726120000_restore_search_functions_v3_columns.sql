@@ -475,6 +475,17 @@ $fn$;
 -- read-only mode, which rejects `SET` outright, so a body-level statement would
 -- make every one of these fail on first call.
 --
+-- The DO block immediately below is load-bearing, not decoration. Until
+-- pgvector's library is loaded into the session, `hnsw.ef_search` exists only as
+-- a GUC *placeholder*, and PostgreSQL refuses to let a non-superuser write a
+-- placeholder into a function's SET clause:
+--
+--     ERROR 42501: permission denied to set parameter "hnsw.ef_search"
+--
+-- Supabase's `postgres` role is not a superuser, so every CREATE FUNCTION below
+-- would fail. Touching the vector type forces the library to load and makes the
+-- parameter real, after which the clause is accepted and stored.
+--
 -- The historical definitions are the cautionary tale. verses/prose/verse_chunks
 -- were VOLATILE (unmarked) and their body-level SET LOCAL worked; but
 -- search_transcript_paragraphs_semantic and search_letter_paragraphs_semantic
@@ -484,6 +495,12 @@ $fn$;
 -- were dead silently. The function-level clause is equivalent in effect (the
 -- value is scoped to the call and reset on exit) and is valid at any volatility.
 -- ===========================================================================
+
+DO $load_pgvector$
+BEGIN
+  PERFORM '[1]'::extensions.vector;
+END
+$load_pgvector$;
 
 CREATE FUNCTION public.search_verses_semantic_v2(
   query_embedding extensions.vector,
