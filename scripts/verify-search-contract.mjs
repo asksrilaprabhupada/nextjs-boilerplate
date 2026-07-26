@@ -178,6 +178,130 @@ try {
 }
 
 // ---------------------------------------------------------------------------
+// The V2 retrieval surface.
+//
+// Presence is already covered by the contract manifest above. This section
+// EXECUTES each batch function, because the two are not the same check: the
+// first version of the restore migration created five semantic functions that
+// were declared STABLE with a body-level `SET LOCAL`, which creates cleanly and
+// then fails on the first call. Presence passed; execution did not.
+console.log("\n7. V2 batched retrieval — executed, not merely present");
+
+const V2_QUERIES = [
+  { id: "q_original", text: "how do I control my restless mind", embedding: null },
+  { id: "s1", text: "the mind as friend and enemy of the soul", embedding: null },
+];
+const V2_ARGS = {
+  p_queries: V2_QUERIES,
+  p_lexical_phrases: ["friend and the enemy"],
+  p_tag_slugs: [],
+  p_constraints: {},
+  p_limit: 10,
+};
+
+const BATCH_FNS = [
+  ["verses", "search_verses_hybrid_batch_v2"],
+  ["verse chunks", "search_verse_chunks_hybrid_batch_v2"],
+  ["prose", "search_prose_hybrid_batch_v2"],
+  ["transcripts", "search_transcripts_hybrid_batch_v2"],
+  ["letters", "search_letters_hybrid_batch_v2"],
+];
+
+for (const [label, fn] of BATCH_FNS) {
+  const rows = await exercise(`${label} / hybrid batch`, fn, V2_ARGS);
+  if (!rows || rows.length === 0) continue;
+  const r = rows[0];
+  report(typeof r.passage_key === "string" && r.passage_key.includes(":"),
+    `${label}: passage_key is namespaced`, String(r.passage_key));
+  report(Array.isArray(r.matched_query_ids), `${label}: matched_query_ids present`);
+  report(r.channel_ranks !== null && typeof r.channel_ranks === "object",
+    `${label}: channel_ranks present`);
+  // The retrieval payload must be a passage, never a whole book or transcript.
+  report((r.retrieval_text || "").length < 20000,
+    `${label}: retrieval_text is a passage, not a whole document`,
+    `${(r.retrieval_text || "").length} chars`);
+}
+
+// Voyage-unavailable path: every query carries embedding: null, so the lexical
+// channels must carry the search on their own rather than erroring.
+{
+  const rows = await exercise("verses / no embeddings (Voyage down)", "search_verses_hybrid_batch_v2", {
+    ...V2_ARGS,
+    p_queries: [{ id: "q_original", text: "surrender unto Me", embedding: null }],
+    p_lexical_phrases: [],
+  });
+  if (rows && rows.length > 0) {
+    const channels = new Set(
+      (rows[0].channel_ranks || []).map(c => c.channel),
+    );
+    report(!channels.has("semantic"),
+      "no semantic channel when embeddings are absent",
+      [...channels].join(","));
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n8. Controlled vocabulary resolves, and refuses to invent");
+{
+  const resolved = await exercise("multiword + alias resolution", "resolve_vocabulary_terms_v1", {
+    p_candidates: ["devotional service", "chanting hare krsna", "bhakti-yoga"],
+    p_limit_per_candidate: 2,
+  });
+  if (resolved) {
+    const slugs = new Set(resolved.map(r => r.slug));
+    // These are the multiword/alias cases that single-word matching could not
+    // reach; 143 of the 251 vocabulary terms are multiword.
+    report(slugs.has("chanting-hare-krsna"), "multiword term resolves");
+    report(slugs.has("devotional-service"), "alias resolves to its canonical slug");
+  }
+  try {
+    const none = await rpc("resolve_vocabulary_terms_v1", {
+      p_candidates: ["not-a-real-concept-xyz"],
+      p_limit_per_candidate: 2,
+    });
+    report(none.length === 0,
+      "an unrecognised concept resolves to NOTHING, never to an arbitrary slug");
+  } catch (err) {
+    report(false, "unknown vocabulary handling", err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+console.log("\n9. Citations are well formed across every storage pattern");
+{
+  // SB and CC store verse_number as "Text 9"; BS/ISO/NOI store a placeholder
+  // with the real number in chapter_number. A citation is how a devotee
+  // verifies a passage, so a malformed one is not cosmetic.
+  const { data, error } = await db
+    .from("verses")
+    .select("scripture, verse_number, vedabase_url, chapters(chapter_number, canto_or_division)")
+    .in("scripture", ["BG", "SB", "CC", "BS", "ISO", "NOI"])
+    .limit(400);
+
+  if (error) {
+    report(false, "citation sample query", error.message);
+  } else {
+    const bad = [];
+    for (const row of data ?? []) {
+      const { data: ref, error: e2 } = await db.rpc("format_verse_reference", {
+        p_scripture: row.scripture,
+        p_division: row.chapters?.canto_or_division ?? null,
+        p_chapter: row.chapters?.chapter_number ?? null,
+        p_verse: row.verse_number,
+        p_url: row.vedabase_url,
+      });
+      if (e2) { bad.push(`${row.scripture}: ${e2.message}`); continue; }
+      if (typeof ref !== "string" || /Text\s|Verse text|Devanagari/.test(ref)) {
+        bad.push(`${row.scripture} ${row.verse_number} -> ${ref}`);
+      }
+    }
+    report(bad.length === 0,
+      `citations well formed across ${(data ?? []).length} sampled verses`,
+      bad.slice(0, 3).join("; "));
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log(`\n${checks - failures}/${checks} checks passed.`);
 if (failures > 0) {
   console.error(`${failures} FAILED.`);
