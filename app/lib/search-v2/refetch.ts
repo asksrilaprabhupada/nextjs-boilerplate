@@ -22,6 +22,7 @@
  */
 import { unwrapOrThrow, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
 import { normalizeVerbatim } from "@/app/lib/17-verbatim-validator";
+import { formatVerseReference } from "@/app/lib/search-v2/citation";
 import type { SelectedPassage } from "@/app/lib/search-v2/select";
 
 /** Namespace → the table and columns that namespace is allowed to resolve to. */
@@ -87,8 +88,11 @@ interface SupabaseLike extends RpcCapableClient {
 
 const COLUMNS: Record<SourceNamespace, string> = {
   verse:
-    "id, scripture, verse_number, sanskrit_devanagari, transliteration, synonyms, translation, purport, vedabase_url, chapter_id",
-  purport: "id, scripture, chapter_number, verse_number, chunk_number, body_text, verse_id",
+    "id, scripture, verse_number, sanskrit_devanagari, transliteration, synonyms, translation, purport, vedabase_url, chapter_id, chapters(chapter_number, canto_or_division)",
+  // The parent verse carries the canonical Vedabase URL and the chapter row
+  // carries the SB canto / CC division, both of which the citation needs.
+  purport:
+    "id, scripture, chapter_number, verse_number, chunk_number, body_text, verse_id, verses(vedabase_url, chapters(chapter_number, canto_or_division))",
   book: "id, book_slug, paragraph_number, body_text, vedabase_url, vedabase_url_precise, chapter_id",
   lecture:
     "id, title, content_type, date, location, occasion, scripture_ref, body_text, vedabase_url, transcript_id",
@@ -99,6 +103,15 @@ function parseKey(key: string): { ns: string; id: string } | null {
   const idx = key.indexOf(":");
   if (idx <= 0) return null;
   return { ns: key.slice(0, idx), id: key.slice(idx + 1) };
+}
+
+/**
+ * PostgREST returns an embedded resource as an object for a to-one join and as
+ * an array for a to-many one. Normalising here keeps the callers readable.
+ */
+function nested(v: unknown): Record<string, unknown> | null {
+  if (Array.isArray(v)) return (v[0] as Record<string, unknown>) ?? null;
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : null;
 }
 
 function str(v: unknown): string | null {
@@ -236,23 +249,38 @@ function buildVerified(
   };
 
   switch (ns) {
-    case "verse":
+    case "verse": {
+      const ch = nested(row.chapters);
       return {
         ...base,
-        reference: [str(row.scripture), str(row.verse_number)].filter(Boolean).join(" ") || null,
+        reference: formatVerseReference({
+          scripture: str(row.scripture),
+          division: str(ch?.canto_or_division),
+          chapterNumber: (ch?.chapter_number as number | null) ?? null,
+          verseNumber: str(row.verse_number),
+          vedabaseUrl: str(row.vedabase_url),
+        }),
         sanskrit: str(row.sanskrit_devanagari),
         transliteration: str(row.transliteration),
         synonyms: str(row.synonyms),
         purport: str(row.purport),
       };
-    case "purport":
+    }
+    case "purport": {
+      const parent = nested(row.verses);
+      const ch = nested(parent?.chapters);
       return {
         ...base,
-        reference:
-          [str(row.scripture), [str(row.chapter_number), str(row.verse_number)].filter(Boolean).join(".")]
-            .filter(Boolean)
-            .join(" ") || null,
+        reference: formatVerseReference({
+          scripture: str(row.scripture),
+          division: str(ch?.canto_or_division),
+          chapterNumber: (ch?.chapter_number as number | null) ?? (row.chapter_number as number | null) ?? null,
+          verseNumber: str(row.verse_number),
+          vedabaseUrl: str(parent?.vedabase_url),
+        }),
+        vedabaseUrl: str(parent?.vedabase_url),
       };
+    }
     case "book":
       return {
         ...base,
