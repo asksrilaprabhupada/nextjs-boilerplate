@@ -10,9 +10,13 @@
 
 // ─── Types ───────────────────────────────────────────────────
 
+/**
+ * The only fields reranking reads off a candidate. Deliberately NOT an index
+ * signature: `[key: string]: unknown` would have forced every concrete hit type
+ * (VerseHit, ProseHit, …) to declare one too, and widening them to satisfy it
+ * is how a typo in a field name stops being a compile error.
+ */
 export interface RerankCandidate {
-  /** Any search result object — we only read body_text/translation/purport for reranking */
-  [key: string]: any;
   body_text?: string;
   translation?: string;
   purport?: string;
@@ -149,11 +153,12 @@ export async function cohereRerank<T extends RerankCandidate>(
       original_index: r.index,
     }));
 
-  } catch (error: any) {
-    if (error.name === 'AbortError') {
+  } catch (error: unknown) {
+    const err = error as { name?: string; message?: string };
+    if (err.name === 'AbortError') {
       console.error('[cohere-rerank] Request timed out after 10s');
     } else {
-      console.error('[cohere-rerank] Request failed:', error.message);
+      console.error('[cohere-rerank] Request failed:', err.message);
     }
 
     // Fallback: return original order — search must never break

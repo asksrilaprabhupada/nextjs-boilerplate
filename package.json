@@ -8,7 +8,8 @@
     "start": "next start",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "verify:contract": "node scripts/verify-search-contract.mjs"
+    "verify:contract": "node scripts/verify-search-contract.mjs",
+    "lint": "eslint ."
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",
@@ -25,7 +26,10 @@
     "typescript": "^5.9.3"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
     "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.12",
     "vitest": "^4.1.9"
   }
 }
