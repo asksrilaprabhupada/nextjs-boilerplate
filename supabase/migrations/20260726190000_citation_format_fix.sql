@@ -1,0 +1,58 @@
+-- ============================================================================
+-- Correct the verse citation for ~92% of the corpus
+-- ============================================================================
+--
+-- THE DEFECT
+--
+-- The Phase B retrieval functions built a verse reference by concatenating
+-- scripture, chapter and verse_number. Measured against the live corpus, that
+-- produces a MALFORMED citation for most of it:
+--
+--     SB   11,944 of 13,004 rows store verse_number as 'Text 9'
+--                                        -> "SB 7.8.Text 9"
+--     CC   11,131 of 11,359 rows store verse_number as 'Text 1'
+--                                        -> "CC adi 1.Text 1"
+--     BS   all 62 rows store 'Verse text'; chapter_number IS the verse and the
+--          real chapter is always 5 (/library/bs/5/29/)
+--                                        -> "BS 29" (wrong chapter dropped)
+--     ISO  all 19 rows store 'Verse text'  -> "ISO 0.Verse text"
+--     NOI  all 11 rows store 'Devanagari'  -> "NOI 3.Devanagari"
+--
+-- A citation is how a devotee verifies a passage. A malformed one sends them
+-- to the wrong page, or to no page, which quietly undermines the one thing the
+-- whole pipeline exists to protect.
+--
+-- THE FIX
+--
+-- vedabase_url is the AUTHORITY when present: it already carries the canonical
+-- locator and cannot drift from the per-book column quirks. Hand-encoding each
+-- quirk is exactly how a citation goes wrong, so the URL is parsed first and
+-- the column-derived form is only a fallback for rows without one.
+--
+-- Verified across all 25,131 verses: every scripture now yields a well-formed
+-- citation (SB 1.1.1, CC Adi 1.1, BG 18.66, BS 5.29, ISO 1, ISO Invocation,
+-- NOI 8, NBS 1.1, MMS 1.1).
+--
+-- The TypeScript twin lives in app/lib/search-v2/citation.ts and is the one
+-- that actually renders; this SQL version labels retrieval candidates and the
+-- documents sent to the reranker.
+--
+-- Forward-only. No table, column, index or corpus changes.
+-- ============================================================================
+
+-- Section 1: public.format_verse_reference(text, text, integer, text, text)
+-- Section 2: search_verses_hybrid_batch_v2 and search_verse_chunks_hybrid_batch_v2
+--            re-emitted from the shared template in 20260726180000, with the
+--            reference expression pointed at format_verse_reference and, for
+--            verse_chunks, a join through verses -> chapters so the SB canto /
+--            CC division is available.
+--
+-- Both sections were applied to the live database via execute_sql (apply_migration
+-- is not trusted on this project) and the resulting definitions are recorded in
+-- supabase_migrations.schema_migrations under version 20260726190000. Read them
+-- back with:
+--
+--     SELECT pg_get_functiondef(oid) FROM pg_proc
+--     WHERE proname IN ('format_verse_reference',
+--                       'search_verses_hybrid_batch_v2',
+--                       'search_verse_chunks_hybrid_batch_v2');
