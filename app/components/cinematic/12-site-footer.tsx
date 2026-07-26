@@ -2,8 +2,9 @@
  * 12-site-footer.tsx — Unified Site Footer (every route)
  *
  * The quiet footer shared by all pages: copyright, GitHub, Support-the-seva
- * and Send-feedback (both open the shared modals), plus "← Back to search" on
- * inner pages (hidden on the home route, which IS the search).
+ * and Send-feedback (both open the shared modals), plus — on inner pages —
+ * Request-a-feature and "← Back to search" (both hidden on the home route,
+ * which IS the search).
  */
 "use client";
 
@@ -29,9 +30,12 @@ export default function SiteFooter() {
       <div style={{ display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap" }}>
         <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="cine-nav-link font-body" style={quietLink}>GitHub</a>
         <button onClick={() => openModal("donate")} className="cine-nav-link font-body" style={quietLink}>Support the seva</button>
+        {!isHome && (
+          <button onClick={() => openModal("feature")} className="cine-nav-link font-body" style={quietLink}>Request a feature</button>
+        )}
         <button onClick={() => openModal("feedback")} className="cine-nav-link font-body" style={quietLink}>Send feedback</button>
         {!isHome && (
-          <Link href="/" className="cine-backlink font-body" style={quietLink}>← Back to search</Link>
+          <Link href="/?entrance=0" className="cine-backlink font-body" style={quietLink}>← Back to search</Link>
         )}
       </div>
     </footer>

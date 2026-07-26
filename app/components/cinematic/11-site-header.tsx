@@ -1,14 +1,21 @@
 /**
  * 11-site-header.tsx — Unified Site Header (every route)
  *
- * One fixed, frosted, scroll-reactive header for the whole site: brand,
- * Search · His Journey · Features · How it works, and a "More ▾" dropdown
- * (Support the seva · Request a feature · Send feedback · GitHub · theme
- * toggle) that opens the shared modals from any page. Active link gets the
- * pill (home and /search both count as Search). `variant="overlay"` is
- * transparent until the page scrolls (the home hero look); `variant="solid"`
- * is always frosted. Below ~880px the links collapse into a hamburger with a
- * slide-down sheet.
+ * One fixed, scroll-reactive header for the whole site: brand, Search · His
+ * Journey · Features · How it works, and a "More ▾" dropdown (Support the seva
+ * · Request a feature · Send feedback · GitHub · theme toggle) that opens the
+ * shared modals from any page. Active link gets the pill (home and /search
+ * both count as Search). Below ~880px the links collapse into a hamburger with
+ * a slide-down sheet.
+ *
+ * Three variants:
+ *   • "solid"   — always frosted paper (search results).
+ *   • "overlay" — genuinely transparent at rest, frosting in once the page
+ *                 scrolls (home, features, how it works).
+ *   • "scene"   — scene-aware: a soft dark scrim with light type while the
+ *                 viewport is still over a dark opening scene, turning into
+ *                 frosted paper below it (His Journey). This is what stops a
+ *                 pale bar from sitting on top of a dark cinematic frame.
  */
 "use client";
 
@@ -20,8 +27,10 @@ import { useSiteModals } from "./13-site-modals";
 
 const GITHUB_URL = "https://github.com/asksrilaprabhupada/nextjs-boilerplate";
 
+export type HeaderVariant = "overlay" | "solid" | "scene";
+
 const NAV: { key: string; label: string; href: string; match: (p: string) => boolean }[] = [
-  { key: "search", label: "Search", href: "/", match: (p) => p === "/" || p.startsWith("/search") },
+  { key: "search", label: "Search", href: "/?entrance=0", match: (p) => p === "/" || p.startsWith("/search") },
   { key: "journey", label: "His Journey", href: "/journey", match: (p) => p.startsWith("/journey") },
   { key: "features", label: "Features", href: "/features", match: (p) => p.startsWith("/features") },
   { key: "how", label: "How it works", href: "/how-it-works", match: (p) => p.startsWith("/how-it-works") },
@@ -29,19 +38,31 @@ const NAV: { key: string; label: string; href: string; match: (p: string) => boo
 
 const linkBase: CSSProperties = {
   textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px",
-  borderRadius: 9, fontSize: 14, lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.3s, background 0.3s",
+  borderRadius: 9, fontSize: 14, lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.4s, background 0.4s",
 };
 
-export default function SiteHeader({ variant = "solid" }: { variant?: "overlay" | "solid" }) {
+const PAPER = {
+  bg: "linear-gradient(120deg, rgba(254,252,248,0.94), rgba(250,247,241,0.90))",
+  blur: "blur(16px) saturate(1.1)",
+  border: "#E8E0D2",
+  shadow: "0 1px 2px rgba(43,37,25,0.04), 0 10px 30px rgba(43,37,25,0.06)",
+} as const;
+
+export default function SiteHeader({ variant = "solid" }: { variant?: HeaderVariant }) {
   const pathname = usePathname() || "/";
   const { openModal } = useSiteModals();
   const [scrolled, setScrolled] = useState(variant === "solid");
+  // Journey opens over a full-viewport dark frame — true while we are still on it.
+  const [overDark, setOverDark] = useState(variant === "scene");
   const [moreOpen, setMoreOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     if (variant === "solid") return;
-    const onScroll = () => setScrolled(window.scrollY > 8);
+    const onScroll = () => {
+      setScrolled(window.scrollY > 8);
+      if (variant === "scene") setOverDark(window.scrollY < window.innerHeight - 120);
+    };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
@@ -50,9 +71,21 @@ export default function SiteHeader({ variant = "solid" }: { variant?: "overlay" 
   // Close menus on route change.
   useEffect(() => { setMoreOpen(false); setMenuOpen(false); }, [pathname]);
 
-  const hdr = scrolled || menuOpen
-    ? { bg: "linear-gradient(120deg, rgba(254,252,248,0.94), rgba(250,247,241,0.90))", border: "#E8E0D2", shadow: "0 1px 2px rgba(43,37,25,0.04), 0 10px 30px rgba(43,37,25,0.06)" }
-    : { bg: "linear-gradient(120deg, rgba(254,252,248,0.82), rgba(250,247,241,0.74))", border: "transparent", shadow: "none" };
+  // The mobile sheet is paper in every variant, so the bar above it must be too.
+  const dark = variant === "scene" && overDark && !menuOpen;
+  const paper = variant === "solid" || menuOpen || (variant === "overlay" && scrolled) || (variant === "scene" && !overDark);
+
+  const hdr = dark
+    ? { bg: "linear-gradient(180deg, rgba(22,18,12,0.55), rgba(22,18,12,0))", blur: "none", border: "transparent", shadow: "none" }
+    : paper
+      ? PAPER
+      : { bg: "transparent", blur: "none", border: "transparent", shadow: "none" };
+
+  const brandColor = dark ? "#FFF8E8" : "#51409A";
+  const linkColor = dark ? "rgba(255,248,232,0.75)" : "#6E6353";
+  const activeBg = dark ? "rgba(255,248,232,0.14)" : "rgba(107,87,201,0.16)";
+  const activeColor = dark ? "#FFF8E8" : "#51409A";
+  const hoverClass = dark ? "cine-nav-link-dark" : "cine-nav-link";
 
   const moreItems = [
     { title: "Support the seva", sub: "Keep his words freely searchable", on: () => { openModal("donate"); setMoreOpen(false); setMenuOpen(false); } },
@@ -66,12 +99,12 @@ export default function SiteHeader({ variant = "solid" }: { variant?: "overlay" 
       <Link
         key={item.key}
         href={item.href}
-        className={active ? "font-body" : "cine-nav-link font-body"}
+        className={active ? "font-body" : `${hoverClass} font-body`}
         style={{
           ...linkBase,
           fontWeight: active ? 500 : 400,
-          background: active ? "rgba(107,87,201,0.16)" : "transparent",
-          color: active ? "#51409A" : "#6E6353",
+          background: active ? activeBg : "transparent",
+          color: active ? activeColor : linkColor,
         }}
       >
         {item.label}
@@ -81,15 +114,15 @@ export default function SiteHeader({ variant = "solid" }: { variant?: "overlay" 
 
   return (
     <>
-      <header style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, height: 60, background: hdr.bg, backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)", borderBottom: `1px solid ${hdr.border}`, padding: "0 clamp(20px,4vw,48px)", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: hdr.shadow, transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s" }}>
-        <Link href="/" className="font-display" style={{ textDecoration: "none", fontSize: "clamp(1rem, 3.5vw, 1.4rem)", fontWeight: 600, color: "#51409A", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>Ask Śrīla Prabhupāda</Link>
+      <header style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, height: 60, background: hdr.bg, backdropFilter: hdr.blur, WebkitBackdropFilter: hdr.blur, borderBottom: `1px solid ${hdr.border}`, padding: "0 clamp(20px,4vw,48px)", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: hdr.shadow, transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s" }}>
+        <Link href="/?entrance=0" className="font-display" style={{ textDecoration: "none", fontSize: "clamp(1rem, 3.5vw, 1.4rem)", fontWeight: 600, color: brandColor, whiteSpace: "nowrap", letterSpacing: "-0.01em", transition: "color 0.4s" }}>Ask Śrīla Prabhupāda</Link>
 
         {/* Desktop nav */}
         <nav className="site-nav-desktop" style={{ display: "flex", alignItems: "center", gap: 6 }}>
           {NAV.map(navLink)}
           <div style={{ position: "relative", display: "flex" }}>
-            <button onClick={() => setMoreOpen((v) => !v)} className="cine-nav-link font-body" aria-expanded={moreOpen} aria-haspopup="menu"
-              style={{ ...linkBase, gap: 6, fontWeight: 400, background: moreOpen ? "rgba(107,87,201,0.10)" : "transparent", color: moreOpen ? "#51409A" : "#6E6353", border: "none", cursor: "pointer" }}>
+            <button onClick={() => setMoreOpen((v) => !v)} className={`${hoverClass} font-body`} aria-expanded={moreOpen} aria-haspopup="menu"
+              style={{ ...linkBase, gap: 6, fontWeight: 400, background: moreOpen ? (dark ? "rgba(255,248,232,0.14)" : "rgba(107,87,201,0.10)") : "transparent", color: moreOpen ? activeColor : linkColor, border: "none", cursor: "pointer" }}>
               <span>More</span>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: `rotate(${moreOpen ? "180deg" : "0deg"})`, transition: "transform 0.35s cubic-bezier(0.16,1,0.3,1)" }}><path d="m6 9 6 6 6-6" /></svg>
             </button>
@@ -120,7 +153,7 @@ export default function SiteHeader({ variant = "solid" }: { variant?: "overlay" 
           onClick={() => setMenuOpen((v) => !v)}
           aria-label={menuOpen ? "Close menu" : "Open menu"}
           aria-expanded={menuOpen}
-          style={{ display: "none", width: 40, height: 40, borderRadius: 10, border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", color: "#51409A", cursor: "pointer", alignItems: "center", justifyContent: "center" }}
+          style={{ display: "none", width: 40, height: 40, borderRadius: 10, border: `1px solid ${dark ? "rgba(232,224,210,0.4)" : "#E8E0D2"}`, background: dark ? "transparent" : "rgba(254,252,248,0.9)", color: brandColor, cursor: "pointer", alignItems: "center", justifyContent: "center", transition: "color 0.4s, border-color 0.4s, background 0.4s" }}
         >
           {menuOpen ? (
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>

@@ -84,7 +84,7 @@ export default function PhotoSlot({ src, alt, placeholderCaption, frame, objectP
           decoding="async"
           onLoad={() => setStatus("loaded")}
           onError={() => setStatus("missing")}
-          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition, opacity: loaded ? 1 : 0, transition: "opacity 0.6s ease" }}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition, opacity: loaded ? 1 : 0, transition: "opacity 0.6s ease, transform 0.8s cubic-bezier(0.16,1,0.3,1)" }}
         />
       )}
     </div>

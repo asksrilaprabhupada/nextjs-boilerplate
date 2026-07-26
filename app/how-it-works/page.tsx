@@ -2,8 +2,9 @@
  * page.tsx — How It Works Page
  *
  * Server wrapper: SEO metadata around the cinematic explainer — three numbered
- * steps (Ask → Verify → Go deeper), the under-the-hood pipeline, and a
- * full-bleed CTA. All motion and interaction live in the client component.
+ * steps (Ask → Verify → Go deeper), the five-stage under-the-hood pipeline,
+ * and a parallax CTA band. All motion and interaction live in the client
+ * component.
  */
 import type { Metadata } from "next";
 import HowItWorksPage from "../components/cinematic/07-how-it-works-page";

@@ -2,20 +2,34 @@
  * 13-site-modals.tsx — Site-wide modal provider (Support the seva · Feature
  * request · Feedback)
  *
- * The three cinematic overlays, moved verbatim out of the home page monolith
- * so the unified header/footer can open them from ANY route. Mounted once in
- * app/layout.tsx; children call useSiteModals().openModal("donate" | "feature"
- * | "feedback"). Seva details come from app/lib/19-seva-config.ts. The feature
- * and feedback forms POST to /api/feedback (feedback table) with a success
- * state and an honest error state.
+ * One cinematic shell — dark scrim, frosted gold-edged card, the same entrance
+ * choreography as the rest of the site — with two contents:
+ *
+ *   • Support the seva — an India / International toggle revealing the labelled
+ *     account rows from app/lib/19-seva-config.ts with tap-to-copy, plus GitHub
+ *     star and share as secondary actions.
+ *   • Feedback — one form for both "Request a feature" and "Send feedback":
+ *     Bug / Idea / General pills (which retitle the placeholder and the submit
+ *     button), optional name + email, and a gradient submit.
+ *
+ * Mounted once in app/layout.tsx; children call useSiteModals().openModal(
+ * "donate" | "feature" | "feedback").
+ *
+ * Submitting composes a mail to FEEDBACK_EMAIL and hands off to the visitor's
+ * email app — nothing is stored on this site. To post to the Supabase feedback
+ * table instead, swap the body of `submitForm` for a POST to /api/feedback and
+ * update the disclaimer line under the button.
  */
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { usePathname } from "next/navigation";
-import { SEVA } from "@/app/lib/19-seva-config";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { SEVA_REGIONS, SEVA_ROWS, SEVA_IS_PLACEHOLDER, type SevaRegion } from "@/app/lib/19-seva-config";
 
 export type SiteModal = "donate" | "feature" | "feedback" | null;
+
+/** TODO(owner): swap for the real inbox — this is where every form lands. */
+const FEEDBACK_EMAIL = "hello@asksrilaprabhupada.org";
+const GITHUB_URL = "https://github.com/asksrilaprabhupada/nextjs-boilerplate";
 
 const SiteModalsContext = createContext<{ openModal: (m: Exclude<SiteModal, null>) => void }>({
   openModal: () => { /* provider not mounted */ },
@@ -25,213 +39,246 @@ export function useSiteModals() {
   return useContext(SiteModalsContext);
 }
 
-/* ── shared style fragments (ported from the home page overlays) ── */
-const overlayBackdrop: React.CSSProperties = {
-  position: "fixed", inset: 0, zIndex: 1300, display: "flex", alignItems: "center", justifyContent: "center",
-  padding: "clamp(20px,5vw,60px)",
-  background: "radial-gradient(120% 100% at 50% 30%, rgba(45,36,80,0.42), rgba(22,18,12,0.66))",
-  backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)",
-  animation: "moreOverlayIn 0.5s ease both",
+type Category = "bug" | "idea" | "general";
+
+const CATEGORIES: { key: Category; label: string }[] = [
+  { key: "bug", label: "Bug" },
+  { key: "idea", label: "Idea" },
+  { key: "general", label: "General" },
+];
+
+const PLACEHOLDER: Record<Category, string> = {
+  bug: "What went wrong? Steps to reproduce help a lot…",
+  idea: "I wish I could…",
+  general: "Tell us what's working, and what isn't…",
 };
-const overlayPanel = (maxWidth: number): React.CSSProperties => ({
-  position: "relative", width: "100%", maxWidth, maxHeight: "88vh", overflowY: "auto",
-  padding: "clamp(30px,4vw,46px)", borderRadius: 28,
-  background: "linear-gradient(160deg, rgba(254,252,248,0.98), rgba(250,247,241,0.96))",
-  border: "1px solid rgba(255,255,255,0.6)",
-  boxShadow: "0 40px 120px rgba(22,18,12,0.5), 0 0 0 1px rgba(107,87,201,0.08)",
-  animation: "morePanelIn 0.7s cubic-bezier(0.16,1,0.3,1) both",
-});
-const eyebrow = (color: string): React.CSSProperties => ({
-  fontSize: 11, fontWeight: 600, letterSpacing: "0.32em", textTransform: "uppercase", color, textAlign: "center",
-});
+
+const SUBMIT_LABEL: Record<Category, string> = {
+  bug: "Send bug report",
+  idea: "Send request",
+  general: "Send feedback",
+};
+
+const CATEGORY_NAME: Record<Category, string> = {
+  bug: "Bug report",
+  idea: "Feature request",
+  general: "General feedback",
+};
+
+/* ── style fragments (values from the v2 design) ── */
+const scrim: React.CSSProperties = {
+  position: "fixed", inset: 0, zIndex: 1400, display: "flex", alignItems: "center", justifyContent: "center",
+  padding: "clamp(16px,4vw,40px)", background: "rgba(22,18,12,0.6)",
+  backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+  animation: "moreOverlayIn 0.35s ease both",
+};
+const panel: React.CSSProperties = {
+  position: "relative", width: "100%", maxWidth: 440, maxHeight: "88vh", overflowY: "auto",
+  padding: "clamp(30px,4vw,42px) clamp(28px,4vw,38px) 32px", borderRadius: 24,
+  background: "linear-gradient(165deg, #FEFCF8, #FAF7F1)",
+  boxShadow: "0 30px 90px rgba(43,37,25,0.35), 0 0 0 1px rgba(201,162,75,0.14)",
+  animation: "morePanelIn 0.45s cubic-bezier(0.16,1,0.3,1) both",
+};
+const pillTrack: React.CSSProperties = {
+  display: "flex", gap: 4, padding: 4, background: "#F1EBDD", borderRadius: 100, marginBottom: 16,
+};
+const field: React.CSSProperties = {
+  boxSizing: "border-box", width: "100%", padding: "11px 13px", borderRadius: 12,
+  border: "1px solid #E8E0D2", background: "#fff", fontSize: 13.5, color: "#2B2519", outline: "none",
+  transition: "border-color 0.25s",
+};
 
 export default function SiteModalsProvider({ children }: { children: ReactNode }) {
-  const pathname = usePathname();
   const [modal, setModal] = useState<SiteModal>(null);
-  const [copied, setCopied] = useState<string | null>(null);
+  const [region, setRegion] = useState<SevaRegion>("india");
+  const [copyHint, setCopyHint] = useState("");
+  const [shareCopied, setShareCopied] = useState(false);
 
-  const [featText, setFeatText] = useState("");
-  const [featEmail, setFeatEmail] = useState("");
-  const [featSent, setFeatSent] = useState(false);
-  const [featSending, setFeatSending] = useState(false);
-  const [featError, setFeatError] = useState<string | null>(null);
+  const [category, setCategory] = useState<Category>("idea");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [text, setText] = useState("");
+  const [sent, setSent] = useState(false);
 
-  const [fbVote, setFbVote] = useState<"up" | "down" | null>(null);
-  const [fbText, setFbText] = useState("");
-  const [fbSent, setFbSent] = useState(false);
-  const [fbSending, setFbSending] = useState(false);
-  const [fbError, setFbError] = useState<string | null>(null);
+  const close = useCallback(() => setModal(null), []);
 
-  const openModal = (m: Exclude<SiteModal, null>) => {
+  const openModal = useCallback((m: Exclude<SiteModal, null>) => {
     setModal(m);
-    setCopied(null);
-    if (m === "feature") { setFeatSent(false); setFeatError(null); }
-    if (m === "feedback") { setFbSent(false); setFbError(null); }
-  };
+    setCopyHint("");
+    if (m !== "donate") {
+      setText("");
+      setSent(false);
+      setCategory(m === "feature" ? "idea" : "general");
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!modal) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [modal, close]);
 
   const copyRow = (label: string, value: string) => () => {
-    try { navigator.clipboard.writeText(value); } catch { /* ok */ }
-    setCopied(label);
-    window.setTimeout(() => setCopied(null), 1600);
+    if (!value) return;
+    try { navigator.clipboard?.writeText(value); } catch { /* clipboard unavailable */ }
+    setCopyHint(`${label} copied`);
+    window.setTimeout(() => setCopyHint(""), 1800);
   };
 
-  /** POST to the feedback table via the existing route handler. */
-  const submitToFeedback = async (payload: { type: "feature" | "feedback"; message: string; email?: string }) => {
-    const res = await fetch("/api/feedback", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        type: payload.type,
-        message: payload.message,
-        email: payload.email || null,
-        page_url: pathname,
-      }),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  };
-
-  const sendFeature = async () => {
-    if (!featText.trim() || featSending) return;
-    setFeatSending(true);
-    setFeatError(null);
-    try {
-      await submitToFeedback({ type: "feature", message: featText.trim(), email: featEmail.trim() || undefined });
-      setFeatSent(true);
-    } catch {
-      setFeatError("Couldn't send just now — please try again.");
-    } finally {
-      setFeatSending(false);
+  const shareLibrary = () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      navigator.share({ title: "Ask Śrīla Prabhupāda", url }).catch(() => { /* dismissed */ });
+    } else if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(() => {
+        setShareCopied(true);
+        window.setTimeout(() => setShareCopied(false), 2200);
+      }).catch(() => { /* clipboard unavailable */ });
     }
   };
 
-  const sendFeedback = async () => {
-    if ((!fbVote && !fbText.trim()) || fbSending) return;
-    setFbSending(true);
-    setFbError(null);
-    try {
-      const message = [fbVote ? `[${fbVote === "up" ? "helpful" : "could be better"}]` : "", fbText.trim()].filter(Boolean).join(" ");
-      await submitToFeedback({ type: "feedback", message });
-      setFbSent(true);
-    } catch {
-      setFbError("Couldn't send just now — please try again.");
-    } finally {
-      setFbSending(false);
-    }
+  const submitForm = () => {
+    if (!text.trim()) return;
+    const cat = CATEGORY_NAME[category];
+    const subject = `[Ask Śrīla Prabhupāda] ${cat}${name ? ` from ${name}` : ""}`;
+    const body = `Category: ${cat}\nName: ${name || "(not provided)"}\nEmail: ${email || "(not provided)"}\n\n${text}`;
+    window.location.href = `mailto:${FEEDBACK_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    setSent(true);
   };
 
-  const featDisabled = !featText.trim() || featSending;
-  const fbDisabled = (!fbVote && !fbText.trim()) || fbSending;
-
-  const closeBtn = (
-    <button onClick={() => setModal(null)} aria-label="Close" className="cine-close"
-      style={{ position: "absolute", top: 16, right: 16, width: 38, height: 38, borderRadius: "50%", border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", color: "#6E6353", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.3s ease" }}>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
-    </button>
-  );
+  const isSeva = modal === "donate";
+  const isForm = modal === "feature" || modal === "feedback";
+  const empty = !text.trim();
+  const rows = SEVA_ROWS[region];
 
   return (
     <SiteModalsContext.Provider value={{ openModal }}>
       {children}
 
-      {/* ═══════════ SUPPORT THE SEVA — cinematic overlay ═══════════ */}
-      {modal === "donate" && (
-        <div role="dialog" aria-label="Support the seva" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>Support the seva</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>Keep his words freely searchable</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>No ads. No fees. Only seva.</p>
-            {SEVA.isPlaceholder && (
-              <p className="font-body" role="alert" style={{ fontSize: 13, fontWeight: 600, color: "#8A5A0B", background: "rgba(201, 142, 36, 0.12)", border: "1px solid rgba(201, 142, 36, 0.30)", borderRadius: 12, padding: "10px 16px", textAlign: "center", marginBottom: 16 }}>
-                {SEVA.notice}
-              </p>
-            )}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {SEVA.rows.map((d, i) => (
-                <div key={d.label} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "center", padding: "12px 16px", border: "1px solid #E8E0D2", borderRadius: 14, background: "rgba(254,252,248,0.9)", opacity: 0, animation: "moreCardIn 0.55s cubic-bezier(0.16,1,0.3,1) both", animationDelay: `${(0.14 + i * 0.06).toFixed(2)}s` }}>
-                  <div style={{ minWidth: 0 }}>
-                    <p className="font-body" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.22em", textTransform: "uppercase", color: "#C9A24B" }}>{d.label}</p>
-                    <p className="font-body" style={{ fontSize: 15, fontWeight: 500, color: "#2B2519", marginTop: 3, fontVariantNumeric: "tabular-nums", overflowWrap: "break-word" }}>
-                      {SEVA.isPlaceholder ? `${d.value} (FAKE)` : d.value}
-                    </p>
-                  </div>
-                  <button
-                    onClick={SEVA.isPlaceholder ? undefined : copyRow(d.label, d.value)}
-                    disabled={SEVA.isPlaceholder}
-                    aria-disabled={SEVA.isPlaceholder}
-                    title={SEVA.isPlaceholder ? "Placeholder details — copying is disabled" : undefined}
-                    className="cine-copy-btn font-body"
-                    style={{ padding: "7px 14px", borderRadius: 100, border: "1px solid rgba(107,87,201,0.3)", background: "rgba(107,87,201,0.06)", color: "#51409A", fontSize: 12, fontWeight: 500, cursor: SEVA.isPlaceholder ? "not-allowed" : "pointer", opacity: SEVA.isPlaceholder ? 0.4 : 1, whiteSpace: "nowrap", transition: "all 0.3s" }}
-                  >
-                    {copied === d.label ? "Copied" : "Copy"}
+      {modal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={isSeva ? "Support the seva" : "Send feedback"}
+          onClick={close}
+          style={scrim}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={panel}>
+            <button onClick={close} aria-label="Close" className="cine-modal-close"
+              style={{ position: "absolute", top: 16, right: 16, width: 34, height: 34, borderRadius: "50%", border: "1px solid #E8E0D2", background: "rgba(255,255,255,0.6)", color: "#6E6353", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.25s" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+
+            <p className="font-body" style={{ margin: "0 0 8px", fontSize: 11, fontWeight: 700, letterSpacing: "0.28em", color: "#C9A24B", textTransform: "uppercase" }}>
+              {isSeva ? "SEVA" : "FEEDBACK"}
+            </p>
+            <h3 className="font-display" style={{ margin: "0 0 14px", fontSize: 30, fontWeight: 600, color: "#201B12", letterSpacing: "-0.01em" }}>
+              {isSeva ? "Support the seva" : "Send feedback"}
+            </h3>
+            <div aria-hidden style={{ width: 46, height: 1, background: "linear-gradient(90deg, #C9A24B, transparent)", margin: "0 0 18px" }} />
+            <p className="font-body" style={{ margin: "0 0 24px", fontSize: 14.5, lineHeight: 1.6, color: "#5B5343" }}>
+              {isSeva
+                ? "This library is offered freely, as seva. If it has helped you, here is how to help it reach further."
+                : "Bugs, ideas, or anything else on your mind — this goes straight to us."}
+            </p>
+
+            {/* ══ SUPPORT THE SEVA ══ */}
+            {isSeva && (
+              <div>
+                <div style={pillTrack}>
+                  {SEVA_REGIONS.map((r) => {
+                    const on = region === r.key;
+                    return (
+                      <button key={r.key} onClick={() => setRegion(r.key)} className="font-body"
+                        style={{ flex: 1, padding: "9px 14px", borderRadius: 100, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.3s", background: on ? "#FFFFFF" : "transparent", color: on ? "#51409A" : "#6E6353", boxShadow: on ? "0 2px 8px rgba(43,37,25,0.10)" : "none" }}>
+                        {r.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 1, borderRadius: 14, overflow: "hidden", border: "1px solid #E8E0D2", marginBottom: 10 }}>
+                  {rows.map((row) => (
+                    <div key={row.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 14px", background: "#FEFCF8" }}>
+                      <div style={{ minWidth: 0 }}>
+                        <p className="font-body" style={{ margin: 0, fontSize: 10, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "#9A8F7D" }}>{row.label}</p>
+                        <p className="font-body" style={{ margin: "2px 0 0", fontSize: 13.5, color: row.value ? "#201B12" : "#B7AD9B", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {row.value || "Add in project"}
+                        </p>
+                      </div>
+                      <button onClick={copyRow(row.label, row.value)} aria-label={`Copy ${row.label}`} disabled={!row.value} className="cine-row-copy"
+                        style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 8, border: "1px solid #E8E0D2", background: "#fff", color: "#6E6353", cursor: row.value ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.25s" }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                <p className="font-body" style={{ margin: "0 0 18px", fontSize: 11, color: copyHint ? "#51409A" : "#9A8F7D", textAlign: "center", transition: "color 0.3s" }}>
+                  {copyHint || (SEVA_IS_PLACEHOLDER ? "Tap a row to copy once real details are added." : "Tap a row to copy it.")}
+                </p>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="cine-star-btn font-body"
+                    style={{ textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "12px 20px", borderRadius: 100, border: "1px solid #E8E0D2", background: "rgba(255,255,255,0.7)", color: "#2B2519", fontSize: 13.5, fontWeight: 500, transition: "all 0.3s" }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.46-1.15-1.11-1.46-1.11-1.46-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.89 1.52 2.34 1.08 2.91.83.09-.65.35-1.08.63-1.33-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.4 9.4 0 0 1 5 0c1.91-1.3 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.68-4.57 4.93.36.31.68.92.68 1.85v2.74c0 .27.18.58.69.48A10 10 0 0 0 12 2z" /></svg>
+                    <span>Star the repository</span>
+                  </a>
+                  <button onClick={shareLibrary} className="cine-share-btn font-body"
+                    style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: "10px 20px", borderRadius: 100, border: "none", background: "transparent", color: "#9A8F7D", fontSize: 13, fontWeight: 500, cursor: "pointer", transition: "color 0.3s" }}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M16 6l-4-4-4 4M12 2v13" /></svg>
+                    <span>{shareCopied ? "Link copied" : "Share with a devotee"}</span>
                   </button>
                 </div>
-              ))}
-            </div>
-            <p className="font-body" style={{ fontSize: 12, color: "#9A8F7D", textAlign: "center", marginTop: 18 }}>Every contribution keeps the library online — servers, search, nothing else.</p>
-          </div>
-        </div>
-      )}
+              </div>
+            )}
 
-      {/* ═══════════ FEATURE REQUEST — cinematic overlay ═══════════ */}
-      {modal === "feature" && (
-        <div role="dialog" aria-label="Feature request" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>Shape what comes next</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>What would serve your study?</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>Describe it — we read every request.</p>
-            {!featSent ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.15s both" }}>
-                <textarea value={featText} onChange={(e) => setFeatText(e.target.value)} placeholder="The feature you wish existed…" rows={4} aria-label="Feature request" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "14px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", resize: "none", lineHeight: 1.6, transition: "border-color 0.3s" }} />
-                <input value={featEmail} onChange={(e) => setFeatEmail(e.target.value)} placeholder="Email (optional — for updates)" aria-label="Email" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "13px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", transition: "border-color 0.3s" }} />
-                {featError && <p className="font-body" role="alert" style={{ fontSize: 13, color: "#A4552E", textAlign: "center", margin: 0 }}>{featError}</p>}
-                <button onClick={sendFeature} disabled={featDisabled} className="cine-send-btn font-body" style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 9, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "13px 34px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", cursor: featDisabled ? "default" : "pointer", opacity: featDisabled ? 0.45 : 1, boxShadow: "0 10px 30px rgba(107,87,201,0.3)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)", marginTop: 6 }}>{featSending ? "Sending…" : "Send request"}</button>
+            {/* ══ FEEDBACK / FEATURE REQUEST ══ */}
+            {isForm && (sent ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 12, padding: "12px 0 4px", animation: "moreCardIn 0.5s cubic-bezier(0.16,1,0.3,1) both" }}>
+                <div style={{ width: 46, height: 46, borderRadius: "50%", background: "linear-gradient(135deg, #6B57C9, #C9A24B)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                </div>
+                <p className="font-body" style={{ margin: 0, fontSize: 14.5, color: "#2B2519", lineHeight: 1.55, maxWidth: 300 }}>
+                  Your email app should open with this ready to send — thank you for helping shape this.
+                </p>
+                <button onClick={() => { setText(""); setName(""); setEmail(""); setSent(false); }} className="font-body"
+                  style={{ marginTop: 4, fontSize: 13, color: "#51409A", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+                  Send another
+                </button>
               </div>
             ) : (
-              <div style={{ textAlign: "center", padding: "18px 0 6px", animation: "moreCardIn 0.7s cubic-bezier(0.16,1,0.3,1) both" }}>
-                <div aria-hidden style={{ width: 56, height: 1, background: "linear-gradient(90deg, transparent, #C9A24B, transparent)", margin: "0 auto 18px" }} />
-                <p className="font-display" style={{ fontSize: 24, fontStyle: "italic", color: "#201B12" }}>Received — thank you.</p>
-                <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 8 }}>Every request is read. Hare Kṛṣṇa.</p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+              <div>
+                <div style={pillTrack}>
+                  {CATEGORIES.map((c) => {
+                    const on = category === c.key;
+                    return (
+                      <button key={c.key} onClick={() => setCategory(c.key)} className="font-body"
+                        style={{ flex: 1, padding: "8px 10px", borderRadius: 100, border: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 600, transition: "all 0.3s", background: on ? "linear-gradient(135deg, rgba(107,87,201,0.18), rgba(201,162,75,0.18))" : "transparent", color: on ? "#51409A" : "#6E6353" }}>
+                        {c.label}
+                      </button>
+                    );
+                  })}
+                </div>
 
-      {/* ═══════════ FEEDBACK — cinematic overlay ═══════════ */}
-      {modal === "feedback" && (
-        <div role="dialog" aria-label="Feedback" onClick={() => setModal(null)} style={overlayBackdrop}>
-          <div onClick={(e) => e.stopPropagation()} style={overlayPanel(520)}>
-            {closeBtn}
-            <p className="font-body" style={eyebrow("#C9A24B")}>From the heart</p>
-            <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,34px)", fontWeight: 600, letterSpacing: "-0.02em", color: "#201B12", textAlign: "center", margin: "8px 0 4px" }}>How was your experience?</h2>
-            <p className="font-display" style={{ fontSize: "clamp(15px,1.8vw,18px)", fontStyle: "italic", color: "#6E6353", textAlign: "center", marginBottom: 24 }}>Your words guide ours.</p>
-            {!fbSent ? (
-              <>
-                <div style={{ display: "flex", justifyContent: "center", gap: 12, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.12s both" }}>
-                  <button onClick={() => setFbVote("up")} className="cine-vote-btn font-body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 140, padding: "18px 12px", borderRadius: 18, border: `1px solid ${fbVote === "up" ? "#6B57C9" : "#E8E0D2"}`, background: fbVote === "up" ? "rgba(107,87,201,0.10)" : "rgba(254,252,248,0.9)", color: fbVote === "up" ? "#51409A" : "#6E6353", cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" /></svg>
-                    <span>Helpful</span>
-                  </button>
-                  <button onClick={() => setFbVote("down")} className="cine-vote-btn font-body" style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 140, padding: "18px 12px", borderRadius: 18, border: `1px solid ${fbVote === "down" ? "#6B57C9" : "#E8E0D2"}`, background: fbVote === "down" ? "rgba(107,87,201,0.10)" : "rgba(254,252,248,0.9)", color: fbVote === "down" ? "#51409A" : "#6E6353", cursor: "pointer", fontSize: 13, fontWeight: 500, transition: "all 0.35s cubic-bezier(0.16,1,0.3,1)" }}>
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17" /></svg>
-                    <span>Could be better</span>
-                  </button>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                  <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (optional)" aria-label="Your name" className="cine-field font-body" style={field} />
+                  <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email (optional)" type="email" aria-label="Your email" className="cine-field font-body" style={field} />
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 14, opacity: 0, animation: "moreCardIn 0.6s cubic-bezier(0.16,1,0.3,1) 0.2s both" }}>
-                  <textarea value={fbText} onChange={(e) => setFbText(e.target.value)} placeholder="Tell us more (optional)…" rows={3} aria-label="Feedback" className="cine-field font-body" style={{ width: "100%", display: "block", padding: "14px 16px", fontSize: 14, border: "1px solid #E8E0D2", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none", resize: "none", lineHeight: 1.6, transition: "border-color 0.3s" }} />
-                  {fbError && <p className="font-body" role="alert" style={{ fontSize: 13, color: "#A4552E", textAlign: "center", margin: 0 }}>{fbError}</p>}
-                  <button onClick={sendFeedback} disabled={fbDisabled} className="cine-send-btn font-body" style={{ alignSelf: "center", display: "inline-flex", alignItems: "center", gap: 9, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "13px 34px", fontSize: 14, fontWeight: 500, letterSpacing: "0.04em", cursor: fbDisabled ? "default" : "pointer", opacity: fbDisabled ? 0.45 : 1, boxShadow: "0 10px 30px rgba(107,87,201,0.3)", transition: "all 0.4s cubic-bezier(0.16,1,0.3,1)" }}>{fbSending ? "Sending…" : "Send feedback"}</button>
-                </div>
-              </>
-            ) : (
-              <div style={{ textAlign: "center", padding: "18px 0 6px", animation: "moreCardIn 0.7s cubic-bezier(0.16,1,0.3,1) both" }}>
-                <div aria-hidden style={{ width: 56, height: 1, background: "linear-gradient(90deg, transparent, #C9A24B, transparent)", margin: "0 auto 18px" }} />
-                <p className="font-display" style={{ fontSize: 24, fontStyle: "italic", color: "#201B12" }}>Received — thank you.</p>
-                <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 8 }}>Your words guide ours. Hare Kṛṣṇa.</p>
+
+                <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={PLACEHOLDER[category]} rows={4} aria-label="Your message" className="cine-field font-body"
+                  style={{ width: "100%", boxSizing: "border-box", resize: "vertical", minHeight: 90, padding: "13px 15px", borderRadius: 14, border: "1px solid #E8E0D2", background: "#fff", fontSize: 14, color: "#2B2519", lineHeight: 1.5, outline: "none", transition: "border-color 0.25s" }} />
+
+                <button onClick={submitForm} disabled={empty} className="font-body"
+                  style={{ marginTop: 14, width: "100%", padding: "13px 20px", borderRadius: 100, border: "none", background: empty ? "#C9C2B4" : "linear-gradient(135deg, #6B57C9, #51409A)", color: "#fff", fontSize: 14, fontWeight: 500, cursor: empty ? "not-allowed" : "pointer", transition: "all 0.3s" }}>
+                  {SUBMIT_LABEL[category]}
+                </button>
+                <p className="font-body" style={{ margin: "10px 0 0", fontSize: 11, color: "#9A8F7D", textAlign: "center" }}>
+                  Opens your email app, addressed to us — nothing is stored on this site.
+                </p>
               </div>
-            )}
+            ))}
           </div>
         </div>
       )}

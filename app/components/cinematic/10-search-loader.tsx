@@ -1,20 +1,39 @@
 /**
- * 10-search-loader.tsx — Meditative Search Loader (SSE-driven)
+ * 10-search-loader.tsx — Meditative Search Loader (SSE-driven) — v2
  *
  * The full-screen aura + rotating-mandala loader shown while /api/search
- * streams. Unlike the old prototype timer, the label and percent are driven by
- * real pipeline `stage` events (understood → expanding → searching → reranking
- * → weaving); the bar eases toward each stage's target and snaps to 100 when
- * the result lands. While waiting, one short verbatim translation (with its
- * reference) rotates every 8 s. Under prefers-reduced-motion everything is
- * static: no mandala spin, no crossfade — just the label and the bar.
+ * streams. The label and percent are driven by real pipeline `stage` events
+ * (understood → expanding → searching → reranking → weaving), and the five
+ * stages are now visible as a ticking row — Understand · Search · Rerank ·
+ * Weave · Verify — so the wait reads as work rather than as a spinner.
+ *
+ * "Verify" is the server-side verbatim validator: it runs between the weaving
+ * event and the result landing, so the row advances to it once weaving has
+ * been reported and the answer has not arrived yet. The bar eases toward each
+ * stage's target and snaps to 100 when the result lands. While waiting, one
+ * short verbatim translation (with its reference) rotates every 8 s. Under
+ * prefers-reduced-motion everything is static.
  */
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { SearchStageEvent } from "@/app/lib/types/01-search";
+import type { SearchStageEvent, SearchStageKey } from "@/app/lib/types/01-search";
 
 const MANDALA = Array.from({ length: 12 }, (_, i) => i * 30);
+
+/** The five stages the visitor sees, and which SSE events map onto each. */
+const STAGE_DOTS: { name: string; keys: SearchStageKey[] }[] = [
+  { name: "Understand", keys: ["understood", "expanding"] },
+  { name: "Search", keys: ["searching"] },
+  { name: "Rerank", keys: ["reranking"] },
+  { name: "Weave", keys: ["weaving"] },
+  { name: "Verify", keys: [] }, // the verbatim validator — no event of its own
+];
+
+const VERIFY_INDEX = STAGE_DOTS.length - 1;
+const VERIFY_STAGE: SearchStageEvent = { stage: "weaving", pct: 97, label: "Verifying every quote…" };
+/** How long after "weaving" we assume the validator has taken over. */
+const VERIFY_AFTER_MS = 1400;
 
 /**
  * Verbatim translations (with refs) rotated during the wait. Pulled exactly as
@@ -50,6 +69,7 @@ export default function SearchLoader({
 }) {
   const [pct, setPct] = useState(4);
   const [fallbackStage, setFallbackStage] = useState<SearchStageEvent | null>(null);
+  const [verifying, setVerifying] = useState(false);
   const [verseIdx, setVerseIdx] = useState(0);
   const [reduced, setReduced] = useState(false);
   const rafRef = useRef<number | null>(null);
@@ -74,7 +94,21 @@ export default function SearchLoader({
     return () => clearInterval(iv);
   }, [stage, done]);
 
-  const active = stage ?? fallbackStage;
+  const reported = stage ?? fallbackStage;
+
+  // Once weaving has been reported and the answer still hasn't come back, the
+  // server is validating every quote — say so.
+  useEffect(() => {
+    setVerifying(false);
+    if (done || reported?.stage !== "weaving") return;
+    const t = setTimeout(() => setVerifying(true), VERIFY_AFTER_MS);
+    return () => clearTimeout(t);
+  }, [reported?.stage, done]);
+
+  const active = verifying && !done ? VERIFY_STAGE : reported;
+  const activeIndex = verifying
+    ? VERIFY_INDEX
+    : Math.max(0, STAGE_DOTS.findIndex((d) => reported && d.keys.includes(reported.stage)));
   const target = done ? 100 : Math.min(active?.pct ?? 4, stage ? 100 : FALLBACK_CAP);
 
   // Ease the bar toward the current stage target (snap when motion is reduced).
@@ -106,24 +140,38 @@ export default function SearchLoader({
       aria-live="polite"
       style={{ position: "fixed", inset: 0, zIndex: 800, background: "rgba(250,247,241,0.97)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, opacity: done ? 0 : 1, transition: "opacity 0.7s ease", pointerEvents: done ? "none" : "auto" }}
     >
-      <div style={{ position: "relative", width: "min(70vw, 300px)", height: "min(70vw, 300px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div aria-hidden style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: "130%", height: "130%", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.26) 0%, rgba(201,162,75,0.12) 42%, transparent 70%)", filter: "blur(38px)", animation: reduced ? "none" : "auraBreathe 4.5s ease-in-out infinite" }} />
-        <svg viewBox="0 0 400 400" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.16, animation: reduced ? "none" : "rotateMandala 60s linear infinite", color: "#6B57C9" }}>
+      <div style={{ position: "relative", width: "min(60vw, 260px)", height: "min(60vw, 260px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div aria-hidden style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: "130%", height: "130%", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.24) 0%, rgba(201,162,75,0.11) 42%, transparent 70%)", filter: "blur(38px)", animation: reduced ? "none" : "auraBreathe 4.5s ease-in-out infinite" }} />
+        <svg viewBox="0 0 400 400" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.15, animation: reduced ? "none" : "rotateMandala 60s linear infinite", color: "#6B57C9" }}>
           {MANDALA.map((deg, i) => (
             <g key={i} transform={`rotate(${deg} 200 200)`}><ellipse cx="200" cy="120" rx="18" ry="40" fill="none" stroke="currentColor" strokeWidth="0.6" /></g>
           ))}
           <circle cx="200" cy="200" r="70" fill="none" stroke="currentColor" strokeWidth="0.5" />
         </svg>
-        <p className="font-display" style={{ fontSize: "clamp(17px, 2.4vw, 21px)", fontStyle: "italic", color: "#51409A", textAlign: "center", maxWidth: 240, position: "relative" }}>
+        <p className="font-display" style={{ margin: 0, fontSize: "clamp(17px, 2.4vw, 21px)", fontStyle: "italic", color: "#51409A", textAlign: "center", maxWidth: 220, position: "relative" }}>
           {active?.label ?? "Weaving his words…"}
         </p>
       </div>
 
       {/* The user's actual question — never a sample. */}
-      <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", marginTop: 8, maxWidth: 460, textAlign: "center" }}>&ldquo;{q}&rdquo;</p>
+      <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", margin: "8px 0 0", maxWidth: 460, textAlign: "center" }}>&ldquo;{q}&rdquo;</p>
+
+      {/* The five real pipeline stages, ticking */}
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "center", gap: 14, marginTop: 20 }}>
+        {STAGE_DOTS.map((d, i) => {
+          const passed = done || i < activeIndex;
+          const current = !done && i === activeIndex;
+          return (
+            <span key={d.name} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span aria-hidden style={{ width: 8, height: 8, borderRadius: "50%", background: passed ? "#6B57C9" : current ? "#C9A24B" : "transparent", border: `1.5px solid ${passed ? "#6B57C9" : current ? "#C9A24B" : "#D8CCB8"}`, boxSizing: "border-box", transition: "background 0.4s, border-color 0.4s" }} />
+              <span className="font-body" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: current ? "#51409A" : passed ? "#6E6353" : "#B9AE99", transition: "color 0.4s" }}>{d.name}</span>
+            </span>
+          );
+        })}
+      </div>
 
       {/* Progress bar + percent */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 18, width: "min(80vw, 340px)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 16, width: "min(80vw, 340px)" }}>
         <div aria-hidden style={{ flex: 1, height: 3, borderRadius: 100, background: "rgba(107,87,201,0.12)", overflow: "hidden" }}>
           <div style={{ width: `${pct}%`, height: "100%", borderRadius: 100, background: "linear-gradient(90deg, #6B57C9, #C9A24B)", transition: reduced ? "none" : "width 0.2s linear" }} />
         </div>

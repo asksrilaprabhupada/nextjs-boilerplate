@@ -3,7 +3,8 @@
  *
  * Server wrapper: SEO metadata around the cinematic five-chapter scroll film
  * (1965 Jaladuta crossing → seven dollars → Matchless Gifts → the books → the
- * world). All motion and interaction live in the client component.
+ * world), opening over the Jaladuta photograph itself. All motion and
+ * interaction live in the client component.
  */
 import type { Metadata } from "next";
 import JourneyPage from "../components/cinematic/05-journey-page";
