@@ -113,6 +113,29 @@ export interface SearchResults {
   searchLogId?: string | null;
   /** Chapter neighbours of the primary essay verse. */
   primaryVerseContext?: VerseContext | null;
+
+  /* ── Integrity metadata ── */
+
+  /** Correlates this response with server logs. Non-sensitive. */
+  requestId?: string;
+  /**
+   * "complete" means retrieval ran end to end, so an empty result is a genuine
+   * absence of direct evidence rather than a failure. A failed search never
+   * carries this field — it returns a typed error instead.
+   */
+  retrievalStatus?: "complete";
+  /** Optional lanes that softened on this request. Empty in the normal case. */
+  degradedStages?: DegradedStage[];
+  /** Lanes switched off in this build, e.g. ["tags"] during Phase A. */
+  disabledLanes?: string[];
+}
+
+/** One optional lane that failed and was softened rather than fatal. */
+export interface DegradedStage {
+  stage: string;
+  /** An RPC or provider name. Never carries query text or arguments. */
+  source: string;
+  code: string;
 }
 
 /* ── SSE stage events (?stream=1) ── */
