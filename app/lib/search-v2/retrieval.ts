@@ -23,7 +23,7 @@ import { rpcOrThrow, rpcOrDegrade, type RpcCapableClient, DegradationLog } from 
 import { SEARCH_V2_CONFIG } from "@/app/lib/search-v2/config";
 import type { RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 import type { QueryPlan } from "@/app/lib/search-v2/query-plan";
-import { cached, cacheKeys, TTL } from "@/app/lib/search-v2/cache";
+import { getCacheAdapter, cacheKeys, TTL } from "@/app/lib/search-v2/cache";
 
 /** The id reserved for the devotee's actual question. */
 export const ORIGINAL_QUERY_ID = "q_original";
@@ -87,27 +87,45 @@ export async function embedPlannedQueries(
   const resolved = new Map<string, number[]>();
   const missing: { id: string; text: string }[] = [];
 
+  // Read-only lookup. Deliberately NOT the `cached()` read-through helper:
+  // its producer runs on a miss, so a producer returning null would write a
+  // null into the keyspace for every query text the pipeline has never seen.
+  // That is never served as a hit, but it fills the shared cache with entries
+  // that mean "we once failed to find this", which is not worth storing.
+  let store: Awaited<ReturnType<typeof getCacheAdapter>> | null = null;
+  try {
+    store = await getCacheAdapter();
+  } catch {
+    store = null; // no cache available; every query is a miss
+  }
+
   for (const w of wanted) {
-    const hit = await cached<number[] | null>(cacheKeys.embedding(model, w.text), TTL.embedding, async () => null);
+    let hit: number[] | null = null;
+    if (store) {
+      try {
+        hit = await store.get<number[]>(cacheKeys.embedding(model, w.text));
+      } catch {
+        hit = null;
+      }
+    }
     if (hit && hit.length > 0) resolved.set(w.id, hit);
     else missing.push(w);
   }
 
   let providerCalls = 0;
   if (missing.length > 0) {
+    // One batched call for every query the cache did not already hold.
     providerCalls = 1;
     const vectors = await embedQueries(missing.map((m) => m.text));
     for (let i = 0; i < missing.length; i++) {
       const v = vectors[i] ?? [];
-      if (v.length > 0) {
-        resolved.set(missing[i].id, v);
-        const { getCacheAdapter } = await import("@/app/lib/search-v2/cache");
-        try {
-          const store = await getCacheAdapter();
-          await store.set(cacheKeys.embedding(model, missing[i].text), v, TTL.embedding);
-        } catch {
-          // Cache write failures never affect the search.
-        }
+      if (v.length === 0) continue; // provider failed for this entry
+      resolved.set(missing[i].id, v);
+      if (!store) continue;
+      try {
+        await store.set(cacheKeys.embedding(model, missing[i].text), v, TTL.embedding);
+      } catch {
+        // Cache write failures never affect the search.
       }
     }
   }

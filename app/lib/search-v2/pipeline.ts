@@ -129,10 +129,13 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     ORIGINAL_QUERY_ID,
     planned.plan.subqueries.map((s) => ({ id: s.id, priority: s.priority })),
   );
+  // Fusion and dedup are pure and fast, but they are also where a bad ranking
+  // is created, so they get their own timing rather than disappearing into the
+  // gap between stages.
+  const fuseStart = Date.now();
   const fused = fuseWeighted(retrieved.groups, priorities);
-
   const deduped = dedupeCandidates(fused);
-  durations.fusing = durations.fusing ?? 0;
+  durations.fusing = Date.now() - fuseStart;
 
   // ── rerank ──
   onStage?.("reranking");
