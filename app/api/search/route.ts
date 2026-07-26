@@ -73,6 +73,11 @@ import {
 import { deepResearchV2Enabled, type SearchMode } from "@/app/lib/search-v2/config";
 import { runSearchV2, type PipelineStage } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
+import {
+  cacheKeys as v2CacheKeys,
+  getCacheAdapter as getV2Cache,
+  TTL as V2_TTL,
+} from "@/app/lib/search-v2/cache";
 
 // The cold pipeline (embeddings + ~20 RPCs + Cohere) can take 25–50 s; give the
 // function room on Vercel. If the plan rejects 90, drop to 60.
@@ -2929,6 +2934,33 @@ async function runSearchPipeline(
  * become a 24 h cached "no passages found"), and correlation ids are attached
  * AFTER the cache read so a cached body never replays another request's id.
  */
+/**
+ * Shared-cache read for the V2 response. Never throws: a cache that is down or
+ * misconfigured must cost latency, never a search. The per-request fields
+ * (searchLogId, requestId) are deliberately absent from the stored value — each
+ * serving logs its own row and carries its own correlation id.
+ */
+async function readV2Cache(key: string): Promise<Record<string, unknown> | null> {
+  try {
+    const store = await getV2Cache();
+    return await store.get<Record<string, unknown>>(key);
+  } catch {
+    return null;
+  }
+}
+
+async function writeV2Cache(key: string, value: Record<string, unknown>): Promise<void> {
+  try {
+    const store = await getV2Cache();
+    const { searchLogId: _perRequest, requestId: _rid, ...cacheable } = value;
+    void _perRequest;
+    void _rid;
+    await store.set(key, cacheable, V2_TTL.response);
+  } catch {
+    // A failed cache write is not a failed search.
+  }
+}
+
 async function getOrComputeResult(
   query: string,
   mode: string,
@@ -2948,6 +2980,24 @@ async function getOrComputeResult(
   // V1 on error would rebuild the disguise this work removed.
   if (deepResearchV2Enabled()) {
     const v2Mode: SearchMode = mode === "references" ? "quick" : "guided";
+
+    // Shared response cache, keyed on the EXACT normalised question plus mode
+    // and corpus version. A semantically-close but different question is a
+    // different question and never reuses this entry — answering one devotee's
+    // question with another's evidence is how words get put in Śrīla
+    // Prabhupāda's mouth by accident.
+    const v2Key = v2CacheKeys.response(v2Mode, query);
+    const v2Cached = await readV2Cache(v2Key);
+    if (v2Cached) {
+      // A cached answer still logs its own row so feedback attributes correctly.
+      const searchLogId = await logSearchRow(query, v2Cached, "v2-cache", { totalMs: 0 }, ctx);
+      onStage?.("weaving");
+      return {
+        result: { ...v2Cached, searchLogId, requestId: pipeline.requestId },
+        fromCache: true,
+      };
+    }
+
     const out = await runSearchV2({
       db: getSupabaseAdmin() as unknown as RpcCapableClient,
       query,
@@ -2963,6 +3013,14 @@ async function getOrComputeResult(
       { totalMs: out.telemetry.totalDurationMs },
       ctx,
     );
+
+    // Only a clean, non-degraded answer is cached. A response produced while
+    // Voyage or Cohere was down is correct but weaker, and caching it for 24
+    // hours would outlive the outage that caused it.
+    if (!out.telemetry.degraded && !out.evidenceInsufficient) {
+      await writeV2Cache(v2Key, adapted);
+    }
+
     return {
       result: { ...adapted, searchLogId, requestId: pipeline.requestId },
       fromCache: false,
