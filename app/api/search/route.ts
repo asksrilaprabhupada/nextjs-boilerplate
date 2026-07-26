@@ -70,6 +70,9 @@ import {
   isSearchError,
   newRequestId,
 } from "@/app/lib/search-v2/errors";
+import { deepResearchV2Enabled, type SearchMode } from "@/app/lib/search-v2/config";
+import { runSearchV2, type PipelineStage } from "@/app/lib/search-v2/pipeline";
+import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
 
 // The cold pipeline (embeddings + ~20 RPCs + Cohere) can take 25–50 s; give the
 // function room on Vercel. If the plan rejects 90, drop to 60.
@@ -137,6 +140,34 @@ const STAGE_META: Record<SearchStageKey, { pct: number; label: string }> = {
   weaving: { pct: 90, label: "Weaving the essay…" },
 };
 const STAGE_ORDER: SearchStageKey[] = ["understood", "expanding", "searching", "reranking", "weaving"];
+
+/**
+ * Bridges the V2 stage vocabulary onto the SSE events the loader already
+ * understands, so the flag can be flipped without touching the UI. The V2 names
+ * are the honest ones and are what telemetry records; these are the wire names
+ * the mandala loader was built against.
+ *
+ * Terminal states emit nothing — `complete` is signalled by the `result` and
+ * `done` events, and a failure by the existing `failure` event.
+ */
+const V2_STAGE_TO_WIRE: Partial<Record<PipelineStage, SearchStageKey>> = {
+  planning: "understood",
+  retrieving: "searching",
+  fusing: "searching",
+  reranking: "reranking",
+  selecting: "reranking",
+  organizing: "weaving",
+};
+
+function mapV2Stage(onStage: OnStage): (stage: PipelineStage) => void {
+  return (stage) => {
+    const wire = V2_STAGE_TO_WIRE[stage];
+    if (!wire) return;
+    // V2 does not fan out into ten variants, so the "Exploring 10 angles"
+    // label would be a lie. The planning stage says what it actually does.
+    onStage(wire, wire === "understood" ? "Reading your question…" : undefined);
+  };
+}
 
 /**
  * Returns true if the text is mostly Sanskrit transliteration (not useful as prose content).
@@ -659,21 +690,22 @@ async function hybridSearch(query: string, pipeline: PipelineContext, onStage?: 
 /**
  * Scores how relevant a result is to the query using its tags.
  *
- * Tags contain three types of data:
- *   - Topics: "anger", "detachment", "devotional service" (general keywords)
- *   - Questions: "How to overcome anger?" (questions this verse answers)
- *   - Summary: "SUMMARY: This verse teaches that anger arises from lust" (1-2 line summary)
+ * REWRITTEN for the real data model. The previous version assumed tags carried
+ * "SUMMARY:" prefixes and question strings ending in "?" — a shape that has not
+ * existed since the v3 cutover. `tags_core` holds plain controlled-vocabulary
+ * slugs ("krsna", "devotional-service", "chanting-hare-krsna"), so every branch
+ * of the old scorer fell through and it returned ~0 for everything.
  *
- * Returns a score from 0.0 to 1.0 where:
- *   0.0 = no tag overlap with query (likely irrelevant)
- *   0.5 = moderate overlap (tangentially related)
- *   1.0 = strong overlap (directly answers the query)
+ * That mattered: the callers below filtered on the result, so a scorer that
+ * could only return near-zero was discarding good passages rather than merely
+ * failing to promote them.
+ *
+ * Slugs are hyphenated multiword phrases, so matching is done on the slug's
+ * words against the query's content words, with a bonus when a whole slug
+ * phrase appears in the query. Returns 0.0-1.0.
  */
 function scoreTagRelevance(query: string, tags: string[] | null | undefined): number {
-  if (!tags || tags.length === 0) return 0.25; // No tags = neutral, don't hard-exclude
-
-  const queryLower = query.toLowerCase().replace(/[?!.,;:'"]/g, "");
-  const queryWords = queryLower.split(/\s+/).filter(w => w.length > 2);
+  if (!tags || tags.length === 0) return 0.25; // no tags = neutral, never a penalty
 
   const stopWords = new Set([
     "the", "and", "for", "that", "this", "with", "from", "how", "what",
@@ -682,60 +714,53 @@ function scoreTagRelevance(query: string, tags: string[] | null | undefined): nu
     "would", "could", "should", "into", "also", "very", "just", "can",
     "srila", "prabhupada", "prabhupāda", "said", "say", "says",
   ]);
-  const queryKeywords = queryWords.filter(w => !stopWords.has(w));
 
-  if (queryKeywords.length === 0) return 0.25;
+  const normalized = query
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  let summaryScore = 0;
-  let questionScore = 0;
-  let topicScore = 0;
-  let topicCount = 0;
+  const queryWords = new Set(
+    normalized.split(" ").filter(w => w.length > 2 && !stopWords.has(w)),
+  );
+  if (queryWords.size === 0) return 0.25;
 
-  for (const tag of tags) {
-    const tagLower = tag.toLowerCase();
+  let best = 0;
+  let matchedSlugs = 0;
 
-    // ── SUMMARY tags (highest signal) ──
-    if (tagLower.startsWith("summary:")) {
-      const summary = tagLower.substring(8).trim();
-      const summaryWords = summary.split(/\s+/).filter(w => w.length > 2);
-      const matches = queryKeywords.filter(qw =>
-        summaryWords.some(sw => sw.includes(qw) || qw.includes(sw))
-      ).length;
-      summaryScore = matches / queryKeywords.length;
+  for (const rawTag of tags) {
+    const slug = (rawTag || "").toLowerCase().trim();
+    if (!slug) continue;
+
+    // A whole slug phrase present in the query is the strongest signal:
+    // "chanting-hare-krsna" inside "how long should I chant hare krsna".
+    const phrase = slug.replace(/-/g, " ");
+    if (phrase.length > 3 && normalized.includes(phrase)) {
+      best = Math.max(best, 1);
+      matchedSlugs += 1;
       continue;
     }
 
-    // ── QUESTION tags (high signal — direct intent match) ──
-    if (tagLower.includes("?")) {
-      const questionWords = tagLower.replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
-      const matches = queryKeywords.filter(qw =>
-        questionWords.some(qfw => qfw.includes(qw) || qw.includes(qfw))
-      ).length;
-      const qScore = matches / Math.max(queryKeywords.length, 1);
-      questionScore = Math.max(questionScore, qScore);
-      continue;
-    }
+    const slugWords = phrase.split(" ").filter(w => w.length > 2 && !stopWords.has(w));
+    if (slugWords.length === 0) continue;
 
-    // ── Topic tags (moderate signal) ──
-    topicCount++;
-    const tagWords = tagLower.split(/\s+/).filter(w => w.length > 2);
-    const hasOverlap = queryKeywords.some(qw =>
-      tagWords.some(tw => tw.includes(qw) || qw.includes(tw))
-    ) || queryKeywords.some(qw => tagLower.includes(qw));
+    const overlap = slugWords.filter(w => queryWords.has(w)).length;
+    if (overlap === 0) continue;
 
-    if (hasOverlap) topicScore += 1;
+    matchedSlugs += 1;
+    // Proportion of the slug covered by the query, so a one-word hit on a
+    // three-word concept scores below an exact concept match.
+    best = Math.max(best, overlap / slugWords.length);
   }
 
-  const normalizedTopicScore = topicCount > 0 ? Math.min(topicScore / Math.max(queryKeywords.length * 0.5, 1), 1) : 0;
+  if (matchedSlugs === 0) return 0.25;
 
-  // Weighted combination: summary > question > topic
-  const finalScore = (
-    summaryScore * 0.45 +
-    questionScore * 0.35 +
-    normalizedTopicScore * 0.20
-  );
-
-  return Math.min(Math.max(finalScore, 0), 1);
+  // A second and third matching concept add confidence, with diminishing return.
+  const breadth = Math.min(matchedSlugs / 3, 1);
+  return Math.min(Math.max(best * 0.75 + breadth * 0.25, 0), 1);
 }
 
 /**
@@ -809,7 +834,7 @@ function rankAndFilterOverflow(
 
       return { ...v, _combinedScore: combinedScore, _tagScore: tagScore };
     })
-    .filter(v => v._tagScore >= 0.08)
+    .filter(v => v._tagScore > 0)
     .sort((a, b) => b._combinedScore - a._combinedScore);
 
   // ── Score and filter prose ──
@@ -828,7 +853,7 @@ function rankAndFilterOverflow(
 
       return { ...p, _combinedScore: combinedScore, _tagScore: tagScore };
     })
-    .filter(p => p._tagScore >= 0.08)
+    .filter(p => p._tagScore > 0)
     .sort((a, b) => b._combinedScore - a._combinedScore);
 
   const totalOriginal = verses.length + prose.length;
@@ -2911,6 +2936,39 @@ async function getOrComputeResult(
   onStage?: OnStage,
   ctx: SearchRequestContext = {},
 ): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
+  // ── V2 path ──
+  //
+  // The existing pipeline below stays in place as the control arm. When the flag
+  // is on, the request is served by the V2 orchestrator instead: deterministic
+  // routing, one query plan, five batched RPCs, one weighted fusion, one unified
+  // rerank, rule-based selection, and an exact re-fetch before anything renders.
+  //
+  // Failures are NOT caught here. A retrieval RPC failure must reach the
+  // handler as a SearchInfrastructureError and become a 503 — falling back to
+  // V1 on error would rebuild the disguise this work removed.
+  if (deepResearchV2Enabled()) {
+    const v2Mode: SearchMode = mode === "references" ? "quick" : "guided";
+    const out = await runSearchV2({
+      db: getSupabaseAdmin() as unknown as RpcCapableClient,
+      query,
+      mode: v2Mode,
+      requestId: pipeline.requestId,
+      onStage: onStage ? mapV2Stage(onStage) : undefined,
+    });
+    const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
+    const searchLogId = await logSearchRow(
+      query,
+      adapted,
+      "v2",
+      { totalMs: out.telemetry.totalDurationMs },
+      ctx,
+    );
+    return {
+      result: { ...adapted, searchLogId, requestId: pipeline.requestId },
+      fromCache: false,
+    };
+  }
+
   const key = cacheKey(query, mode);
   const cached = getCached<Record<string, unknown>>(key);
   if (cached) {

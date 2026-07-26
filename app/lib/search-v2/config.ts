@@ -97,9 +97,24 @@ export function mmrEnabled(): boolean {
 /**
  * The V2 flag. The existing pipeline stays in place as the control arm; this
  * decides which one serves a given request.
+ *
+ * DEFAULTS ON. That is a deliberate, and reversible, decision.
+ *
+ * V2 has not been executed end to end — the build environment's network policy
+ * blocks the deployment host and every AI provider, so it is verified at the
+ * database, type and unit-test layers only. Shipping it on is what was asked
+ * for, and the failure modes are typed rather than silent: a retrieval failure
+ * is a 503 with a request id, and no passage reaches a reader without surviving
+ * the exact re-fetch in refetch.ts.
+ *
+ * ROLLBACK IS ONE ENVIRONMENT VARIABLE, NO DEPLOY:
+ *
+ *     DEEP_RESEARCH_V2_ENABLED=false
+ *
+ * That restores the restored-and-verified V1 pipeline immediately.
  */
 export function deepResearchV2Enabled(): boolean {
-  return (process.env.DEEP_RESEARCH_V2_ENABLED ?? "false").toLowerCase() === "true";
+  return (process.env.DEEP_RESEARCH_V2_ENABLED ?? "true").toLowerCase() === "true";
 }
 
 export function searchPipelineVersion(): string {
