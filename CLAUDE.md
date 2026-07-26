@@ -41,6 +41,8 @@ MULTIQUERY_CHANNELS=all                    # or a comma list of semantic,fulltex
 
 Light theme first: light aurora gradients, soft lavender, whites, gentle pastels, card-based layouts with soft gradients, clean spacing, rounded corners, subtle shadows, and elegant typography. The overall feel is spiritual, warm, clean, and modern. An opt-in "Warm Evening" dark theme exists (toggle in the header's More ▾ menu); it overrides only the primitive tokens in globals.css. All ambient animation is gated behind prefers-reduced-motion.
 
+Cinematic + simple: the dark frames (the doorway, the Journey opening, the Features interlude) are deliberate scenes, not a theme — the header goes light-on-dark over them (`variant="scene"`) so a pale bar never sits on a dark image. There is no audio anywhere on the site. The doorway shows on arrival only; every internal link home carries `?entrance=0`.
+
 ### Search pipeline (app/api/search/route.ts)
 
 GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood → expanding → searching → reranking → weaving, then `result`, then `done`). The pipeline: Gemini multi-query expansion (10 variants + a topic phrase, 4 s cap, graceful degradation) → batched Voyage embedding → per-variant lighter semantic/FTS/tags fan-out → reciprocal-rank fusion into the original query's candidates → Cohere rerank against the original question → provenance filter (HIS-only essay) → guided-study main flow (primary verse → best lecture → best letter) → server-side verbatim validator (every rendered block re-fetched and asserted against its source row; `validated`/`droppedBlocks` in the response) → deterministic verbatim essay template. Every fresh serving logs one `search_logs` row via the `log_search` RPC and returns `searchLogId` for feedback/behavior/citation-click telemetry.
@@ -67,16 +69,16 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   └── verse/route.ts             (single verse lookup by id, or by textual cross-reference)
 │   ├── components/
 │   │   ├── cinematic/                 # THE LIVE UI FAMILY
-│   │   │   ├── 01-cinematic-home.tsx  (home: entrance rotation, hero search, gallery, testimonials)
+│   │   │   ├── 01-cinematic-home.tsx  (home: doorway entrance + rotating verse, hero search, library count-up, Moments filmstrip, 1965 teaser, sample voices)
 │   │   │   ├── 04-use-cinematic-reveal.ts (scroll reveals + 1.5s failsafe; journey rail fill)
 │   │   │   ├── 05-journey-page.tsx    (His Journey chapters)
-│   │   │   ├── 06-features-page.tsx   (features rows incl. Context on tap)
-│   │   │   ├── 07-how-it-works-page.tsx (steps + under-the-hood pipeline cards)
+│   │   │   ├── 06-features-page.tsx   (three core features as live UI vignettes + supporting grid)
+│   │   │   ├── 07-how-it-works-page.tsx (three steps + five under-the-hood pipeline cards)
 │   │   │   ├── 09-search-experience.tsx (SSE orchestrator: loader → results → ask-next chips)
-│   │   │   ├── 10-search-loader.tsx   (mandala loader: SSE stages, percent, rotating verses)
-│   │   │   ├── 11-site-header.tsx     (unified header: nav, More ▾, hamburger, theme toggle)
+│   │   │   ├── 10-search-loader.tsx   (mandala loader: five ticking stages from SSE, percent, rotating verses)
+│   │   │   ├── 11-site-header.tsx     (unified header: nav, More ▾, hamburger, theme toggle; variants overlay | solid | scene)
 │   │   │   ├── 12-site-footer.tsx     (unified footer)
-│   │   │   ├── 13-site-modals.tsx     (provider: seva/feature/feedback overlays, /api/feedback wiring)
+│   │   │   ├── 13-site-modals.tsx     (provider: seva modal with India/International toggle + one Bug/Idea/General feedback form, mailto submit)
 │   │   │   └── 14-photo-slot.tsx      (path-addressed photo slot: placeholder until the exact file exists; useImageAvailable for bg swaps)
 │   │   ├── results/
 │   │   │   ├── 01-narrative-response.tsx (woven essay: heroes, purport folds, context strip, citations)
@@ -107,7 +109,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 16-multi-query.ts          (Gemini variant expansion + reciprocal-rank fusion)
 │   │   ├── 17-verbatim-validator.ts   (re-fetch + normalize ⊆ assertion for every rendered block)
 │   │   ├── 18-image-manifest.ts       (photo registry: src/alt/caption/allowFullBleed)
-│   │   ├── 19-seva-config.ts          (donation rows; isPlaceholder drives FAKE labelling)
+│   │   ├── 19-seva-config.ts          (donation rows per region; an empty value renders as "Add in project")
 │   │   ├── 20-site.ts                 (canonical origin from NEXT_PUBLIC_SITE_URL)
 │   │   ├── types/01-search.ts         (shared server↔client search contract + SSE stage events)
 │   │   └── server/01-lockscreen-images.ts (filesystem image reader)
@@ -124,6 +126,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 ├── docs/screenshots/                  (release verification screenshots)
 ├── public/
 │   ├── data/donate.json               (legacy; live seva rows come from app/lib/19-seva-config.ts)
+│   ├── data/entrance-quotes.json      (entrance verse pool — bhāva/prema only; add lines here, no code change)
 │   ├── images/
 │   │   ├── README.md                  (how to add photos + register them in the manifest)
 │   │   ├── lockscreen/                (photos; auto-discovered by /api/lockscreen-images)
@@ -151,7 +154,9 @@ All server-side Supabase access goes through the single shared client in `app/li
 ### Admin Actions Required
 
 - Upload Śrīla Prabhupāda photos to `public/images/lockscreen/` (auto-discovered by `/api/lockscreen-images`) AND register them in `app/lib/18-image-manifest.ts` with truthful alt/caption so they join the intro rotation and galleries.
-- Upload the /journey chapter photos and the landing Moments photos by their exact filenames per `public/images/journey/README.md` and `public/images/moments/README.md` (path-addressed slots — placeholders are replaced automatically on redeploy, no code change). After the four Moments photos land, replace the neutral gallery captions in `app/components/cinematic/01-cinematic-home.tsx` (GALLERY array) with truthful lines.
-- Replace the FAKE seva details in `app/lib/19-seva-config.ts` and flip `isPlaceholder: false` (this removes the FAKE labels and re-enables the Copy buttons).
-- Replace the `[FAKE]` testimonials in `app/components/cinematic/01-cinematic-home.tsx` (TESTIMONIALS array).
+- Upload the /journey chapter photos and the landing Moments photos by their exact filenames per `public/images/journey/README.md` and `public/images/moments/README.md` (path-addressed slots — placeholders are replaced automatically on redeploy, no code change).
+- Fill in the real account details in `app/lib/19-seva-config.ts` (India and international rows). Any row left empty shows "Add in project" with its Copy button disabled; a filled row turns solid and copyable on its own.
+- Set the real inbox in `FEEDBACK_EMAIL` (`app/components/cinematic/13-site-modals.tsx`) — every form currently composes a mail to a placeholder address. To store submissions in the `feedback` table instead, POST to `/api/feedback` from `submitForm` and update the line under the button.
+- Replace the labelled sample voices in `app/components/cinematic/01-cinematic-home.tsx` (VOICES array) with real quotes, and drop the "Sample — a real voice will appear here" lines.
+- Add or edit entrance verses in `public/data/entrance-quotes.json` (bhāva/prema only; verify wording and citations against Vedabase before shipping).
 - After attaching the custom domain in Vercel, set `NEXT_PUBLIC_SITE_URL=https://asksrilaprabhupada.com`.

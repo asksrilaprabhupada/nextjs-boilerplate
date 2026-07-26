@@ -1,28 +1,46 @@
 /**
  * 19-seva-config.ts — Support-the-seva (donation) details
  *
- * Single source for the bank/UPI rows shown in the "Support the seva" modal.
- * The values below are PLACEHOLDERS — the owner replaces them with the real
- * account and flips `isPlaceholder` to false; that one flag switches the modal
- * from FAKE-labelled/copy-disabled to live. Nothing else needs to change.
+ * Single source for the account rows shown in the "Support the seva" modal,
+ * split by region: givers in India see Account Number / IFSC / UPI, everyone
+ * else sees IBAN / BIC-SWIFT. Any row left with an empty `value` renders as a
+ * greyed "Add in project" placeholder with its Copy button inert, so the modal
+ * stays honest until the real details exist.
  *
- * TODO(owner): fill in the real account details, then set isPlaceholder: false.
+ * TODO(owner): fill in the real values below. No other file needs to change —
+ * a filled row automatically turns solid and its Copy button starts working.
  */
 
+export type SevaRegion = "india" | "intl";
+
 export interface SevaRow {
+  key: string;
   label: string;
+  /** Empty string = not yet supplied; the modal shows "Add in project". */
   value: string;
 }
 
-export const SEVA = {
-  /** While true: every value renders with a " (FAKE)" suffix, the do-not-send
-   *  notice shows, and the Copy buttons are disabled. */
-  isPlaceholder: true,
-  notice: "Placeholder details — please do not send money yet.",
-  rows: [
-    { label: "Account name", value: "Ask Śrīla Prabhupāda Seva" },
-    { label: "Account number", value: "0000 0000 0000" },
-    { label: "IFSC", value: "BANK0000000" },
-    { label: "UPI", value: "seva@upi" },
-  ] as SevaRow[],
-} as const;
+export const SEVA_REGIONS: { key: SevaRegion; label: string }[] = [
+  { key: "india", label: "India" },
+  { key: "intl", label: "International" },
+];
+
+export const SEVA_ROWS: Record<SevaRegion, SevaRow[]> = {
+  india: [
+    { key: "name", label: "Account Name", value: "" },
+    { key: "acct", label: "Account Number", value: "" },
+    { key: "ifsc", label: "IFSC Code", value: "" },
+    { key: "upi", label: "UPI ID", value: "" },
+  ],
+  intl: [
+    { key: "holder", label: "Account Holder", value: "" },
+    { key: "iban", label: "IBAN", value: "" },
+    { key: "swift", label: "BIC / SWIFT", value: "" },
+    { key: "bank", label: "Bank Name", value: "" },
+  ],
+};
+
+/** True while not one row anywhere carries a real value — drives the honest hint line. */
+export const SEVA_IS_PLACEHOLDER = Object.values(SEVA_ROWS)
+  .flat()
+  .every((row) => !row.value);

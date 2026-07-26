@@ -1,8 +1,9 @@
 /**
  * page.tsx — Features Page
  *
- * Server wrapper: SEO metadata around the cinematic features page — masked
- * title reveal, six numbered feature rows, verse interlude, and CTA back to
+ * Server wrapper: SEO metadata around the cinematic features page — three
+ * core features shown as live vignettes of the real interface, a quiet grid
+ * of the supporting capabilities, a verse interlude, and a CTA back to
  * search. All motion and interaction live in the client component.
  */
 import type { Metadata } from "next";

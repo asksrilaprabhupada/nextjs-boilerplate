@@ -164,7 +164,7 @@ export default function SearchExperience({ q }: { q: string }) {
 
       {phase === "loading" && <SearchLoader q={q} stage={stage} done={doneRef.current} />}
 
-      <main style={{ maxWidth: 780, margin: "0 auto", padding: "120px clamp(20px,5vw,40px) 80px" }}>
+      <main style={{ maxWidth: 780, margin: "0 auto", padding: "110px clamp(20px,5vw,40px) 80px" }}>
         {/* ═══════ ERROR CARD — honest, never sample verses ═══════ */}
         {phase === "error" && (
           <div style={{ maxWidth: 560, margin: "10vh auto 0", textAlign: "center", background: "#FEFCF8", border: "1px solid #E8E0D2", borderRadius: 18, padding: "clamp(32px,5vw,48px)", boxShadow: "0 2px 6px rgba(43,37,25,0.04), 0 16px 44px rgba(43,37,25,0.07)" }}>
@@ -180,7 +180,7 @@ export default function SearchExperience({ q }: { q: string }) {
               >
                 Try again
               </button>
-              <Link href="/" className="font-body" style={{ fontSize: 14, fontWeight: 600, color: "#6E6353", border: "1px solid #E8E0D2", borderRadius: 100, padding: "11px 24px", textDecoration: "none" }}>
+              <Link href="/?entrance=0" className="font-body" style={{ fontSize: 14, fontWeight: 600, color: "#6E6353", border: "1px solid #E8E0D2", borderRadius: 100, padding: "11px 24px", textDecoration: "none" }}>
                 New search
               </Link>
             </div>
@@ -193,7 +193,7 @@ export default function SearchExperience({ q }: { q: string }) {
             <form onSubmit={submitFollowUp} style={{ position: "sticky", top: 68, zIndex: 60, marginBottom: "clamp(40px,7vh,64px)", opacity: ans.op, transition: "opacity 0.8s ease 0.1s" }}>
               <div style={{ position: "relative", borderRadius: 16, padding: 1.5, background: "linear-gradient(135deg, rgba(107,87,201,0.42), rgba(201,162,75,0.28))", boxShadow: "0 8px 30px rgba(43,37,25,0.10)" }}>
                 <input value={followUp} onChange={(e) => setFollowUp(e.target.value)} aria-label="Ask a follow-up" placeholder="Ask a follow-up question…" className="font-body" style={{ width: "100%", display: "block", padding: "14px 108px 14px 20px", fontSize: 15, border: "none", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none" }} />
-                <Link href="/" aria-label="New search" title="New search" className="cine-newsearch" style={{ position: "absolute", right: 52, top: 8, width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#6E6353", textDecoration: "none", transition: "all 0.2s ease" }}>
+                <Link href="/?entrance=0" aria-label="New search" title="New search" className="cine-newsearch" style={{ position: "absolute", right: 52, top: 8, width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#6E6353", textDecoration: "none", transition: "all 0.2s ease" }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
                 </Link>
                 <button type="submit" aria-label="Search" className="cine-submit-btn" style={{ position: "absolute", right: 8, top: 8, width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.3s ease" }}>
