@@ -16,7 +16,7 @@ function fakeClient(tables: Record<string, Row[]>, opts: { failTable?: string } 
   return {
     from(table: string) {
       return {
-        select(_cols: string) {
+        select() {
           return {
             in(_col: string, ids: string[]) {
               if (opts.failTable === table) {

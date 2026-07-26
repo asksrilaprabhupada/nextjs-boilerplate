@@ -334,6 +334,23 @@ async function hybridSearchV2(query: string, pipeline: PipelineContext, onStage?
   // looked identical to "that verse does not exist".
   let directVerse: VerseHit | undefined;
   const isDirectRef = /^(BG|SB|CC|NOI|ISO|BS|NBS|MMS)\s+/i.test(query.trim());
+  /** The exact return shape of public.direct_verse_lookup, per the DB contract. */
+  interface DirectVerseRow {
+    id: string;
+    scripture: string;
+    verse_number: string;
+    sanskrit_devanagari: string | null;
+    transliteration: string | null;
+    translation: string | null;
+    purport: string | null;
+    chapter_id: string;
+    vedabase_url: string | null;
+    tags: string[] | null;
+    chapter_number: number | null;
+    canto_or_division: string | null;
+    chapter_title: string | null;
+    book_slug: string | null;
+  }
   if (isDirectRef) {
     {
       const dvData = await rpcOrThrow<Record<string, unknown>[] | null>(
@@ -343,7 +360,7 @@ async function hybridSearchV2(query: string, pipeline: PipelineContext, onStage?
         { stage: "retrieval:direct_verse_lookup", requestId },
       );
       if (dvData && dvData.length > 0) {
-        const dv = dvData[0] as Record<string, any>;
+        const dv = dvData[0] as unknown as DirectVerseRow;
         directVerse = {
           id: dv.id,
           scripture: dv.scripture,
@@ -1147,7 +1164,7 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
 
   // Add transcripts (lectures)
   for (const t of synthTranscripts) {
-    let bodyText = (t.body_text || "").trim();
+    const bodyText = (t.body_text || "").trim();
     if (bodyText.length < 80 || isMostlySanskrit(bodyText)) continue;
     const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
     const locationPart = t.location || "";
@@ -1166,7 +1183,7 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
 
   // Add letters
   for (const l of synthLetters) {
-    let bodyText = (l.body_text || "").trim();
+    const bodyText = (l.body_text || "").trim();
     if (bodyText.length < 80) continue;
     const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }) : "";
     const recipientPart = l.recipient || "";
@@ -1198,7 +1215,7 @@ function buildSynthesisPrompt(question: string, verses: VerseHit[], prose: Prose
   const summaryTags: string[] = [];
   const allTagSources = [...verses.slice(0, 5), ...prose.slice(0, 3), ...transcripts.slice(0, 3), ...letters.slice(0, 2)];
   for (const item of allTagSources) {
-    const tags = (item as any).tags as string[] | undefined;
+    const tags = (item as { tags?: string[] }).tags;
     if (tags) {
       const summary = tags.find((t: string) => t.startsWith("SUMMARY:"));
       if (summary) {
@@ -1321,7 +1338,7 @@ function groupIntoThemes(
   // Pass 1: Group by the FIRST topic tag (most specific)
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    const tags = (item.data as any).tags as string[] | undefined;
+    const tags = (item.data as { tags?: string[] }).tags;
     if (!tags) continue;
 
     const topicTags = tags.filter(t =>
@@ -2066,6 +2083,19 @@ async function fetchNeighbourMap(
   const supabase = getSupabaseAdmin();
   const result = new Map<string, { before?: string; after?: string }>();
 
+  /**
+   * The narrow slice of the PostgREST builder this helper uses. The table and
+   * column names are computed at runtime, so the generated per-table types do
+   * not apply; this states exactly what is called instead of erasing the type.
+   */
+  interface DynamicTableQuery {
+    select(columns: string): DynamicTableQuery;
+    in(column: string, values: readonly (string | number)[]): DynamicTableQuery;
+    then<R>(
+      onfulfilled: (value: { data: unknown[] | null; error: unknown }) => R,
+    ): Promise<R>;
+  }
+
   const load = async <T extends { id: string; paragraph_number: number }>(
     table: string,
     parentCol: keyof T & string,
@@ -2082,7 +2112,7 @@ async function fetchNeighbourMap(
     ];
 
     // Dynamic table + column name — cast past the typed query builder.
-    const { data, error } = await (supabase.from(table) as any)
+    const { data, error } = await (supabase.from(table) as unknown as DynamicTableQuery)
       .select(`${parentCol}, paragraph_number, body_text`)
       .in(parentCol, parentIds)
       .in("paragraph_number", wantedNums);
