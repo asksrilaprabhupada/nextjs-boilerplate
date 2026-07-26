@@ -1,0 +1,43 @@
+# CI — the Phase A gate, made enforceable.
+#
+# This repository had no CI at all, which is part of how a broken search
+# pipeline reached production and stayed there. These checks need no database
+# and no provider keys, so they run on every push and pull request.
+#
+# The live database contract is NOT checked here: it needs real credentials, and
+# a check that silently skips without them would report green while proving
+# nothing. Run `npm run verify:contract` against a real database as part of the
+# deploy sequence instead.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+        env:
+          # The build must succeed without runtime credentials — client
+          # construction is lazy precisely so this holds.
+          NEXT_TELEMETRY_DISABLED: "1"

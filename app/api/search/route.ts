@@ -58,6 +58,18 @@ import type {
   SearchStageKey,
 } from "@/app/lib/types/01-search";
 import { validateMainFlow, normalizeVerbatim, type SourceFetchClient } from "@/app/lib/17-verbatim-validator";
+import {
+  rpcOrThrow,
+  rpcOrDegrade,
+  unwrapOrThrow,
+  DegradationLog,
+  type RpcCapableClient,
+} from "@/app/lib/search-v2/rpc";
+import {
+  InvalidSearchInputError,
+  isSearchError,
+  newRequestId,
+} from "@/app/lib/search-v2/errors";
 
 // The cold pipeline (embeddings + ~20 RPCs + Cohere) can take 25–50 s; give the
 // function room on Vercel. If the plan rejects 90, drop to 60.
@@ -72,12 +84,50 @@ const GEMINI_MODEL_SYNTHESIS = "gemini-2.5-flash";
  * in-memory cache can never serve a response built by older code. The mode is
  * part of the key — article and references responses differ and must never
  * collide.
+ *
+ * p8: the strict RPC boundary. p7 could cache a successful-looking empty result
+ * produced while every search function was missing from the database; bumping
+ * retires any such entry rather than letting it outlive the fix.
  */
-const RESPONSE_VERSION = "p7";
+const RESPONSE_VERSION = "p8";
 const cacheKey = (query: string, mode: string) => `${RESPONSE_VERSION}:${mode}:${query}`;
+
+/** Modes the route accepts. Anything else is invalid input, not a silent default. */
+const ALLOWED_MODES = new Set(["article", "references"]);
+
+/**
+ * Upper bound on `q`. Without one, a single unauthenticated request drives the
+ * full paid fan-out (Gemini + Voyage + Cohere + ~20 RPCs) with an arbitrarily
+ * large query. Rate limiting proper is PR D.
+ */
+const MAX_QUERY_CHARS = 2000;
+
+/**
+ * PHASE A: the five *_by_tags lanes are restored in the database but not called.
+ *
+ * `tags_core` holds controlled-vocabulary slugs ("goloka-vrndavana", "krsna"),
+ * while this route splits queries into single words — 143 of the 251 vocabulary
+ * terms are multiword and unreachable that way. Measured on production, the
+ * ranked tag shape scans 66,461 rows / ~1.25 s for a common slug ("krsna" tags
+ * 60,958 of 144,438 transcript paragraphs), and a broad query would fire up to
+ * 45 tag RPCs. PR B owns phrase-preserving, ambiguity-aware, batched resolution;
+ * until then the lane is disabled openly and reported in `disabledLanes`.
+ */
+const TAG_LANES_ENABLED = false;
+const DISABLED_LANES: string[] = TAG_LANES_ENABLED ? [] : ["tags"];
 
 /** Pipeline progress hook — drives the SSE `stage` events. */
 type OnStage = (stage: SearchStageKey, labelOverride?: string) => void;
+
+/**
+ * Threaded through every pipeline stage so a failure can be correlated with
+ * server logs, and so optional lanes that softened can be reported honestly
+ * rather than disappearing.
+ */
+interface PipelineContext {
+  requestId: string;
+  degraded: DegradationLog;
+}
 
 const STAGE_META: Record<SearchStageKey, { pct: number; label: string }> = {
   understood: { pct: 12, label: "Reading your question…" },
@@ -248,20 +298,52 @@ function rrfMerge<T extends { id: string; similarity?: number }>(
   return map;
 }
 
+/**
+ * A widening full-text call that is allowed to fail. Used for supplementary
+ * phrases and query variants — never for the original question's own lanes.
+ */
+function optionalFts(
+  db: RpcCapableClient,
+  fn: string,
+  searchQuery: string,
+  matchCount: number,
+  pipeline: PipelineContext,
+): Promise<Record<string, unknown>[]> {
+  return rpcOrDegrade<Record<string, unknown>[]>(
+    db,
+    fn,
+    { search_query: searchQuery, match_count: matchCount },
+    { stage: `retrieval:widening:${fn}`, requestId: pipeline.requestId },
+    [],
+    pipeline.degraded,
+  ).then(rows => rows ?? []);
+}
+
 // =====================================================
 // V2 PARALLEL HYBRID SEARCH: FTS + Tags immediately, Semantic in parallel
 // =====================================================
-async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null; embeddingMs?: number }> {
+async function hybridSearchV2(query: string, pipeline: PipelineContext, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null; embeddingMs?: number }> {
   const supabase = getSupabaseAdmin();
+  const db = supabase as unknown as RpcCapableClient;
+  const { requestId, degraded } = pipeline;
 
   // ── Direct verse lookup for exact references like "BG 18.66", "SB 1.1.1", "NOI verse 1" ──
+  //
+  // Required lane: a devotee asking for an exact citation must get that verse or
+  // a typed failure. It previously swallowed every error, so a dropped function
+  // looked identical to "that verse does not exist".
   let directVerse: VerseHit | undefined;
   const isDirectRef = /^(BG|SB|CC|NOI|ISO|BS|NBS|MMS)\s+/i.test(query.trim());
   if (isDirectRef) {
-    try {
-      const { data: dvData } = await supabase.rpc("direct_verse_lookup", { ref_query: query.trim() });
+    {
+      const dvData = await rpcOrThrow<Record<string, unknown>[] | null>(
+        db,
+        "direct_verse_lookup",
+        { ref_query: query.trim() },
+        { stage: "retrieval:direct_verse_lookup", requestId },
+      );
       if (dvData && dvData.length > 0) {
-        const dv = dvData[0];
+        const dv = dvData[0] as Record<string, any>;
         directVerse = {
           id: dv.id,
           scripture: dv.scripture,
@@ -280,8 +362,6 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
           score: 999, // Highest possible score — this is THE verse they asked for
         };
       }
-    } catch (err) {
-      console.error("[direct_verse_lookup] Error:", err);
     }
   }
 
@@ -290,34 +370,32 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
 
   // For long queries with multiple extracted phrases, run additional FTS searches
   const additionalPhrases = preprocessed.searchPhrases.slice(1, 3);
+  //
+  // Supplementary phrases widen recall for long queries; a failure here must not
+  // sink a search whose main phrase succeeded, so they degrade and are recorded.
   const additionalFtsPromises = additionalPhrases.flatMap(phrase => [
-    supabase.rpc("search_verses_fulltext_v2", { search_query: phrase, match_count: 10 }),
-    supabase.rpc("search_prose_fulltext_v2", { search_query: phrase, match_count: 5 }),
-    supabase.rpc("search_transcript_paragraphs_fulltext", { search_query: phrase, match_count: 5 }),
-    supabase.rpc("search_letter_paragraphs_fulltext", { search_query: phrase, match_count: 3 }),
+    optionalFts(db, "search_verses_fulltext_v2", phrase, 10, pipeline),
+    optionalFts(db, "search_prose_fulltext_v2", phrase, 5, pipeline),
+    optionalFts(db, "search_transcript_paragraphs_fulltext", phrase, 5, pipeline),
+    optionalFts(db, "search_letter_paragraphs_fulltext", phrase, 3, pipeline),
   ]);
 
-  // WAVE 1: Instant (no embedding needed)
-  const ftsVersesPromise = supabase.rpc("search_verses_fulltext_v2", { search_query: mainPhrase, match_count: 25 });
-  const ftsProsePromise = supabase.rpc("search_prose_fulltext_v2", { search_query: mainPhrase, match_count: 15 });
-  const ftsTranscriptsPromise = supabase.rpc("search_transcript_paragraphs_fulltext", { search_query: mainPhrase, match_count: 10 });
-  const ftsLettersPromise = supabase.rpc("search_letter_paragraphs_fulltext", { search_query: mainPhrase, match_count: 8 });
-  const ftsChunksPromise = supabase.rpc("search_verse_chunks_fulltext", { search_query: mainPhrase, match_count: 15 });
-  const tagVersesPromise = preprocessed.tagTerms.length > 0
-    ? supabase.rpc("search_verses_by_tags", { search_terms: preprocessed.tagTerms, match_count: 15 })
-    : Promise.resolve({ data: [] as VerseHit[] });
-  const tagProsePromise = preprocessed.tagTerms.length > 0
-    ? supabase.rpc("search_prose_by_tags", { search_terms: preprocessed.tagTerms, match_count: 10 })
-    : Promise.resolve({ data: [] as ProseHit[] });
-  const tagTranscriptsPromise = preprocessed.tagTerms.length > 0
-    ? supabase.rpc("search_transcript_paragraphs_by_tags", { search_terms: preprocessed.tagTerms, match_count: 8 })
-    : Promise.resolve({ data: [] as TranscriptHit[] });
-  const tagLettersPromise = preprocessed.tagTerms.length > 0
-    ? supabase.rpc("search_letter_paragraphs_by_tags", { search_terms: preprocessed.tagTerms, match_count: 6 })
-    : Promise.resolve({ data: [] as LetterHit[] });
-  const tagChunksPromise = preprocessed.tagTerms.length > 0
-    ? supabase.rpc("search_verse_chunks_by_tags", { search_terms: preprocessed.tagTerms, match_count: 10 })
-    : Promise.resolve({ data: [] as ChunkHit[] });
+  // WAVE 1: Instant (no embedding needed).
+  // These are the required lanes — the evidence a devotee actually receives.
+  // Any database error propagates as SearchInfrastructureError.
+  const ftsVersesPromise = rpcOrThrow<VerseHit[] | null>(db, "search_verses_fulltext_v2", { search_query: mainPhrase, match_count: 25 }, { stage: "retrieval:verses:fulltext", requestId });
+  const ftsProsePromise = rpcOrThrow<ProseHit[] | null>(db, "search_prose_fulltext_v2", { search_query: mainPhrase, match_count: 15 }, { stage: "retrieval:prose:fulltext", requestId });
+  const ftsTranscriptsPromise = rpcOrThrow<TranscriptHit[] | null>(db, "search_transcript_paragraphs_fulltext", { search_query: mainPhrase, match_count: 10 }, { stage: "retrieval:transcripts:fulltext", requestId });
+  const ftsLettersPromise = rpcOrThrow<LetterHit[] | null>(db, "search_letter_paragraphs_fulltext", { search_query: mainPhrase, match_count: 8 }, { stage: "retrieval:letters:fulltext", requestId });
+  const ftsChunksPromise = rpcOrThrow<ChunkHit[] | null>(db, "search_verse_chunks_fulltext", { search_query: mainPhrase, match_count: 15 }, { stage: "retrieval:chunks:fulltext", requestId });
+
+  // Tag lanes are disabled in Phase A (see TAG_LANES_ENABLED). Reported in
+  // `disabledLanes` rather than silently returning nothing.
+  const tagVersesPromise = Promise.resolve<VerseHit[]>([]);
+  const tagProsePromise = Promise.resolve<ProseHit[]>([]);
+  const tagTranscriptsPromise = Promise.resolve<TranscriptHit[]>([]);
+  const tagLettersPromise = Promise.resolve<LetterHit[]>([]);
+  const tagChunksPromise = Promise.resolve<ChunkHit[]>([]);
 
   // ── Multi-query expansion (RAG-Fusion) ──
   // The original query's Wave-1 FTS/tag RPCs are already in flight above; the
@@ -334,29 +412,20 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
       : "Searching directly…",
   );
 
-  // Variant fan-out: all three channels, lighter than the original
-  // (semantic 8 / fulltext 6 / tags 6 per source table; chunk tables skipped).
+  // Variant fan-out: full-text and semantic only — the tag channel is disabled
+  // in Phase A. Variants widen recall, so each call is optional: a failure
+  // narrows the search and is recorded, but never sinks an answer whose own
+  // lanes succeeded.
   const variantFtsPromises = variants.map(v =>
     channels.has("fulltext")
       ? Promise.all([
-          supabase.rpc("search_verses_fulltext_v2", { search_query: v, match_count: 6 }),
-          supabase.rpc("search_prose_fulltext_v2", { search_query: v, match_count: 6 }),
-          supabase.rpc("search_transcript_paragraphs_fulltext", { search_query: v, match_count: 6 }),
-          supabase.rpc("search_letter_paragraphs_fulltext", { search_query: v, match_count: 6 }),
-        ]).catch(() => null)
+          optionalFts(db, "search_verses_fulltext_v2", v, 6, pipeline),
+          optionalFts(db, "search_prose_fulltext_v2", v, 6, pipeline),
+          optionalFts(db, "search_transcript_paragraphs_fulltext", v, 6, pipeline),
+          optionalFts(db, "search_letter_paragraphs_fulltext", v, 6, pipeline),
+        ])
       : Promise.resolve(null),
   );
-  const variantTagPromises = variants.map(v => {
-    const terms = v.toLowerCase().replace(/[?!.,;:'"]/g, "").split(/\s+/).filter(w => w.length > 3);
-    return channels.has("tags") && terms.length > 0
-      ? Promise.all([
-          supabase.rpc("search_verses_by_tags", { search_terms: terms, match_count: 6 }),
-          supabase.rpc("search_prose_by_tags", { search_terms: terms, match_count: 6 }),
-          supabase.rpc("search_transcript_paragraphs_by_tags", { search_terms: terms, match_count: 6 }),
-          supabase.rpc("search_letter_paragraphs_by_tags", { search_terms: terms, match_count: 6 }),
-        ]).catch(() => null)
-      : Promise.resolve(null);
-  });
 
   // WAVE 2: ONE batched Voyage call embeds the original + every variant.
   const embedTexts = [
@@ -372,12 +441,11 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
 
   // Wait for all Wave 1 + variant channels + embeddings in parallel
   onStage?.("searching");
-  const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, ftsChunks, tagVerses, tagProse, tagTranscripts, tagLetters, tagChunks, embeddings, variantFts, variantTags] = await Promise.all([
+  const [ftsVerses, ftsProse, ftsTranscripts, ftsLetters, ftsChunks, tagVerses, tagProse, tagTranscripts, tagLetters, tagChunks, embeddings, variantFts] = await Promise.all([
     ftsVersesPromise, ftsProsePromise, ftsTranscriptsPromise, ftsLettersPromise, ftsChunksPromise,
     tagVersesPromise, tagProsePromise, tagTranscriptsPromise, tagLettersPromise, tagChunksPromise,
     embeddingsPromise,
     Promise.all(variantFtsPromises),
-    Promise.all(variantTagPromises),
   ]);
   const embedding = embeddings[0] || [];
 
@@ -393,85 +461,65 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
     (channels.has("semantic") ? embeddings.slice(1) : []).map(emb => {
       if (emb.length !== 1024) return Promise.resolve(null);
       const vs = `[${emb.join(",")}]`;
+      const opts = (fn: string) =>
+        rpcOrDegrade<Record<string, unknown>[]>(
+          db, fn, { query_embedding: vs, match_count: 8 },
+          { stage: `retrieval:widening:${fn}`, requestId }, [], degraded,
+        ).then(rows => rows ?? []);
       return Promise.all([
-        supabase.rpc("search_verses_semantic_v2", { query_embedding: vs, match_count: 8 }),
-        supabase.rpc("search_prose_semantic_v2", { query_embedding: vs, match_count: 8 }),
-        supabase.rpc("search_transcript_paragraphs_semantic", { query_embedding: vs, match_count: 8 }),
-        supabase.rpc("search_letter_paragraphs_semantic", { query_embedding: vs, match_count: 8 }),
-      ]).catch(() => null);
+        opts("search_verses_semantic_v2"),
+        opts("search_prose_semantic_v2"),
+        opts("search_transcript_paragraphs_semantic"),
+        opts("search_letter_paragraphs_semantic"),
+      ]);
     }),
   );
 
   if (embedding.length === 1024) {
     const vectorStr = `[${embedding.join(",")}]`;
     const [semV, semP, semT, semL, semC] = await Promise.all([
-      supabase.rpc("search_verses_semantic_v2", { query_embedding: vectorStr, match_count: 30 }),
-      supabase.rpc("search_prose_semantic_v2", { query_embedding: vectorStr, match_count: 20 }),
-      supabase.rpc("search_transcript_paragraphs_semantic", { query_embedding: vectorStr, match_count: 15 }),
-      supabase.rpc("search_letter_paragraphs_semantic", { query_embedding: vectorStr, match_count: 10 }),
-      supabase.rpc("search_verse_chunks_semantic", { query_embedding: vectorStr, match_count: 15 }),
+      rpcOrThrow<VerseHit[] | null>(db, "search_verses_semantic_v2", { query_embedding: vectorStr, match_count: 30 }, { stage: "retrieval:verses:semantic", requestId }),
+      rpcOrThrow<ProseHit[] | null>(db, "search_prose_semantic_v2", { query_embedding: vectorStr, match_count: 20 }, { stage: "retrieval:prose:semantic", requestId }),
+      rpcOrThrow<TranscriptHit[] | null>(db, "search_transcript_paragraphs_semantic", { query_embedding: vectorStr, match_count: 15 }, { stage: "retrieval:transcripts:semantic", requestId }),
+      rpcOrThrow<LetterHit[] | null>(db, "search_letter_paragraphs_semantic", { query_embedding: vectorStr, match_count: 10 }, { stage: "retrieval:letters:semantic", requestId }),
+      rpcOrThrow<ChunkHit[] | null>(db, "search_verse_chunks_semantic", { query_embedding: vectorStr, match_count: 15 }, { stage: "retrieval:chunks:semantic", requestId }),
     ]);
-    semanticVersesData = semV.data || [];
-    semanticProseData = semP.data || [];
-    semanticTranscriptsData = semT.data || [];
-    semanticLettersData = semL.data || [];
-    semanticChunksData = semC.data || [];
+    semanticVersesData = semV || [];
+    semanticProseData = semP || [];
+    semanticTranscriptsData = semT || [];
+    semanticLettersData = semL || [];
+    semanticChunksData = semC || [];
+  } else {
+    // Voyage returned nothing usable. Full-text still carries the answer, but
+    // the response must admit the semantic channel is missing.
+    degraded.record("embedding:voyage", "voyage", { code: "embedding_unavailable" });
   }
 
-  // Resolve additional phrase FTS results
-  let additionalFtsResults: { data: any[] | null }[] = [];
-  if (additionalPhrases.length > 0) {
-    additionalFtsResults = await Promise.all(additionalFtsPromises);
-  }
+  // Resolve additional phrase FTS results (already degraded-safe arrays).
+  const additionalFtsResults: Record<string, unknown>[][] =
+    additionalPhrases.length > 0 ? await Promise.all(additionalFtsPromises) : [];
 
   // Merge additional phrase FTS results into main FTS arrays before RRF
-  if (additionalFtsResults.length > 0) {
-    for (let p = 0; p < additionalPhrases.length; p++) {
-      const base = p * 4;
-      const extraVerses = additionalFtsResults[base]?.data || [];
-      const extraProse = additionalFtsResults[base + 1]?.data || [];
-      const extraTranscripts = additionalFtsResults[base + 2]?.data || [];
-      const extraLetters = additionalFtsResults[base + 3]?.data || [];
-
-      if (ftsVerses.data) ftsVerses.data.push(...extraVerses);
-      else ftsVerses.data = extraVerses;
-      if (ftsProse.data) ftsProse.data.push(...extraProse);
-      else ftsProse.data = extraProse;
-      if (ftsTranscripts.data) ftsTranscripts.data.push(...extraTranscripts);
-      else ftsTranscripts.data = extraTranscripts;
-      if (ftsLetters.data) ftsLetters.data.push(...extraLetters);
-      else ftsLetters.data = extraLetters;
-    }
+  const ftsVersesRows: VerseHit[] = [...(ftsVerses ?? [])];
+  const ftsProseRows: ProseHit[] = [...(ftsProse ?? [])];
+  const ftsTranscriptRows: TranscriptHit[] = [...(ftsTranscripts ?? [])];
+  const ftsLetterRows: LetterHit[] = [...(ftsLetters ?? [])];
+  for (let p = 0; p < additionalPhrases.length; p++) {
+    const base = p * 4;
+    ftsVersesRows.push(...((additionalFtsResults[base] ?? []) as unknown as VerseHit[]));
+    ftsProseRows.push(...((additionalFtsResults[base + 1] ?? []) as unknown as ProseHit[]));
+    ftsTranscriptRows.push(...((additionalFtsResults[base + 2] ?? []) as unknown as TranscriptHit[]));
+    ftsLetterRows.push(...((additionalFtsResults[base + 3] ?? []) as unknown as LetterHit[]));
   }
 
   // MERGE with RRF
-  const verseMap = rrfMerge<VerseHit>(
-    semanticVersesData,
-    ftsVerses.data || [],
-    tagVerses.data || [],
-  );
-  const proseMap = rrfMerge<ProseHit>(
-    semanticProseData,
-    ftsProse.data || [],
-    tagProse.data || [],
-  );
-  const transcriptMap = rrfMerge<TranscriptHit>(
-    semanticTranscriptsData,
-    ftsTranscripts.data || [],
-    tagTranscripts.data || [],
-  );
-  const letterMap = rrfMerge<LetterHit>(
-    semanticLettersData,
-    ftsLetters.data || [],
-    tagLetters.data || [],
-  );
+  const verseMap = rrfMerge<VerseHit>(semanticVersesData, ftsVersesRows, tagVerses);
+  const proseMap = rrfMerge<ProseHit>(semanticProseData, ftsProseRows, tagProse);
+  const transcriptMap = rrfMerge<TranscriptHit>(semanticTranscriptsData, ftsTranscriptRows, tagTranscripts);
+  const letterMap = rrfMerge<LetterHit>(semanticLettersData, ftsLetterRows, tagLetters);
 
   // RRF merge chunks
-  const chunkMap = rrfMerge<ChunkHit>(
-    semanticChunksData,
-    ftsChunks.data || [],
-    tagChunks.data || [],
-  );
+  const chunkMap = rrfMerge<ChunkHit>(semanticChunksData, ftsChunks ?? [], tagChunks);
 
   // Boost parent verses found via chunks — surfaces content buried deep in long purports
   const bestChunkScore = new Map<string, number>(); // verse_id → best chunk score seen
@@ -514,11 +562,12 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
     for (let i = 0; i < variants.length; i++) {
       const sem = variantSemantic[i];
       const fts = variantFts[i];
-      const tags = variantTags[i];
-      const rankedV = [...rrfMerge<VerseHit>(sem?.[0]?.data || [], fts?.[0]?.data || [], tags?.[0]?.data || []).values()].sort((a, b) => b.score - a.score);
-      const rankedP = [...rrfMerge<ProseHit>(sem?.[1]?.data || [], fts?.[1]?.data || [], tags?.[1]?.data || []).values()].sort((a, b) => b.score - a.score);
-      const rankedT = [...rrfMerge<TranscriptHit>(sem?.[2]?.data || [], fts?.[2]?.data || [], tags?.[2]?.data || []).values()].sort((a, b) => b.score - a.score);
-      const rankedL = [...rrfMerge<LetterHit>(sem?.[3]?.data || [], fts?.[3]?.data || [], tags?.[3]?.data || []).values()].sort((a, b) => b.score - a.score);
+      // The tag channel is disabled in Phase A, so variant lists fuse semantic
+      // and full-text only.
+      const rankedV = [...rrfMerge<VerseHit>((sem?.[0] ?? []) as unknown as VerseHit[], (fts?.[0] ?? []) as unknown as VerseHit[], []).values()].sort((a, b) => b.score - a.score);
+      const rankedP = [...rrfMerge<ProseHit>((sem?.[1] ?? []) as unknown as ProseHit[], (fts?.[1] ?? []) as unknown as ProseHit[], []).values()].sort((a, b) => b.score - a.score);
+      const rankedT = [...rrfMerge<TranscriptHit>((sem?.[2] ?? []) as unknown as TranscriptHit[], (fts?.[2] ?? []) as unknown as TranscriptHit[], []).values()].sort((a, b) => b.score - a.score);
+      const rankedL = [...rrfMerge<LetterHit>((sem?.[3] ?? []) as unknown as LetterHit[], (fts?.[3] ?? []) as unknown as LetterHit[], []).values()].sort((a, b) => b.score - a.score);
       if (rankedV.length > 0) vVerseLists.push(rankedV);
       if (rankedP.length > 0) vProseLists.push(rankedP);
       if (rankedT.length > 0) vTranscriptLists.push(rankedT);
@@ -553,14 +602,34 @@ async function hybridSearchV2(query: string, onStage?: OnStage): Promise<{ verse
 }
 
 // =====================================================
-// HYBRID SEARCH: V2 with fallback to legacy V1
+// HYBRID SEARCH: V2, with the legacy V1 path retained only for non-database faults
 // =====================================================
-async function hybridSearch(query: string, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null; embeddingMs?: number }> {
+/**
+ * A SearchInfrastructureError ALWAYS escapes this function.
+ *
+ * The legacy fallback below reaches for v1 RPCs and then raw `ilike` table
+ * scans. Letting a database failure fall through to it would answer a broken
+ * pipeline with a thin, plausible-looking result set — the same disguise this
+ * work exists to remove. Only a non-database fault (a bug in the V2 assembly
+ * code) may use the fallback.
+ *
+ * @deprecated The v1/ilike path is retained for this hotfix only; PR B removes
+ * it once the V2 retrieval modules own the pipeline.
+ */
+async function hybridSearch(query: string, pipeline: PipelineContext, onStage?: OnStage): Promise<{ verses: VerseHit[]; prose: ProseHit[]; transcripts: TranscriptHit[]; letters: LetterHit[]; directVerse?: VerseHit; queryVariants?: string[]; topic?: string | null; embeddingMs?: number }> {
   try {
-    return await hybridSearchV2(query, onStage);
+    return await hybridSearchV2(query, pipeline, onStage);
   } catch (err) {
-    console.error("V2 search failed, falling back to v1:", err);
-    const raw = await fullTextSearch(query);
+    if (isSearchError(err)) throw err;
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "search.v2_assembly_failed",
+        requestId: pipeline.requestId,
+      }),
+    );
+    pipeline.degraded.record("retrieval:v2", "hybridSearchV2", { code: "assembly_error" });
+    const raw = await fullTextSearch(query, pipeline);
     const enriched = await legacyEnrich(raw.verses, raw.prose);
     return { ...enriched, transcripts: [], letters: [] };
   }
@@ -784,30 +853,33 @@ function reRankResults<T extends { score?: number; tags?: string[]; similarity?:
   return (relevant.length >= minCount ? relevant : scored);
 }
 
-async function fullTextSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
-  const supabase = getSupabaseAdmin();
+/**
+ * Legacy v1 lane. Reachable only from the non-database branch of hybridSearch.
+ * Its RPCs are still strict: a database failure here must surface, not slide
+ * quietly down to the `ilike` scan.
+ */
+async function fullTextSearch(query: string, pipeline: PipelineContext): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+  const db = getSupabaseAdmin() as unknown as RpcCapableClient;
+  const { requestId } = pipeline;
 
-  try {
-    const [ftsVerses, ftsProse] = await Promise.all([
-      supabase.rpc("search_verses_fulltext", { search_query: query, match_count: 20 }),
-      supabase.rpc("search_prose_fulltext", { search_query: query, match_count: 10 }),
-    ]);
+  const [ftsVerses, ftsProse] = await Promise.all([
+    rpcOrThrow<(VerseHit & { rank?: number })[] | null>(db, "search_verses_fulltext", { search_query: query, match_count: 20 }, { stage: "retrieval:legacy:verses:fulltext", requestId }),
+    rpcOrThrow<(ProseHit & { rank?: number })[] | null>(db, "search_prose_fulltext", { search_query: query, match_count: 10 }, { stage: "retrieval:legacy:prose:fulltext", requestId }),
+  ]);
 
-    if ((ftsVerses.data?.length || 0) > 0 || (ftsProse.data?.length || 0) > 0) {
-      return {
-        verses: (ftsVerses.data || []).map((v: VerseHit & { rank?: number }) => ({ ...v, score: v.rank || 0 })),
-        prose: (ftsProse.data || []).map((p: ProseHit & { rank?: number }) => ({ ...p, score: p.rank || 0 })),
-      };
-    }
-  } catch (err) {
-    console.error("Full-text search failed, falling back to ilike:", err);
+  if ((ftsVerses?.length || 0) > 0 || (ftsProse?.length || 0) > 0) {
+    return {
+      verses: (ftsVerses || []).map(v => ({ ...v, score: v.rank || 0 })),
+      prose: (ftsProse || []).map(p => ({ ...p, score: p.rank || 0 })),
+    };
   }
 
-  return ilikeSearch(query);
+  return ilikeSearch(query, pipeline);
 }
 
-async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
+async function ilikeSearch(query: string, pipeline: PipelineContext): Promise<{ verses: VerseHit[]; prose: ProseHit[] }> {
   const supabase = getSupabaseAdmin();
+  const { requestId } = pipeline;
   const terms = query.toLowerCase().replace(/[?!.,]/g, "").split(/\s+/).filter(w => w.length > 3);
   if (terms.length === 0) return { verses: [], prose: [] };
 
@@ -815,17 +887,23 @@ async function ilikeSearch(query: string): Promise<{ verses: VerseHit[]; prose: 
   const pf = terms.map(k => `purport.ilike.%${k}%`).join(",");
   const bf = terms.map(k => `body_text.ilike.%${k}%`).join(",");
 
-  const [{ data: vT }, { data: vP }, { data: pr }] = await Promise.all([
+  const [rT, rP, rPr] = await Promise.all([
     supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id,vedabase_url").or(tf).limit(15),
     supabase.from("verses").select("id,scripture,verse_number,sanskrit_devanagari,transliteration,translation,purport,chapter_id,vedabase_url").or(pf).limit(15),
     supabase.from("prose_paragraphs").select("id,book_slug,paragraph_number,body_text,chapter_id,vedabase_url").or(bf).limit(15),
   ]);
 
+  // These are table reads, not RPCs, but they resolve with the same
+  // { data, error } shape and were being destructured just as unsafely.
+  const ctx = { stage: "retrieval:legacy:ilike", requestId };
+  const vT = unwrapOrThrow<VerseHit[] | null>(rT, "verses.ilike(translation)", ctx) ?? [];
+  const vP = unwrapOrThrow<VerseHit[] | null>(rP, "verses.ilike(purport)", ctx) ?? [];
+  const pr = unwrapOrThrow<ProseHit[] | null>(rPr, "prose_paragraphs.ilike(body_text)", ctx) ?? [];
+
   const seenV = new Set<string>();
-  const allV = [...(vT || []), ...(vP || [])];
+  const allV = [...vT, ...vP];
   const uV = allV.filter(v => { if (seenV.has(v.id)) return false; seenV.add(v.id); return true; });
-  const uP = (pr || []);
-  return { verses: uV, prose: uP };
+  return { verses: uV, prose: pr };
 }
 
 // =====================================================
@@ -2412,17 +2490,27 @@ async function logSearchRow(
 async function runSearchPipeline(
   query: string,
   mode: string,
+  pipeline: PipelineContext,
   onStage?: OnStage,
   ctx: SearchRequestContext = {},
 ): Promise<Record<string, unknown>> {
   onStage?.("understood");
   const tStart = Date.now();
 
-  // Fire search and spelling check in parallel
-  const spellingSupa = getSupabaseAdmin();
-  const [searchResults, spellResult] = await Promise.all([
-    hybridSearch(query, onStage),
-    spellingSupa.rpc('suggest_spelling', { raw_query: query }).then(res => res, () => ({ data: null })),
+  // Fire search and spelling check in parallel. Spelling is enrichment, not
+  // evidence, so it is allowed to degrade — but the softening is recorded
+  // rather than swallowed.
+  const spellingDb = getSupabaseAdmin() as unknown as RpcCapableClient;
+  const [searchResults, spellData] = await Promise.all([
+    hybridSearch(query, pipeline, onStage),
+    rpcOrDegrade<Record<string, string>[] | null>(
+      spellingDb,
+      "suggest_spelling",
+      { raw_query: query },
+      { stage: "enrichment:spelling", requestId: pipeline.requestId },
+      null,
+      pipeline.degraded,
+    ),
   ]);
   const searchMs = Date.now() - tStart;
 
@@ -2436,17 +2524,12 @@ async function runSearchPipeline(
     // "Did you mean?" — extract spelling suggestion
     let suggestion: string | null = null;
     let suggestionDisplay: string | null = null;
-    try {
-      const spellData = spellResult.data;
-      if (spellData && spellData.length > 0 && spellData[0].suggested_query) {
-        const suggested = spellData[0].suggested_query;
-        if (suggested.toLowerCase() !== query.toLowerCase()) {
-          suggestion = suggested;
-          suggestionDisplay = spellData[0].display_query || suggested;
-        }
+    if (spellData && spellData.length > 0 && spellData[0].suggested_query) {
+      const suggested = spellData[0].suggested_query;
+      if (suggested.toLowerCase() !== query.toLowerCase()) {
+        suggestion = suggested;
+        suggestionDisplay = spellData[0].display_query || suggested;
       }
-    } catch (e) {
-      console.error('[suggest_spelling] Error:', e);
     }
 
     // Skip re-ranking layers for direct verse lookups (e.g., "BG 2.20")
@@ -2641,7 +2724,7 @@ async function runSearchPipeline(
     // re-fetched from its source row and asserted verbatim; failures are
     // dropped, never rendered. Runs BEFORE keyAnswers/mainFlowItems/framing so
     // every downstream count stays consistent automatically.
-    const validation = await validateMainFlow(mainFlow.items, spellingSupa as unknown as SourceFetchClient);
+    const validation = await validateMainFlow(mainFlow.items, getSupabaseAdmin() as unknown as SourceFetchClient);
     let droppedBlocks = validation.droppedBlocks;
     if (validation.keptItems.length !== mainFlow.items.length) {
       const kept = validation.keptItems;
@@ -2662,11 +2745,17 @@ async function runSearchPipeline(
       after: { id: string; ref: string; translation: string; vedabase_url?: string; position: number }[];
     } | null = null;
     if (primaryVerse) {
-      try {
-        const { data: ctxRows } = await spellingSupa.rpc("get_verse_context", {
-          p_verse_id: primaryVerse.id,
-          p_radius: 1,
-        });
+      {
+        // Chapter context enriches the answer but is not the answer, so it may
+        // degrade — visibly, in degradedStages.
+        const ctxRows = await rpcOrDegrade<{ id: string; scripture: string; verse_number: string; translation: string; vedabase_url: string | null; rel_position: number }[] | null>(
+          getSupabaseAdmin() as unknown as RpcCapableClient,
+          "get_verse_context",
+          { p_verse_id: primaryVerse.id, p_radius: 1 },
+          { stage: "enrichment:verse_context", requestId: pipeline.requestId },
+          null,
+          pipeline.degraded,
+        );
         if (ctxRows && ctxRows.length > 0) {
           const toLine = (r: { id: string; scripture: string; verse_number: string; translation: string; vedabase_url: string | null; rel_position: number }) => ({
             id: r.id,
@@ -2688,8 +2777,6 @@ async function runSearchPipeline(
             after: ctxRows.filter((r: { rel_position: number }) => r.rel_position > 0).map(toLine),
           };
         }
-      } catch (err) {
-        console.error("[get_verse_context] Error:", err); // context is optional — never blocks the answer
       }
     }
 
@@ -2756,7 +2843,16 @@ async function runSearchPipeline(
     const narrative = mode === "references"
       ? ""
       : buildTemplateArticle(query, mainFlow.verses, mainFlow.prose, mainFlow.transcripts, mainFlow.letters, queryTerms, topic);
-    const result: Record<string, unknown> = { ...fullMetadata, narrative };
+    const result: Record<string, unknown> = {
+      ...fullMetadata,
+      narrative,
+      // Retrieval ran to completion. This is what distinguishes an honest
+      // "no direct evidence" answer from a failure — `validated` keeps its
+      // existing meaning (every quoted block verbatim-checked).
+      retrievalStatus: "complete",
+      degradedStages: pipeline.degraded.list(),
+      disabledLanes: DISABLED_LANES,
+    };
 
     // Telemetry: one search_logs row per fresh pipeline run (Task 14). The id
     // rides on the response so thumbs/behavior/citation clicks can attach.
@@ -2771,10 +2867,17 @@ async function runSearchPipeline(
   }
 }
 
-/** Cache-aware pipeline entry — both handlers go through here. */
+/**
+ * Cache-aware pipeline entry — both handlers go through here.
+ *
+ * Two invariants: only a completed result is ever cached (an error must never
+ * become a 24 h cached "no passages found"), and correlation ids are attached
+ * AFTER the cache read so a cached body never replays another request's id.
+ */
 async function getOrComputeResult(
   query: string,
   mode: string,
+  pipeline: PipelineContext,
   onStage?: OnStage,
   ctx: SearchRequestContext = {},
 ): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
@@ -2784,26 +2887,86 @@ async function getOrComputeResult(
     // Cached answers still log a fresh row (method "cache") so feedback on
     // them attributes to a real search_logs id.
     const searchLogId = await logSearchRow(query, cached, "cache", { totalMs: 0 }, ctx);
-    return { result: { ...cached, searchLogId }, fromCache: true };
+    return {
+      result: { ...cached, searchLogId, requestId: pipeline.requestId },
+      fromCache: true,
+    };
   }
-  const result = await runSearchPipeline(query, mode, onStage, ctx);
-  // Never cache the per-request searchLogId — every serving logs its own row.
+  const result = await runSearchPipeline(query, mode, pipeline, onStage, ctx);
+  // Never cache the per-request searchLogId or requestId — every serving logs
+  // its own row and carries its own correlation id.
   const { searchLogId: _perRequest, ...cacheable } = result;
   void _perRequest;
   setCached(key, cacheable);
-  return { result, fromCache: false };
+  return { result: { ...result, requestId: pipeline.requestId }, fromCache: false };
 }
 
 // =====================================================
 // HANDLERS — plain JSON (default) and SSE (?stream=1)
 // =====================================================
+/**
+ * Maps a thrown pipeline failure to its wire form.
+ *
+ * Typed failures carry a stable code, an appropriate status (400 for bad input,
+ * 503 for infrastructure and required providers) and the correlation id.
+ * Everything else is an unexpected 500. No message, SQL or stack ever crosses
+ * the boundary — those live in the server logs, joined by request id.
+ */
+function failureResponseBody(err: unknown, requestId: string): {
+  status: number;
+  body: Record<string, unknown>;
+} {
+  if (isSearchError(err)) {
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "search.failed",
+        requestId,
+        code: err.code,
+        stage: err.stage ?? null,
+        name: err.name,
+      }),
+    );
+    return { status: err.status, body: { ...err.toPublicJSON(), request_id: requestId } };
+  }
+  console.error(
+    JSON.stringify({ level: "error", event: "search.unexpected_error", requestId }),
+    err,
+  );
+  return {
+    status: 500,
+    body: { error: "An error occurred.", code: "internal_error", request_id: requestId },
+  };
+}
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
-  const query = url.searchParams.get("q");
+  const rawQuery = url.searchParams.get("q");
   const mode = url.searchParams.get("mode") || "article";
   const wantStream = url.searchParams.get("stream") === "1";
 
-  if (!query) return NextResponse.json({ error: "Query 'q' required" }, { status: 400 });
+  const requestId = newRequestId();
+  const pipeline: PipelineContext = { requestId, degraded: new DegradationLog(requestId) };
+
+  // Input validation happens before any paid work. Without a length cap one
+  // unauthenticated request drives the full Gemini + Voyage + Cohere + RPC
+  // fan-out with an arbitrarily large query.
+  const query = (rawQuery ?? "").trim();
+  let inputError: InvalidSearchInputError | null = null;
+  if (!query) {
+    inputError = new InvalidSearchInputError("Query 'q' required", { requestId });
+  } else if (query.length > MAX_QUERY_CHARS) {
+    inputError = new InvalidSearchInputError(
+      `Query exceeds ${MAX_QUERY_CHARS} characters`,
+      { requestId },
+    );
+  } else if (!ALLOWED_MODES.has(mode)) {
+    inputError = new InvalidSearchInputError(`Unknown mode "${mode}"`, { requestId });
+  }
+  if (inputError && !wantStream) {
+    const { status, body } = failureResponseBody(inputError, requestId);
+    return NextResponse.json(body, { status });
+  }
 
   const ctx: SearchRequestContext = {
     userAgent: request.headers.get("user-agent"),
@@ -2813,11 +2976,11 @@ export async function GET(request: NextRequest) {
 
   if (!wantStream) {
     try {
-      const { result } = await getOrComputeResult(query, mode, undefined, ctx);
+      const { result } = await getOrComputeResult(query, mode, pipeline, undefined, ctx);
       return NextResponse.json(result);
     } catch (err) {
-      console.error("Search error:", err);
-      return NextResponse.json({ error: "An error occurred." }, { status: 500 });
+      const { status, body } = failureResponseBody(err, requestId);
+      return NextResponse.json(body, { status });
     }
   }
 
@@ -2845,7 +3008,8 @@ export async function GET(request: NextRequest) {
       };
 
       try {
-        const { result, fromCache } = await getOrComputeResult(query, mode, onStage, ctx);
+        if (inputError) throw inputError;
+        const { result, fromCache } = await getOrComputeResult(query, mode, pipeline, onStage, ctx);
         if (fromCache) {
           // Cached answer: replay the stages quickly so the loader still arcs.
           for (const s of STAGE_ORDER) {
@@ -2856,8 +3020,11 @@ export async function GET(request: NextRequest) {
         send("result", result);
         send("done", {});
       } catch (err) {
-        console.error("Search error (stream):", err);
-        send("failure", { error: "An error occurred." });
+        // Headers are already streamed, so the status code is spent. Emit the
+        // typed failure the client listens for — never a fabricated empty
+        // `result`, which is what made the outage invisible.
+        const { body } = failureResponseBody(err, requestId);
+        send("failure", body);
       } finally {
         clearInterval(heartbeat);
         closed = true;

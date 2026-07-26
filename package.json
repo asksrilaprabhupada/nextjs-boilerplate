@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify:contract": "node scripts/verify-search-contract.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.100.0",
