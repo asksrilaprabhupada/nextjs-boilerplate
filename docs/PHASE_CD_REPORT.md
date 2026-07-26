@@ -95,3 +95,83 @@ SITE=https://asksrilaprabhupada.vercel.app npm run eval:gold
 ```
 
 If anything looks wrong: `DEEP_RESEARCH_V2_ENABLED=false`.
+
+---
+
+# Addendum — finishing pass
+
+Work done after the four phases were merged, in risk order. Everything here was
+found by exercising the system rather than reading it.
+
+## 1. Citations were malformed for ~92% of the corpus (shipped defect)
+
+Calling the batch RPC with the exact payload `supabase-js` sends produced
+`SB 7.8.Text 9` and `ISO 0.Verse text`.
+
+| Scripture | Rows affected | Storage |
+|---|---|---|
+| SB | 11,944 / 13,004 | `verse_number = 'Text 9'` |
+| CC | 11,131 / 11,359 | `verse_number = 'Text 1'` |
+| BS | 62 / 62 | `'Verse text'`; `chapter_number` **is** the verse, chapter always 5 |
+| ISO | 19 / 19 | `'Verse text'` |
+| NOI | 11 / 11 | `'Devanagari'` |
+
+`vedabase_url` is now the authority — it carries the canonical locator and
+cannot drift from per-book column quirks. Verified across **all 25,131 verses**:
+`SB 1.1.1`, `CC Adi 1.1`, `CC Madhya 9.265`, `BG 18.66`, `BS 5.29`, `ISO 1`,
+`ISO Invocation`, `NOI 8`, `NBS 1.1`, `MMS 1.1`.
+
+`public.format_verse_reference()` (SQL) + `app/lib/search-v2/citation.ts` (TS,
+and the one that actually renders). `refetch.ts` now joins through
+`verses → chapters` for the SB canto / CC division.
+
+## 2. The orchestrator had never been executed
+
+`tests/search-v2-integration.test.ts` calls `runSearchV2` directly against a
+fake seeded with real production rows, with **no provider keys** — the
+all-providers-down path. Asserts the answer is still correct, cited and
+verbatim; that exactly five table RPCs run with hydration counted separately;
+that a retrieval failure propagates rather than returning empty; that a tampered
+source row is dropped while the rest renders; and that the question never
+reaches telemetry in plaintext.
+
+## 3. Two defects in the V2 code itself
+
+- The embedding lookup misused `cached()`, whose producer runs on a miss and
+  then **stores the result** — writing a `null` into the shared keyspace for
+  every unseen query text. Never served as a hit, but it polluted a shared
+  cache. Now a direct read-only get.
+- `durations.fusing = durations.fusing ?? 0` meant the fusing stage always
+  recorded zero. Fusion and dedup are where a bad ranking is created; now timed.
+
+## 4. Response cache wired into the V2 route
+
+The V2 branch returned before the caching logic, so every request recomputed —
+which matters more on MICRO with its 60-connection cap. Now keyed on the exact
+normalised question + mode + corpus version. **A degraded or
+evidence-insufficient response is never cached**: it is correct but weaker, and
+a 24-hour entry would outlive the outage that produced it.
+
+## 5. Planner call loops covered
+
+The rejection predicates were already unit-tested; the loop around them was not.
+Now covered against injected clients: one retry on a truncated body, safe
+fallback after two failures without throwing, discard of a schema-valid plan
+that invented a constraint, no model call at all for a bare exact reference, and
+rejection of a plan that reworded the disclosure.
+
+## Gates after the finishing pass
+
+lint 0 errors · typecheck clean · **175 tests** · production build succeeds.
+
+## Still open — and why
+
+- **No live end-to-end run.** The network policy blocks the deployment host,
+  Supabase HTTP, Voyage and Cohere. The integration test closes most of this gap
+  at the orchestration layer, but nothing has served a real HTTP request.
+- **41 of 65 gold-set rows carry unreviewed relevance labels.** This needs a
+  devotee's judgement and cannot be automated; the harness refuses to score them.
+- **The experiment matrix has not been run** — it requires a reachable
+  deployment. The harness is ready.
+- Fusion weights, `rrfK`, the duplicate threshold, the selection floor and MMR λ
+  remain benchmark candidates, not findings.
