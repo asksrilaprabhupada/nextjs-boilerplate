@@ -12,13 +12,13 @@ Next.js 16 App Router project. Supabase backend. The only app/ folder is the Nex
 npm install
 npm run dev
 npm run build
-npm test          # vitest — RRF fusion, multi-query hardening, verbatim validator
+npm test          # vitest — fusion weighting, dedup, selection, planners, verbatim validator
 SITE=<url> bash scripts/verify-release.sh   # release acceptance checks against any deployment
 ```
 
 ### Tech Stack
 
-Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses, verse_chunks, prose_paragraphs, transcript_paragraphs, letter_paragraphs tables, 244,000+ searchable passages; RLS enabled everywhere), Tailwind CSS 4, Framer Motion, vitest. AI: Voyage AI (voyage-context-4 query embeddings, 1024-dim, batched), Google Gemini (multi-query expansion + long-query preprocessing), Cohere Rerank v4.0 Pro (relevance reranking, judged against the original question only). Image processing: sharp (HEIC → JPEG). Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
+Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses, verse_chunks, prose_paragraphs, transcript_paragraphs, letter_paragraphs tables, 244,000+ searchable passages; RLS enabled everywhere), Tailwind CSS 4, Framer Motion, vitest. Image processing: sharp (HEIC → JPEG). Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
 
 ### Environment Variables (in .env.local)
 
@@ -30,12 +30,21 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=<anon key>
 VOYAGE_API_KEY=<voyage ai key>             # query embeddings (voyage-context-4, 1024-dim)
 GEMINI_API_KEY=<google ai studio key>      # multi-query expansion, long-query preprocessing
 COHERE_API_KEY=<cohere key>                # search result reranking (rerank-v4.0-pro)
-GEMINI_MODEL=gemini-2.5-flash              # optional — variant-generation model
-NEXT_PUBLIC_SITE_URL=<canonical origin>    # optional — set after attaching the custom domain
-MULTIQUERY_ENABLED=true                    # optional dials for the RAG-Fusion fan-out
-MULTIQUERY_VARIANTS=10
-MULTIQUERY_CHANNELS=all                    # or a comma list of semantic,fulltext,tags
+GEMINI_QUERY_PLANNER_MODEL=gemini-2.5-flash   # optional — query-plan model
+GEMINI_ARTICLE_PLANNER_MODEL=gemini-2.5-flash # optional — article-plan model
+COHERE_RERANK_MODEL=rerank-v4.0-pro           # optional — reranker
+NEXT_PUBLIC_SITE_URL=<canonical origin>       # optional — set after attaching the custom domain
+SEARCH_CORPUS_VERSION=2026-07-08-tags-v3      # optional — cache-busts a re-tagged corpus
 ```
+
+There is no environment variable that selects a search engine or a search mode.
+There is one pipeline; nothing switches it.
+
+### Tech Stack (AI)
+
+Voyage AI (voyage-context-4 query embeddings, 1024-dim, batched), Google Gemini
+(one schema-constrained query plan, one article plan), Cohere Rerank v4.0 Pro
+(relevance reranking, judged against the original question only).
 
 ### Design Direction
 
@@ -45,7 +54,15 @@ Cinematic + simple: the dark frames (the doorway, the Journey opening, the Featu
 
 ### Search pipeline (app/api/search/route.ts)
 
-GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood → expanding → searching → reranking → weaving, then `result`, then `done`). The pipeline: Gemini multi-query expansion (10 variants + a topic phrase, 4 s cap, graceful degradation) → batched Voyage embedding → per-variant lighter semantic/FTS/tags fan-out → reciprocal-rank fusion into the original query's candidates → Cohere rerank against the original question → provenance filter (HIS-only essay) → guided-study main flow (primary verse → best lecture → best letter) → server-side verbatim validator (every rendered block re-fetched and asserted against its source row; `validated`/`droppedBlocks` in the response) → deterministic verbatim essay template. Every fresh serving logs one `search_logs` row via the `log_search` RPC and returns `searchLogId` for feedback/behavior/citation-click telemetry.
+**ONE ENGINE, ONE ROAD.** There is a single pipeline. No flag, no environment variable, no `mode=` parameter and no question-classifier selects a different one, because there is no different one. A `mode=` parameter in the URL is ignored silently so old links keep working.
+
+GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood → expanding → searching → reranking → weaving, then `result`, then `done`).
+
+`route.ts` is the request boundary only — validate, read cache, call pipeline, log, respond. The stages live in `app/lib/search-v2/`, joined in `pipeline.ts`:
+
+Gemini query plan (one schema-constrained call, ≤6 distinct search angles, 4 s cap, rejected rather than repaired on any semantic violation) → batched Voyage embedding of the question and every approved angle → 5 concurrent batched RPCs (verses, verse chunks, prose, transcripts, letters) → one weighted RRF pass (the original question always outweighs any angle) → duplicate collapse → one Cohere rerank against the ORIGINAL question → rule-based evidence selection (≤8 passages; an unlabellable letter is excluded outright) → **verbatim re-fetch: every selected passage re-read from its source row and asserted byte-identical, or dropped** → Gemini article plan (order and structure only, never words) → deterministic renderer that owns every string a reader sees.
+
+Failure discipline: a retrieval RPC failure is fatal (503 with a request id) and never becomes "no teachings found". Everything else degrades and says so in `degradedStages`. Only a clean, non-degraded answer is cached. Every serving logs one `search_logs` row via the `log_search` RPC and returns `searchLogId` for feedback/behavior/citation-click telemetry.
 
 ### File Structure
 
@@ -65,7 +82,8 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── lockscreen-images/
 │   │   │   ├── route.ts               (image list endpoint)
 │   │   │   └── heic/route.ts          (HEIC-to-JPEG conversion via sharp)
-│   │   ├── search/route.ts            (hybrid search + RAG-Fusion + RRF + Cohere rerank + verbatim validator + SSE + telemetry)
+│   │   ├── health/route.ts            (can this deployment actually serve a search?)
+│   │   ├── search/route.ts            (request boundary only: validate → cache → pipeline → log → JSON or SSE)
 │   │   └── verse/route.ts             (single verse lookup by id, or by textual cross-reference)
 │   ├── components/
 │   │   ├── cinematic/                 # THE LIVE UI FAMILY
@@ -94,10 +112,8 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 01-supabase.ts            (shared server-side Supabase admin client)
 │   │   ├── 02-analytics.ts           (tracking helpers: logFeedback/logBehavior/logCitationClick)
 │   │   ├── 03-embed.ts               (Voyage embeddings; embedQueries batches original + variants)
-│   │   ├── 04-search-cache.ts        (24h LRU result cache)
 │   │   ├── 05-link-postprocessor.ts   (citation linking)
 │   │   ├── 06-lockscreen-data.ts      (slideshow fallback + daily verses)
-│   │   ├── 07-query-preprocessor.ts   (long-query phrase extraction)
 │   │   ├── 08-cohere-rerank.ts        (Cohere Rerank v4.0 Pro relevance reranking)
 │   │   ├── 09-purport-format.ts       (shared purport paragraph/footer helpers)
 │   │   ├── 10-passage-fold.ts         (shared fold preview + matched-line highlight + verbatim key line)
@@ -106,11 +122,23 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 13-passage-label.ts        (TYPE · SOURCE · SPEAKER attribution + amber provenance badge)
 │   │   ├── 14-verse-speaker.ts        (story speaker from uvāca markers)
 │   │   ├── 15-transcript-speakers.ts  (Name: prefix segmentation for lectures)
-│   │   ├── 16-multi-query.ts          (Gemini variant expansion + reciprocal-rank fusion)
 │   │   ├── 17-verbatim-validator.ts   (re-fetch + normalize ⊆ assertion for every rendered block)
 │   │   ├── 18-image-manifest.ts       (photo registry: src/alt/caption/allowFullBleed)
 │   │   ├── 19-seva-config.ts          (donation rows per region; an empty value renders as "Add in project")
 │   │   ├── 20-site.ts                 (canonical origin from NEXT_PUBLIC_SITE_URL)
+│   │   ├── search-v2/                 # THE SEARCH ENGINE — the only one
+│   │   │   ├── pipeline.ts            (the orchestrator; joins every stage, holds the budgets)
+│   │   │   ├── config.ts              (fusion weights, selection sizing, model ids)
+│   │   │   ├── reference.ts           (spots a scripture reference — a retrieval clue, never a road)
+│   │   │   ├── query-plan.ts          (one schema-constrained Gemini query plan + its validator)
+│   │   │   ├── retrieval.ts           (vocabulary resolve, batched embedding, 5 concurrent RPCs)
+│   │   │   ├── fusion.ts · dedup.ts   (one weighted RRF pass, then duplicate collapse)
+│   │   │   ├── rerank.ts              (one Cohere rerank against the original question)
+│   │   │   ├── select.ts              (rule-based evidence selection)
+│   │   │   ├── refetch.ts             (re-reads every passage from source and asserts it verbatim)
+│   │   │   ├── article-plan.ts · render.ts (structure only, then the deterministic renderer)
+│   │   │   ├── adapt.ts               (maps pipeline output onto the wire contract the UI renders)
+│   │   │   ├── cache.ts · rpc.ts · errors.ts · citation.ts
 │   │   ├── types/01-search.ts         (shared server↔client search contract + SSE stage events)
 │   │   └── server/01-lockscreen-images.ts (filesystem image reader)
 │   ├── types/01-speech.d.ts           (Web Speech API types)

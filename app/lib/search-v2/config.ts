@@ -68,24 +68,18 @@ export const CHANNEL_WEIGHT_KEY: Record<ChannelName, keyof typeof SEARCH_V2_CONF
   controlled_tags: "controlledTags",
 };
 
-/** Reader modes. Quick Answer is the 7am-class case; Guided Study is class prep. */
-export type SearchMode = "quick" | "guided";
-
-export const MODE_BUDGETS = {
-  quick: { maxSubqueries: 3, maxCandidatesBeforeRerank: 60, maxFinalPassages: 4 },
-  guided: { maxSubqueries: 6, maxCandidatesBeforeRerank: 120, maxFinalPassages: 8 },
-} as const;
-
 /**
  * Evidence-selector sizing. A range, not a target: the brief is explicit that
  * three Gītā verses and one purport with no letter beats a weak letter dragged
  * in for variety.
+ *
+ * ONE band. There used to be three, chosen by guessing what kind of question had
+ * been asked, which meant the same question could be sized three different ways
+ * depending on which words it happened to contain. These are the numbers the
+ * widest band carried, and they are provisional — the sizing question is
+ * reopened when the retrieval budget is settled.
  */
-export const SELECTION_SIZING = {
-  direct: { min: 2, max: 4 },
-  ordinary: { min: 4, max: 6 },
-  broad: { min: 5, max: 8 },
-} as const;
+export const SELECTION_SIZING = { min: 5, max: 8 } as const;
 
 /** MMR is off until the gold set says otherwise. λ is a candidate, not a finding. */
 export const MMR_LAMBDA = 0.7;
@@ -95,30 +89,12 @@ export function mmrEnabled(): boolean {
 }
 
 /**
- * The V2 flag. The existing pipeline stays in place as the control arm; this
- * decides which one serves a given request.
- *
- * DEFAULTS ON. That is a deliberate, and reversible, decision.
- *
- * V2 has not been executed end to end — the build environment's network policy
- * blocks the deployment host and every AI provider, so it is verified at the
- * database, type and unit-test layers only. Shipping it on is what was asked
- * for, and the failure modes are typed rather than silent: a retrieval failure
- * is a 503 with a request id, and no passage reaches a reader without surviving
- * the exact re-fetch in refetch.ts.
- *
- * ROLLBACK IS ONE ENVIRONMENT VARIABLE, NO DEPLOY:
- *
- *     DEEP_RESEARCH_V2_ENABLED=false
- *
- * That restores the restored-and-verified V1 pipeline immediately.
+ * There is ONE pipeline. There is no flag, no environment variable and no query
+ * parameter that selects a different one, because there is no different one left
+ * to select. A question that reaches this codebase travels exactly one road.
  */
-export function deepResearchV2Enabled(): boolean {
-  return (process.env.DEEP_RESEARCH_V2_ENABLED ?? "true").toLowerCase() === "true";
-}
-
 export function searchPipelineVersion(): string {
-  return process.env.SEARCH_PIPELINE_VERSION || (deepResearchV2Enabled() ? "v2" : "v1");
+  return process.env.SEARCH_PIPELINE_VERSION || "v2";
 }
 
 /**

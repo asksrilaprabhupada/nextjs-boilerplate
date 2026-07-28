@@ -9,11 +9,15 @@
  *
  * KEY DISCIPLINE — the rule that matters more than the backend:
  *
- *   A full response is served ONLY for an exact normalised question, in the same
- *   mode, under the same config and corpus version. A *different* question that
- *   happens to be semantically close is a different question, and answering it
- *   from another question's cached evidence would be putting words in Śrīla
- *   Prabhupāda's mouth by accident.
+ *   A full response is served ONLY for an exact normalised question, under the
+ *   same config and corpus version. A *different* question that happens to be
+ *   semantically close is a different question, and answering it from another
+ *   question's cached evidence would be putting words in Śrīla Prabhupāda's
+ *   mouth by accident.
+ *
+ *   The keys carry no mode segment, because there are no modes. Entries written
+ *   by the two-mode code cannot be read back: their keys carry a segment this
+ *   shape never produces, so they simply expire unread.
  *
  * Retrieval candidates may be reused more liberally, because everything
  * downstream — rerank against the original question, selection, exact re-fetch —
@@ -136,14 +140,13 @@ export const TTL = {
 export const cacheKeys = {
   queryPlan: (question: string) => `query-plan:v1:${sha256(normalizeQuestion(question))}`,
   embedding: (model: string, text: string) => `embedding:${model}:${sha256(normalizeQuestion(text))}`,
-  retrieval: (mode: string, planHash: string) =>
-    `retrieval:v2:${searchCorpusVersion()}:${mode}:${planHash}`,
+  retrieval: (planHash: string) => `retrieval:v2:${searchCorpusVersion()}:${planHash}`,
   rerank: (question: string, candidateSetHash: string) =>
     `rerank:v1:${sha256(normalizeQuestion(question))}:${candidateSetHash}`,
   articlePlan: (question: string, selectedIdHash: string) =>
     `article-plan:v1:${sha256(normalizeQuestion(question))}:${selectedIdHash}`,
-  response: (mode: string, question: string) =>
-    `response:v2:${searchCorpusVersion()}:${mode}:${sha256(normalizeQuestion(question))}`,
+  response: (question: string) =>
+    `response:v2:${searchCorpusVersion()}:${sha256(normalizeQuestion(question))}`,
 } as const;
 
 /**

@@ -13,7 +13,6 @@
 import { describe, it, expect } from "vitest";
 import { planQuery, fallbackPlan } from "@/app/lib/search-v2/query-plan";
 import { planArticle, DISCLOSURE } from "@/app/lib/search-v2/article-plan";
-import { routeQuery } from "@/app/lib/search-v2/intent";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 
 /** A client that returns a scripted body per call, or throws. */
@@ -33,7 +32,8 @@ function scriptedClient(bodies: (string | Error)[]) {
 }
 
 const QUESTION = "how do I control my restless mind";
-const routed = routeQuery(QUESTION);
+/** The one fan-out ceiling. Every question is planned against it. */
+const MAX_SUBQUERIES = 6;
 
 function goodPlan(over: Record<string, unknown> = {}) {
   return JSON.stringify({
@@ -59,7 +59,7 @@ function goodPlan(over: Record<string, unknown> = {}) {
 describe("query planner loop", () => {
   it("accepts a well-formed plan on the first call", async () => {
     const client = scriptedClient([goodPlan()]);
-    const out = await planQuery(QUESTION, routed, { client });
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("model");
     expect(out.plan.subqueries).toHaveLength(2);
     expect(client.calls).toHaveLength(1);
@@ -67,7 +67,7 @@ describe("query planner loop", () => {
 
   it("retries exactly once on a truncated body, then succeeds", async () => {
     const client = scriptedClient(['{"schema_version":"query-pl', goodPlan()]);
-    const out = await planQuery(QUESTION, routed, { client });
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("model_retry");
     expect(client.calls).toHaveLength(2);
     expect(out.rejections.length).toBeGreaterThan(0);
@@ -75,7 +75,7 @@ describe("query planner loop", () => {
 
   it("falls back to the original question after two failures — never throws", async () => {
     const client = scriptedClient([new Error("503"), new Error("503")]);
-    const out = await planQuery(QUESTION, routed, { client });
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("fallback_original_only");
     expect(out.plan.subqueries).toHaveLength(0);
     expect(out.plan.canonical_query).toBe(QUESTION);
@@ -91,23 +91,34 @@ describe("query planner loop", () => {
       },
     });
     const client = scriptedClient([invented, invented]);
-    const out = await planQuery(QUESTION, routed, { client });
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("fallback_original_only");
     expect(out.rejections.join(" ")).toMatch(/invented recipient/);
   });
 
-  it("never calls the model for a bare exact reference", async () => {
-    const client = scriptedClient([goodPlan()]);
-    const out = await planQuery("BG 18.66", routeQuery("BG 18.66"), { client });
-    expect(client.calls).toHaveLength(0);
-    expect(out.source).toBe("fallback_original_only");
+  it("plans a bare scripture reference like any other question", async () => {
+    // This used to skip the planner entirely, so "BG 18.66" and "what does BG
+    // 18.66 mean" were answered by two different pipelines. One road now: the
+    // reference becomes a retrieval constraint, not a detour.
+    const client = scriptedClient([
+      goodPlan({
+        intent: "exact_reference",
+        canonical_query: "BG 18.66",
+        preserve_terms: ["BG 18.66"],
+        subqueries: [],
+      }),
+    ]);
+    const out = await planQuery("BG 18.66", MAX_SUBQUERIES, { client });
+    expect(client.calls).toHaveLength(1);
+    expect(out.source).toBe("model");
+    expect(out.plan.constraints.scripture_references).toContain("BG 18.66");
   });
 
   it("falls back when no API key is configured", async () => {
     const saved = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;
     try {
-      const out = await planQuery(QUESTION, routed);
+      const out = await planQuery(QUESTION, MAX_SUBQUERIES);
       expect(out.source).toBe("fallback_original_only");
       expect(out.rejections.join(" ")).toMatch(/GEMINI_API_KEY absent/);
     } finally {
@@ -116,7 +127,7 @@ describe("query planner loop", () => {
   });
 
   it("produces a fallback plan that is itself valid", () => {
-    const plan = fallbackPlan(QUESTION, routed);
+    const plan = fallbackPlan(QUESTION);
     expect(plan.schema_version).toBe("query-plan-v1");
     expect(plan.subqueries).toEqual([]);
   });

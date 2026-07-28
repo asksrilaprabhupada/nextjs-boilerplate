@@ -1,16 +1,16 @@
 /**
  * search-v2-pipeline.test.ts — Unit cover for the Phase B decision layer.
  *
- * These cover the parts that decide WHAT a devotee is shown: routing, fusion
- * weighting, duplicate collapse and evidence selection. All are pure, so they
- * run without a database, a provider key or a network.
+ * These cover the parts that decide WHAT a devotee is shown: fusion weighting,
+ * duplicate collapse and evidence selection. All are pure, so they run without a
+ * database, a provider key or a network.
  *
  * The assertions are written around the failures the brief calls unrecoverable
  * — a letter losing its recipient, a variant outvoting the original question, a
  * verse collapsed into its purport — rather than around happy paths.
  */
 import { describe, it, expect } from "vitest";
-import { routeQuery, extractReference, sizingBandFor } from "@/app/lib/search-v2/intent";
+import { extractReference, normalizeReference } from "@/app/lib/search-v2/reference";
 import { fuseWeighted, buildPriorityMap, type RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates, mustNotCollapse, normalizeForHash } from "@/app/lib/search-v2/dedup";
 import { selectEvidence, isLabellable } from "@/app/lib/search-v2/select";
@@ -37,58 +37,20 @@ function candidate(over: Partial<RetrievedCandidate> & { passage_key: string }):
   } as RetrievedCandidate;
 }
 
-// ─── B1: deterministic intent router ─────────────────────────
+// ─── scripture references: a retrieval clue, never a road ────
 
-describe("intent router", () => {
-  it("routes a bare reference to direct lookup with no planner and no rerank", () => {
-    for (const q of ["BG 18.66", "bg 18.66", "  SB 1.2.6 ", "CC Adi 1.1", "NOI 1", "BG 18.66"]) {
-      const r = routeQuery(q);
-      expect(r.intent, q).toBe("exact_reference");
-      expect(r.bypassPlanner, q).toBe(true);
-      expect(r.bypassRerank, q).toBe(true);
-      expect(r.maxSubqueries, q).toBe(0);
-      expect(r.reference, q).toBeTruthy();
-    }
+describe("reference extraction", () => {
+  it("normalises a reference for the lookup RPC", () => {
+    expect(extractReference("bg 18.66")).toBe("BG 18.66");
+    expect(extractReference("  SB 1.2.6 ")).toBe("SB 1.2.6");
+    expect(extractReference("what does BG 18.66 mean?")).toBe("BG 18.66");
+    expect(normalizeReference("cc  adi 1.1")).toBe("CC adi 1.1");
   });
 
   it("does not mistake ordinary prose for a reference", () => {
-    for (const q of ["what is bhakti", "who was Arjuna", "how do I chant"]) {
-      expect(routeQuery(q).intent, q).not.toBe("exact_reference");
+    for (const q of ["what is bhakti", "who was Arjuna", "how do I chant", ""]) {
+      expect(extractReference(q), q).toBeNull();
     }
-  });
-
-  it("extracts a reference mentioned inside a question but still plans", () => {
-    const r = routeQuery("what does BG 18.66 mean?");
-    expect(r.reference).toBe("BG 18.66");
-    expect(r.bypassPlanner).toBe(false);
-    expect(r.maxSubqueries).toBe(1);
-  });
-
-  it("caps subqueries per the brief's ceilings", () => {
-    expect(routeQuery('he said "abandon all varieties of religion"').maxSubqueries).toBeLessThanOrEqual(1);
-    expect(routeQuery("who was Haridasa Thakura").maxSubqueries).toBeLessThanOrEqual(2);
-    expect(routeQuery("compare karma-yoga and bhakti-yoga").maxSubqueries).toBeLessThanOrEqual(6);
-    expect(routeQuery("what is the soul").maxSubqueries).toBeLessThanOrEqual(4);
-  });
-
-  it("classifies letter and lecture questions before topical heuristics", () => {
-    // "why did he write to..." is a letter question, not a why question.
-    expect(routeQuery("why did Prabhupada write to Rayarama in a letter").intent).toBe("letter_specific");
-    expect(routeQuery("what did he say in the morning walk about science").intent).toBe("lecture_specific");
-  });
-
-  it("treats empty input as insufficient rather than broad", () => {
-    expect(routeQuery("   ").intent).toBe("insufficient_or_out_of_domain");
-  });
-
-  it("maps intents onto sizing bands", () => {
-    expect(sizingBandFor("exact_reference")).toBe("direct");
-    expect(sizingBandFor("multi_part")).toBe("broad");
-    expect(sizingBandFor("practical_how")).toBe("ordinary");
-  });
-
-  it("normalises the extracted reference for the lookup RPC", () => {
-    expect(extractReference("bg 18.66")).toBe("BG 18.66");
   });
 });
 
@@ -270,7 +232,7 @@ describe("evidence selection", () => {
         channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }],
       }),
     ]);
-    const out = selectEvidence({ ranked, intent: "letter_specific", approvedQueryIds: ["q"], maxFinalPassages: 4 });
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 4 });
     expect(out.selected[0].contextRequirements).toContain("letter_context");
   });
 
@@ -280,13 +242,13 @@ describe("evidence selection", () => {
       candidate({ passage_key: "verse:2", retrieval_text: "the second distinct verse", channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 2 }], matched_query_ids: ["q"] }),
       candidate({ passage_key: "letter:9", retrieval_text: "a far weaker letter paragraph", source_type: "letter", recipient: "X", occurred_on: "1970-01-01", channel_ranks: [{ query_id: "q", channel: "semantic", rank: 400 }], matched_query_ids: ["q"] }),
     ]);
-    const out = selectEvidence({ ranked, intent: "exact_reference", approvedQueryIds: ["q"], maxFinalPassages: 8 });
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 });
     expect(out.selected.every((s) => s.candidate.source_type !== "letter")).toBe(true);
   });
 
-  it("keeps an exact-reference answer small", () => {
+  it("never exceeds the passage ceiling, however many candidates survive", () => {
     const ranked = build(
-      Array.from({ length: 10 }, (_, i) =>
+      Array.from({ length: 40 }, (_, i) =>
         candidate({
           passage_key: `verse:${i}`,
           retrieval_text: `distinct text ${i}`,
@@ -295,9 +257,12 @@ describe("evidence selection", () => {
         }),
       ),
     );
-    const out = selectEvidence({ ranked, intent: "exact_reference", approvedQueryIds: ["q"], maxFinalPassages: 8 });
-    expect(out.band).toBe("direct");
-    expect(out.selected.length).toBeLessThanOrEqual(4);
+    // One sizing band for every question. The ceiling is the ceiling; it is not
+    // relaxed or tightened by guessing what kind of question was asked.
+    expect(selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 }).selected.length)
+      .toBeLessThanOrEqual(8);
+    expect(selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 3 }).selected.length)
+      .toBeLessThanOrEqual(3);
   });
 
   it("pulls in the purport partner of the primary verse", () => {
@@ -305,7 +270,7 @@ describe("evidence selection", () => {
       candidate({ passage_key: "verse:1", source_type: "verse", reference: "BG 6.6", retrieval_text: "v", channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }] }),
       candidate({ passage_key: "purport:1", source_type: "purport", reference: "BG 6.6", retrieval_text: "p", channel_ranks: [{ query_id: "q", channel: "semantic", rank: 30 }] }),
     ]);
-    const out = selectEvidence({ ranked, intent: "broad_concept", approvedQueryIds: ["q"], maxFinalPassages: 8 });
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 });
     expect(out.selected.map((s) => s.candidate.passage_key)).toContain("purport:1");
   });
 
@@ -313,7 +278,7 @@ describe("evidence selection", () => {
     const ranked = build([
       candidate({ passage_key: "verse:1", matched_query_ids: ["q"], channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }] }),
     ]);
-    const out = selectEvidence({ ranked, intent: "broad_concept", approvedQueryIds: ["q", "s1"], maxFinalPassages: 8 });
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q", "s1"], maxFinalPassages: 8 });
     expect(out.uncoveredQueryIds).toContain("s1");
   });
 
@@ -321,7 +286,7 @@ describe("evidence selection", () => {
     const ranked = build([
       candidate({ passage_key: "letter:1", source_type: "letter", recipient: null, occurred_on: null }),
     ]);
-    const out = selectEvidence({ ranked, intent: "broad_concept", approvedQueryIds: ["q"], maxFinalPassages: 8 });
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 });
     expect(out.evidenceInsufficient).toBe(true);
   });
 });
@@ -329,25 +294,47 @@ describe("evidence selection", () => {
 // ─── B2: query-plan semantic validation ──────────────────────
 
 describe("query plan validation", () => {
-  const routed = routeQuery("how do I control my mind");
-  const base = fallbackPlan("how do I control my mind", routed);
+  /** The one fan-out ceiling. Every question is planned against it. */
+  const MAX_SUBQUERIES = 6;
+  const base = fallbackPlan("how do I control my mind");
+  const check = (query: string, plan: typeof base) =>
+    semanticRejections({ query, plan, maxSubqueries: MAX_SUBQUERIES });
 
   it("accepts the fallback plan against its own schema", () => {
     expect(QueryPlanSchema.safeParse(base).success).toBe(true);
   });
 
-  it("rejects more subqueries than the router permits", () => {
+  it("carries a reference the devotee wrote into the fallback plan's constraints", () => {
+    // A clue for retrieval, not a decision about how the question is handled.
+    expect(fallbackPlan("what does BG 18.66 mean?").constraints.scripture_references)
+      .toEqual(["BG 18.66"]);
+    expect(base.constraints.scripture_references).toEqual([]);
+  });
+
+  it("rejects more subqueries than the budget permits", () => {
     const plan = {
       ...base,
-      subqueries: Array.from({ length: 6 }, (_, i) => ({
+      subqueries: Array.from({ length: MAX_SUBQUERIES + 1 }, (_, i) => ({
         id: `s${i}`,
         text: `distinct angle number ${i} about steadiness`,
         role: "cause" as const,
         priority: "supporting" as const,
       })),
     };
-    const problems = semanticRejections({ query: "how do I control my mind", routed, plan });
-    expect(problems.join(" ")).toMatch(/router permits/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/budget permits/);
+  });
+
+  it("accepts a plan that spends the budget exactly", () => {
+    const plan = {
+      ...base,
+      subqueries: Array.from({ length: MAX_SUBQUERIES }, (_, i) => ({
+        id: `s${i}`,
+        text: `distinct angle number ${i} about steadiness`,
+        role: "cause" as const,
+        priority: "supporting" as const,
+      })),
+    };
+    expect(check("how do I control my mind", plan).join(" ")).not.toMatch(/budget permits/);
   });
 
   it("rejects a subquery equivalent to the original question", () => {
@@ -355,7 +342,7 @@ describe("query plan validation", () => {
       ...base,
       subqueries: [{ id: "s1", text: "how do I control my mind", role: "reformulation" as const, priority: "primary" as const }],
     };
-    expect(semanticRejections({ query: "how do I control my mind", routed, plan }).join(" ")).toMatch(/equivalent/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/equivalent/);
   });
 
   it("rejects near-identical subqueries", () => {
@@ -366,19 +353,18 @@ describe("query plan validation", () => {
         { id: "s2", text: "steadying the restless mind through practice", role: "practice" as const, priority: "supporting" as const },
       ],
     };
-    expect(semanticRejections({ query: "how do I control my mind", routed, plan }).join(" ")).toMatch(/near-identical/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/near-identical/);
   });
 
   it("rejects an invented constraint the devotee never asked for", () => {
     const plan = { ...base, constraints: { ...base.constraints, recipient: "Brahmananda" } };
-    expect(semanticRejections({ query: "how do I control my mind", routed, plan }).join(" ")).toMatch(/invented recipient/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/invented recipient/);
   });
 
   it("rejects a plan that drops a proper name from the question", () => {
     const q = "what did Prabhupada say about Haridasa Thakura";
-    const r = routeQuery(q);
-    const plan = { ...fallbackPlan(q, r), canonical_query: "what did he say about the chanting saint" };
-    expect(semanticRejections({ query: q, routed: r, plan }).join(" ")).toMatch(/dropped/);
+    const plan = { ...fallbackPlan(q), canonical_query: "what did he say about the chanting saint" };
+    expect(check(q, plan).join(" ")).toMatch(/dropped/);
   });
 
   it("rejects reserved subquery ids that would inherit the original's weight", () => {
@@ -386,7 +372,7 @@ describe("query plan validation", () => {
       ...base,
       subqueries: [{ id: "__tags__", text: "steadying the mind by detachment", role: "method" as const, priority: "primary" as const }],
     };
-    expect(semanticRejections({ query: "how do I control my mind", routed, plan }).join(" ")).toMatch(/reserved/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/reserved/);
   });
 
   it("accepts a well-formed plan with genuinely distinct angles", () => {
@@ -397,6 +383,6 @@ describe("query plan validation", () => {
         { id: "s2", text: "why the mind is restless and flickering", role: "cause" as const, priority: "supporting" as const },
       ],
     };
-    expect(semanticRejections({ query: "how do I control my mind", routed, plan })).toEqual([]);
+    expect(check("how do I control my mind", plan)).toEqual([]);
   });
 });

@@ -1,8 +1,17 @@
 /**
- * pipeline.ts — The V2 orchestrator, and the only place the stages are joined.
+ * pipeline.ts — The orchestrator, and the only place the stages are joined.
  *
- *   route → plan → embed → 5 batched RPCs → fuse → dedupe → rerank →
+ *   plan → embed → 5 batched RPCs → fuse → dedupe → rerank →
  *   select → re-fetch → article plan → render
+ *
+ * ONE ROAD. Every question that reaches this function is planned, fanned out,
+ * fused, reranked, selected, re-fetched and rendered by the same code with the
+ * same budgets. There is no classifier deciding that this question deserves six
+ * angles and that one deserves two, no mode deciding that this reader gets four
+ * passages and that one gets eight, and no shortcut that skips the reranker
+ * because a question looked like a bare reference. Those switches are why the
+ * same question could produce four different answers and nobody could say which
+ * path had produced the one in front of them.
  *
  * Every degradation is recorded and surfaced in the response. The two rules
  * that govern the failure paths:
@@ -16,7 +25,6 @@
  * Telemetry carries a hash of the question, never the question itself, plus the
  * counts that let a bad result be diagnosed without re-running it.
  */
-import { routeQuery } from "@/app/lib/search-v2/intent";
 import { planQuery } from "@/app/lib/search-v2/query-plan";
 import { retrieveCandidates, ORIGINAL_QUERY_ID } from "@/app/lib/search-v2/retrieval";
 import { fuseWeighted, buildPriorityMap } from "@/app/lib/search-v2/fusion";
@@ -27,9 +35,21 @@ import { refetchAndVerify } from "@/app/lib/search-v2/refetch";
 import { planArticle } from "@/app/lib/search-v2/article-plan";
 import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
-import { MODE_BUDGETS, searchPipelineVersion, searchCorpusVersion, type SearchMode } from "@/app/lib/search-v2/config";
+import { searchPipelineVersion, searchCorpusVersion } from "@/app/lib/search-v2/config";
 import { sha256, normalizeQuestion } from "@/app/lib/search-v2/cache";
 import type { DegradedStage } from "@/app/lib/search-v2/rpc";
+
+/**
+ * The budgets, as plain fixed values. These are the numbers the wider of the two
+ * retired modes carried; they are held here, at the one place that spends them,
+ * rather than in a table keyed by something that no longer exists.
+ *
+ * They are provisional. Deciding how many passages a devotee should actually be
+ * shown is the next piece of work, and it will replace these outright.
+ */
+const MAX_SUBQUERIES = 6;
+const MAX_CANDIDATES_BEFORE_RERANK = 120;
+const MAX_FINAL_PASSAGES = 8;
 
 export type PipelineStage =
   | "planning"
@@ -47,8 +67,11 @@ export type OnPipelineStage = (stage: PipelineStage) => void;
 /** Per-request diagnostics. No secrets, no raw question. */
 export interface SearchTelemetry {
   requestId: string;
-  mode: SearchMode;
-  intent: string;
+  /**
+   * The planner's own description of the question. Recorded so a bad result can
+   * be diagnosed; it selects nothing and changes no budget.
+   */
+  plannedIntent: string;
   questionHash: string;
   pipelineVersion: string;
   corpusVersion: string;
@@ -71,7 +94,6 @@ export interface SearchTelemetry {
   totalDurationMs: number;
   models: { queryPlanner: string | null; reranker: string; articlePlanner: string | null };
   errorCategory: string | null;
-  flagCohort: string;
 }
 
 export interface PipelineOutput {
@@ -84,14 +106,12 @@ export interface PipelineOutput {
 export interface PipelineInput {
   db: RpcCapableClient;
   query: string;
-  mode: SearchMode;
   requestId: string;
   onStage?: OnPipelineStage;
 }
 
 export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput> {
-  const { db, query, mode, requestId, onStage } = input;
-  const budgets = MODE_BUDGETS[mode];
+  const { db, query, requestId, onStage } = input;
   const degraded = new DegradationLog(requestId);
   const durations: Record<string, number> = {};
   const started = Date.now();
@@ -107,9 +127,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   // ── plan ──
   onStage?.("planning");
-  const routed = routeQuery(query);
-  const routedForMode = { ...routed, maxSubqueries: Math.min(routed.maxSubqueries, budgets.maxSubqueries) };
-  const planned = await time("planning", () => planQuery(query, routedForMode));
+  const planned = await time("planning", () => planQuery(query, MAX_SUBQUERIES));
   if (planned.source === "fallback_original_only" && planned.rejections.length > 0) {
     degraded.record("planning", "gemini_query_planner", { code: "plan_rejected" });
   }
@@ -143,8 +161,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     rerankUnified({
       question: query, // the ORIGINAL question, never the canonicalisation
       candidates: deduped.candidates,
-      maxCandidates: budgets.maxCandidatesBeforeRerank,
-      bypass: routed.bypassRerank,
+      maxCandidates: MAX_CANDIDATES_BEFORE_RERANK,
     }),
   );
   if (rerank.degradedReason) {
@@ -156,9 +173,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   const approvedIds = [ORIGINAL_QUERY_ID, ...planned.plan.subqueries.map((s) => s.id)];
   const selection = selectEvidence({
     ranked: rerank.ranked,
-    intent: routed.intent,
     approvedQueryIds: approvedIds,
-    maxFinalPassages: budgets.maxFinalPassages,
+    maxFinalPassages: MAX_FINAL_PASSAGES,
   });
 
   // ── verify: the hard stop ──
@@ -171,18 +187,12 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   // ── organise ──
   onStage?.("organizing");
-  // Quick Answer skips the article planner whenever the sources speak for
-  // themselves: a devotee fifteen minutes before class does not need an AI to
-  // arrange three passages.
-  const skipPlanner = mode === "quick" && refetched.verified.length <= 3;
   const article = await time("organizing", async () => {
-    const plan = skipPlanner
-      ? { plan: null, source: "deterministic_fallback" as const, rejections: [] }
-      : await planArticle(query, refetched.verified, budgets.maxFinalPassages);
-    if (plan.plan === null && !skipPlanner && plan.rejections.length > 0) {
+    const plan = await planArticle(query, refetched.verified, MAX_FINAL_PASSAGES);
+    if (plan.plan === null && plan.rejections.length > 0) {
       degraded.record("organizing", "gemini_article_planner", { code: "plan_rejected" });
     }
-    return renderArticle({ question: query, passages: refetched.verified, plan: plan.plan, mode });
+    return renderArticle({ question: query, passages: refetched.verified, plan: plan.plan });
   });
 
   const degradedStages = degraded.list();
@@ -190,8 +200,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   const telemetry: SearchTelemetry = {
     requestId,
-    mode,
-    intent: routed.intent,
+    plannedIntent: planned.plan.intent,
     questionHash: sha256(normalizeQuestion(query)),
     pipelineVersion: searchPipelineVersion(),
     corpusVersion: searchCorpusVersion(),
@@ -218,10 +227,9 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
       articlePlanner: article.planned ? "gemini" : null,
     },
     errorCategory: null,
-    flagCohort: "v2",
   };
 
-  console.info(JSON.stringify({ level: "info", event: "search.v2_complete", ...telemetry }));
+  console.info(JSON.stringify({ level: "info", event: "search.complete", ...telemetry }));
 
   return {
     article,

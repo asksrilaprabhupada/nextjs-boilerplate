@@ -193,7 +193,6 @@ export interface RenderInput {
   question: string;
   passages: VerifiedPassage[];
   plan: ArticlePlan | null;
-  mode: "quick" | "guided";
 }
 
 /**
@@ -202,7 +201,7 @@ export interface RenderInput {
  * passage text, because both read the same verified data.
  */
 export function renderArticle(input: RenderInput): RenderedArticle {
-  const { question, plan, mode } = input;
+  const { question, plan } = input;
   // Second gate after re-fetch: nothing unlabellable is rendered.
   const passages = input.passages.filter(isRenderable);
   const byKey = new Map(passages.map((p) => [p.passageKey, p]));
@@ -272,10 +271,10 @@ export function renderArticle(input: RenderInput): RenderedArticle {
 
   return {
     title,
-    articleType: plan?.article_type ?? (mode === "quick" ? "direct_answer" : "guided_study"),
-    // Quick Answer is source-first and single column; a source map there is
-    // noise before the passage the devotee came for.
-    sourceMap: mode === "guided" ? buildSourceMap(passages) : null,
+    // The planner's own shape when it produced one; otherwise the shape this
+    // renderer just built. Descriptive only — nothing branches on it.
+    articleType: plan?.article_type ?? "unplanned",
+    sourceMap: buildSourceMap(passages),
     sections,
     closing,
     citations,

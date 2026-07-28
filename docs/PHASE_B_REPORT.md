@@ -1,5 +1,12 @@
 # Phase B (part 1) — Retrieval and ranking V2
 
+> **SUPERSEDED — historical record.** The single-search-engine change removed
+> the second engine, the `DEEP_RESEARCH_V2_ENABLED` flag and the two reader
+> modes described below. **There is no rollback to a previous engine and no
+> environment variable that selects one**; any such instruction in this document
+> is history, not a runbook. Kept unedited so the reasoning behind the current
+> pipeline stays readable.
+
 **Commit:** `1a2913b` · **PR:** [#120](https://github.com/asksrilaprabhupada/nextjs-boilerplate/pull/120)
 **Flag state:** `DEEP_RESEARCH_V2_ENABLED` defaults **false**. V2 is not serving. See "Not done".
 
