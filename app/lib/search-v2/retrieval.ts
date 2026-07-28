@@ -236,7 +236,24 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
           p_limit: perTableLimit,
         },
         { stage: `retrieval:batch:${fn}`, requestId },
-      ).then((rows) => rows ?? []),
+      ).then((rows) => {
+        const out = rows ?? [];
+        // A table that fills its whole budget probably has more relevant rows
+        // waiting behind the cut. Logged so the ceiling is raised from
+        // evidence, not from a hunch.
+        if (out.length >= perTableLimit) {
+          console.info(
+            JSON.stringify({
+              level: "info",
+              event: "search.table_at_limit",
+              requestId,
+              table: fn,
+              limit: perTableLimit,
+            }),
+          );
+        }
+        return out;
+      }),
     ),
   );
 

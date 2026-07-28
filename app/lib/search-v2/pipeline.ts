@@ -31,7 +31,7 @@ import { fuseWeighted, buildPriorityMap } from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates } from "@/app/lib/search-v2/dedup";
 import { rerankUnified } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
-import { refetchAndVerify } from "@/app/lib/search-v2/refetch";
+import { refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { planArticle } from "@/app/lib/search-v2/article-plan";
 import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
@@ -40,16 +40,13 @@ import { sha256, normalizeQuestion } from "@/app/lib/search-v2/cache";
 import type { DegradedStage } from "@/app/lib/search-v2/rpc";
 
 /**
- * The budgets, as plain fixed values. These are the numbers the wider of the two
- * retired modes carried; they are held here, at the one place that spends them,
- * rather than in a table keyed by something that no longer exists.
- *
- * They are provisional. Deciding how many passages a devotee should actually be
- * shown is the next piece of work, and it will replace these outright.
+ * Six angles is the design of the query plan, not a limit on the answer: each
+ * approved angle serves a different retrieval purpose, and past six they stop
+ * being different purposes. Nothing else in this pipeline is a ceiling any
+ * more — every candidate is judged, and every passage above the relevance line
+ * is shown.
  */
 const MAX_SUBQUERIES = 6;
-const MAX_CANDIDATES_BEFORE_RERANK = 120;
-const MAX_FINAL_PASSAGES = 8;
 
 export type PipelineStage =
   | "planning"
@@ -62,7 +59,15 @@ export type PipelineStage =
   | "degraded"
   | "error";
 
-export type OnPipelineStage = (stage: PipelineStage) => void;
+/** Live counts for the waiting screen — how much has been found so far. */
+export interface PipelineStageInfo {
+  /** Candidates retrieved from the library (pre-dedup). */
+  found?: number;
+  /** Passages that cleared selection and are being woven. */
+  kept?: number;
+}
+
+export type OnPipelineStage = (stage: PipelineStage, info?: PipelineStageInfo) => void;
 
 /** Per-request diagnostics. No secrets, no raw question. */
 export interface SearchTelemetry {
@@ -98,6 +103,12 @@ export interface SearchTelemetry {
 
 export interface PipelineOutput {
   article: RenderedArticle;
+  /**
+   * The verified passages themselves, in selection order (the reranker's
+   * order). This is what the wire response is built from — the full words,
+   * never just names for the page to look up.
+   */
+  passages: VerifiedPassage[];
   telemetry: SearchTelemetry;
   uncoveredQueryIds: string[];
   evidenceInsufficient: boolean;
@@ -142,7 +153,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   }
 
   // ── fuse ──
-  onStage?.("fusing");
+  onStage?.("fusing", { found: retrieved.candidateCount });
   const priorities = buildPriorityMap(
     ORIGINAL_QUERY_ID,
     planned.plan.subqueries.map((s) => ({ id: s.id, priority: s.priority })),
@@ -155,26 +166,26 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   const deduped = dedupeCandidates(fused);
   durations.fusing = Date.now() - fuseStart;
 
-  // ── rerank ──
-  onStage?.("reranking");
+  // ── rerank: every candidate judged, no cap ──
+  onStage?.("reranking", { found: deduped.candidates.length });
   const rerank = await time("reranking", () =>
     rerankUnified({
       question: query, // the ORIGINAL question, never the canonicalisation
       candidates: deduped.candidates,
-      maxCandidates: MAX_CANDIDATES_BEFORE_RERANK,
     }),
   );
   if (rerank.degradedReason) {
     degraded.record("reranking", "cohere", { code: rerank.degradedReason });
   }
 
-  // ── select ──
-  onStage?.("selecting");
+  // ── select: by relevance, not by counting ──
+  onStage?.("selecting", { found: deduped.candidates.length });
   const approvedIds = [ORIGINAL_QUERY_ID, ...planned.plan.subqueries.map((s) => s.id)];
   const selection = selectEvidence({
     ranked: rerank.ranked,
     approvedQueryIds: approvedIds,
-    maxFinalPassages: MAX_FINAL_PASSAGES,
+    rerankAvailable: rerank.reranked,
+    requestId,
   });
 
   // ── verify: the hard stop ──
@@ -186,9 +197,13 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   }
 
   // ── organise ──
-  onStage?.("organizing");
+  // The planner contributes arrangement only. When it fails, or the list is
+  // too long for its schema, the deterministic renderer orders the passages —
+  // and in both cases every verified passage is shown: the renderer appends
+  // whatever a plan leaves unplaced.
+  onStage?.("organizing", { kept: refetched.verified.length });
   const article = await time("organizing", async () => {
-    const plan = await planArticle(query, refetched.verified, MAX_FINAL_PASSAGES);
+    const plan = await planArticle(query, refetched.verified);
     if (plan.plan === null && plan.rejections.length > 0) {
       degraded.record("organizing", "gemini_article_planner", { code: "plan_rejected" });
     }
@@ -212,7 +227,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     embeddingProviderCalls: retrieved.embeddingProviderCalls,
     candidatesBeforeFusion: retrieved.candidateCount,
     candidatesAfterFusion: fused.length,
-    duplicatesCollapsed: deduped.stats.exactCollapsed + deduped.stats.nearCollapsed,
+    duplicatesCollapsed: deduped.stats.exactCollapsed + deduped.stats.containedCollapsed,
     rerankDocumentCount: rerank.documentCount,
     reranked: rerank.reranked,
     selectedPassageCount: article.sections.reduce((n, s) => n + s.blocks.length, 0),
@@ -233,6 +248,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   return {
     article,
+    passages: refetched.verified,
     telemetry,
     uncoveredQueryIds: selection.uncoveredQueryIds,
     evidenceInsufficient: article.evidenceInsufficient || selection.evidenceInsufficient,

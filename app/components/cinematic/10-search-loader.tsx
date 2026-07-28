@@ -73,6 +73,8 @@ export default function SearchLoader({
   const [verseIdx, setVerseIdx] = useState(0);
   const [reduced, setReduced] = useState(false);
   const rafRef = useRef<number | null>(null);
+  /** When the current stage target was set — drives the slow creep past it. */
+  const targetSinceRef = useRef<number>(Date.now());
 
   useEffect(() => {
     try {
@@ -111,19 +113,30 @@ export default function SearchLoader({
     : Math.max(0, STAGE_DOTS.findIndex((d) => reported && d.keys.includes(reported.stage)));
   const target = done ? 100 : Math.min(active?.pct ?? 4, stage ? 100 : FALLBACK_CAP);
 
-  // Ease the bar toward the current stage target (snap when motion is reduced).
+  // Ease the bar toward the current stage target, then keep CREEPING gently
+  // past it while the same stage holds — a long rerank must read as work in
+  // progress, never as a frozen bar. The creep is honest about its ceiling:
+  // it never touches 100 before the result actually lands.
+  useEffect(() => {
+    targetSinceRef.current = Date.now();
+  }, [target]);
+
   useEffect(() => {
     if (reduced) { setPct(target); return; }
     const step = () => {
       setPct((p) => {
-        const next = p + Math.max(0.35, (target - p) * 0.06);
-        return next >= target ? target : next;
+        const heldMs = Date.now() - targetSinceRef.current;
+        const creep = done ? 0 : Math.min(6, (heldMs / 8000) * 0.8);
+        const goal = done ? 100 : Math.min(96, target + creep);
+        if (p >= goal) return p;
+        const next = p + Math.max(done ? 0.35 : 0.02, (goal - p) * 0.06);
+        return next >= goal ? goal : next;
       });
       rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [target, reduced]);
+  }, [target, reduced, done]);
 
   // Rotate one verse every 8 s (static under reduced motion).
   useEffect(() => {
@@ -155,6 +168,13 @@ export default function SearchLoader({
 
       {/* The user's actual question — never a sample. */}
       <p className="font-body" style={{ fontSize: 13, color: "#9A8F7D", margin: "8px 0 0", maxWidth: 460, textAlign: "center" }}>&ldquo;{q}&rdquo;</p>
+
+      {/* Live count — how much has been found so far, straight from the pipeline. */}
+      {typeof stage?.found === "number" && stage.found > 0 && (
+        <p className="font-body" aria-live="polite" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", color: "#6E6353", margin: "10px 0 0" }}>
+          {stage.found.toLocaleString("en-US")} passages so far
+        </p>
+      )}
 
       {/* The five real pipeline stages, ticking */}
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", justifyContent: "center", gap: 14, marginTop: 20 }}>

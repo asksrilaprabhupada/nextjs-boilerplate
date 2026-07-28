@@ -44,12 +44,22 @@ export const SEARCH_V2_CONFIG = {
     controlledTags: 0.35,
   },
 
-  /** Near-duplicate collapse threshold (cosine). Benchmarked in Phase D. */
-  duplicateCosine: 0.95,
-
-  /** Per-table candidate ceiling handed to each batch RPC. */
-  perTableLimit: 60,
+  /**
+   * Per-table candidate ceiling handed to each batch RPC. Deliberately large:
+   * the reranker's job is to sort the candidates, not the database's job to
+   * pre-shrink them. When a table returns this many rows, retrieval logs it,
+   * because a full table means more may be waiting behind the cut.
+   */
+  perTableLimit: 400,
 } as const;
+
+/**
+ * The relevance line. A passage the reranker scores at or above this is shown;
+ * below it, not — however many pass. This is a STARTING VALUE to be tuned from
+ * real score distributions, which is why every score is logged at selection
+ * time: tuning should come from numbers, not guesses.
+ */
+export const RELEVANCE_THRESHOLD = 0.3;
 
 export type QueryPriority = keyof typeof SEARCH_V2_CONFIG.queryWeights;
 export type ChannelName =
@@ -67,26 +77,6 @@ export const CHANNEL_WEIGHT_KEY: Record<ChannelName, keyof typeof SEARCH_V2_CONF
   lexical: "lexical",
   controlled_tags: "controlledTags",
 };
-
-/**
- * Evidence-selector sizing. A range, not a target: the brief is explicit that
- * three Gītā verses and one purport with no letter beats a weak letter dragged
- * in for variety.
- *
- * ONE band. There used to be three, chosen by guessing what kind of question had
- * been asked, which meant the same question could be sized three different ways
- * depending on which words it happened to contain. These are the numbers the
- * widest band carried, and they are provisional — the sizing question is
- * reopened when the retrieval budget is settled.
- */
-export const SELECTION_SIZING = { min: 5, max: 8 } as const;
-
-/** MMR is off until the gold set says otherwise. λ is a candidate, not a finding. */
-export const MMR_LAMBDA = 0.7;
-
-export function mmrEnabled(): boolean {
-  return (process.env.SEARCH_MMR_ENABLED ?? "false").toLowerCase() === "true";
-}
 
 /**
  * There is ONE pipeline. There is no flag, no environment variable and no query

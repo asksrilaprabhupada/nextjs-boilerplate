@@ -27,7 +27,7 @@ import {
   isSearchError,
   newRequestId,
 } from "@/app/lib/search-v2/errors";
-import { runSearchV2, type PipelineStage } from "@/app/lib/search-v2/pipeline";
+import { runSearchV2, type PipelineStage, type PipelineStageInfo } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
 import {
   cacheKeys,
@@ -35,9 +35,11 @@ import {
   TTL,
 } from "@/app/lib/search-v2/cache";
 
-// The cold pipeline (embeddings + RPCs + Cohere) can take 25–50 s; give the
-// function room on Vercel. If the plan rejects 90, drop to 60.
-export const maxDuration = 90;
+// With no candidate caps, a cold search embeds, runs five large RPCs, and
+// reranks the whole pool in Cohere batches — minutes, not seconds, on a broad
+// question. If the plan refuses this number, enable Fluid compute
+// (Vercel → project → Settings → Functions); then it is allowed.
+export const maxDuration = 300;
 
 /**
  * Upper bound on `q`. Without one, a single unauthenticated request drives the
@@ -46,8 +48,9 @@ export const maxDuration = 90;
  */
 const MAX_QUERY_CHARS = 2000;
 
-/** Pipeline progress hook — drives the SSE `stage` events. */
-type OnStage = (stage: SearchStageKey) => void;
+/** Pipeline progress hook — drives the SSE `stage` events. A stage may be
+ *  reported more than once as live counts arrive; the loader shows the latest. */
+type OnStage = (stage: SearchStageKey, labelOverride?: string, found?: number) => void;
 
 const STAGE_META: Record<SearchStageKey, { pct: number; label: string }> = {
   understood: { pct: 12, label: "Reading your question…" },
@@ -75,10 +78,25 @@ const STAGE_TO_WIRE: Partial<Record<PipelineStage, SearchStageKey>> = {
   organizing: "weaving",
 };
 
-function toWireStage(onStage: OnStage): (stage: PipelineStage) => void {
-  return (stage) => {
+/** Live labels: a two-minute search must read as work, so once the pipeline
+ *  knows how many passages it is holding, the label says so. */
+function liveLabel(stage: PipelineStage, info?: PipelineStageInfo): string | undefined {
+  const n = (v: number) => v.toLocaleString("en-US");
+  if (info?.found !== undefined) {
+    if (stage === "fusing") return `Found ${n(info.found)} passages — weighing them…`;
+    if (stage === "reranking") return `Weighing ${n(info.found)} passages against your question…`;
+    if (stage === "selecting") return `Keeping every passage that answers — of ${n(info.found)} found…`;
+  }
+  if (info?.kept !== undefined && stage === "organizing") {
+    return `Weaving ${n(info.kept)} passages…`;
+  }
+  return undefined;
+}
+
+function toWireStage(onStage: OnStage): (stage: PipelineStage, info?: PipelineStageInfo) => void {
+  return (stage, info) => {
     const wire = STAGE_TO_WIRE[stage];
-    if (wire) onStage(wire);
+    if (wire) onStage(wire, liveLabel(stage, info), info?.found ?? info?.kept);
   };
 }
 
@@ -111,20 +129,23 @@ async function logSearchRow(
 ): Promise<string | null> {
   try {
     const supabase = getSupabaseAdmin();
-    const mainFlowItems = (result.mainFlowItems as { type: string; id: string }[] | undefined) || [];
+    const passages = (result.passages as { type: string; id: string; reference?: string | null }[] | undefined) || [];
+    const rowId = (namespaced: string) => namespaced.slice(namespaced.indexOf(":") + 1);
     const { data, error } = await supabase.rpc("log_search", {
       p_query: query,
       p_visitor_id: ctx.visitorId ?? null,
       p_total_results: (result.totalResults as number) ?? 0,
       p_verse_ids: (result.articleVerseIds as string[] | undefined) || [],
-      p_prose_ids: mainFlowItems.filter(i => i.type === "prose").map(i => i.id),
-      p_books_returned: ((result.books as { name: string }[] | undefined) || []).map(b => b.name),
+      p_prose_ids: passages.filter(p => p.type === "book").map(p => rowId(p.id)),
+      p_books_returned: [...new Set(passages.map(p =>
+        p.type === "lecture" ? "Lectures" : p.type === "letter" ? "Letters" : (p.reference || "").split(/[\s.]/)[0],
+      ).filter(Boolean))],
       p_search_method: method,
       p_search_duration_ms: null,
       p_embedding_duration_ms: null,
       p_synthesis_duration_ms: null,
       p_total_duration_ms: durations.totalMs ?? null,
-      p_narrative_length: typeof result.narrative === "string" ? result.narrative.length : null,
+      p_narrative_length: null,
       p_source: "web",
       p_user_agent: ctx.userAgent ?? null,
       p_referrer: ctx.referrer ?? null,
@@ -319,12 +340,16 @@ export async function GET(request: NextRequest) {
       // through the long cold path.
       const heartbeat = setInterval(() => write(`: ping\n\n`), 15000);
 
-      const emitted = new Set<SearchStageKey>();
-      const onStage: OnStage = (stage) => {
-        if (emitted.has(stage)) return;
-        emitted.add(stage);
+      // A stage re-emits when its label gains information (live counts), so
+      // the waiting screen keeps moving through a long rerank instead of
+      // freezing on a two-minute-old message.
+      const lastLabel = new Map<SearchStageKey, string>();
+      const onStage: OnStage = (stage, labelOverride, found) => {
         const meta = STAGE_META[stage];
-        send("stage", { stage, pct: meta.pct, label: meta.label });
+        const label = labelOverride ?? meta.label;
+        if (lastLabel.get(stage) === label) return;
+        lastLabel.set(stage, label);
+        send("stage", { stage, pct: meta.pct, label, ...(found !== undefined ? { found } : {}) });
       };
 
       try {

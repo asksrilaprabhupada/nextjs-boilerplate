@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { refetchAndVerify, isRenderable, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { articleRejections, ArticlePlanSchema, DISCLOSURE, type ArticlePlan } from "@/app/lib/search-v2/article-plan";
 import { renderArticle } from "@/app/lib/search-v2/render";
-import { articleToHtml } from "@/app/lib/search-v2/adapt";
+import { toWirePassage } from "@/app/lib/search-v2/adapt";
 import type { SelectedPassage } from "@/app/lib/search-v2/select";
 
 // ─── fakes ───────────────────────────────────────────────────
@@ -159,7 +159,7 @@ describe("article plan validation", () => {
   };
 
   const check = (p: ArticlePlan) =>
-    articleRejections({ plan: p, passages, maxFinalPassages: 8, question: "how do I control my mind" }).join(" ");
+    articleRejections({ plan: p, passages, question: "how do I control my mind" }).join(" ");
 
   it("accepts a well-formed plan", () => {
     expect(check(base)).toBe("");
@@ -169,14 +169,13 @@ describe("article plan validation", () => {
     expect(check({ ...base, sections: [{ ...base.sections[0], passage_ids: ["verse:999"] }] })).toMatch(/never supplied/);
   });
 
-  it("rejects more passages than the mode permits", () => {
+  it("rejects more distinct passages than were supplied", () => {
     const many = articleRejections({
-      plan: { ...base, sections: [{ ...base.sections[0], passage_ids: ["verse:1", "purport:1"] }] },
+      plan: { ...base, sections: [{ ...base.sections[0], passage_ids: ["verse:1", "purport:1", "verse:extra"] }] },
       passages,
-      maxFinalPassages: 1,
       question: "q",
     }).join(" ");
-    expect(many).toMatch(/mode permits/);
+    expect(many).toMatch(/only 2 were supplied/);
   });
 
   it("rejects a promotional or unsupported title", () => {
@@ -200,7 +199,6 @@ describe("article plan validation", () => {
     const out = articleRejections({
       plan: { ...base, opening: { kind: "direct_source", passage_id: "letter:1" }, direct_answer_passage_ids: [], sections: [{ ...base.sections[0], passage_ids: ["letter:1"] }] },
       passages: lp,
-      maxFinalPassages: 8,
       question: "q",
     }).join(" ");
     expect(out).toMatch(/lacks verified recipient\/date/);
@@ -244,7 +242,6 @@ describe("deterministic renderer", () => {
   it("always carries the disclosure", () => {
     const a = renderArticle({ question: "q", passages: [verse], plan: null });
     expect(a.disclosure).toBe(DISCLOSURE);
-    expect(articleToHtml(a)).toContain(DISCLOSURE);
   });
 
   it("renders without a plan and marks itself unplanned", () => {
@@ -273,16 +270,47 @@ describe("deterministic renderer", () => {
     expect(keys).toContain("letter:1");
   });
 
-  it("escapes passage text so stored punctuation cannot inject markup", () => {
-    const nasty = { ...verse, text: '<script>alert("x")</script>' } as unknown as VerifiedPassage;
-    const html = articleToHtml(renderArticle({ question: "q", passages: [nasty], plan: null }));
-    expect(html).not.toContain("<script>");
-    expect(html).toContain("&lt;script&gt;");
-  });
-
   it("says so plainly when there is no evidence, rather than assembling one", () => {
     const a = renderArticle({ question: "q", passages: [], plan: null });
     expect(a.evidenceInsufficient).toBe(true);
-    expect(articleToHtml(a)).toMatch(/No passage in the library directly answers/);
+  });
+});
+
+// ─── The wire passage — words on it, never a name to look up ──
+
+describe("wire passage", () => {
+  const verse = {
+    passageKey: "verse:1", sourceType: "verse", rowId: "1",
+    text: "For him who has conquered the mind, the mind is the best of friends.",
+    reference: "BG 6.6", speaker: null, recipient: null, date: null, location: null,
+    vedabaseUrl: "https://vedabase.io/en/library/bg/6/6/",
+    sanskrit: null, transliteration: null, synonyms: null,
+    purport: "There is a purport here.",
+    scripture: "BG", division: null, chapterNumber: 6,
+    selection: { candidate: { alternates: [{}], rerankScore: 0.91 } },
+  } as unknown as VerifiedPassage;
+
+  it("carries the exact words, the score, and a server-computed label", () => {
+    const w = toWirePassage(verse);
+    expect(w.text).toBe(verse.text);
+    expect(w.purport).toBe("There is a purport here.");
+    expect(w.rerankScore).toBe(0.91);
+    expect(w.alsoAppearsIn).toBe(1);
+    expect(w.label).toContain("Bhagavad-gītā 6.6");
+    expect(w.label).toContain("Translation");
+    expect(w.provenanceNote).toBe(""); // BG translations are his
+  });
+
+  it("labels a letter with its recipient and frames it as correspondence", () => {
+    const letter = {
+      ...verse, passageKey: "letter:2", sourceType: "letter", rowId: "2",
+      text: "Please chant sixteen rounds.", reference: "Letter to Rayarama",
+      recipient: "Rayarama", date: "1968-02-01", vedabaseUrl: null, purport: null,
+      scripture: null, division: null, chapterNumber: null,
+      selection: { candidate: { alternates: [], rerankScore: 0.4 } },
+    } as unknown as VerifiedPassage;
+    const w = toWirePassage(letter);
+    expect(w.label).toContain("to Rayarama");
+    expect(w.contextNotice).toBe("Specific correspondence — Letter to Rayarama, 1968");
   });
 });

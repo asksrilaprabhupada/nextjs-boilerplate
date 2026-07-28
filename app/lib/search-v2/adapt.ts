@@ -1,28 +1,30 @@
 /**
- * adapt.ts — Maps V2 pipeline output onto the existing wire contract.
+ * adapt.ts — Maps pipeline output onto the wire contract.
  *
- * The V1 response shape (`SearchResults`) is what the live renderer and the
- * telemetry endpoints already understand. Rewriting the UI to match a new shape
- * is a separate change with its own risk, and the brief is explicit that the
- * streaming/UI architecture should not be rewritten to look modern. So V2
- * produces the same contract, filled from verified data.
+ * ONE LIST, WITH THE WORDS IN IT. The response's `passages` array carries every
+ * kept passage — its exact verified text, its verse layers, its who-and-when,
+ * its server-computed label, and the reranker score that kept it — in the
+ * reranker's order. The page prints that list from first to last.
  *
- * The important property: `narrative` is assembled ONLY from
- * `RenderedArticle` — headings the server generated, transitions from a fixed
- * table, and passage text that came out of a fresh source-row read. No string in
- * here originates with a model.
+ * This replaces the shape that caused the blank page: a `books` grouping that
+ * arrived empty, a `mainFlowItems` list of bare references pointing into it,
+ * and `overflow…` side-channels. The page had names and nowhere to look them
+ * up. Nothing in the new shape requires a look-up: if a field is needed to
+ * render a passage, it is ON the passage.
+ *
+ * Every string here originates from a fresh source-row read (refetch.ts) or a
+ * fixed server-side table. No model output reaches this file.
  */
-import type { RenderedArticle, RenderedBlock } from "@/app/lib/search-v2/render";
 import type { PipelineOutput } from "@/app/lib/search-v2/pipeline";
-import type { Citation, SearchResults, MainFlowNode } from "@/app/lib/types/01-search";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
+import { contextNoticeFor } from "@/app/lib/search-v2/render";
+import { extractQueryTerms } from "@/app/lib/10-passage-fold";
+import {
+  formatLabel,
+  labelForWirePassage,
+  purportLabelForWirePassage,
+} from "@/app/lib/13-passage-label";
+import type { Citation, SearchPassage, SearchResults } from "@/app/lib/types/01-search";
 
 const CITATION_TYPE: Record<string, Citation["type"]> = {
   verse: "verse",
@@ -32,125 +34,77 @@ const CITATION_TYPE: Record<string, Citation["type"]> = {
   letter: "letter",
 };
 
-const FLOW_TYPE: Record<string, MainFlowNode["type"]> = {
-  verse: "verse",
-  purport: "verse",
-  book: "prose",
-  lecture: "lecture",
-  letter: "letter",
-};
-
-function renderBlockHtml(b: RenderedBlock): string {
-  const parts: string[] = [];
-
-  if (b.transition) {
-    parts.push(`<p class="asp-transition">${escapeHtml(b.transition)}</p>`);
-  }
-  if (b.contextNotice) {
-    parts.push(
-      `<p class="asp-context-notice" data-kind="${escapeHtml(b.contextNoticeKind ?? "")}">${escapeHtml(
-        b.contextNotice,
-      )}</p>`,
-    );
-  }
-
-  const layers: string[] = [];
-  if (b.sanskrit) layers.push(`<p class="asp-sanskrit">${escapeHtml(b.sanskrit)}</p>`);
-  if (b.transliteration) layers.push(`<p class="asp-translit">${escapeHtml(b.transliteration)}</p>`);
-
-  const cite = b.reference
-    ? b.url
-      ? `<cite><a href="${escapeHtml(b.url)}" rel="noopener noreferrer" target="_blank">${escapeHtml(b.reference)}</a></cite>`
-      : `<cite>${escapeHtml(b.reference)}</cite>`
-    : "";
-
-  parts.push(
-    `<blockquote class="asp-passage" data-source="${escapeHtml(b.sourceType)}" data-passage="${escapeHtml(b.passageKey)}">` +
-      layers.join("") +
-      `<p>${escapeHtml(b.text)}</p>` +
-      cite +
-      `</blockquote>`,
-  );
-
-  if (b.alsoAppearsIn > 0) {
-    const n = b.alsoAppearsIn;
-    parts.push(
-      `<p class="asp-also-appears">This passage also appears in ${n} other place${n === 1 ? "" : "s"}.</p>`,
-    );
-  }
-
-  return parts.join("\n");
-}
-
-/** Assembles the narrative HTML. Every string here is server-owned. */
-export function articleToHtml(article: RenderedArticle): string {
-  const out: string[] = [];
-
-  if (article.evidenceInsufficient) {
-    out.push(
-      `<p class="asp-insufficient">No passage in the library directly answers this question. ` +
-        `Rather than assemble an answer from passages that only touch the subject, nothing is shown here.</p>`,
-    );
-  }
-
-  if (article.sourceMap) {
-    out.push(`<p class="asp-source-map">${escapeHtml(article.sourceMap)}</p>`);
-  }
-
-  for (const section of article.sections) {
-    if (section.heading) out.push(`<h2>${escapeHtml(section.heading)}</h2>`);
-    for (const b of section.blocks) out.push(renderBlockHtml(b));
-  }
-
-  if (article.closing.blocks.length > 0) {
-    out.push(
-      `<h2>${article.closing.kind === "further_study" ? "Further passages to study" : "A final passage"}</h2>`,
-    );
-    for (const b of article.closing.blocks) out.push(renderBlockHtml(b));
-  }
-
-  out.push(`<p class="asp-disclosure">${escapeHtml(article.disclosure)}</p>`);
-  return out.join("\n");
+/** One verified passage → one complete wire passage. */
+export function toWirePassage(p: VerifiedPassage): SearchPassage {
+  const shape = {
+    type: p.sourceType,
+    reference: p.reference,
+    url: p.vedabaseUrl,
+    scripture: p.scripture,
+    division: p.division,
+    chapterNumber: p.chapterNumber,
+    speaker: p.speaker,
+    recipient: p.recipient,
+    date: p.date,
+    location: p.location,
+  };
+  const label = labelForWirePassage(shape);
+  return {
+    id: p.passageKey,
+    type: p.sourceType,
+    reference: p.reference,
+    url: p.vedabaseUrl,
+    text: p.text,
+    sanskrit: p.sanskrit,
+    transliteration: p.transliteration,
+    synonyms: p.synonyms,
+    purport: p.purport,
+    speaker: p.speaker,
+    recipient: p.recipient,
+    date: p.date,
+    location: p.location,
+    label: formatLabel(label),
+    provenanceNote: label.provenanceNote,
+    purportLabel: p.purport ? purportLabelForWirePassage(shape) : null,
+    contextNotice: contextNoticeFor(p)?.text ?? null,
+    rerankScore: p.selection.candidate.rerankScore ?? null,
+    alsoAppearsIn: p.selection.candidate.alternates?.length ?? 0,
+  };
 }
 
 /**
- * Produces the wire response. `books` is left empty: V2 groups by structural
- * role rather than by book, and inventing a book grouping the pipeline did not
- * compute would be presenting a shape that no longer reflects the reasoning.
+ * Produces the wire response. `passages` is the whole answer; everything else
+ * is derived from it or is integrity metadata.
  */
 export function adaptToSearchResults(query: string, out: PipelineOutput): SearchResults {
   const { article, telemetry } = out;
-  const blocks = article.sections.flatMap((s) => s.blocks);
 
-  const citations: Citation[] = blocks.map((b) => ({
-    ref: b.reference ?? b.passageKey,
-    book: b.sourceType,
-    url: b.url ?? "",
-    type: CITATION_TYPE[b.sourceType] ?? "prose",
-    title: b.reference ?? "",
-  }));
+  const passages = out.passages.map(toWirePassage);
 
-  const mainFlowItems: MainFlowNode[] = blocks.map((b) => ({
-    type: FLOW_TYPE[b.sourceType] ?? "prose",
-    id: b.passageKey,
-    ref: b.reference ?? "",
-    url: b.url ?? "",
+  const citations: Citation[] = passages.map((p) => ({
+    ref: p.reference ?? p.id,
+    book: p.type,
+    url: p.url ?? "",
+    type: CITATION_TYPE[p.type] ?? "prose",
+    title: p.reference ?? "",
   }));
 
   return {
     query,
-    narrative: articleToHtml(article),
-    totalResults: blocks.length,
+    passages,
+    totalResults: passages.length,
     citations,
-    books: [],
-    mainFlowItems,
     intro: article.title,
-    validated: true, // every block came from refetchAndVerify
+    queryTerms: extractQueryTerms(query),
+    validated: true, // every passage came out of refetchAndVerify
     droppedBlocks: telemetry.droppedOnRefetch,
     requestId: telemetry.requestId,
     retrievalStatus: "complete",
     degradedStages: telemetry.degradedStages,
     disabledLanes: [],
-    articleVerseIds: blocks.filter((b) => b.sourceType === "verse").map((b) => b.passageKey),
+    // Bare row ids (never the namespaced key) — log_search stores uuid[].
+    articleVerseIds: passages
+      .filter((p) => p.type === "verse")
+      .map((p) => p.id.slice(p.id.indexOf(":") + 1)),
   };
 }

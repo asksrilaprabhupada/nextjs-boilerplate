@@ -60,7 +60,9 @@ GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood �
 
 `route.ts` is the request boundary only — validate, read cache, call pipeline, log, respond. The stages live in `app/lib/search-v2/`, joined in `pipeline.ts`:
 
-Gemini query plan (one schema-constrained call, ≤6 distinct search angles, 4 s cap, rejected rather than repaired on any semantic violation) → batched Voyage embedding of the question and every approved angle → 5 concurrent batched RPCs (verses, verse chunks, prose, transcripts, letters) → one weighted RRF pass (the original question always outweighs any angle) → duplicate collapse → one Cohere rerank against the ORIGINAL question → rule-based evidence selection (≤8 passages; an unlabellable letter is excluded outright) → **verbatim re-fetch: every selected passage re-read from its source row and asserted byte-identical, or dropped** → Gemini article plan (order and structure only, never words) → deterministic renderer that owns every string a reader sees.
+Gemini query plan (one schema-constrained call, ≤6 distinct search angles, 4 s cap, rejected rather than repaired on any semantic violation) → batched Voyage embedding of the question and every approved angle → 5 concurrent batched RPCs (verses, verse chunks, prose, transcripts, letters; 400 candidates per table per question) → one weighted RRF pass (the original question always outweighs any angle) → real-duplicate collapse only (identical text, or ≥90% containment within the same source+reference — never "sounds similar") → Cohere rerank of EVERY candidate in concurrent batches of 200, then one final rerank of everything above the relevance line so the order is one true order → selection by relevance, not by counting: every passage scoring ≥ `RELEVANCE_THRESHOLD` (0.30, a starting value, every score logged for tuning) is kept — no ceiling; top-10 floor when few clear the line; top-100 fused order when the reranker is down (marked degraded) → **verbatim re-fetch: every selected passage re-read from its source row and asserted byte-identical, or dropped** → Gemini article plan (order and structure only, never words; skipped above its schema's capacity — arrangement changes, nothing is dropped) → the wire response carries `passages`: every kept passage with its full verified text, layers, who-and-when, server-computed label and rerank score, in the reranker's order. The page prints that list; nothing on the client looks anything up.
+
+**No limits.** There is no maximum passage count anywhere in the pipeline or the UI. If 240 passages clear the relevance line, all 240 are shown (folded, never dropped). Timeouts match: server `maxDuration` 300 s (needs Fluid compute on Vercel), client waits 330 s, and the loader shows live found-counts from SSE stage events.
 
 Failure discipline: a retrieval RPC failure is fatal (503 with a request id) and never becomes "no teachings found". Everything else degrades and says so in `degradedStages`. Only a clean, non-degraded answer is cached. Every serving logs one `search_logs` row via the `log_search` RPC and returns `searchLogId` for feedback/behavior/citation-click telemetry.
 
@@ -99,8 +101,8 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── 13-site-modals.tsx     (provider: seva modal with India/International toggle + one Bug/Idea/General feedback form, mailto submit)
 │   │   │   └── 14-photo-slot.tsx      (path-addressed photo slot: placeholder until the exact file exists; useImageAvailable for bg swaps)
 │   │   ├── results/
-│   │   │   ├── 01-narrative-response.tsx (woven essay: heroes, purport folds, context strip, citations)
-│   │   │   └── 02-dig-deeper-modal.tsx (overflow drawer: count-chip filters, sort, search-within, His-words-only)
+│   │   │   ├── 01-narrative-response.tsx (prints results.passages first-to-last: label, words, citation, copy; Essay | By source views of the same list)
+│   │   │   └── 02-dig-deeper-modal.tsx (retained, unmounted — there is no overflow any more; every passage is in the main list)
 │   │   ├── verse/
 │   │   │   └── 01-verse-view.tsx      (interactive reader: toggleable layers, swipe, cross-ref preview)
 │   │   ├── layout/03-theme-toggle.tsx (light/warm-evening toggle, used by the site header)

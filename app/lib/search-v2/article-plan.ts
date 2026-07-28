@@ -119,7 +119,6 @@ export interface ArticleValidationInput {
   plan: ArticlePlan;
   /** Exactly the passages that were supplied to the planner, post re-fetch. */
   passages: VerifiedPassage[];
-  maxFinalPassages: number;
   question: string;
 }
 
@@ -133,7 +132,6 @@ export interface ArticleValidationInput {
 export function articleRejections({
   plan,
   passages,
-  maxFinalPassages,
 }: ArticleValidationInput): string[] {
   const problems: string[] = [];
   const supplied = new Set(passages.map((p) => p.passageKey));
@@ -153,10 +151,12 @@ export function articleRejections({
     }
   }
 
-  // 2. More passages than the mode permits.
+  // 2. More distinct passages than were supplied means invented or duplicated
+  //    ids. There is no display ceiling any more — whatever the plan does not
+  //    place, the renderer appends afterwards, so nothing is ever dropped.
   const distinct = new Set(referenced);
-  if (distinct.size > maxFinalPassages) {
-    problems.push(`plan uses ${distinct.size} passages; mode permits ${maxFinalPassages}`);
+  if (distinct.size > passages.length) {
+    problems.push(`plan uses ${distinct.size} passages; only ${passages.length} were supplied`);
   }
 
   // 3. A section with no passages is a section of pure AI prose.
@@ -226,6 +226,14 @@ export function articleRejections({
   return problems;
 }
 
+/**
+ * The most passages a plan can physically place: 5 sections × 4 ids, plus the
+ * closing's 3. Beyond this the planner is skipped rather than asked to do the
+ * impossible — the deterministic renderer takes over, and NOTHING is dropped
+ * either way: unplaced passages are always appended after the sections.
+ */
+export const ARTICLE_PLANNER_CAPACITY = 23;
+
 /** JSON Schema handed to Gemini, mirroring the Zod schema. */
 export function articlePlanResponseSchema(maxPassages: number): Record<string, unknown> {
   return {
@@ -281,7 +289,7 @@ export function articlePlanResponseSchema(maxPassages: number): Record<string, u
   };
 }
 
-function buildPrompt(question: string, passages: VerifiedPassage[], maxPassages: number): string {
+function buildPrompt(question: string, passages: VerifiedPassage[]): string {
   // Only limited, verified metadata. Deliberately NOT the full passage text:
   // the planner has no business reading the teaching in order to arrange it,
   // and a shorter context is a smaller surface for it to start paraphrasing.
@@ -319,8 +327,9 @@ function buildPrompt(question: string, passages: VerifiedPassage[], maxPassages:
     "",
     "`short_subject` is a NOUN LABEL of at most a few words, not a sentence.",
     "",
-    `Use at most ${maxPassages} distinct passages. Prefer fewer. A tight answer`,
-    "from three passages beats a padded one from eight.",
+    `${passages.length} passages are available. Arrange the ones that structure`,
+    "the answer best — anything you do not place is still shown after your",
+    "sections, in relevance order. Nothing is dropped by leaving it unplaced.",
     "",
     "If the passages do not answer the question, use article_type",
     "\"evidence_insufficient\" and leave direct_answer_passage_ids empty.",
@@ -366,11 +375,21 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 export async function planArticle(
   question: string,
   passages: VerifiedPassage[],
-  maxFinalPassages: number,
   deps: ArticlePlannerDeps = {},
 ): Promise<PlannedArticle> {
   if (passages.length === 0) {
     return { plan: null, source: "deterministic_fallback", rejections: ["no verified passages"] };
+  }
+
+  // The list is too long for the plan schema to place. Falling back to the
+  // deterministic renderer changes ARRANGEMENT only — every passage is shown
+  // either way, in relevance order.
+  if (passages.length > ARTICLE_PLANNER_CAPACITY) {
+    return {
+      plan: null,
+      source: "deterministic_fallback",
+      rejections: [`${passages.length} passages exceed the planner's capacity of ${ARTICLE_PLANNER_CAPACITY}`],
+    };
   }
 
   let client = deps.client;
@@ -390,10 +409,10 @@ export async function planArticle(
       const res = await withTimeout(
         client.models.generateContent({
           model: geminiArticlePlannerModel(),
-          contents: buildPrompt(question, passages, maxFinalPassages),
+          contents: buildPrompt(question, passages),
           config: {
             responseMimeType: "application/json",
-            responseJsonSchema: articlePlanResponseSchema(maxFinalPassages),
+            responseJsonSchema: articlePlanResponseSchema(passages.length),
             temperature: 0.1,
             maxOutputTokens: 1400,
           },
@@ -413,7 +432,6 @@ export async function planArticle(
       const problems = articleRejections({
         plan: parsed.data,
         passages,
-        maxFinalPassages,
         question,
       });
       if (problems.length > 0) {

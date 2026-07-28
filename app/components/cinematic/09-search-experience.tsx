@@ -6,7 +6,7 @@
  * stage events, then renders the woven answer with the data-driven renderer
  * (components/results/01-narrative-response) inside the cinematic chrome —
  * header, "You asked" headline, follow-up bar. On stream failure it falls back
- * to a plain fetch once; if the library still doesn't answer within 90 s it
+ * to a plain fetch once; if the library still doesn't answer within 330 s it
  * shows an honest error card with a retry. It never falls back to sample
  * verses.
  */
@@ -23,7 +23,9 @@ import { useSearchBehaviorTracker } from "@/app/hooks/01-use-search-behavior-tra
 import { logBehavior, logCitationClick } from "@/app/lib/02-analytics";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
 
-const TIMEOUT_MS = 90_000;
+// The page must always outlast the server (maxDuration 300 s): giving up while
+// the answer is still being made shows a failure that never happened.
+const TIMEOUT_MS = 330_000;
 
 type Phase = "loading" | "ready" | "error";
 
@@ -149,8 +151,7 @@ export default function SearchExperience({ q }: { q: string }) {
   const answered = phase === "ready" && !!results;
   const ans = answered ? { op: 1, ty: "0px", rule: "160px" } : { op: 0, ty: "26px", rule: "0px" };
 
-  const passageCount = results?.mainFlowItems?.length || 0;
-  const bookNames = (results?.books || []).map((b) => b.name).slice(0, 2);
+  const passageCount = results?.passages?.length || 0;
   const variants = (results?.queryVariants || []).slice(0, 6);
 
   const submitFollowUp = (e: React.FormEvent) => {
@@ -212,12 +213,9 @@ export default function SearchExperience({ q }: { q: string }) {
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: "clamp(36px,6vh,54px)", opacity: ans.op, transition: "opacity 0.9s ease 0.4s" }}>
                 {passageCount > 0 && (
                   <span className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", color: "#6E6353", background: "rgba(107,87,201,0.07)", border: "1px solid #E8E0D2", borderRadius: 100, padding: "6px 14px" }}>
-                    Woven from {passageCount} {passageCount === 1 ? "passage" : "passages"}
+                    {passageCount} relevant {passageCount === 1 ? "passage" : "passages"} — every one shown
                   </span>
                 )}
-                {bookNames.map((name) => (
-                  <span key={name} className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", color: "#6E6353", background: "rgba(201,162,75,0.08)", border: "1px solid #E8E0D2", borderRadius: 100, padding: "6px 14px" }}>{name}</span>
-                ))}
                 <span className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#9A8F7D" }}>Every word below the labels is his — verbatim.</span>
               </div>
             )}

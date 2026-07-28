@@ -1,12 +1,17 @@
 /**
- * 01-narrative-response.tsx — Woven Essay (sacred-minimalism reading surface)
+ * 01-narrative-response.tsx — The answer, printed from one list.
  *
- * A single-column, scan-then-read-deep reading surface. Neutral AI framing
- * (small, muted) opens and closes; the 2–3 strongest passages are elevated as
- * hero cards; the remaining main-flow passages flow as the woven essay, each
- * collapsed to its strongest line and expandable in place. Every passage keeps
- * a quiet tappable citation chip and a "Copy with reference" action. Overflow
- * lives in the Dig Deeper sheet — nothing is ever removed.
+ * The server sends `results.passages`: every passage the reranker judged
+ * relevant, words included, in the reranker's order. This component walks that
+ * list from first to last and prints each passage — its label, its words, its
+ * citation link, its copy button. There is no look-up table, no id-joining, and
+ * no second list: if a field is needed to render a passage, it arrived on the
+ * passage.
+ *
+ * Two views of the SAME list: "Essay" prints it in order; "By source" groups it
+ * under book names. Same passages, same words, arranged differently — nothing
+ * is hidden and nothing is dropped in either view. Long passages FOLD (preview
+ * + expand in place); they are never truncated away.
  *
  * All verbatim bodies and the matched-sentence emphasis come SOLELY from the
  * shared fold helpers (app/lib/10-passage-fold.ts) — no philosophy is ever
@@ -18,24 +23,15 @@ import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import SearchFeedback from "../search/06-search-feedback";
-import DigDeeperModal from "./02-dig-deeper-modal";
 import {
   buildFoldPreviewHtml,
   highlightParagraphsHtml,
   buildSectionText,
   type PassageType,
 } from "@/app/lib/10-passage-fold";
-import { stripPurportBoilerplate, escapeHtml } from "@/app/lib/09-purport-format";
+import { stripPurportBoilerplate } from "@/app/lib/09-purport-format";
 import { EASE, SPRING_SETTLE } from "@/app/lib/11-motion";
-import {
-  type PassageLabel,
-  formatLabel,
-  labelForVerse,
-  labelForPurport,
-  labelForProse,
-  labelForTranscript,
-  labelForLetter,
-} from "@/app/lib/13-passage-label";
+import { getBookName } from "@/app/lib/12-provenance";
 
 /* ─────────────────────────── Data contract ───────────────────────────
    The response types live in the shared server↔client contract
@@ -44,27 +40,22 @@ import {
 
 import type {
   Citation,
+  SearchPassage,
+  SearchResults,
   VerseHit,
   ProseHit,
   TranscriptHit,
   LetterHit,
-  KeyAnswer,
-  BookGroup,
-  MainFlowNode,
-  SearchResults,
-  VerseContext,
 } from "@/app/lib/types/01-search";
 
 export type {
   Citation,
+  SearchPassage,
+  SearchResults,
   VerseHit,
   ProseHit,
   TranscriptHit,
   LetterHit,
-  KeyAnswer,
-  BookGroup,
-  MainFlowNode,
-  SearchResults,
 };
 
 /* ─────────────────────────── Citation display ─────────────────────────── */
@@ -84,14 +75,43 @@ function formatCiteRef(ref: string): string {
   return ref;
 }
 
-// A verse reference built on the client (References mode), mirroring the server's cleanRef.
-function verseRef(v: VerseHit): string {
-  const num = (v.verse_number || "").replace(/^Text\s+/i, "");
-  return `${v.scripture || ""} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${num}`.trim();
+/** Short citation text for a passage's chip. */
+function citeFor(p: SearchPassage): string {
+  if (p.type === "book") return getBookName(p.reference || "");
+  if (p.type === "lecture") {
+    return ["Lecture", p.date ? new Date(p.date).getFullYear().toString() : "", p.location]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (p.type === "letter") {
+    return ["Letter", p.recipient ? `to ${p.recipient}` : "", p.date ? new Date(p.date).getFullYear().toString() : ""]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return formatCiteRef(p.reference || p.id);
+}
+
+/** The book-shelf name a passage files under in the "By source" view. */
+function shelfFor(p: SearchPassage): string {
+  if (p.type === "lecture") return "Lectures & Conversations";
+  if (p.type === "letter") return "Letters";
+  if (p.type === "book") return getBookName(p.reference || "");
+  const m = (p.reference || "").match(/^([A-Za-z]{2,4})\b/);
+  return m ? getBookName(m[1].toLowerCase()) : "Other sources";
 }
 
 function scrollToSource(id: string) {
   document.getElementById(`source-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+/** Row id inside a namespaced passage key ("verse:<uuid>" → "<uuid>"). */
+function rowIdOf(p: SearchPassage): string {
+  return p.id.slice(p.id.indexOf(":") + 1);
+}
+
+/** Cite-dot palette key. */
+function dotType(p: SearchPassage): string {
+  return p.type === "lecture" ? "lecture" : p.type === "letter" ? "letter" : p.type;
 }
 
 /* ─────────────────────────── Copy button (icon morphs to a check) ─────────────────────────── */
@@ -132,72 +152,28 @@ function CopyButton({ onCopy, label = "Copy" }: { onCopy: () => void; label?: st
   );
 }
 
-/* ─────────────────────────── Attribution label line ─────────────────────────── */
+/* ─────────────────────────── Label + notice lines ─────────────────────────── */
 
-type AnyHit = VerseHit | ProseHit | TranscriptHit | LetterHit;
-
-// TYPE + SOURCE + SPEAKER metadata, computed from the hit itself (13-passage-label)
-// so the essay, references mode, and preview sheet all label identically.
-function labelFor(type: MainFlowNode["type"], data: AnyHit): PassageLabel {
-  switch (type) {
-    case "verse": return labelForVerse(data as VerseHit);
-    case "prose": return labelForProse(data as ProseHit);
-    case "lecture": return labelForTranscript(data as TranscriptHit);
-    case "letter": return labelForLetter(data as LetterHit);
-  }
-}
-
-function LabelLine({ type, data }: { type: MainFlowNode["type"]; data: AnyHit }) {
-  const label = labelFor(type, data);
-  const text = formatLabel(label);
-  if (!text && !label.provenanceNote) return null;
+function LabelLine({ p }: { p: SearchPassage }) {
+  if (!p.label && !p.provenanceNote) return null;
   return (
     <div className="passage-label">
-      {text && <span>{text}</span>}
-      {label.provenanceNote && <span className="passage-label-note">{label.provenanceNote}</span>}
+      {p.label && <span>{p.label}</span>}
+      {p.provenanceNote && <span className="passage-label-note">{p.provenanceNote}</span>}
     </div>
-  );
-}
-
-/* ─────────────────────────── Verse context strip ───────────────────────────
-   Dimmed chapter neighbours of the primary verse (get_verse_context RPC) —
-   verbatim translations with fixed neutral frames, each linking to its own
-   Vedabase page. Renders directly under the primary verse's card. */
-
-function VerseContextStrip({ ctx }: { ctx: VerseContext }) {
-  if (ctx.before.length === 0 && ctx.after.length === 0) return null;
-  const line = (l: VerseContext["before"][number], frame: string) => (
-    <p key={l.id} className="ctx-line font-body">
-      <span className="ctx-frame">{frame}</span>{" "}
-      <span className="ctx-text">&ldquo;{l.translation}&rdquo;</span>{" "}
-      {l.vedabase_url ? (
-        <a className="ctx-ref" href={l.vedabase_url} target="_blank" rel="noopener noreferrer">{formatCiteRef(l.ref)} ↗</a>
-      ) : (
-        <span className="ctx-ref">{formatCiteRef(l.ref)}</span>
-      )}
-    </p>
-  );
-  return (
-    <aside className="verse-context-strip" aria-label="Surrounding verses in the chapter">
-      {ctx.before.map(l => line(l, "Just before this, it is asked —"))}
-      {ctx.after.map(l => line(l, "…and the reply —"))}
-    </aside>
   );
 }
 
 /* ─────────────────────────── One passage card ─────────────────────────── */
 
 function PassageCard({
-  node, data, hero, line, index = 0, queryTerms, onCopy, onOpenPreview,
+  p, index = 0, queryTerms, onCopy, onOpenPreview,
 }: {
-  node: MainFlowNode;
-  data: AnyHit;
-  hero?: boolean;
-  line?: string;
+  p: SearchPassage;
   index?: number;
   queryTerms: string[];
-  onCopy: (node: MainFlowNode) => void;
-  onOpenPreview: (node: MainFlowNode) => void;
+  onCopy: (p: SearchPassage) => void;
+  onOpenPreview: (p: SearchPassage) => void;
 }) {
   const [open, setOpen] = useState(false);
   // Compose-in: only the first ~10 passages stagger; the rest appear at once.
@@ -205,22 +181,22 @@ function PassageCard({
 
   const foot = (
     <div className="passage-foot">
-      <motion.button className="cite-chip" onClick={() => onOpenPreview(node)} whileTap={{ scale: 0.97 }} aria-label={`Preview ${formatCiteRef(node.ref)}`}>
-        <span className="cite-dot" data-type={node.type} aria-hidden />
-        {formatCiteRef(node.ref)}
+      <motion.button className="cite-chip" onClick={() => onOpenPreview(p)} whileTap={{ scale: 0.97 }} aria-label={`Preview ${citeFor(p)}`}>
+        <span className="cite-dot" data-type={dotType(p)} aria-hidden />
+        {citeFor(p)}
       </motion.button>
-      {node.url && (
+      {p.url && (
         <a
           className="cite-chip cite-external"
-          href={node.url}
+          href={p.url}
           target="_blank"
           rel="noopener noreferrer"
-          aria-label={`Open ${formatCiteRef(node.ref)} on Vedabase in a new tab`}
+          aria-label={`Open ${citeFor(p)} on Vedabase in a new tab`}
         >
           ↗
         </a>
       )}
-      <CopyButton onCopy={() => onCopy(node)} />
+      <CopyButton onCopy={() => onCopy(p)} />
     </div>
   );
 
@@ -243,20 +219,21 @@ function PassageCard({
 
   let content: ReactNode;
 
-  if (node.type === "verse") {
-    const v = data as VerseHit;
-    const translationHtml = highlightParagraphsHtml(v.translation || "", undefined, queryTerms);
-    const purport = (v.purport || "").trim();
-    const preview = purport ? buildFoldPreviewHtml({ type: "purport", text: v.purport || "", matchedChunkText: v.matchedChunkText, queryTerms }) : null;
-    const purportFull = purport ? highlightParagraphsHtml(v.purport || "", v.matchedChunkText, queryTerms) : "";
+  if (p.type === "verse") {
+    const translationHtml = highlightParagraphsHtml(p.text || "", undefined, queryTerms);
+    const purport = (p.purport || "").trim();
+    const preview = purport ? buildFoldPreviewHtml({ type: "purport", text: purport, queryTerms }) : null;
+    const purportFull = purport ? highlightParagraphsHtml(purport, undefined, queryTerms) : "";
     content = (
       <>
-        <div className={hero ? "verse-translation hero" : "verse-translation"} dangerouslySetInnerHTML={{ __html: translationHtml }} />
+        <div className="verse-translation" dangerouslySetInnerHTML={{ __html: translationHtml }} />
         {preview && preview.previewHtml && (
           <div className="purport-block">
-            <div className="passage-label">
-              <span>{formatLabel(labelForPurport(v))}</span>
-            </div>
+            {p.purportLabel && (
+              <div className="passage-label">
+                <span>{p.purportLabel}</span>
+              </div>
+            )}
             {!open && <div className="passage-body" dangerouslySetInnerHTML={{ __html: preview.previewHtml }} />}
             {full(purportFull)}
             {preview.truncated && (
@@ -269,48 +246,40 @@ function PassageCard({
       </>
     );
   } else {
-    const d = data as ProseHit | TranscriptHit | LetterHit;
-    const body = d.body_text || "";
-    const preview = buildFoldPreviewHtml({ type: node.type as PassageType, text: body, queryTerms });
-    const sectionFull = highlightParagraphsHtml(buildSectionText(body, d.before, d.after), undefined, queryTerms, node.type as PassageType);
-    if (hero) {
-      content = (
-        <>
-          {line && <p className="hero-quote"><span className="hl-sentence">{line}</span></p>}
-          {full(sectionFull)}
-          {(preview.truncated || !open) && (
-            <button className="fold-expand-btn" onClick={() => setOpen(o => !o)}>
-              {open ? "Show less ↑" : "Read in context ↓"}
-            </button>
-          )}
-        </>
-      );
-    } else {
-      content = (
-        <div className={node.type === "letter" ? "letter-body" : undefined}>
-          {!open && <div className="passage-body" dangerouslySetInnerHTML={{ __html: preview.previewHtml }} />}
-          {full(sectionFull)}
-          {preview.truncated && (
-            <button className="fold-expand-btn" onClick={() => setOpen(o => !o)}>
-              {open ? "Show less ↑" : "Read in context ↓"}
-            </button>
-          )}
-        </div>
-      );
-    }
+    const body = p.text || "";
+    const foldType: PassageType = p.type === "book" ? "prose" : (p.type as PassageType);
+    const preview = buildFoldPreviewHtml({ type: foldType, text: body, queryTerms });
+    const fullHtml = highlightParagraphsHtml(buildSectionText(body), undefined, queryTerms, foldType);
+    content = (
+      <div className={p.type === "letter" ? "letter-body" : undefined}>
+        {!open && <div className="passage-body" dangerouslySetInnerHTML={{ __html: preview.previewHtml }} />}
+        {full(fullHtml)}
+        {preview.truncated && (
+          <button className="fold-expand-btn" onClick={() => setOpen(o => !o)}>
+            {open ? "Show less ↑" : "Read in full ↓"}
+          </button>
+        )}
+      </div>
+    );
   }
 
   return (
     <motion.article
-      id={`source-${node.id}`}
-      className={`passage${hero ? " passage-hero" : ""}`}
-      data-passage-type={node.type}
+      id={`source-${p.id}`}
+      className="passage"
+      data-passage-type={p.type}
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: EASE.decelerate, delay: entranceDelay }}
     >
-      <LabelLine type={node.type} data={data} />
+      <LabelLine p={p} />
+      {p.contextNotice && <p className="context-notice font-body">{p.contextNotice}</p>}
       {content}
+      {p.alsoAppearsIn > 0 && (
+        <p className="also-appears font-body">
+          This passage also appears in {p.alsoAppearsIn} other {p.alsoAppearsIn === 1 ? "place" : "places"}.
+        </p>
+      )}
       {foot}
     </motion.article>
   );
@@ -319,12 +288,11 @@ function PassageCard({
 /* ─────────────────────────── Citation preview sheet ─────────────────────────── */
 
 function PreviewSheet({
-  node, data, onClose, onCopy,
+  p, onClose, onCopy,
 }: {
-  node: MainFlowNode;
-  data: AnyHit;
+  p: SearchPassage;
   onClose: () => void;
-  onCopy: (node: MainFlowNode) => void;
+  onCopy: (p: SearchPassage) => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -333,18 +301,17 @@ function PreviewSheet({
   }, [onClose]);
 
   let html = "";
-  if (node.type === "verse") {
-    const v = data as VerseHit;
+  if (p.type === "verse") {
     const parts: string[] = [];
-    if (v.translation?.trim()) parts.push(highlightParagraphsHtml(v.translation, undefined, []));
-    if ((v.purport || "").trim()) {
-      parts.push(`<div class="passage-label">${escapeHtml(formatLabel(labelForPurport(v)))}</div>`);
-      parts.push(highlightParagraphsHtml(v.purport, undefined, []));
+    if (p.text?.trim()) parts.push(highlightParagraphsHtml(p.text, undefined, []));
+    if ((p.purport || "").trim()) {
+      if (p.purportLabel) parts.push(`<div class="passage-label">${p.purportLabel}</div>`);
+      parts.push(highlightParagraphsHtml(p.purport || "", undefined, []));
     }
     html = parts.join("");
   } else {
-    const d = data as ProseHit | TranscriptHit | LetterHit;
-    html = highlightParagraphsHtml(buildSectionText(d.body_text || "", d.before, d.after), undefined, [], node.type as PassageType);
+    const foldType: PassageType = p.type === "book" ? "prose" : (p.type as PassageType);
+    html = highlightParagraphsHtml(buildSectionText(p.text || ""), undefined, [], foldType);
   }
 
   return (
@@ -357,24 +324,24 @@ function PreviewSheet({
       />
       <motion.div
         className="preview-sheet"
-        role="dialog" aria-label={`${formatCiteRef(node.ref)} full passage`}
+        role="dialog" aria-label={`${citeFor(p)} full passage`}
         initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}
         transition={{ duration: 0.28, ease: EASE.decelerate }}
       >
         <div className="preview-head">
-          <span className="cite-chip" aria-hidden><span className="cite-dot" data-type={node.type} />{formatCiteRef(node.ref)}</span>
+          <span className="cite-chip" aria-hidden><span className="cite-dot" data-type={dotType(p)} />{citeFor(p)}</span>
           <button className="sheet-close" onClick={onClose} aria-label="Close preview">&times;</button>
         </div>
-        <LabelLine type={node.type} data={data} />
+        <LabelLine p={p} />
         <div className="preview-body passage-body" dangerouslySetInnerHTML={{ __html: html }} />
         <div className="preview-actions">
-          <CopyButton onCopy={() => onCopy(node)} label="Copy with reference" />
+          <CopyButton onCopy={() => onCopy(p)} label="Copy with reference" />
           <span className="preview-links">
-            {node.type === "verse" && (
-              <Link className="vedabase-link" href={`/verse/${node.id}`}>Read this verse →</Link>
+            {p.type === "verse" && (
+              <Link className="vedabase-link" href={`/verse/${rowIdOf(p)}`}>Read this verse →</Link>
             )}
-            {node.url && (
-              <a className="vedabase-link" href={node.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
+            {p.url && (
+              <a className="vedabase-link" href={p.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
             )}
           </span>
         </div>
@@ -397,13 +364,12 @@ interface Props {
 }
 
 export default function NarrativeResponse({ results, isLoading, onSearch, searchLogId, viewMode, onViewModeChange }: Props) {
-  const [digDeeperOpen, setDigDeeperOpen] = useState(false);
-  const [previewNode, setPreviewNode] = useState<MainFlowNode | null>(null);
+  const [preview, setPreview] = useState<SearchPassage | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const nextIdxRef = useRef(0);
   const shellRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { setDigDeeperOpen(false); setPreviewNode(null); }, [results?.query]);
+  useEffect(() => { setPreview(null); }, [results?.query]);
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 2200);
@@ -461,75 +427,43 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
     return () => { io.disconnect(); mo.disconnect(); if (timer) window.clearTimeout(timer); };
   }, [results]);
 
-  const queryTerms = results?.queryTerms || [];
+  const queryTerms = useMemo(() => results?.queryTerms || [], [results]);
+  const passages = useMemo(() => results?.passages || [], [results]);
 
-  // id → passage data, across the main set and overflow (lossless client lookup).
-  const maps = useMemo(() => {
-    const verse = new Map<string, VerseHit>();
-    const prose = new Map<string, ProseHit>();
-    const lecture = new Map<string, TranscriptHit>();
-    const letter = new Map<string, LetterHit>();
-    if (results) {
-      for (const b of results.books) {
-        for (const v of b.verses) verse.set(v.id, v);
-        for (const p of b.prose) prose.set(p.id, p);
-        for (const t of (b.transcripts || [])) lecture.set(t.id, t);
-        for (const l of (b.letters || [])) letter.set(l.id, l);
+  // "By source": the SAME list, grouped under book names. Shelves appear in the
+  // order their first passage appears; within a shelf, arrival order holds.
+  const shelves = useMemo(() => {
+    const out: { name: string; passages: SearchPassage[] }[] = [];
+    const byName = new Map<string, { name: string; passages: SearchPassage[] }>();
+    for (const p of passages) {
+      const name = shelfFor(p);
+      let shelf = byName.get(name);
+      if (!shelf) {
+        shelf = { name, passages: [] };
+        byName.set(name, shelf);
+        out.push(shelf);
       }
-      for (const v of (results.overflowVerses || [])) if (!verse.has(v.id)) verse.set(v.id, v);
-      for (const p of (results.overflowProse || [])) if (!prose.has(p.id)) prose.set(p.id, p);
-      for (const t of (results.overflowTranscripts || [])) if (!lecture.has(t.id)) lecture.set(t.id, t);
-      for (const l of (results.overflowLetters || [])) if (!letter.has(l.id)) letter.set(l.id, l);
-    }
-    return { verse, prose, lecture, letter };
-  }, [results]);
-
-  const dataFor = (node: MainFlowNode): AnyHit | undefined => {
-    if (node.type === "verse") return maps.verse.get(node.id);
-    if (node.type === "prose") return maps.prose.get(node.id);
-    if (node.type === "lecture") return maps.lecture.get(node.id);
-    return maps.letter.get(node.id);
-  };
-
-  const mainFlow = results?.mainFlowItems || [];
-  const keyAnswers = results?.keyAnswers || [];
-
-  // Heroes: the top 2–3 substantive matched lines (never a bare fragment — the
-  // server already filtered empties out of keyAnswers).
-  const heroes = useMemo(() => {
-    const out: { node: MainFlowNode; line: string }[] = [];
-    for (const ka of keyAnswers) {
-      const node = mainFlow.find(n => n.id === ka.id);
-      if (node && dataFor(node)) out.push({ node, line: ka.line });
-      if (out.length >= 3) break;
+      shelf.passages.push(p);
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyAnswers, mainFlow, maps]);
+  }, [passages]);
 
-  const heroIds = new Set(heroes.map(h => h.node.id));
-  const essayNodes = mainFlow.filter(n => !heroIds.has(n.id));
-
-  const fullTextFor = (node: MainFlowNode): string => {
-    const d = dataFor(node);
-    if (!d) return "";
-    if (node.type === "verse") {
-      const v = d as VerseHit;
+  const fullTextFor = (p: SearchPassage): string => {
+    if (p.type === "verse") {
       const parts: string[] = [];
-      if (v.translation?.trim()) parts.push(v.translation.trim());
-      const pur = stripPurportBoilerplate(v.purport || "").trim();
+      if (p.text?.trim()) parts.push(p.text.trim());
+      const pur = stripPurportBoilerplate(p.purport || "").trim();
       if (pur) parts.push(pur);
       return parts.join("\n\n");
     }
-    const s = d as ProseHit | TranscriptHit | LetterHit;
-    return buildSectionText(s.body_text || "", s.before, s.after);
+    return (p.text || "").trim();
   };
 
-  const copyWithRef = async (node: MainFlowNode) => {
-    const text = fullTextFor(node);
+  const copyWithRef = async (p: SearchPassage) => {
+    const text = fullTextFor(p);
     if (!text) return;
     // The reference always includes the passage's own Vedabase URL when it has one.
-    const payload = `"${text}"\n\n— ${formatCiteRef(node.ref)}${node.url ? `\n${node.url}` : ""}`;
+    const payload = `"${text}"\n\n— ${citeFor(p)}${p.url ? `\n${p.url}` : ""}`;
     try {
       await navigator.clipboard.writeText(payload);
       setToast("Copied with reference");
@@ -539,11 +473,10 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
   };
 
   const jumpNextQuote = () => {
-    const anchors = [...heroes.map(h => h.node.id), ...essayNodes.map(n => n.id)];
-    if (anchors.length === 0) return;
-    const i = nextIdxRef.current % anchors.length;
+    if (passages.length === 0) return;
+    const i = nextIdxRef.current % passages.length;
     nextIdxRef.current = i + 1;
-    scrollToSource(anchors[i]);
+    scrollToSource(passages[i].id);
   };
 
   if (isLoading) return null;
@@ -582,24 +515,6 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
     );
   }
 
-  const overflowTotal =
-    (results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) +
-    (results.overflowTranscripts?.length || 0) + (results.overflowLetters?.length || 0);
-  const hasDigDeeper =
-    ((results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)) > 25 &&
-    overflowTotal > 0;
-
-  // References: grouped by book, rendered with the SAME passage cards.
-  const referenceBooks = results.books.filter(
-    b => b.verses.length > 0 || b.prose.length > 0 || (b.transcripts?.length || 0) > 0 || (b.letters?.length || 0) > 0,
-  );
-
-  const digDeeperBtn = hasDigDeeper && (
-    <button onClick={() => setDigDeeperOpen(true)} className="dig-deeper-btn font-body">
-      Dig deeper — {overflowTotal} more {overflowTotal === 1 ? "passage" : "passages"} ↓
-    </button>
-  );
-
   return (
     <MotionConfig reducedMotion="user">
       <div className="results-shell" ref={shellRef}>
@@ -617,117 +532,65 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
             {results.intro && <p className="framing-note framing-intro font-body">{results.intro}</p>}
 
             {/* Desktop Contents jump-list — collapsed by default, navigation only */}
-            {mainFlow.length > 1 && (
+            {passages.length > 1 && (
               <details className="contents">
-                <summary className="font-body">Contents · {mainFlow.length} passages</summary>
+                <summary className="font-body">Contents · {passages.length} passages</summary>
                 <ol>
-                  {mainFlow.map(n => (
-                    <li key={n.id}>
-                      <button className="font-body" onClick={() => scrollToSource(n.id)}>{formatCiteRef(n.ref)}</button>
+                  {passages.map(p => (
+                    <li key={p.id}>
+                      <button className="font-body" onClick={() => scrollToSource(p.id)}>{citeFor(p)}</button>
                     </li>
                   ))}
                 </ol>
               </details>
             )}
 
-            {/* Hero passages */}
-            {heroes.length > 0 && (
-              <div className="hero-stack">
-                {heroes.map((h, hi) => {
-                  const d = dataFor(h.node);
-                  if (!d) return null;
-                  return (
-                    <div key={`${results.query}:${h.node.id}`}>
-                      <PassageCard
-                        node={h.node} data={d} hero line={h.line} index={hi}
-                        queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
-                      />
-                      {results.primaryVerseContext?.verseId === h.node.id && (
-                        <VerseContextStrip ctx={results.primaryVerseContext} />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Woven essay — the remaining main-flow passages, most-important-first */}
+            {/* Every passage, in the reranker's order, words on screen. */}
             <div className="essay-flow">
-              {essayNodes.map((node, j) => {
-                const d = dataFor(node);
-                if (!d) return null;
-                return (
-                  <div key={`${results.query}:${node.id}`}>
-                    <PassageCard
-                      node={node} data={d} index={heroes.length + j}
-                      queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
-                    />
-                    {results.primaryVerseContext?.verseId === node.id && (
-                      <VerseContextStrip ctx={results.primaryVerseContext} />
-                    )}
-                  </div>
-                );
-              })}
+              {passages.map((p, i) => (
+                <PassageCard
+                  key={`${results.query}:${p.id}`}
+                  p={p} index={i}
+                  queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreview}
+                />
+              ))}
             </div>
 
-            {/* Neutral conclusion */}
-            {results.conclusion && <p className="framing-note framing-outro font-body">{results.conclusion}</p>}
-
-            {/* Fallback: if structured items are unavailable, show the verbatim essay HTML. */}
-            {mainFlow.length === 0 && results.narrative && (
-              <div className="narrative-content font-body" dangerouslySetInnerHTML={{ __html: results.narrative }} />
-            )}
-
             {results.totalResults > 0 && <SearchFeedback searchLogId={searchLogId || null} />}
-            {digDeeperBtn}
           </motion.div>
         )}
 
         {viewMode === "references" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4, ease: EASE.decelerate }}>
-            {referenceBooks.map(book => {
-              const nodes: { node: MainFlowNode; data: AnyHit }[] = [
-                ...book.verses.map(v => ({ node: { type: "verse" as const, id: v.id, ref: verseRef(v), url: v.vedabase_url || "" }, data: v as AnyHit })),
-                ...book.prose.map(p => ({ node: { type: "prose" as const, id: p.id, ref: book.name, url: p.vedabase_url || "" }, data: p as AnyHit })),
-                ...(book.transcripts || []).map(t => ({ node: { type: "lecture" as const, id: t.id, ref: ["Lecture", t.date ? new Date(t.date).getFullYear().toString() : "", t.location].filter(Boolean).join(" · "), url: t.vedabase_url || "" }, data: t as AnyHit })),
-                ...(book.letters || []).map(l => ({ node: { type: "letter" as const, id: l.id, ref: ["Letter", l.recipient ? `to ${l.recipient}` : "", l.date ? new Date(l.date).getFullYear().toString() : ""].filter(Boolean).join(" · "), url: l.vedabase_url || "" }, data: l as AnyHit })),
-              ];
-              return (
-                <section key={book.slug} className="ref-book">
-                  <h3 className="font-display">{book.name}</h3>
-                  <div className="essay-flow">
-                    {nodes.map(({ node, data }) => (
-                      <PassageCard
-                        key={`${results.query}:ref:${node.id}`}
-                        node={node} data={data}
-                        queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreviewNode}
-                      />
-                    ))}
-                  </div>
-                </section>
-              );
-            })}
-            {digDeeperBtn}
+            {shelves.map(shelf => (
+              <section key={shelf.name} className="ref-book">
+                <h3 className="font-display">{shelf.name}</h3>
+                <div className="essay-flow">
+                  {shelf.passages.map(p => (
+                    <PassageCard
+                      key={`${results.query}:ref:${p.id}`}
+                      p={p}
+                      queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreview}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
           </motion.div>
         )}
       </div>
 
-      {/* Mobile floating "next strong quote" */}
-      {heroes.length + essayNodes.length > 2 && (
-        <button className="next-quote-btn" onClick={jumpNextQuote} aria-label="Jump to the next quote">
+      {/* Mobile floating "next passage" */}
+      {passages.length > 2 && (
+        <button className="next-quote-btn" onClick={jumpNextQuote} aria-label="Jump to the next passage">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 5v14M5 12l7 7 7-7" /></svg>
         </button>
       )}
 
       {/* Citation preview sheet */}
       <AnimatePresence>
-        {previewNode && dataFor(previewNode) && (
-          <PreviewSheet
-            node={previewNode}
-            data={dataFor(previewNode) as AnyHit}
-            onClose={() => setPreviewNode(null)}
-            onCopy={copyWithRef}
-          />
+        {preview && (
+          <PreviewSheet p={preview} onClose={() => setPreview(null)} onCopy={copyWithRef} />
         )}
       </AnimatePresence>
 
@@ -740,23 +603,6 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         )}
       </AnimatePresence>
 
-      {/* Dig deeper */}
-      {digDeeperOpen && (
-        <DigDeeperModal
-          overflowVerses={results.overflowVerses || []}
-          overflowProse={results.overflowProse || []}
-          overflowTranscripts={results.overflowTranscripts || []}
-          overflowLetters={results.overflowLetters || []}
-          totalVerses={results.totalVerses || 0}
-          totalProse={results.totalProse || 0}
-          totalTranscripts={results.totalTranscripts || 0}
-          totalLetters={results.totalLetters || 0}
-          articleVerseIds={new Set(results.articleVerseIds || [])}
-          onClose={() => setDigDeeperOpen(false)}
-          onSearch={(q) => { setDigDeeperOpen(false); onSearch(q); }}
-        />
-      )}
-
       <style jsx global>{`
         .results-shell { max-width: 720px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 24px); }
 
@@ -768,39 +614,28 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         /* Neutral AI framing — visually subordinate so it can never read as scripture. */
         .framing-note { font-size: 0.95rem; line-height: 1.6; color: var(--framing); max-width: var(--measure); }
         .framing-intro { margin-bottom: var(--space-7); }
-        .framing-outro { margin-top: var(--space-7); padding-top: var(--space-4); border-top: 1px solid var(--border-hair); }
 
         .contents { margin: 0 0 var(--space-6); border: 1px solid var(--border-hair); border-radius: var(--radius-md); background: var(--surface-raised); }
         .contents > summary { cursor: pointer; padding: 10px 14px; font-size: var(--type-label-size); color: var(--ink-muted); list-style: none; }
         .contents > summary::-webkit-details-marker { display: none; }
-        .contents ol { margin: 0; padding: 0 14px 12px 14px; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+        .contents ol { margin: 0; padding: 0 14px 12px 14px; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
         .contents li button { background: none; border: none; padding: 4px 0; color: var(--accent-strong); font-size: 0.85rem; cursor: pointer; text-align: left; }
         .contents li button:hover { text-decoration: underline; }
         @media (max-width: 900px) { .contents { display: none; } }
 
-        .hero-stack { display: flex; flex-direction: column; gap: var(--space-5); margin-bottom: var(--space-7); }
         .essay-flow { display: flex; flex-direction: column; }
-
-        /* ── Verse context strip — dimmed chapter neighbours under the primary verse ── */
-        .verse-context-strip { margin: var(--space-3) 0 0 var(--space-4); padding: var(--space-3) var(--space-4); border-left: 2px solid var(--border-hair); opacity: 0.82; }
-        .verse-context-strip .ctx-line { margin: 0 0 var(--space-2); font-size: 0.88rem; line-height: 1.6; color: var(--ink-muted); }
-        .verse-context-strip .ctx-line:last-child { margin-bottom: 0; }
-        .verse-context-strip .ctx-frame { font-size: 0.78rem; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-subtle); }
-        .verse-context-strip .ctx-text { font-style: italic; }
-        .verse-context-strip .ctx-ref { font-size: 0.78rem; font-weight: 600; color: var(--accent-strong); text-decoration: none; white-space: nowrap; }
-        .verse-context-strip a.ctx-ref:hover { text-decoration: underline; }
 
         .passage { padding: var(--space-6) 0; border-bottom: 1px solid var(--border-hair); }
         .essay-flow .passage:last-child { border-bottom: none; }
-        .passage-hero { padding: var(--space-6); background: var(--surface-raised); border: 1px solid var(--border-hair); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); }
+
+        /* Framing the reader must see for letters / recorded exchanges. */
+        .context-notice { font-size: 0.82rem; color: var(--ink-muted); font-style: italic; margin: 0 0 var(--space-3); }
+        .also-appears { font-size: 0.8rem; color: var(--ink-subtle); margin: var(--space-3) 0 0; }
 
         /* Source types distinguished by TYPOGRAPHY (no colored bars, no legend). */
         .verse-translation { font-family: var(--font-display), 'Cormorant Garamond', Georgia, serif; font-size: clamp(1.2rem, 2.4vw, 1.4rem); line-height: 1.45; color: var(--ink-strong); }
-        .verse-translation.hero { font-size: clamp(1.35rem, 3vw, 1.7rem); }
         .verse-translation .pp { margin: 0 0 var(--space-3); }
         .verse-translation .pp:last-child { margin-bottom: 0; }
-
-        .hero-quote { font-family: var(--font-display), 'Cormorant Garamond', Georgia, serif; font-size: clamp(1.35rem, 3vw, 1.7rem); line-height: 1.4; color: var(--ink-strong); }
 
         .passage-body { font-size: var(--type-body-size); line-height: var(--type-body-lh); color: var(--ink); }
         .passage-body .pp { margin: 0 0 var(--space-3); }
@@ -824,17 +659,10 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .copy-chip:hover { color: var(--accent-strong); }
         .copy-ico { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; }
         .cite-chip, .copy-chip { min-height: 30px; }
-        .fold-expand-btn:active, .dig-deeper-btn:active, .view-mode-toggle button:active { transform: scale(0.985); }
+        .fold-expand-btn:active, .view-mode-toggle button:active { transform: scale(0.985); }
 
         .ref-book { margin-bottom: var(--space-7); }
         .ref-book h3 { font-size: 1.3rem; font-weight: 600; color: var(--ink-strong); margin: 0 0 var(--space-2); }
-
-        .dig-deeper-btn { width: 100%; margin-top: var(--space-6); padding: 14px 20px; border-radius: var(--radius-md); border: 1px dashed var(--border-firm); background: color-mix(in srgb, var(--accent) 4%, transparent); font-size: 0.9rem; font-weight: 600; color: var(--accent-strong); cursor: pointer; text-align: center; transition: background var(--dur-3) var(--ease-standard), border-color var(--dur-3) var(--ease-standard); }
-        .dig-deeper-btn:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); border-color: var(--accent); }
-
-        .zero-state { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); padding: var(--space-8) var(--space-5); text-align: center; }
-        .zero-title { font-size: 1.3rem; color: var(--ink); }
-        .zero-hint { font-size: 0.95rem; color: var(--ink-muted); }
 
         /* ── Matched-sentence emphasis (the bloom): lavender→gold, blooms once,
            then settles to a calm resting tint. Never a flat yellow block. ── */
@@ -871,7 +699,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
           .preview-sheet { left: 0; right: 0; bottom: 0; top: auto; transform: none; width: 100%; max-height: 85vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
         }
 
-        /* ── Mobile "next strong quote" floating button ── */
+        /* ── Mobile "next passage" floating button ── */
         .next-quote-btn { position: fixed; right: 16px; bottom: 20px; z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-hair); background: var(--surface-raised); color: var(--accent-strong); box-shadow: var(--shadow-soft); cursor: pointer; display: none; align-items: center; justify-content: center; transition: transform var(--dur-2) var(--ease-standard); }
         .next-quote-btn:active { transform: scale(0.94); }
         @media (max-width: 900px) { .next-quote-btn { display: flex; } }
@@ -883,8 +711,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         }
 
         @media (max-width: 768px) {
-          .passage, .passage-hero { padding: var(--space-5) 0; }
-          .passage-hero { padding: var(--space-5); }
+          .passage { padding: var(--space-5) 0; }
         }
       `}</style>
     </MotionConfig>
