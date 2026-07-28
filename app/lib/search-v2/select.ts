@@ -16,8 +16,6 @@
  */
 import { SELECTION_SIZING, MMR_LAMBDA, mmrEnabled } from "@/app/lib/search-v2/config";
 import type { DedupedCandidate } from "@/app/lib/search-v2/dedup";
-import type { SearchIntent } from "@/app/lib/search-v2/intent";
-import { sizingBandFor } from "@/app/lib/search-v2/intent";
 
 /** A context notice the renderer MUST show alongside the passage. */
 export type ContextRequirement =
@@ -38,17 +36,15 @@ export interface SelectionResult {
   selected: SelectedPassage[];
   /** Approved subquery ids no selected passage covers. Drives honest gaps. */
   uncoveredQueryIds: string[];
-  band: "direct" | "ordinary" | "broad";
   evidenceInsufficient: boolean;
 }
 
 export interface SelectionInput {
   /** Candidates in final relevance order (reranked, or fused if rerank failed). */
   ranked: DedupedCandidate[];
-  intent: SearchIntent;
   /** Ids of every approved query, so coverage gaps can be reported. */
   approvedQueryIds: string[];
-  /** Mode ceiling. The band still governs the lower bound. */
+  /** Hard ceiling on shown passages. The sizing floor governs the lower bound. */
   maxFinalPassages: number;
   /** Embeddings for redundancy scoring; absent disables the MMR component. */
   embeddings?: Map<string, number[]>;
@@ -58,7 +54,7 @@ const VERSE_TYPES = new Set(["verse", "purport"]);
 
 /**
  * A candidate scoring below this fraction of the primary passage is not
- * strong enough to be shown purely to reach the band minimum. Benchmarked in
+ * strong enough to be shown purely to reach the sizing minimum. Benchmarked in
  * Phase D alongside the fusion weights.
  */
 const MIN_RELATIVE_SCORE = 0.25;
@@ -107,17 +103,16 @@ function cosine(a: number[], b: number[]): number {
  *      purport explaining a shown verse is context, not redundancy,
  *   4. fill remaining slots preferring passages that cover a subquery nothing
  *      selected covers yet, with a redundancy penalty,
- *   5. stop at the band's minimum unless coverage still demands more.
+ *   5. stop at the sizing minimum unless coverage still demands more.
  */
 export function selectEvidence(input: SelectionInput): SelectionResult {
-  const { ranked, intent, approvedQueryIds, maxFinalPassages, embeddings } = input;
-  const band = sizingBandFor(intent);
-  const sizing = SELECTION_SIZING[band];
+  const { ranked, approvedQueryIds, maxFinalPassages, embeddings } = input;
+  const sizing = SELECTION_SIZING;
   const ceiling = Math.min(maxFinalPassages, sizing.max);
 
   const eligible = ranked.filter(isLabellable);
   if (eligible.length === 0) {
-    return { selected: [], uncoveredQueryIds: approvedQueryIds, band, evidenceInsufficient: true };
+    return { selected: [], uncoveredQueryIds: approvedQueryIds, evidenceInsufficient: true };
   }
 
   const chosen: SelectedPassage[] = [];
@@ -136,7 +131,7 @@ export function selectEvidence(input: SelectionInput): SelectionResult {
     for (const q of c.queryCoverage ?? []) covered.add(q);
   };
 
-  // 2. The strongest passage. An exact-reference result often needs nothing else.
+  // 2. The strongest passage. Often it is most of the answer on its own.
   take(eligible[0], "highest relevance to the original question");
 
   // 3. Verse ↔ purport partner.
@@ -195,7 +190,7 @@ export function selectEvidence(input: SelectionInput): SelectionResult {
 
     if (!best) break;
 
-    // The band MINIMUM is a target, not an obligation. A passage far weaker
+    // The sizing MINIMUM is a target, not an obligation. A passage far weaker
     // than the primary one is not evidence just because a slot is open — that
     // is exactly the "weak letter dragged in for variety" the brief rejects.
     // Below the floor a candidate earns its place only by covering a gap.
@@ -203,7 +198,7 @@ export function selectEvidence(input: SelectionInput): SelectionResult {
     const addsCoverage = (best.queryCoverage ?? []).some((q) => !covered.has(q));
     if (topScore > 0 && best.fusedScore < topScore * MIN_RELATIVE_SCORE && !addsCoverage) break;
 
-    // Past the band minimum, only keep going while a real gap remains.
+    // Past the sizing minimum, only keep going while a real gap remains.
     if (chosen.length >= sizing.min && !addsCoverage) break;
 
     take(best, bestReason);
@@ -214,7 +209,6 @@ export function selectEvidence(input: SelectionInput): SelectionResult {
   return {
     selected: chosen,
     uncoveredQueryIds: uncovered,
-    band,
     // Genuinely weak evidence is reported as such rather than dressed up.
     evidenceInsufficient: chosen.length === 0,
   };

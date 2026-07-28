@@ -200,7 +200,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const out = await runSearchV2({
       db: db as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_integration",
     });
 
@@ -224,7 +223,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const out = await runSearchV2({
       db: fakeDb() as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_rank",
     });
 
@@ -251,7 +249,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const out = await runSearchV2({
       db: fakeDb() as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_degraded",
     });
     expect(out.telemetry.degraded).toBe(true);
@@ -265,7 +262,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const out = await runSearchV2({
       db: db as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_count",
     });
     const batchCalls = db.calls.filter((c) => BATCH_FNS.has(c));
@@ -280,7 +276,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     await runSearchV2({
       db: fakeDb() as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_stage",
       onStage: (s) => seen.push(s),
     });
@@ -294,7 +289,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       runSearchV2({
         db: fakeDb({ failingRpc: "search_letters_hybrid_batch_v2" }) as never,
         query: "how do I control my restless mind",
-        mode: "guided",
         requestId: "req_fail",
       }),
     ).rejects.toThrow(/search_letters_hybrid_batch_v2/);
@@ -305,7 +299,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const out = await runSearchV2({
       db: fakeDb({ verseRows: [tampered, BG_6_26, BG_14_22] }) as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_tamper",
     });
     const keys = out.article.sections.flatMap((s) => s.blocks.map((b) => b.passageKey));
@@ -319,30 +312,30 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const out = await runSearchV2({
       db: fakeDb({ verseRows: [] }) as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_none",
     });
     expect(out.evidenceInsufficient).toBe(true);
     expect(out.article.sections.flatMap((s) => s.blocks)).toHaveLength(0);
   });
 
-  it("bypasses planning and reranking for a bare exact reference", async () => {
-    const out = await runSearchV2({
-      db: fakeDb() as never,
-      query: "BG 6.34",
-      mode: "quick",
-      requestId: "req_exact",
-    });
-    expect(out.telemetry.intent).toBe("exact_reference");
-    expect(out.telemetry.subqueryCount).toBe(0);
-    expect(out.telemetry.rerankDocumentCount).toBe(0);
+  it("sends a bare exact reference down the same road as everything else", async () => {
+    // The old pipeline recognised "BG 6.34" and skipped planning, fan-out and
+    // reranking. That is exactly the branching this rebuild removed: the same
+    // stages run, in the same order, whatever the question looks like.
+    const db = fakeDb();
+    const out = await runSearchV2({ db: db as never, query: "BG 6.34", requestId: "req_exact" });
+
+    expect(db.calls.filter((c) => BATCH_FNS.has(c))).toHaveLength(5);
+    expect(out.telemetry.tableRpcCount).toBe(5);
+    // Cohere is down in this fixture, so the rerank degrades rather than being
+    // skipped — a degradation is reported, a bypass never was.
+    expect(out.telemetry.degradedStages.map((d) => d.stage)).toContain("reranking");
   });
 
   it("adapts onto the wire contract the live UI already renders", async () => {
     const out = await runSearchV2({
       db: fakeDb() as never,
       query: "how do I control my restless mind",
-      mode: "guided",
       requestId: "req_adapt",
     });
     const wire = adaptToSearchResults("how do I control my restless mind", out);
@@ -363,7 +356,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const out = await runSearchV2({
       db: fakeDb() as never,
       query: "a very distinctive question about the restless mind",
-      mode: "guided",
       requestId: "req_privacy",
     });
     const serialised = JSON.stringify(out.telemetry);

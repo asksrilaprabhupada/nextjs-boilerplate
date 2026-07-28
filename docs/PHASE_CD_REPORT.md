@@ -1,5 +1,12 @@
 # Phases B (part 2), C and D
 
+> **SUPERSEDED — historical record.** The single-search-engine change removed
+> the second engine, the `DEEP_RESEARCH_V2_ENABLED` flag and the two reader
+> modes described below. **There is no rollback to a previous engine and no
+> environment variable that selects one**; any such instruction in this document
+> is history, not a runbook. Kept unedited so the reasoning behind the current
+> pipeline stays readable.
+
 **Flag state:** `DEEP_RESEARCH_V2_ENABLED` now defaults **true**. V2 serves.
 **Rollback:** set `DEEP_RESEARCH_V2_ENABLED=false` in Vercel. One variable, no deploy.
 

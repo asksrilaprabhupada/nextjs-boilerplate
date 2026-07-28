@@ -74,25 +74,20 @@ export interface RerankInput {
   /** The devotee's ORIGINAL question. Never a subquery, never a canonicalisation. */
   question: string;
   candidates: DedupedCandidate[];
-  /** Mode ceiling on documents sent to the provider. */
+  /** Ceiling on documents sent to the provider. */
   maxCandidates: number;
-  /** Exact-reference paths skip reranking entirely. */
-  bypass?: boolean;
 }
 
+/**
+ * EVERY question is reranked. There used to be a bypass for questions that
+ * looked like a bare scripture reference, which meant "BG 18.66" and "what does
+ * BG 18.66 mean" were ordered by two different mechanisms. Reranking a single
+ * obvious answer costs one provider call and is never wrong; guessing which
+ * questions deserve it was.
+ */
 export async function rerankUnified(input: RerankInput): Promise<RerankOutcome> {
   const model = cohereRerankModel();
-  const { question, candidates, maxCandidates, bypass } = input;
-
-  if (bypass) {
-    return {
-      ranked: candidates,
-      reranked: false,
-      degradedReason: null, // deliberate bypass, not a degradation
-      documentCount: 0,
-      model,
-    };
-  }
+  const { question, candidates, maxCandidates } = input;
 
   if (candidates.length <= 1) {
     return { ranked: candidates, reranked: false, degradedReason: null, documentCount: candidates.length, model };

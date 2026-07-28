@@ -5,8 +5,9 @@
  * failure mode of a search cache is not a slow page — it is answering one
  * devotee's question with the evidence gathered for a different one.
  *
- * So: an exact normalised question in the same mode and corpus version may be
- * served from cache. Anything else must miss.
+ * So: an exact normalised question under the same corpus version may be served
+ * from cache. Anything else must miss. There is no mode segment, because there
+ * are no modes — one question has one answer.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import {
@@ -54,30 +55,24 @@ describe("question normalisation", () => {
 });
 
 describe("response key discipline", () => {
-  it("is stable for the same question in the same mode", () => {
-    expect(cacheKeys.response("guided", "How do I control my mind?")).toBe(
-      cacheKeys.response("guided", "  how do i control my MIND  "),
-    );
-  });
-
-  it("separates modes", () => {
-    expect(cacheKeys.response("guided", "what is bhakti")).not.toBe(
-      cacheKeys.response("quick", "what is bhakti"),
+  it("is stable for the same question", () => {
+    expect(cacheKeys.response("How do I control my mind?")).toBe(
+      cacheKeys.response("  how do i control my MIND  "),
     );
   });
 
   it("separates different questions", () => {
-    expect(cacheKeys.response("guided", "what is the soul")).not.toBe(
-      cacheKeys.response("guided", "what is the mind"),
+    expect(cacheKeys.response("what is the soul")).not.toBe(
+      cacheKeys.response("what is the mind"),
     );
   });
 
   it("carries the corpus version, so a re-tagged corpus cannot serve stale answers", () => {
-    const before = cacheKeys.response("guided", "what is bhakti");
+    const before = cacheKeys.response("what is bhakti");
     const saved = process.env.SEARCH_CORPUS_VERSION;
     process.env.SEARCH_CORPUS_VERSION = "2099-01-01-rebuilt";
     try {
-      expect(cacheKeys.response("guided", "what is bhakti")).not.toBe(before);
+      expect(cacheKeys.response("what is bhakti")).not.toBe(before);
     } finally {
       if (saved === undefined) delete process.env.SEARCH_CORPUS_VERSION;
       else process.env.SEARCH_CORPUS_VERSION = saved;
@@ -85,9 +80,17 @@ describe("response key discipline", () => {
   });
 
   it("never embeds the raw question in the key", () => {
-    const key = cacheKeys.response("guided", "a very distinctive private question");
+    const key = cacheKeys.response("a very distinctive private question");
     expect(key).not.toContain("distinctive");
     expect(key).not.toContain("private");
+  });
+
+  it("cannot collide with an entry written by the retired two-mode keyspace", () => {
+    // Old shape: response:v2:<corpus>:<mode>:<hash>. Nothing produces that now,
+    // so those entries expire unread rather than being served to one road.
+    const key = cacheKeys.response("what is bhakti");
+    expect(key).not.toMatch(/:guided:|:quick:/);
+    expect(key.split(":")).toHaveLength(4);
   });
 });
 

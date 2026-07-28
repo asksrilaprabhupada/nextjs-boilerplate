@@ -21,8 +21,13 @@
  */
 import { z } from "zod";
 import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
-import type { RoutedQuery, SearchIntent } from "@/app/lib/search-v2/intent";
+import { extractReference } from "@/app/lib/search-v2/reference";
 
+/**
+ * What the planner may say a question IS. This is a DESCRIPTION, recorded for
+ * diagnosis; it selects no branch and changes no budget. Every question gets the
+ * same planning call, the same fan-out ceiling and the same reranking.
+ */
 const INTENTS = [
   "exact_reference",
   "exact_quote",
@@ -168,18 +173,28 @@ export function queryPlanResponseSchema(maxSubqueries: number): Record<string, u
   };
 }
 
-/** The plan used when the model is unavailable or its output cannot be trusted. */
-export function fallbackPlan(query: string, routed: RoutedQuery): QueryPlan {
+/**
+ * The plan used when the model is unavailable or its output cannot be trusted.
+ *
+ * A scripture reference the devotee wrote is still carried through, because it
+ * is a genuine retrieval clue and losing it would make the degraded search worse
+ * than it needs to be. It is a constraint handed to the RPCs, not a decision
+ * about how the question is handled.
+ */
+export function fallbackPlan(query: string): QueryPlan {
+  const reference = extractReference(query);
   return {
     schema_version: "query-plan-v1",
-    intent: routed.intent,
+    // No router classifies questions any more. The neutral value is what the
+    // old router fell through to when nothing narrower matched.
+    intent: "broad_concept",
     canonical_query: query.slice(0, 240),
     preserve_terms: [],
     lexical_phrases: [],
     vocabulary_candidates: [],
     subqueries: [],
     constraints: {
-      scripture_references: routed.reference ? [routed.reference] : [],
+      scripture_references: reference ? [reference] : [],
       source_types: [],
       speaker: null,
       recipient: null,
@@ -243,8 +258,9 @@ function significantTokens(query: string): string[] {
 
 export interface SemanticCheckInput {
   query: string;
-  routed: RoutedQuery;
   plan: QueryPlan;
+  /** The fan-out ceiling this plan was asked to respect. */
+  maxSubqueries: number;
 }
 
 /**
@@ -255,19 +271,12 @@ export interface SemanticCheckInput {
  * constraint or dropped a name has misread the question, and silently trimming
  * its output hides that.
  */
-export function semanticRejections({ query, routed, plan }: SemanticCheckInput): string[] {
+export function semanticRejections({ query, plan, maxSubqueries }: SemanticCheckInput): string[] {
   const problems: string[] = [];
   const subs = plan.subqueries;
 
-  if (subs.length > routed.maxSubqueries) {
-    problems.push(
-      `plan returned ${subs.length} subqueries; router permits ${routed.maxSubqueries} for ${routed.intent}`,
-    );
-  }
-
-  // An exact reference fanned out into facets is a misread question.
-  if (routed.intent === "exact_reference" && routed.bypassPlanner && subs.length > 0) {
-    problems.push("exact-reference query was fanned out into subqueries");
+  if (subs.length > maxSubqueries) {
+    problems.push(`plan returned ${subs.length} subqueries; the budget permits ${maxSubqueries}`);
   }
 
   const ids = new Set<string>();
@@ -341,16 +350,16 @@ export function semanticRejections({ query, routed, plan }: SemanticCheckInput):
   return problems;
 }
 
-function buildPrompt(query: string, routed: RoutedQuery, maxSubqueries: number): string {
+function buildPrompt(query: string, maxSubqueries: number): string {
   return [
     "You plan a RETRIEVAL STRATEGY over a fixed library of Śrīla Prabhupāda's",
     "books, lectures, conversations and letters. You never answer the question.",
     "",
     "You are producing search angles for a librarian, not a reply for a reader.",
     "",
-    `A deterministic router already classified this question as "${routed.intent}"`,
-    `and permits AT MOST ${maxSubqueries} subqueries. Returning more is a failure.`,
-    maxSubqueries === 0 ? "Return an EMPTY subqueries array." : "",
+    `You may return AT MOST ${maxSubqueries} subqueries. Returning more is a failure.`,
+    "Returning fewer is fine, and often right: a narrow question needs one or two",
+    "angles, and padding it out to the ceiling only retrieves noise.",
     "",
     "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE — a different role",
     "from the enum, reaching passages the others would miss. Rephrasing the same",
@@ -396,14 +405,13 @@ const PLANNER_TIMEOUT_MS = 4000;
 async function callPlanner(
   client: GenAiLike,
   query: string,
-  routed: RoutedQuery,
   maxSubqueries: number,
   timeoutMs: number,
 ): Promise<unknown> {
   const response = await withTimeout(
     client.models.generateContent({
       model: geminiQueryPlannerModel(),
-      contents: buildPrompt(query, routed, maxSubqueries),
+      contents: buildPrompt(query, maxSubqueries),
       config: {
         responseMimeType: "application/json",
         responseJsonSchema: queryPlanResponseSchema(maxSubqueries),
@@ -444,20 +452,14 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  */
 export async function planQuery(
   query: string,
-  routed: RoutedQuery,
+  maxSubqueries: number,
   deps: PlannerDeps = {},
 ): Promise<PlannedQuery> {
-  const maxSubqueries = routed.maxSubqueries;
-
-  if (routed.bypassPlanner || maxSubqueries === 0) {
-    return { plan: fallbackPlan(query, routed), source: "fallback_original_only", rejections: [] };
-  }
-
   let client = deps.client;
   if (!client) {
     if (!process.env.GEMINI_API_KEY) {
       return {
-        plan: fallbackPlan(query, routed),
+        plan: fallbackPlan(query),
         source: "fallback_original_only",
         rejections: ["GEMINI_API_KEY absent"],
       };
@@ -471,34 +473,46 @@ export async function planQuery(
 
   for (const attempt of ["model", "model_retry"] as const) {
     try {
-      const raw = await callPlanner(client, query, routed, maxSubqueries, timeoutMs);
+      const raw = await callPlanner(client, query, maxSubqueries, timeoutMs);
       const parsed = QueryPlanSchema.safeParse(raw);
       if (!parsed.success) {
         rejections.push(`${attempt}: schema — ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`);
         continue; // transient/truncated output earns exactly one retry
       }
 
-      const problems = semanticRejections({ query, routed, plan: parsed.data });
+      const problems = semanticRejections({ query, plan: parsed.data, maxSubqueries });
       if (problems.length > 0) {
         rejections.push(...problems.map((p) => `${attempt}: ${p}`));
         continue;
       }
 
-      return { plan: parsed.data, source: attempt, rejections };
+      return { plan: withExtractedReference(query, parsed.data), source: attempt, rejections };
     } catch (err) {
       rejections.push(`${attempt}: ${err instanceof Error ? err.message : "planner call failed"}`);
     }
   }
 
   console.warn(
-    JSON.stringify({
-      level: "warn",
-      event: "search.query_plan_degraded",
-      intent: routed.intent,
-      rejections,
-    }),
+    JSON.stringify({ level: "warn", event: "search.query_plan_degraded", rejections }),
   );
-  return { plan: fallbackPlan(query, routed), source: "fallback_original_only", rejections };
+  return { plan: fallbackPlan(query), source: "fallback_original_only", rejections };
 }
 
-export type { SearchIntent };
+/**
+ * Adds a reference the devotee actually wrote to the approved plan's retrieval
+ * constraints, if the planner did not already carry it.
+ *
+ * Applied AFTER approval, deliberately: `semanticRejections` rejects invented
+ * scripture constraints, and a constraint the server derived from the question
+ * itself must not be mistaken for one the model made up.
+ */
+function withExtractedReference(query: string, plan: QueryPlan): QueryPlan {
+  const reference = extractReference(query);
+  if (!reference) return plan;
+  const existing = plan.constraints.scripture_references;
+  if (existing.some((r) => r.trim().toUpperCase() === reference.toUpperCase())) return plan;
+  return {
+    ...plan,
+    constraints: { ...plan.constraints, scripture_references: [...existing, reference].slice(0, 5) },
+  };
+}

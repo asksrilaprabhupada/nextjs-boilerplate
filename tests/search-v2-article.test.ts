@@ -230,33 +230,34 @@ describe("deterministic renderer", () => {
   } as unknown as VerifiedPassage;
 
   it("renders exact stored text, unedited", () => {
-    const a = renderArticle({ question: "q", passages: [verse], plan: null, mode: "quick" });
+    const a = renderArticle({ question: "q", passages: [verse], plan: null });
     expect(a.sections[0].blocks[0].text).toBe(verse.text);
   });
 
   it("labels a letter as specific correspondence with recipient and year", () => {
-    const a = renderArticle({ question: "q", passages: [letter], plan: null, mode: "guided" });
+    const a = renderArticle({ question: "q", passages: [letter], plan: null });
     const block = a.sections[0].blocks[0];
     expect(block.contextNotice).toBe("Specific correspondence — Letter to Rayarama, 1968");
     expect(block.contextNoticeKind).toBe("letter");
   });
 
   it("always carries the disclosure", () => {
-    const a = renderArticle({ question: "q", passages: [verse], plan: null, mode: "quick" });
+    const a = renderArticle({ question: "q", passages: [verse], plan: null });
     expect(a.disclosure).toBe(DISCLOSURE);
     expect(articleToHtml(a)).toContain(DISCLOSURE);
   });
 
   it("renders without a plan and marks itself unplanned", () => {
-    const a = renderArticle({ question: "how do I steady the mind", passages: [verse], plan: null, mode: "quick" });
+    const a = renderArticle({ question: "how do I steady the mind", passages: [verse], plan: null });
     expect(a.planned).toBe(false);
     expect(a.title.length).toBeGreaterThan(0);
     expect(a.sections[0].blocks).toHaveLength(1);
   });
 
-  it("omits the source map in Quick Answer and includes it in Guided Study", () => {
-    expect(renderArticle({ question: "q", passages: [verse], plan: null, mode: "quick" }).sourceMap).toBeNull();
-    expect(renderArticle({ question: "q", passages: [verse], plan: null, mode: "guided" }).sourceMap).toContain("Drawn from");
+  it("always describes what the sources are", () => {
+    // This used to be shown in one reader mode and hidden in the other. A
+    // neutral count of what the reader is looking at is never noise.
+    expect(renderArticle({ question: "q", passages: [verse], plan: null }).sourceMap).toContain("Drawn from");
   });
 
   it("never drops a passage the plan failed to place", () => {
@@ -267,20 +268,20 @@ describe("deterministic renderer", () => {
       sections: [{ heading_key: "foundation", short_subject: "", passage_ids: ["verse:1"], transition_type: "none" }],
       closing: { kind: "none", passage_ids: [] }, disclosure: DISCLOSURE,
     };
-    const a = renderArticle({ question: "q", passages: [verse, letter], plan, mode: "guided" });
+    const a = renderArticle({ question: "q", passages: [verse, letter], plan });
     const keys = a.sections.flatMap(s => s.blocks.map(b => b.passageKey));
     expect(keys).toContain("letter:1");
   });
 
   it("escapes passage text so stored punctuation cannot inject markup", () => {
     const nasty = { ...verse, text: '<script>alert("x")</script>' } as unknown as VerifiedPassage;
-    const html = articleToHtml(renderArticle({ question: "q", passages: [nasty], plan: null, mode: "quick" }));
+    const html = articleToHtml(renderArticle({ question: "q", passages: [nasty], plan: null }));
     expect(html).not.toContain("<script>");
     expect(html).toContain("&lt;script&gt;");
   });
 
   it("says so plainly when there is no evidence, rather than assembling one", () => {
-    const a = renderArticle({ question: "q", passages: [], plan: null, mode: "guided" });
+    const a = renderArticle({ question: "q", passages: [], plan: null });
     expect(a.evidenceInsufficient).toBe(true);
     expect(articleToHtml(a)).toMatch(/No passage in the library directly answers/);
   });
