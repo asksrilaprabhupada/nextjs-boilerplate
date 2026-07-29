@@ -1,14 +1,19 @@
 /**
- * rerank.ts — ONE unified rerank, against the ORIGINAL question.
+ * rerank.ts — EVERY candidate judged, against the ORIGINAL question.
  *
- * One candidate list spanning every source type, judged once. Not per source
- * type, and emphatically not per subquery followed by another fusion: the
- * subqueries were recall scaffolding, and reranking against them would let the
- * scaffolding decide what the devotee is shown.
+ * One candidate list spanning every source type, and no cap on how many are
+ * judged: the reranker's job is to sort the pool, and a pool the database was
+ * told to keep large is exactly the pool it must see all of. Cohere cannot take
+ * thousands of documents in one request, so the pool is split into batches of
+ * {@link RERANK_BATCH_SIZE}, sent CONCURRENTLY, and then everything scoring at
+ * or above the relevance line is reranked once more as a single shortlist —
+ * so the final order is one true order, not several batch-local ones stitched
+ * together.
  *
- * Documents are serialised as YAML so the cross-encoder sees the same shape for
- * every source, with metadata that actually bears on relevance (a letter's
- * recipient and date change what the passage means) and nothing that does not.
+ * The score is KEPT. It rides on every candidate as `rerankScore`, because
+ * selection now works by relevance ("keep everything above the line") rather
+ * than by counting, and that is impossible if the score is used to sort and
+ * then thrown away.
  *
  * Cohere's relevance scores are RANKING SIGNALS. They are never surfaced as
  * "confidence percentages" — a 0.83 means this passage outranked that one, not
@@ -18,14 +23,24 @@
  * degraded. That is a worse ordering, not a wrong one.
  */
 import { cohereRerank } from "@/app/lib/08-cohere-rerank";
-import { cohereRerankModel } from "@/app/lib/search-v2/config";
+import { cohereRerankModel, RELEVANCE_THRESHOLD } from "@/app/lib/search-v2/config";
 import type { DedupedCandidate } from "@/app/lib/search-v2/dedup";
 
+/** A candidate carrying the reranker's judgement. Null when it was never judged. */
+export interface RankedCandidate extends DedupedCandidate {
+  rerankScore: number | null;
+}
+
+/** Cohere's documented per-request document ceiling is well above this; 200 keeps
+ *  each request comfortably inside token limits with 4k-char documents. */
+export const RERANK_BATCH_SIZE = 200;
+
 export interface RerankOutcome {
-  ranked: DedupedCandidate[];
-  /** True when Cohere ran and reordered. False means fused order stands. */
+  ranked: RankedCandidate[];
+  /** True when Cohere ran and produced a genuine ordering. */
   reranked: boolean;
   degradedReason: string | null;
+  /** Documents actually sent to the provider (all batches + the final pass). */
   documentCount: number;
   model: string;
 }
@@ -70,87 +85,130 @@ interface RerankDoc {
   __key: string;
 }
 
+function toDocs(pool: DedupedCandidate[]): RerankDoc[] {
+  return pool.map((c) => ({ body_text: serialiseDocument(c), __key: c.passage_key }));
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+const unranked = (candidates: DedupedCandidate[]): RankedCandidate[] =>
+  candidates.map((c) => ({ ...c, rerankScore: null }));
+
 export interface RerankInput {
   /** The devotee's ORIGINAL question. Never a subquery, never a canonicalisation. */
   question: string;
   candidates: DedupedCandidate[];
-  /** Ceiling on documents sent to the provider. */
-  maxCandidates: number;
 }
 
-/**
- * EVERY question is reranked. There used to be a bypass for questions that
- * looked like a bare scripture reference, which meant "BG 18.66" and "what does
- * BG 18.66 mean" were ordered by two different mechanisms. Reranking a single
- * obvious answer costs one provider call and is never wrong; guessing which
- * questions deserve it was.
- */
 export async function rerankUnified(input: RerankInput): Promise<RerankOutcome> {
   const model = cohereRerankModel();
-  const { question, candidates, maxCandidates } = input;
+  const { question, candidates } = input;
 
   if (candidates.length <= 1) {
-    return { ranked: candidates, reranked: false, degradedReason: null, documentCount: candidates.length, model };
+    return {
+      ranked: unranked(candidates),
+      reranked: false,
+      degradedReason: null,
+      documentCount: candidates.length,
+      model,
+    };
   }
-
-  const pool = candidates.slice(0, maxCandidates);
-  const byKey = new Map(pool.map((c) => [c.passage_key, c]));
-  const docs: RerankDoc[] = pool.map((c) => ({ body_text: serialiseDocument(c), __key: c.passage_key }));
 
   if (!process.env.COHERE_API_KEY) {
     return {
-      ranked: candidates,
+      ranked: unranked(candidates),
       reranked: false,
       degradedReason: "cohere_api_key_absent",
-      documentCount: docs.length,
+      documentCount: 0,
       model,
     };
   }
 
   try {
-    const results = await cohereRerank(question, docs, pool.length);
+    // ── Pass 1: every batch, concurrently. Every candidate gets a score. ──
+    const batches = chunk(candidates, RERANK_BATCH_SIZE);
+    let documentCount = 0;
+    const batchResults = await Promise.all(
+      batches.map((batch) => {
+        const docs = toDocs(batch);
+        documentCount += docs.length;
+        return cohereRerank(question, docs, docs.length);
+      }),
+    );
 
-    // `cohereRerank` returns the original order with score 0 when it could not
-    // reach the provider. Treat an all-zero result as a degradation rather than
-    // as a genuine ranking in which every passage is equally irrelevant.
-    const scored = results.filter((r) => r.relevance_score > 0);
-    if (scored.length === 0) {
+    const scoreByKey = new Map<string, number>();
+    let deadBatches = 0;
+    for (const results of batchResults) {
+      // `cohereRerank` returns the original order with score 0 when it could
+      // not reach the provider — an all-zero batch means unjudged, not
+      // uniformly irrelevant.
+      const alive = results.some((r) => r.relevance_score > 0);
+      if (!alive) {
+        deadBatches += 1;
+        continue;
+      }
+      for (const r of results) {
+        scoreByKey.set((r.item as RerankDoc).__key, r.relevance_score);
+      }
+    }
+
+    if (scoreByKey.size === 0) {
       return {
-        ranked: candidates,
+        ranked: unranked(candidates),
         reranked: false,
         degradedReason: "cohere_unavailable",
-        documentCount: docs.length,
+        documentCount,
         model,
       };
     }
 
-    const ordered: DedupedCandidate[] = [];
-    for (const r of results) {
-      const key = (r.item as RerankDoc).__key;
-      const c = byKey.get(key);
-      if (c) {
-        ordered.push(c);
-        byKey.delete(key);
+    // ── Pass 2: one true order over everything above the relevance line. ──
+    // Batch-local scores from one cross-encoder call are comparable enough to
+    // draw the line, but the final ORDER shown to a reader must come from a
+    // single judgement — unless only one batch was ever needed, in which case
+    // the first pass already is that single judgement.
+    const above = candidates.filter((c) => (scoreByKey.get(c.passage_key) ?? 0) >= RELEVANCE_THRESHOLD);
+    if (batches.length > 1 && above.length > 1) {
+      const finalDocs = toDocs(above);
+      documentCount += finalDocs.length;
+      const finalResults = await cohereRerank(question, finalDocs, finalDocs.length);
+      if (finalResults.some((r) => r.relevance_score > 0)) {
+        for (const r of finalResults) {
+          scoreByKey.set((r.item as RerankDoc).__key, r.relevance_score);
+        }
       }
+      // A dead final pass keeps the batch scores — a coarser but honest order.
     }
-    // Anything the provider did not return keeps its fused position, appended.
-    for (const c of pool) if (byKey.has(c.passage_key)) ordered.push(c);
-    // Candidates beyond the provider budget were never judged; they follow.
-    const beyond = candidates.slice(maxCandidates);
+
+    // A candidate whose batch died was never judged — it carries null, not 0.
+    // Zero is a verdict; null is an absence of one.
+    const ranked: RankedCandidate[] = candidates
+      .map((c) => ({
+        ...c,
+        rerankScore: scoreByKey.has(c.passage_key) ? scoreByKey.get(c.passage_key)! : null,
+      }))
+      .sort(
+        (a, b) =>
+          (b.rerankScore ?? -1) - (a.rerankScore ?? -1) || a.passage_key.localeCompare(b.passage_key),
+      );
 
     return {
-      ranked: [...ordered, ...beyond],
+      ranked,
       reranked: true,
-      degradedReason: null,
-      documentCount: docs.length,
+      degradedReason: deadBatches > 0 ? `cohere_partial_${deadBatches}_batches` : null,
+      documentCount,
       model,
     };
   } catch {
     return {
-      ranked: candidates,
+      ranked: unranked(candidates),
       reranked: false,
       degradedReason: "cohere_failed",
-      documentCount: docs.length,
+      documentCount: candidates.length,
       model,
     };
   }

@@ -134,6 +134,8 @@ describe("weighted RRF fusion", () => {
 describe("deduplication", () => {
   const fuse = (c: RetrievedCandidate[]) => fuseWeighted([c], { q: "original" });
 
+  const LONG_PURPORT = "The mind is restless turbulent obstinate and very strong O Krsna and to subdue it I think is more difficult than controlling the wind. But it is possible by constant practice and by detachment, as the yoga system prescribes, and one who has conquered the mind has already reached the Supersoul, because he has attained tranquillity in heat and cold, happiness and distress, honor and dishonor alike.";
+
   it("never collapses a verse into its purport", () => {
     const [v, p] = fuse([
       candidate({ passage_key: "verse:1", source_type: "verse", retrieval_text: "same words here" }),
@@ -178,26 +180,39 @@ describe("deduplication", () => {
     expect(dedupeCandidates(fused).candidates[0].reference).toBe("SB 1.1.1");
   });
 
-  it("skips near-duplicate collapse entirely when embeddings are absent", () => {
+  it("never merges two passages merely because they sound alike", () => {
+    // Two DIFFERENT paragraphs of one purport answer two different parts of a
+    // question. Similar wording is not the same passage.
     const fused = fuse([
-      candidate({ passage_key: "book:1", source_type: "book", retrieval_text: "alpha" }),
-      candidate({ passage_key: "book:2", source_type: "book", retrieval_text: "beta" }),
+      candidate({ passage_key: "purport:1", source_type: "purport", reference: "BG 6.34", retrieval_text: "The mind is restless and turbulent, and controlling it by practice is recommended in this verse for every serious student of yoga who wishes to advance steadily." }),
+      candidate({ passage_key: "purport:2", source_type: "purport", reference: "BG 6.34", retrieval_text: "The mind is turbulent and restless, and detachment from sense objects is the second recommendation, without which practice alone cannot steady anyone at any stage." }),
     ]);
-    expect(dedupeCandidates(fused, undefined).stats.nearCollapsed).toBe(0);
+    const out = dedupeCandidates(fused);
+    expect(out.candidates).toHaveLength(2);
+    expect(out.stats.containedCollapsed).toBe(0);
   });
 
-  it("collapses near-duplicates above the cosine threshold", () => {
+  it("absorbs a chunk that sits almost entirely inside a longer chunk of the same purport", () => {
+    const long = LONG_PURPORT;
+    const short = LONG_PURPORT.slice(0, Math.floor(LONG_PURPORT.length * 0.7));
     const fused = fuse([
-      candidate({ passage_key: "book:1", source_type: "book", retrieval_text: "alpha" }),
-      candidate({ passage_key: "book:2", source_type: "book", retrieval_text: "beta" }),
+      candidate({ passage_key: "purport:short", source_type: "purport", reference: "BG 6.34", retrieval_text: short }),
+      candidate({ passage_key: "purport:long", source_type: "purport", reference: "BG 6.34", retrieval_text: long }),
     ]);
-    const emb = new Map([
-      ["book:1", [1, 0, 0]],
-      ["book:2", [0.999, 0.03, 0]],
-    ]);
-    const out = dedupeCandidates(fused, emb, 0.95);
+    const out = dedupeCandidates(fused);
     expect(out.candidates).toHaveLength(1);
-    expect(out.stats.nearCollapsed).toBe(1);
+    expect(out.candidates[0].passage_key).toBe("purport:long"); // the longer wins
+    expect(out.stats.containedCollapsed).toBe(1);
+  });
+
+  it("never applies containment across references or source types", () => {
+    const fused = fuse([
+      candidate({ passage_key: "purport:a", source_type: "purport", reference: "BG 6.34", retrieval_text: LONG_PURPORT }),
+      // The same words under a DIFFERENT reference bucket is not absorbed…
+      candidate({ passage_key: "lecture:b", source_type: "lecture", reference: "Lecture 1969", retrieval_text: LONG_PURPORT.slice(0, 200) }),
+    ]);
+    // …because a lecture quoting a purport is a different act of teaching.
+    expect(dedupeCandidates(fused).stats.containedCollapsed).toBe(0);
   });
 
   it("normalises punctuation and diacritics for hashing only", () => {
@@ -205,88 +220,128 @@ describe("deduplication", () => {
   });
 });
 
-// ─── B9: evidence selection ──────────────────────────────────
+// ─── B9: evidence selection — by relevance, not by counting ──
 
 describe("evidence selection", () => {
   const build = (cs: RetrievedCandidate[]) => dedupeCandidates(fuseWeighted([cs], { q: "original" })).candidates;
+  const scored = (cs: RetrievedCandidate[], scores: (number | null)[]) =>
+    build(cs).map((c, i) => ({ ...c, rerankScore: scores[i] ?? null }));
+
+  const verses = (n: number, at = (i: number) => `distinct verse text number ${i}`) =>
+    Array.from({ length: n }, (_, i) =>
+      candidate({
+        passage_key: `verse:${i}`,
+        retrieval_text: at(i),
+        channel_ranks: [{ query_id: "q", channel: "fts_core", rank: i + 1 }],
+        matched_query_ids: ["q"],
+      }),
+    );
 
   it("excludes a letter that cannot be labelled with recipient and date", () => {
-    const unlabelled = build([
-      candidate({ passage_key: "letter:1", source_type: "letter", recipient: null, occurred_on: null }),
-    ])[0];
+    const unlabelled = scored(
+      [candidate({ passage_key: "letter:1", source_type: "letter", recipient: null, occurred_on: null })],
+      [0.9],
+    )[0];
     expect(isLabellable(unlabelled)).toBe(false);
 
-    const labelled = build([
-      candidate({ passage_key: "letter:2", source_type: "letter", recipient: "Rayarama", occurred_on: "1968-01-02" }),
-    ])[0];
+    const labelled = scored(
+      [candidate({ passage_key: "letter:2", source_type: "letter", recipient: "Rayarama", occurred_on: "1968-01-02" })],
+      [0.9],
+    )[0];
     expect(isLabellable(labelled)).toBe(true);
+
+    const out = selectEvidence({
+      ranked: [unlabelled, labelled],
+      approvedQueryIds: ["q"],
+      rerankAvailable: true,
+    });
+    expect(out.selected.map((x) => x.candidate.passage_key)).not.toContain("letter:1");
   });
 
   it("attaches a context requirement to letters and recorded conversations", () => {
-    const ranked = build([
-      candidate({
+    const ranked = scored(
+      [candidate({
         passage_key: "letter:1",
         source_type: "letter",
         recipient: "Rayarama",
         occurred_on: "1968-01-02",
         channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }],
-      }),
-    ]);
-    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 4 });
+      })],
+      [0.9],
+    );
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
     expect(out.selected[0].contextRequirements).toContain("letter_context");
   });
 
-  it("does not force a letter or a lecture in for variety", () => {
-    const ranked = build([
-      candidate({ passage_key: "verse:1", retrieval_text: "the first distinct verse", channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }], matched_query_ids: ["q"] }),
-      candidate({ passage_key: "verse:2", retrieval_text: "the second distinct verse", channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 2 }], matched_query_ids: ["q"] }),
-      candidate({ passage_key: "letter:9", retrieval_text: "a far weaker letter paragraph", source_type: "letter", recipient: "X", occurred_on: "1970-01-01", channel_ranks: [{ query_id: "q", channel: "semantic", rank: 400 }], matched_query_ids: ["q"] }),
-    ]);
-    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 });
-    expect(out.selected.every((s) => s.candidate.source_type !== "letter")).toBe(true);
+  it("keeps EVERY passage at or above the relevance line — no ceiling", () => {
+    const ranked = scored(verses(60), Array.from({ length: 60 }, () => 0.55));
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
+    expect(out.selected).toHaveLength(60);
   });
 
-  it("never exceeds the passage ceiling, however many candidates survive", () => {
-    const ranked = build(
-      Array.from({ length: 40 }, (_, i) =>
-        candidate({
-          passage_key: `verse:${i}`,
-          retrieval_text: `distinct text ${i}`,
-          channel_ranks: [{ query_id: "q", channel: "fts_core", rank: i + 1 }],
-          matched_query_ids: ["q"],
-        }),
-      ),
-    );
-    // One sizing band for every question. The ceiling is the ceiling; it is not
-    // relaxed or tightened by guessing what kind of question was asked.
-    expect(selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 }).selected.length)
-      .toBeLessThanOrEqual(8);
-    expect(selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 3 }).selected.length)
-      .toBeLessThanOrEqual(3);
+  it("drops what falls below the line", () => {
+    const scores = Array.from({ length: 40 }, (_, i) => (i < 15 ? 0.8 : 0.05));
+    const out = selectEvidence({
+      ranked: scored(verses(40), scores),
+      approvedQueryIds: ["q"],
+      rerankAvailable: true,
+    });
+    expect(out.selected).toHaveLength(15);
   });
 
-  it("pulls in the purport partner of the primary verse", () => {
-    const ranked = build([
-      candidate({ passage_key: "verse:1", source_type: "verse", reference: "BG 6.6", retrieval_text: "v", channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }] }),
-      candidate({ passage_key: "purport:1", source_type: "purport", reference: "BG 6.6", retrieval_text: "p", channel_ranks: [{ query_id: "q", channel: "semantic", rank: 30 }] }),
-    ]);
-    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 });
-    expect(out.selected.map((s) => s.candidate.passage_key)).toContain("purport:1");
+  it("keeps the top 10 anyway when fewer than 10 clear the threshold", () => {
+    const scores = Array.from({ length: 40 }, (_, i) => (i < 3 ? 0.8 : 0.05));
+    const out = selectEvidence({
+      ranked: scored(verses(40), scores),
+      approvedQueryIds: ["q"],
+      rerankAvailable: true,
+    });
+    expect(out.selected).toHaveLength(10);
+  });
+
+  it("keeps the top 100 of the fused order when the reranker was unreachable", () => {
+    const ranked = scored(verses(150), Array.from({ length: 150 }, () => null));
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: false });
+    expect(out.selected).toHaveLength(100);
+  });
+
+  it("preserves the reranker's order — never re-sorts", () => {
+    const ranked = scored(verses(20), Array.from({ length: 20 }, (_, i) => 0.9 - i * 0.01));
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
+    expect(out.selected.map((x) => x.candidate.passage_key)).toEqual(ranked.map((c) => c.passage_key));
+  });
+
+  it("pulls in the purport partner of the primary verse even below the line", () => {
+    // Twelve passages clear the threshold (so the floor is not in play); the
+    // primary verse's own purport scored far below the line on its own.
+    const pool = [
+      candidate({ passage_key: "verse:primary", source_type: "verse", reference: "BG 6.6", retrieval_text: "the primary verse", channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }] }),
+      ...verses(11, (i) => `supporting verse number ${i}`).map((c, i) => ({ ...c, passage_key: `verse:s${i}`, reference: `BG 9.${i + 1}` })),
+      candidate({ passage_key: "purport:primary", source_type: "purport", reference: "BG 6.6", retrieval_text: "its purport", channel_ranks: [{ query_id: "q", channel: "semantic", rank: 30 }] }),
+    ];
+    const ranked = scored(pool, [0.9, ...Array.from({ length: 11 }, () => 0.6), 0.02]);
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
+    const keys = out.selected.map((x) => x.candidate.passage_key);
+    expect(keys).toContain("purport:primary");
+    // Inserted directly after its verse, not appended or re-sorted elsewhere.
+    expect(keys.indexOf("purport:primary")).toBe(keys.indexOf("verse:primary") + 1);
   });
 
   it("reports uncovered subqueries instead of pretending to answer them", () => {
-    const ranked = build([
-      candidate({ passage_key: "verse:1", matched_query_ids: ["q"], channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }] }),
-    ]);
-    const out = selectEvidence({ ranked, approvedQueryIds: ["q", "s1"], maxFinalPassages: 8 });
+    const ranked = scored(
+      [candidate({ passage_key: "verse:1", matched_query_ids: ["q"], channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }] })],
+      [0.9],
+    );
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q", "s1"], rerankAvailable: true });
     expect(out.uncoveredQueryIds).toContain("s1");
   });
 
   it("reports evidence_insufficient when nothing is selectable", () => {
-    const ranked = build([
-      candidate({ passage_key: "letter:1", source_type: "letter", recipient: null, occurred_on: null }),
-    ]);
-    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], maxFinalPassages: 8 });
+    const ranked = scored(
+      [candidate({ passage_key: "letter:1", source_type: "letter", recipient: null, occurred_on: null })],
+      [0.9],
+    );
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
     expect(out.evidenceInsufficient).toBe(true);
   });
 });

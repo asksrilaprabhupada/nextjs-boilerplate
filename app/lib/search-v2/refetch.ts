@@ -58,6 +58,13 @@ export interface VerifiedPassage {
   transliteration: string | null;
   synonyms: string | null;
   purport: string | null;
+  /**
+   * Raw citation pieces from the fresh row (verse/purport only), so downstream
+   * provenance labelling never has to re-parse the formatted reference.
+   */
+  scripture: string | null;
+  division: string | null;
+  chapterNumber: number | null;
   selection: SelectedPassage;
 }
 
@@ -245,18 +252,22 @@ function buildVerified(
     transliteration: null,
     synonyms: null,
     purport: null,
+    scripture: null,
+    division: null,
+    chapterNumber: null,
     selection,
   };
 
   switch (ns) {
     case "verse": {
       const ch = nested(row.chapters);
+      const chapterNumber = (ch?.chapter_number as number | null) ?? null;
       return {
         ...base,
         reference: formatVerseReference({
           scripture: str(row.scripture),
           division: str(ch?.canto_or_division),
-          chapterNumber: (ch?.chapter_number as number | null) ?? null,
+          chapterNumber,
           verseNumber: str(row.verse_number),
           vedabaseUrl: str(row.vedabase_url),
         }),
@@ -264,21 +275,29 @@ function buildVerified(
         transliteration: str(row.transliteration),
         synonyms: str(row.synonyms),
         purport: str(row.purport),
+        scripture: str(row.scripture),
+        division: str(ch?.canto_or_division),
+        chapterNumber,
       };
     }
     case "purport": {
       const parent = nested(row.verses);
       const ch = nested(parent?.chapters);
+      const chapterNumber =
+        (ch?.chapter_number as number | null) ?? (row.chapter_number as number | null) ?? null;
       return {
         ...base,
         reference: formatVerseReference({
           scripture: str(row.scripture),
           division: str(ch?.canto_or_division),
-          chapterNumber: (ch?.chapter_number as number | null) ?? (row.chapter_number as number | null) ?? null,
+          chapterNumber,
           verseNumber: str(row.verse_number),
           vedabaseUrl: str(parent?.vedabase_url),
         }),
         vedabaseUrl: str(parent?.vedabase_url),
+        scripture: str(row.scripture),
+        division: str(ch?.canto_or_division),
+        chapterNumber,
       };
     }
     case "book":

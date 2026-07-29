@@ -176,3 +176,77 @@ export function labelForLetter(l: LetterLike): PassageLabel {
     provenanceNote: l.provenanceNote || "",
   };
 }
+
+/* ── labels for the wire passage shape ──
+   The /api/search response now ships one flat passage list; the server computes
+   each passage's label HERE, once, so every surface prints the same line and
+   the client never re-derives provenance. */
+
+interface WirePassageLike {
+  type: "verse" | "purport" | "book" | "lecture" | "letter";
+  /** Formatted citation, e.g. "BG 6.34"; the book slug for book passages. */
+  reference: string | null;
+  url?: string | null;
+  scripture?: string | null;
+  division?: string | null;
+  chapterNumber?: number | null;
+  speaker?: string | null;
+  recipient?: string | null;
+  date?: string | null;
+  location?: string | null;
+}
+
+/** "BG 6.34" → "Bhagavad-gītā 6.34"; unknown sigla pass through unchanged. */
+function readableReference(reference: string | null): string {
+  const ref = (reference || "").trim();
+  if (!ref) return "";
+  const m = ref.match(/^([A-Za-z]{2,4})\s+(.+)$/);
+  if (!m) return ref;
+  const title = bookTitleFor(m[1].toLowerCase());
+  return title !== m[1].toLowerCase() ? `${title} ${m[2]}` : ref;
+}
+
+function wireVerseAuthorship(p: WirePassageLike): Authorship {
+  return authorshipFor({
+    kind: "verse",
+    bookSlug: (p.scripture || "").toLowerCase(),
+    vedabaseUrl: p.url ?? undefined,
+    canto: p.division ?? undefined,
+    chapter: p.chapterNumber ?? undefined,
+  });
+}
+
+export function labelForWirePassage(p: WirePassageLike): PassageLabel {
+  switch (p.type) {
+    case "verse": {
+      const auth = wireVerseAuthorship(p);
+      return {
+        parts: [readableReference(p.reference), "Translation", p.speaker || ""],
+        provenanceNote: provenanceNoteFor((p.scripture || "").toLowerCase(), auth),
+      };
+    }
+    case "purport": {
+      const auth = wireVerseAuthorship(p);
+      return {
+        parts: [readableReference(p.reference), "Purport", auth === "HIS" ? "Śrīla Prabhupāda" : ""],
+        provenanceNote: provenanceNoteFor((p.scripture || "").toLowerCase(), auth),
+      };
+    }
+    case "book":
+      return labelForProse({ book_slug: p.reference || "" });
+    case "lecture":
+      return labelForTranscript({ title: p.reference || "", date: p.date || "", location: p.location || "" });
+    case "letter":
+      return labelForLetter({ recipient: p.recipient || "", date: p.date || "" });
+  }
+}
+
+/** Label for the folded purport shown under a verse card, or null. */
+export function purportLabelForWirePassage(p: WirePassageLike): string | null {
+  if (p.type !== "verse") return null;
+  const auth = wireVerseAuthorship(p);
+  return formatLabel({
+    parts: ["Purport", auth === "HIS" ? "Śrīla Prabhupāda" : ""],
+    provenanceNote: "",
+  });
+}

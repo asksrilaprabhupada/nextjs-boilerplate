@@ -115,7 +115,7 @@ export interface RenderedArticle {
   evidenceInsufficient: boolean;
 }
 
-function contextNoticeFor(p: VerifiedPassage): { text: string; kind: ContextNoticeKind } | null {
+export function contextNoticeFor(p: VerifiedPassage): { text: string; kind: ContextNoticeKind } | null {
   switch (p.sourceType) {
     case "letter":
       // Guarded by isRenderable, but re-checked: an unlabelled letter must never

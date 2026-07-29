@@ -332,7 +332,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(out.telemetry.degradedStages.map((d) => d.stage)).toContain("reranking");
   });
 
-  it("adapts onto the wire contract the live UI already renders", async () => {
+  it("adapts onto the wire contract: the words themselves, never just names", async () => {
     const out = await runSearchV2({
       db: fakeDb() as never,
       query: "how do I control my restless mind",
@@ -345,11 +345,22 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(wire.requestId).toBe("req_adapt");
     expect(wire.citations.length).toBeGreaterThan(0);
     expect(wire.citations.every((c) => c.ref && c.ref.trim())).toBe(true);
-    // The narrative carries the exact stored text and its citation.
-    expect(wire.narrative).toContain(BG_6_34.translation);
-    expect(wire.narrative).toContain("BG 6.34");
-    expect(wire.narrative).toContain("assisted by AI");
-    expect(wire.totalResults).toBe(wire.citations.length);
+    expect(wire.totalResults).toBe(wire.passages.length);
+
+    // WORDS, NOT NAMES. This must fail if `passages` is ever empty or
+    // text-free — that is exactly the blank-page bug.
+    expect(wire.passages.length).toBeGreaterThan(0);
+    for (const p of wire.passages) {
+      expect(p.text, `passage ${p.id} arrived without its words`).toBeTruthy();
+      expect(p.text.trim().length).toBeGreaterThan(0);
+      expect(p.label.length).toBeGreaterThan(0);
+    }
+
+    // The exact stored translation travels in the response, with its citation.
+    const bg634 = wire.passages.find((p) => p.reference === "BG 6.34");
+    expect(bg634).toBeDefined();
+    expect(bg634!.text).toBe(BG_6_34.translation);
+    expect(bg634!.url).toBe("https://vedabase.io/en/library/bg/6/34/");
   });
 
   it("never leaks the question into telemetry", async () => {

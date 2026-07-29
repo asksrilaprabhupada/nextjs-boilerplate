@@ -160,7 +160,7 @@ function goodArticle(over: Record<string, unknown> = {}) {
 describe("article planner loop", () => {
   it("accepts a well-formed plan", async () => {
     const client = scriptedClient([goodArticle()]);
-    const out = await planArticle(QUESTION, PASSAGES, 8, { client });
+    const out = await planArticle(QUESTION, PASSAGES, { client });
     expect(out.source).toBe("model");
     expect(out.plan?.sections).toHaveLength(2);
   });
@@ -171,7 +171,7 @@ describe("article planner loop", () => {
       sections: [{ heading_key: "foundation", short_subject: "x", passage_ids: ["verse:999"], transition_type: "none" }],
     });
     const client = scriptedClient([invented, invented]);
-    const out = await planArticle(QUESTION, PASSAGES, 8, { client });
+    const out = await planArticle(QUESTION, PASSAGES, { client });
     expect(out.plan).toBeNull();
     expect(out.source).toBe("deterministic_fallback");
     expect(out.rejections.join(" ")).toMatch(/never supplied/);
@@ -180,20 +180,20 @@ describe("article planner loop", () => {
   it("rejects a plan that reworded the disclosure", async () => {
     const reworded = goodArticle({ disclosure: "Written with AI assistance." });
     const client = scriptedClient([reworded, reworded]);
-    const out = await planArticle(QUESTION, PASSAGES, 8, { client });
+    const out = await planArticle(QUESTION, PASSAGES, { client });
     expect(out.plan).toBeNull();
   });
 
   it("never calls the model when there are no verified passages", async () => {
     const client = scriptedClient([goodArticle()]);
-    const out = await planArticle(QUESTION, [], 8, { client });
+    const out = await planArticle(QUESTION, [], { client });
     expect(client.calls).toHaveLength(0);
     expect(out.plan).toBeNull();
   });
 
   it("survives a provider outage without throwing", async () => {
     const client = scriptedClient([new Error("timeout"), new Error("timeout")]);
-    const out = await planArticle(QUESTION, PASSAGES, 8, { client });
+    const out = await planArticle(QUESTION, PASSAGES, { client });
     expect(out.plan).toBeNull();
     expect(out.source).toBe("deterministic_fallback");
   });
@@ -209,7 +209,7 @@ describe("article planner loop", () => {
         },
       },
     };
-    await planArticle(QUESTION, PASSAGES, 8, { client: spy });
+    await planArticle(QUESTION, PASSAGES, { client: spy });
     void client;
     const prompt = seen[0];
     // The planner is told the ids and a short opening snippet, and explicitly
@@ -217,5 +217,18 @@ describe("article planner loop", () => {
     expect(prompt).toContain("verse:1");
     expect(prompt).toMatch(/opening_words/);
     expect(prompt).toMatch(/You do not write, summarise, quote or explain/);
+  });
+
+  it("skips the model when the list exceeds its schema's capacity — arrangement only, nothing dropped", async () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({
+      ...PASSAGES[0],
+      passageKey: `verse:${i}`,
+    })) as unknown as typeof PASSAGES;
+    const client = scriptedClient([goodArticle()]);
+    const out = await planArticle(QUESTION, many, { client });
+    expect(client.calls).toHaveLength(0);
+    expect(out.plan).toBeNull();
+    expect(out.source).toBe("deterministic_fallback");
+    expect(out.rejections.join(" ")).toMatch(/capacity/);
   });
 });
