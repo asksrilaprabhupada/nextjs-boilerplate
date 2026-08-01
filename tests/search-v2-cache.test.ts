@@ -56,9 +56,11 @@ describe("question normalisation", () => {
 
 describe("response key discipline", () => {
   it("is stable for the same question", () => {
-    expect(cacheKeys.response("How do I control my mind?")).toBe(
+    const key = cacheKeys.response("How do I control my mind?");
+    expect(key).toBe(
       cacheKeys.response("  how do i control my MIND  "),
     );
+    expect(key).toMatch(/^response:v4:/);
   });
 
   it("separates different questions", () => {

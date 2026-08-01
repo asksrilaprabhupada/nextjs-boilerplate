@@ -63,26 +63,35 @@ cosine. Tag lanes accept canonical `vocab_terms` slugs only. All functions are
 
 `app/lib/search-v2/errors.ts` ships `InvalidSearchInputError` (400),
 `SearchInfrastructureError` (503), `ProviderUnavailableError` (503).
-`app/lib/search-v2/rpc.ts` ships `rpcOrThrow`, `rpcOrDegrade`, `unwrapOrThrow`,
-`DegradationLog`, and an injectable client interface for tests.
+`app/lib/search-v2/rpc.ts` ships `rpcOrThrow`, the monotonic-timed
+`rpcOrThrowMeasured`, `rpcOrDegrade`, `unwrapOrThrow`, `DegradationLog`, and an
+injectable client interface for tests. A required RPC may retry once only when
+the Supabase fetch boundary proves that no HTTP response was received and brands
+a definite transient transport failure. A resolved response, Postgres 57014,
+application abort, provider timeout, and unknown rejection are never retried.
 
 Required lanes: direct lookup, and the original question's full-text and
 semantic retrieval. Optional lanes: query expansion, variant retrieval,
 supplementary phrases, spelling, chapter context, telemetry — each records a
 `degradedStages` entry when it softens.
 
-`SearchInfrastructureError` always escapes `hybridSearch`; it may not fall
-through to the legacy v1/`ilike` path, which would answer a broken pipeline with
-plausible-looking results.
+The five evidence sources settle independently. If at least one requested
+source succeeds, its evidence continues and the result is visibly incomplete,
+names every unavailable source, and cannot enter the response cache. If every
+requested source fails, an aggregate `SearchInfrastructureError` escapes; it may
+not become an empty result or fall through to the legacy v1/`ilike` path.
 
 ### Response and HTTP contract
 
-Success gains `requestId`, `retrievalStatus: "complete"`, `degradedStages`,
-`disabledLanes`. `validated` keeps its existing meaning. Invalid input → 400;
+Success gains `requestId`, `degraded`, `retrievalStatus` (`complete` or
+`degraded`), public `degradedSources`, and `disabledLanes`. Each public degraded
+source contains only an allowlisted friendly name and the stable reason
+`temporarily unavailable`; internal stages, function/provider names and codes
+remain server-side. `validated` keeps its existing meaning. Invalid input → 400;
 database/config → 503 `search_infrastructure_error`; required provider → 503
 `provider_unavailable`; unexpected → 500. SSE keeps the `failure` event name.
 Query capped at 2,000 chars; modes limited to `article` and `references`.
-`RESPONSE_VERSION` is `p8`; errors are never cached; request ids are attached
+The response-cache namespace is `v4`; errors are never cached; request ids are attached
 after the cache read.
 
 `GET /api/health` reports only status, search availability and request id,

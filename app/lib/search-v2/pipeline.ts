@@ -24,9 +24,10 @@
  * Every degradation is recorded and surfaced in the response. The two rules
  * that govern the failure paths:
  *
- *   - A retrieval RPC failing is fatal. It propagates as
- *     SearchInfrastructureError → HTTP 503. It never becomes "no teachings
- *     found", because a devotee cannot tell those apart and the second is a lie.
+ *   - If every requested retrieval source fails, SearchInfrastructureError
+ *     propagates as HTTP 503. If at least one source succeeds, successful
+ *     evidence continues with an explicit incomplete-answer warning; failure
+ *     can never become a silent empty source.
  *   - Everything else degrades and says so: no planner, no embeddings, no
  *     reranker, no exact-reference lookup and no article planner each produce a
  *     worse but honest answer.
@@ -35,7 +36,12 @@
  * counts that let a bad result be diagnosed without re-running it.
  */
 import { planQuery } from "@/app/lib/search-v2/query-plan";
-import { retrieveCandidates, ORIGINAL_QUERY_ID } from "@/app/lib/search-v2/retrieval";
+import {
+  retrieveCandidates,
+  ORIGINAL_QUERY_ID,
+  type RetrievalSourceTelemetry,
+} from "@/app/lib/search-v2/retrieval";
+import type { FriendlyRetrievalSource } from "@/app/lib/types/01-search";
 import {
   fuseWeighted,
   buildPriorityMap,
@@ -100,6 +106,7 @@ export interface SearchTelemetry {
   subqueryCount: number;
   planSource: string;
   tableRpcCount: number;
+  tableRpcAttemptCount: number;
   vocabularyRpcCount: number;
   refetchCount: number;
   embeddingProviderCalls: number;
@@ -120,6 +127,10 @@ export interface SearchTelemetry {
   droppedOnRefetch: number;
   degraded: boolean;
   degradedStages: DegradedStage[];
+  /** Detailed server-only evidence for each actual retrieval RPC invocation. */
+  sourceRetrieval: RetrievalSourceTelemetry[];
+  /** Allowlisted source labels safe to map onto the public response. */
+  degradedSources: FriendlyRetrievalSource[];
   stageDurationsMs: Record<string, number>;
   totalDurationMs: number;
   models: { queryPlanner: string | null; reranker: string; articlePlanner: string | null };
@@ -387,7 +398,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   });
 
   const degradedStages = degraded.list();
-  onStage?.(degradedStages.length > 0 ? "degraded" : "complete");
+  const responseDegraded = degradedStages.length > 0 || retrieved.degradedSources.length > 0;
+  onStage?.(responseDegraded ? "degraded" : "complete");
 
   const mainTierCount = refetched.verified.length;
   const telemetry: SearchTelemetry = {
@@ -399,6 +411,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     subqueryCount: planned.plan.subqueries.length,
     planSource: planned.source,
     tableRpcCount: retrieved.tableRpcCount,
+    tableRpcAttemptCount: retrieved.tableRpcAttemptCount,
     vocabularyRpcCount: retrieved.vocabularyRpcCount,
     refetchCount: refetched.fetchCount,
     embeddingProviderCalls: retrieved.embeddingProviderCalls,
@@ -417,8 +430,10 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     cutGap: Math.round(selection.cutGap * 1000) / 1000,
     pinnedExactReference: Boolean(pinnedCandidate),
     droppedOnRefetch: refetched.dropped.length,
-    degraded: degradedStages.length > 0,
+    degraded: responseDegraded,
     degradedStages,
+    sourceRetrieval: retrieved.sourceRetrieval,
+    degradedSources: retrieved.degradedSources,
     stageDurationsMs: durations,
     totalDurationMs: Date.now() - started,
     models: {

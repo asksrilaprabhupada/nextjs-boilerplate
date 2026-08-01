@@ -25,6 +25,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { runSearchV2 } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
 import { __setCacheAdapter } from "@/app/lib/search-v2/cache";
+import { SearchInfrastructureError } from "@/app/lib/search-v2/errors";
 
 // ─── real corpus rows ────────────────────────────────────────
 
@@ -122,16 +123,24 @@ const VERSE_CANDIDATES = [
   },
 ];
 
-const BATCH_FNS = new Set([
+const BATCH_FUNCTIONS = [
   "search_verses_hybrid_batch_v3",
   "search_verse_chunks_hybrid_batch_v3",
   "search_prose_hybrid_batch_v3",
   "search_transcripts_hybrid_batch_v3",
   "search_letters_hybrid_batch_v3",
-]);
+] as const;
+
+const BATCH_FNS = new Set<string>(BATCH_FUNCTIONS);
+
+const PRIVATE_DB_MESSAGE = "private SQL function body and argument values";
+const PRIVATE_DB_DETAILS = "relation internal_search_vectors is unavailable";
 
 interface FakeOpts {
-  failingRpc?: string;
+  /** Every named RPC resolves the way supabase-js does after a DB response. */
+  failingRpcs?: ReadonlySet<string>;
+  /** Named RPCs return an anomalous blank success (`data: null`, no error). */
+  nullDataRpcs?: ReadonlySet<string>;
   verseRows?: Record<string, unknown>[];
   /** Rows direct_verse_lookup returns — the exact-reference pin's source. */
   directRows?: Record<string, unknown>[];
@@ -146,13 +155,27 @@ interface FakeOpts {
 
 function fakeDb(opts: FakeOpts = {}) {
   const calls: string[] = [];
+  const rpcCalls: Array<{ fn: string; args: Record<string, unknown> }> = [];
   const verses = opts.verseRows ?? [BG_6_34, BG_6_26, BG_14_22];
   return {
     calls,
+    rpcCalls,
     rpc(fn: string, args?: Record<string, unknown>) {
       calls.push(fn);
-      if (opts.failingRpc === fn) {
-        return Promise.resolve({ data: null, error: { code: "42883" } });
+      rpcCalls.push({ fn, args: args ?? {} });
+      if (opts.failingRpcs?.has(fn)) {
+        return Promise.resolve({
+          data: null,
+          error: {
+            code: "42883",
+            message: `${PRIVATE_DB_MESSAGE}: ${fn}`,
+            details: PRIVATE_DB_DETAILS,
+            hint: "private migration name",
+          },
+        });
+      }
+      if (opts.nullDataRpcs?.has(fn)) {
+        return Promise.resolve({ data: null, error: null });
       }
       if (fn === "search_verses_hybrid_batch_v3") {
         const cons = (args?.p_constraints ?? {}) as { scripture_references?: string[] };
@@ -304,14 +327,233 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(seen[seen.length - 1]).toBe("degraded");
   });
 
-  it("propagates a retrieval RPC failure instead of returning an empty answer", async () => {
-    await expect(
-      runSearchV2({
-        db: fakeDb({ failingRpc: "search_letters_hybrid_batch_v3" }) as never,
+  it("returns a visibly degraded partial answer when one source fails and four succeed", async () => {
+    const failedFn = "search_transcripts_hybrid_batch_v3";
+    const db = fakeDb({ failingRpcs: new Set([failedFn]) });
+    const out = await runSearchV2({
+      db: db as never,
+      query: "how do I control my restless mind",
+      requestId: "req_partial",
+    });
+
+    expect(out.evidenceInsufficient).toBe(false);
+    expect(out.article.sections.flatMap((section) => section.blocks).length).toBeGreaterThan(0);
+    expect(out.telemetry.tableRpcCount).toBe(5);
+    expect(out.telemetry.tableRpcAttemptCount).toBe(5);
+    expect(out.telemetry.degradedSources).toEqual(["Lectures and conversations"]);
+
+    const sourceTelemetry = out.telemetry.sourceRetrieval;
+    expect(sourceTelemetry).toHaveLength(5);
+    expect(sourceTelemetry.filter((source) => source.success)).toHaveLength(4);
+    const failed = sourceTelemetry.filter((source) => !source.success);
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({
+      source: "Lectures and conversations",
+      internalFunction: failedFn,
+      operation: "initial",
+      success: false,
+      code: "42883",
+      candidateCount: null,
+      attemptCount: 1,
+    });
+
+    for (const source of sourceTelemetry) {
+      const rpcCall = db.rpcCalls.find((call) => call.fn === source.internalFunction);
+      expect(rpcCall, `missing captured call for ${source.internalFunction}`).toBeDefined();
+      expect(Number.isFinite(source.durationMs)).toBe(true);
+      expect(source.durationMs).toBeGreaterThanOrEqual(0);
+      expect(source.outerLimit).toBe(rpcCall!.args.p_limit);
+      expect(source.semanticLimit).toBe(rpcCall!.args.p_semantic_limit);
+      expect(source.outerLimit).toBeGreaterThan(0);
+      expect(source.semanticLimit).toBeGreaterThan(0);
+      expect(source.attemptCount).toBe(1);
+      expect(source.attempts).toHaveLength(1);
+      expect(source.attempts[0].attempt).toBe(1);
+      expect(source.attempts[0].durationMs).toBeGreaterThanOrEqual(0);
+      expect(source.attempts[0].outcome).toBe(source.success ? "success" : "response_error");
+    }
+
+    const wire = adaptToSearchResults("how do I control my restless mind", out);
+    expect(wire.retrievalStatus).toBe("degraded");
+    expect(wire.degradedSources).toEqual([
+      { source: "Lectures and conversations", reason: "temporarily unavailable" },
+    ]);
+    const serialised = JSON.stringify(wire);
+    expect(serialised).not.toContain(failedFn);
+    expect(serialised).not.toContain("42883");
+    expect(serialised).not.toContain(PRIVATE_DB_MESSAGE);
+    expect(serialised).not.toContain(PRIVATE_DB_DETAILS);
+    expect(serialised).not.toContain("sourceRetrieval");
+    expect(serialised).not.toContain("internalFunction");
+  });
+
+  it("treats a blank null/no-error source response as malformed, never as empty evidence", async () => {
+    const failedFn = "search_transcripts_hybrid_batch_v3";
+    const db = fakeDb({ nullDataRpcs: new Set([failedFn]) });
+    const out = await runSearchV2({
+      db: db as never,
+      query: "how do I control my restless mind",
+      requestId: "req_null_partial",
+    });
+
+    expect(out.evidenceInsufficient).toBe(false);
+    expect(out.telemetry.degraded).toBe(true);
+    expect(out.telemetry.degradedSources).toEqual(["Lectures and conversations"]);
+    const failed = out.telemetry.sourceRetrieval.find(
+      (source) => source.internalFunction === failedFn,
+    );
+    expect(failed).toMatchObject({
+      success: false,
+      code: "invalid_response",
+      candidateCount: null,
+      attemptCount: 1,
+    });
+    expect(failed?.attempts).toEqual([
+      expect.objectContaining({ outcome: "invalid_response", code: "invalid_response" }),
+    ]);
+
+    const wire = adaptToSearchResults("how do I control my restless mind", out);
+    expect(wire).toMatchObject({
+      degraded: true,
+      retrievalStatus: "degraded",
+      degradedSources: [
+        { source: "Lectures and conversations", reason: "temporarily unavailable" },
+      ],
+    });
+    expect(JSON.stringify(wire)).not.toContain("invalid_response");
+    expect(JSON.stringify(wire)).not.toContain(failedFn);
+  });
+
+  it("turns five blank null/no-error responses into one real infrastructure failure", async () => {
+    const db = fakeDb({ nullDataRpcs: new Set(BATCH_FUNCTIONS) });
+    let caught: unknown;
+
+    try {
+      await runSearchV2({
+        db: db as never,
         query: "how do I control my restless mind",
-        requestId: "req_fail",
-      }),
-    ).rejects.toThrow(/search_letters_hybrid_batch_v3/);
+        requestId: "req_all_null",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(db.calls.filter((call) => BATCH_FNS.has(call))).toEqual(BATCH_FUNCTIONS);
+    expect(caught).toBeInstanceOf(SearchInfrastructureError);
+    const error = caught as SearchInfrastructureError;
+    expect(error).toMatchObject({
+      requestId: "req_all_null",
+      source: "all_requested_sources",
+      databaseCode: null,
+      transportCode: null,
+      internalCode: "invalid_response",
+      attemptCount: 5,
+    });
+    expect(error.sourceFailures).toHaveLength(5);
+    expect(error.sourceFailures.every((failure) =>
+      failure.internalCode === "invalid_response"
+      && failure.databaseCode === null
+      && failure.transportCode === null)).toBe(true);
+    const publicWire = JSON.stringify(error.toPublicJSON());
+    expect(publicWire).not.toContain("invalid_response");
+    for (const fn of BATCH_FUNCTIONS) expect(publicWire).not.toContain(fn);
+  });
+
+  it("waits for and reports all five source failures as one structured outage", async () => {
+    const db = fakeDb({ failingRpcs: new Set(BATCH_FUNCTIONS) });
+    let caught: unknown;
+
+    try {
+      await runSearchV2({
+        db: db as never,
+        query: "how do I control my restless mind",
+        requestId: "req_all_fail",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(db.calls.filter((call) => BATCH_FNS.has(call))).toEqual(BATCH_FUNCTIONS);
+    expect(caught).toBeInstanceOf(SearchInfrastructureError);
+    const error = caught as SearchInfrastructureError;
+    expect(error).toMatchObject({
+      requestId: "req_all_fail",
+      stage: "retrieval:batch",
+      source: "all_requested_sources",
+      databaseCode: "42883",
+      transportCode: null,
+      attemptCount: 5,
+    });
+    expect(error.sourceFailures).toHaveLength(5);
+    expect(error.sourceFailures.map((failure) => failure.source)).toEqual(BATCH_FUNCTIONS);
+    for (const failure of error.sourceFailures) {
+      expect(failure).toMatchObject({
+        stage: `retrieval:batch:${failure.source}`,
+        databaseCode: "42883",
+        transportCode: null,
+        attemptCount: 1,
+      });
+      expect(Number.isFinite(failure.durationMs)).toBe(true);
+      expect(failure.durationMs).toBeGreaterThanOrEqual(0);
+    }
+    expect((error as Error & { cause?: unknown }).cause).toBeInstanceOf(AggregateError);
+
+    const publicWire = error.toPublicJSON();
+    expect(publicWire).toEqual({
+      error: "Search is temporarily unavailable. Please try again shortly.",
+      code: "search_infrastructure_error",
+      request_id: "req_all_fail",
+    });
+    const serialised = JSON.stringify(publicWire);
+    for (const fn of BATCH_FUNCTIONS) expect(serialised).not.toContain(fn);
+    expect(serialised).not.toContain("42883");
+    expect(serialised).not.toContain(PRIVATE_DB_MESSAGE);
+    expect(serialised).not.toContain(PRIVATE_DB_DETAILS);
+    expect(serialised).not.toContain("sourceFailures");
+  });
+
+  it("does not constraint-fail-open a scripture source that failed", async () => {
+    const failedFn = "search_verse_chunks_hybrid_batch_v3";
+    const db = fakeDb({
+      failingRpcs: new Set([failedFn]),
+      scriptureFilterEmpties: true,
+      transcriptCandidates: [
+        {
+          passage_key: "lecture:bbbbbbbb-0000-0000-0000-000000000000",
+          source_type: "lecture",
+          row_id: "bbbbbbbb-0000-0000-0000-000000000000",
+          retrieval_text:
+            "A recorded talk paragraph long enough to prove that another source returned evidence while one scripture source failed.",
+          reference: "Lecture",
+          speaker: null,
+          recipient: null,
+          occurred_on: null,
+          location: null,
+          matched_query_ids: ["q_original"],
+          channel_ranks: [{ query_id: "q_original", channel: "fts_core", rank: 1 }],
+          channel_scores: {},
+          tag_matches: 0,
+        },
+      ],
+    });
+
+    const out = await runSearchV2({
+      db: db as never,
+      query: "what does BG 6.34 mean?",
+      requestId: "req_failed_scripture",
+    });
+
+    const batchCalls = db.calls.filter((call) => BATCH_FNS.has(call));
+    expect(batchCalls).toHaveLength(6);
+    expect(batchCalls.filter((call) => call === failedFn)).toHaveLength(1);
+    expect(batchCalls.filter((call) => call === "search_verses_hybrid_batch_v3")).toHaveLength(2);
+    expect(out.telemetry.tableRpcCount).toBe(6);
+    expect(out.telemetry.tableRpcAttemptCount).toBe(6);
+    expect(out.telemetry.sourceRetrieval).toHaveLength(6);
+    expect(out.telemetry.sourceRetrieval.filter(
+      (source) => source.operation === "constraint_fail_open",
+    ).map((source) => source.internalFunction)).toEqual(["search_verses_hybrid_batch_v3"]);
+    expect(out.telemetry.degradedSources).toEqual(["Purports"]);
   });
 
   it("drops a passage whose source row changed under it, and renders the rest", async () => {

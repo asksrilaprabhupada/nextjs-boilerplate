@@ -177,24 +177,30 @@ export interface SearchResults {
 
   /** Correlates this response with server logs. Non-sensitive. */
   requestId?: string;
+  /** True when any requested retrieval source was unavailable. */
+  degraded: boolean;
   /**
-   * "complete" means retrieval ran end to end, so an empty result is a genuine
-   * absence of direct evidence rather than a failure. A failed search never
-   * carries this field — it returns a typed error instead.
+   * "complete" means every requested source completed. "degraded" means the
+   * answer is visibly partial; a total failure returns a typed error instead.
    */
-  retrievalStatus?: "complete";
-  /** Optional lanes that softened on this request. Empty in the normal case. */
-  degradedStages?: DegradedStage[];
+  retrievalStatus: "complete" | "degraded";
+  /** Public, allowlisted identities for unavailable retrieval sources. */
+  degradedSources: DegradedSource[];
   /** Lanes switched off in this build. */
   disabledLanes?: string[];
 }
 
-/** One optional lane that failed and was softened rather than fatal. */
-export interface DegradedStage {
-  stage: string;
-  /** An RPC or provider name. Never carries query text or arguments. */
-  source: string;
-  code: string;
+export type FriendlyRetrievalSource =
+  | "Scripture verses"
+  | "Purports"
+  | "Books"
+  | "Lectures and conversations"
+  | "Letters";
+
+/** The only degradation detail allowed across the browser boundary. */
+export interface DegradedSource {
+  source: FriendlyRetrievalSource;
+  reason: "temporarily unavailable";
 }
 
 /* ── SSE stage events (?stream=1) ── */

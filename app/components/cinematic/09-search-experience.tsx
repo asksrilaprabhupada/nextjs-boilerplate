@@ -18,6 +18,7 @@ import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import SearchLoader from "./10-search-loader";
 import NarrativeResponse from "../results/01-narrative-response";
+import IncompleteSearchWarning from "../results/02-incomplete-search-warning";
 import { useSearchBehaviorTracker } from "@/app/hooks/01-use-search-behavior-tracker";
 import { logBehavior, logCitationClick } from "@/app/lib/02-analytics";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
@@ -257,6 +258,9 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
             <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.32em", textTransform: "uppercase", color: "#6B57C9", marginBottom: 18, opacity: ans.op, transform: `translateY(${ans.ty})`, transition: "opacity 0.8s cubic-bezier(0.16,1,0.3,1) 0.05s, transform 0.8s cubic-bezier(0.16,1,0.3,1) 0.05s" }}>You asked</p>
             <h1 className="font-display" style={{ fontSize: "clamp(30px,4.6vw,54px)", fontWeight: 600, lineHeight: 1.12, letterSpacing: "-0.02em", color: "#201B12", textWrap: "pretty", opacity: ans.op, transform: `translateY(${ans.ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.15s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.15s" }}>{results.query || q}</h1>
             <div aria-hidden style={{ width: ans.rule, height: 1, background: "linear-gradient(90deg, #C9A24B, rgba(201,162,75,0))", margin: "26px 0", transition: "width 1.3s cubic-bezier(0.16,1,0.3,1) 0.5s" }} />
+
+            {/* A partial answer must announce itself before counts or teaching text. */}
+            <IncompleteSearchWarning sources={results.degradedSources ?? []} />
 
             {/* Meta chips — honest live counts, both tiers */}
             {results.totalResults > 0 && (

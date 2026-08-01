@@ -16,12 +16,35 @@
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { SearchInfrastructureError } from "@/app/lib/search-v2/errors";
+import {
+  DefiniteSupabaseTransportError,
+  transientTransportCodeFromFetchRejection,
+} from "@/app/lib/search-v2/rpc";
 
 const supabaseUrl =
   process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || "";
 
 let client: SupabaseClient | null = null;
+
+/**
+ * Brands only native fetch rejections that happened before a Response existed.
+ * Supabase/PostgREST resolved errors, response-body failures, application aborts
+ * and unknown exceptions remain unbranded and can never enter the retry path.
+ */
+async function fetchWithTransportEvidence(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (cause) {
+    if (init?.signal?.aborted) throw cause;
+    const code = transientTransportCodeFromFetchRejection(cause);
+    if (!code) throw cause;
+    throw new DefiniteSupabaseTransportError(code, cause);
+  }
+}
 
 /** True when the server credentials needed to serve a request are present. */
 export function hasSupabaseCredentials(): boolean {
@@ -39,11 +62,13 @@ export function getSupabaseAdmin(): SupabaseClient {
   if (!supabaseUrl || !supabaseServiceKey) {
     throw new SearchInfrastructureError(
       `Supabase server credentials missing (url: ${supabaseUrl ? "set" : "absent"}, service key: ${supabaseServiceKey ? "set" : "absent"})`,
-      { stage: "config" },
+      { stage: "config", source: "supabase", attemptCount: 0 },
     );
   }
   if (!client) {
-    client = createClient(supabaseUrl, supabaseServiceKey);
+    client = createClient(supabaseUrl, supabaseServiceKey, {
+      global: { fetch: fetchWithTransportEvidence },
+    });
   }
   return client;
 }

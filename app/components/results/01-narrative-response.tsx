@@ -545,7 +545,11 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
     const examples = ["What is the soul?", "How to chant with attention", "Overcoming anger"];
     return (
       <div style={{ maxWidth: 640, margin: "0 auto", padding: "clamp(48px,10vw,80px) 24px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-        <p className="font-display" style={{ fontSize: "1.4rem", color: "var(--ink)", margin: 0 }}>No passages found for that phrasing.</p>
+        <p className="font-display" style={{ fontSize: "1.4rem", color: "var(--ink)", margin: 0 }}>
+          {results.retrievalStatus === "degraded"
+            ? "No passages were found in the sources that were available."
+            : "No passages found for that phrasing."}
+        </p>
         {results.suggestion && results.suggestionDisplay && (
           <p className="font-body" style={{ fontSize: "1rem", color: "var(--ink)", margin: 0 }}>
             Did you mean{" "}
