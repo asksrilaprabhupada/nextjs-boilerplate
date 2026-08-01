@@ -43,7 +43,7 @@ interface CohereRerankResponse {
 const COHERE_API_URL = 'https://api.cohere.com/v2/rerank';
 const COHERE_MODEL = 'rerank-v4.0-pro';
 const MAX_TOKENS_PER_DOC = 4096;
-const TIMEOUT_MS = 10000; // 10 second timeout
+const DEFAULT_TIMEOUT_MS = 10000; // 10 second timeout; callers may pass more for large single requests
 
 // ─── Helper: Extract searchable text from a candidate ────────
 
@@ -73,6 +73,8 @@ function extractText(candidate: RerankCandidate): string {
  * @param query       - The user's search query
  * @param candidates  - Array of search result objects from RRF fusion
  * @param topN        - Number of top results to return (default: 20)
+ * @param timeoutMs   - Request timeout; the default suits a 200-doc batch, the
+ *                      final single-request pass passes a larger budget
  * @returns           - Candidates reordered by relevance, with scores
  *
  * If Cohere API fails (network error, timeout, rate limit),
@@ -83,6 +85,7 @@ export async function cohereRerank<T extends RerankCandidate>(
   query: string,
   candidates: T[],
   topN: number = 20,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<RerankResult<T>[]> {
   const apiKey = process.env.COHERE_API_KEY;
 
@@ -111,7 +114,7 @@ export async function cohereRerank<T extends RerankCandidate>(
   // ── Call Cohere Rerank API ──
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     const response = await fetch(COHERE_API_URL, {
       method: 'POST',
@@ -156,7 +159,7 @@ export async function cohereRerank<T extends RerankCandidate>(
   } catch (error: unknown) {
     const err = error as { name?: string; message?: string };
     if (err.name === 'AbortError') {
-      console.error('[cohere-rerank] Request timed out after 10s');
+      console.error(`[cohere-rerank] Request timed out after ${timeoutMs / 1000}s`);
     } else {
       console.error('[cohere-rerank] Request failed:', err.message);
     }

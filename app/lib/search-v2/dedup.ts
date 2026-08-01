@@ -70,6 +70,10 @@ export function normalizeForHash(text: string): string {
  * regardless of how similar their text is.
  */
 export function mustNotCollapse(a: FusedCandidate, b: FusedCandidate): boolean {
+  // A pinned passage is the one the devotee asked for by reference. It must
+  // survive to the top of the page, so it may neither absorb nor be absorbed.
+  if (a.pinned || b.pinned) return true;
+
   const types = new Set([a.source_type, b.source_type]);
 
   // A verse and its purport are different layers, not duplicates.

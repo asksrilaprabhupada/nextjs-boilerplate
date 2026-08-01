@@ -15,16 +15,23 @@
  * Every string here originates from a fresh source-row read (refetch.ts) or a
  * fixed server-side table. No model output reaches this file.
  */
-import type { PipelineOutput } from "@/app/lib/search-v2/pipeline";
+import type { AdditionalPassage, PipelineOutput } from "@/app/lib/search-v2/pipeline";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { contextNoticeFor } from "@/app/lib/search-v2/render";
 import { extractQueryTerms } from "@/app/lib/10-passage-fold";
+import { vedabaseUrlForReference } from "@/app/lib/05-link-postprocessor";
 import {
   formatLabel,
   labelForWirePassage,
+  labelForAdditionalPassage,
   purportLabelForWirePassage,
 } from "@/app/lib/13-passage-label";
-import type { Citation, SearchPassage, SearchResults } from "@/app/lib/types/01-search";
+import type {
+  AdditionalSearchPassage,
+  Citation,
+  SearchPassage,
+  SearchResults,
+} from "@/app/lib/types/01-search";
 
 const CITATION_TYPE: Record<string, Citation["type"]> = {
   verse: "verse",
@@ -44,6 +51,7 @@ export function toWirePassage(p: VerifiedPassage): SearchPassage {
     division: p.division,
     chapterNumber: p.chapterNumber,
     speaker: p.speaker,
+    speakerConfidence: p.speakerConfidence,
     recipient: p.recipient,
     date: p.date,
     location: p.location,
@@ -72,14 +80,46 @@ export function toWirePassage(p: VerifiedPassage): SearchPassage {
   };
 }
 
+/** One pipeline second-tier entry → one wire citation line. */
+export function toWireAdditional(a: AdditionalPassage): AdditionalSearchPassage {
+  const type = a.sourceType as AdditionalSearchPassage["type"];
+  const shape = {
+    type,
+    reference: a.reference,
+    speaker: a.speaker,
+    recipient: a.recipient,
+    date: a.occurredOn,
+    location: a.location,
+  };
+  const label = labelForAdditionalPassage(shape);
+  return {
+    id: a.passageKey,
+    type,
+    reference: a.reference,
+    // Derived from the reference when it parses cleanly (verses/purports);
+    // second-tier rows are not re-fetched, so there is no stored URL to use.
+    url: type === "verse" || type === "purport" ? vedabaseUrlForReference(a.reference) : null,
+    label: formatLabel(label),
+    provenanceNote: label.provenanceNote,
+    snippet: a.snippet,
+    speaker: a.speaker,
+    recipient: a.recipient,
+    date: a.occurredOn,
+    location: a.location,
+    rerankScore: a.rerankScore,
+  };
+}
+
 /**
- * Produces the wire response. `passages` is the whole answer; everything else
- * is derived from it or is integrity metadata.
+ * Produces the wire response. `passages` (the main tier) plus `additional`
+ * (everything else that survived retrieval) are the whole answer; everything
+ * else is derived from them or is integrity metadata.
  */
 export function adaptToSearchResults(query: string, out: PipelineOutput): SearchResults {
   const { article, telemetry } = out;
 
   const passages = out.passages.map(toWirePassage);
+  const additional = out.additional.map(toWireAdditional);
 
   const citations: Citation[] = passages.map((p) => ({
     ref: p.reference ?? p.id,
@@ -92,7 +132,10 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
   return {
     query,
     passages,
-    totalResults: passages.length,
+    additional,
+    additionalCount: additional.length,
+    // The honest total: what is rendered in full plus what is cited.
+    totalResults: passages.length + additional.length,
     citations,
     intro: article.title,
     queryTerms: extractQueryTerms(query),

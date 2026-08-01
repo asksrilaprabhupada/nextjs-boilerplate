@@ -21,7 +21,7 @@
  */
 import { z } from "zod";
 import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
-import { extractReference } from "@/app/lib/search-v2/reference";
+import { extractReference, extractSiglum, siglumOf } from "@/app/lib/search-v2/reference";
 
 /**
  * What the planner may say a question IS. This is a DESCRIPTION, recorded for
@@ -90,14 +90,23 @@ export const QueryPlanSchema = z
         date_to: z.string().nullable(),
       })
       .strict(),
+    /**
+     * The FULL reference the devotee wrote ("BG 18.66"), when the question is
+     * or contains one. This is the retrieval clue that drives the pinned
+     * direct_verse_lookup; the siglum alone is what goes into
+     * `constraints.scripture_references`, because that is all the `scripture`
+     * column stores. Always re-derived server-side from the raw query.
+     */
+    exact_reference: z.string().max(50).nullable().default(null),
     possible_false_assumption: z.boolean(),
   })
   .strict();
 
 export type QueryPlan = z.infer<typeof QueryPlanSchema>;
 
-/** How the plan was arrived at. Degraded states are reported, never hidden. */
-export type PlanSource = "model" | "model_retry" | "fallback_original_only";
+/** How the plan was arrived at. Degraded states are reported, never hidden.
+ *  There is no retry state: the planner gets one attempt (see PLANNER_TIMEOUT_MS). */
+export type PlanSource = "model" | "fallback_original_only";
 
 export interface PlannedQuery {
   plan: QueryPlan;
@@ -168,6 +177,7 @@ export function queryPlanResponseSchema(maxSubqueries: number): Record<string, u
           date_to: { type: "string", nullable: true },
         },
       },
+      exact_reference: { type: "string", nullable: true },
       possible_false_assumption: { type: "boolean" },
     },
   };
@@ -178,11 +188,12 @@ export function queryPlanResponseSchema(maxSubqueries: number): Record<string, u
  *
  * A scripture reference the devotee wrote is still carried through, because it
  * is a genuine retrieval clue and losing it would make the degraded search worse
- * than it needs to be. It is a constraint handed to the RPCs, not a decision
- * about how the question is handled.
+ * than it needs to be. The SIGLUM is the constraint handed to the RPCs (the
+ * `scripture` column stores "BG", never "BG 18.66"); the full reference rides in
+ * `exact_reference` and drives the pinned direct lookup instead.
  */
 export function fallbackPlan(query: string): QueryPlan {
-  const reference = extractReference(query);
+  const siglum = extractSiglum(query);
   return {
     schema_version: "query-plan-v1",
     // No router classifies questions any more. The neutral value is what the
@@ -194,7 +205,7 @@ export function fallbackPlan(query: string): QueryPlan {
     vocabulary_candidates: [],
     subqueries: [],
     constraints: {
-      scripture_references: reference ? [reference] : [],
+      scripture_references: siglum ? [siglum] : [],
       source_types: [],
       speaker: null,
       recipient: null,
@@ -202,6 +213,7 @@ export function fallbackPlan(query: string): QueryPlan {
       date_from: null,
       date_to: null,
     },
+    exact_reference: extractReference(query),
     possible_false_assumption: false,
   };
 }
@@ -400,7 +412,13 @@ export interface PlannerDeps {
   timeoutMs?: number;
 }
 
-const PLANNER_TIMEOUT_MS = 4000;
+/**
+ * 3 s, one attempt, no retry. Every observed production trace showed the
+ * planner failing (503 or timeout) and the retry doubling the cost to over
+ * eight seconds before retrieval even began. The fallback plan is a perfectly
+ * serviceable degraded path; paying twice to avoid it is not.
+ */
+const PLANNER_TIMEOUT_MS = 3000;
 
 async function callPlanner(
   client: GenAiLike,
@@ -471,25 +489,23 @@ export async function planQuery(
   const timeoutMs = deps.timeoutMs ?? PLANNER_TIMEOUT_MS;
   const rejections: string[] = [];
 
-  for (const attempt of ["model", "model_retry"] as const) {
-    try {
-      const raw = await callPlanner(client, query, maxSubqueries, timeoutMs);
-      const parsed = QueryPlanSchema.safeParse(raw);
-      if (!parsed.success) {
-        rejections.push(`${attempt}: schema — ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`);
-        continue; // transient/truncated output earns exactly one retry
-      }
-
+  // ONE attempt. A retry here doubled the pre-retrieval cost on every planner
+  // outage while buying nothing the fallback plan does not already provide.
+  try {
+    const raw = await callPlanner(client, query, maxSubqueries, timeoutMs);
+    const parsed = QueryPlanSchema.safeParse(raw);
+    if (!parsed.success) {
+      rejections.push(`model: schema — ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`);
+    } else {
       const problems = semanticRejections({ query, plan: parsed.data, maxSubqueries });
       if (problems.length > 0) {
-        rejections.push(...problems.map((p) => `${attempt}: ${p}`));
-        continue;
+        rejections.push(...problems.map((p) => `model: ${p}`));
+      } else {
+        return { plan: withExtractedReference(query, parsed.data), source: "model", rejections };
       }
-
-      return { plan: withExtractedReference(query, parsed.data), source: attempt, rejections };
-    } catch (err) {
-      rejections.push(`${attempt}: ${err instanceof Error ? err.message : "planner call failed"}`);
     }
+  } catch (err) {
+    rejections.push(`model: ${err instanceof Error ? err.message : "planner call failed"}`);
   }
 
   console.warn(
@@ -505,14 +521,25 @@ export async function planQuery(
  * Applied AFTER approval, deliberately: `semanticRejections` rejects invented
  * scripture constraints, and a constraint the server derived from the question
  * itself must not be mistaken for one the model made up.
+ *
+ * Every scripture constraint — the model's included — is reduced to its SIGLUM
+ * here, because the `scripture` column stores "BG" and never "BG 18.66": a full
+ * reference as a filter matches zero rows and silently deletes every verse.
+ * The full reference survives in `exact_reference`, always re-derived from the
+ * raw query so the model cannot invent one.
  */
 function withExtractedReference(query: string, plan: QueryPlan): QueryPlan {
-  const reference = extractReference(query);
-  if (!reference) return plan;
-  const existing = plan.constraints.scripture_references;
-  if (existing.some((r) => r.trim().toUpperCase() === reference.toUpperCase())) return plan;
+  const siglum = extractSiglum(query);
+  const sigla = [
+    ...plan.constraints.scripture_references.map((r) => siglumOf(r)),
+    siglum,
+  ].filter((s): s is string => Boolean(s));
   return {
     ...plan,
-    constraints: { ...plan.constraints, scripture_references: [...existing, reference].slice(0, 5) },
+    constraints: {
+      ...plan.constraints,
+      scripture_references: [...new Set(sigla)].slice(0, 5),
+    },
+    exact_reference: extractReference(query),
   };
 }

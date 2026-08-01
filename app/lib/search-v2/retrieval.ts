@@ -143,24 +143,34 @@ export async function embedPlannedQueries(
   return { queries, embeddingAvailable, providerCalls };
 }
 
+// v3, not v2: v2 pinned hnsw.ef_search to 100, so its semantic lane silently
+// returned at most 100 rows however many were asked for. v3 raises ef_search to
+// 400 and clamps p_semantic_limit to it, so the truncation that could not be
+// detected also cannot be requested (migration 20260727120000).
 const BATCH_FUNCTIONS = [
-  "search_verses_hybrid_batch_v2",
-  "search_verse_chunks_hybrid_batch_v2",
-  "search_prose_hybrid_batch_v2",
-  "search_transcripts_hybrid_batch_v2",
-  "search_letters_hybrid_batch_v2",
+  "search_verses_hybrid_batch_v3",
+  "search_verse_chunks_hybrid_batch_v3",
+  "search_prose_hybrid_batch_v3",
+  "search_transcripts_hybrid_batch_v3",
+  "search_letters_hybrid_batch_v3",
 ] as const;
 
 export type BatchFunction = (typeof BATCH_FUNCTIONS)[number];
 
 /** Table-level source filtering, so a `source_types` constraint can skip a call. */
 const FUNCTION_SOURCES: Record<BatchFunction, string[]> = {
-  search_verses_hybrid_batch_v2: ["verse"],
-  search_verse_chunks_hybrid_batch_v2: ["purport"],
-  search_prose_hybrid_batch_v2: ["book"],
-  search_transcripts_hybrid_batch_v2: ["lecture", "conversation"],
-  search_letters_hybrid_batch_v2: ["letter"],
+  search_verses_hybrid_batch_v3: ["verse"],
+  search_verse_chunks_hybrid_batch_v3: ["purport"],
+  search_prose_hybrid_batch_v3: ["book"],
+  search_transcripts_hybrid_batch_v3: ["lecture", "conversation"],
+  search_letters_hybrid_batch_v3: ["letter"],
 };
+
+/** The two scripture-constrained sources, for the fail-open rule below. */
+const SCRIPTURE_FILTERED: BatchFunction[] = [
+  "search_verses_hybrid_batch_v3",
+  "search_verse_chunks_hybrid_batch_v3",
+];
 
 export interface RetrievalResult {
   groups: RetrievedCandidate[][];
@@ -179,6 +189,12 @@ export interface RetrievalInput {
   requestId: string;
   degraded: DegradationLog;
   perTableLimit?: number;
+  /**
+   * "Śrīla Prabhupāda's words only" — forwarded to the transcripts RPC as
+   * `p_constraints -> 'speaker_only'`. The other RPCs (and a transcripts
+   * function that predates the speaker migration) ignore the key.
+   */
+  speakerOnly?: boolean;
 }
 
 /**
@@ -190,7 +206,6 @@ export interface RetrievalInput {
  */
 export async function retrieveCandidates(input: RetrievalInput): Promise<RetrievalResult> {
   const { db, original, plan, requestId, degraded } = input;
-  const perTableLimit = input.perTableLimit ?? SEARCH_V2_CONFIG.perTableLimit;
 
   const [vocab, embedded] = await Promise.all([
     resolveVocabulary(db, plan.vocabulary_candidates, { requestId }, degraded),
@@ -215,51 +230,90 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
   // to search nothing.
   const toCall = active.length > 0 ? active : [...BATCH_FUNCTIONS];
 
-  const constraints = {
+  const limitFor = (fn: BatchFunction): number =>
+    input.perTableLimit ?? SEARCH_V2_CONFIG.perSourceLimit[fn] ?? SEARCH_V2_CONFIG.perTableLimit;
+
+  const constraints: Record<string, unknown> = {
     scripture_references: plan.constraints.scripture_references,
     recipient: plan.constraints.recipient,
     location: plan.constraints.location,
     date_from: plan.constraints.date_from,
     date_to: plan.constraints.date_to,
+    ...(input.speakerOnly ? { speaker_only: true } : {}),
   };
 
-  const groups = await Promise.all(
-    toCall.map((fn) =>
-      rpcOrThrow<RetrievedCandidate[] | null>(
-        db,
-        fn,
-        {
-          p_queries: payload,
-          p_lexical_phrases: plan.lexical_phrases,
-          p_tag_slugs: slugs,
-          p_constraints: constraints,
-          p_limit: perTableLimit,
-        },
-        { stage: `retrieval:batch:${fn}`, requestId },
-      ).then((rows) => {
-        const out = rows ?? [];
-        // A table that fills its whole budget probably has more relevant rows
-        // waiting behind the cut. Logged so the ceiling is raised from
-        // evidence, not from a hunch.
-        if (out.length >= perTableLimit) {
-          console.info(
-            JSON.stringify({
-              level: "info",
-              event: "search.table_at_limit",
-              requestId,
-              table: fn,
-              limit: perTableLimit,
-            }),
-          );
-        }
-        return out;
-      }),
-    ),
-  );
+  const callOne = (fn: BatchFunction, cons: Record<string, unknown>) =>
+    rpcOrThrow<RetrievedCandidate[] | null>(
+      db,
+      fn,
+      {
+        p_queries: payload,
+        p_lexical_phrases: plan.lexical_phrases,
+        p_tag_slugs: slugs,
+        p_constraints: cons,
+        p_limit: limitFor(fn),
+        p_semantic_limit: SEARCH_V2_CONFIG.perSourceSemanticLimit,
+      },
+      { stage: `retrieval:batch:${fn}`, requestId },
+    ).then((rows) => {
+      const out = rows ?? [];
+      // A table that fills its whole budget probably has more relevant rows
+      // waiting behind the cut. Logged so the ceiling is raised from
+      // evidence, not from a hunch.
+      if (out.length >= limitFor(fn)) {
+        console.info(
+          JSON.stringify({
+            level: "info",
+            event: "search.table_at_limit",
+            requestId,
+            table: fn,
+            limit: limitFor(fn),
+          }),
+        );
+      }
+      return out;
+    });
+
+  const groups = await Promise.all(toCall.map((fn) => callOne(fn, constraints)));
+  let tableRpcCount = toCall.length;
+
+  // ── Fail open, never closed ──
+  // A scripture filter that empties BOTH scripture sources while the
+  // unconstrained sources found rows has misread the question, not answered it.
+  // Re-run only the scripture-filtered calls without the constraint and merge.
+  // An empty result set caused by a filter is always a bug, never an answer.
+  const hasScriptureConstraint = plan.constraints.scripture_references.length > 0;
+  if (hasScriptureConstraint) {
+    const scriptureRows = toCall.reduce(
+      (n, fn, i) => n + (SCRIPTURE_FILTERED.includes(fn) ? groups[i].length : 0),
+      0,
+    );
+    const otherRows = toCall.reduce(
+      (n, fn, i) => n + (SCRIPTURE_FILTERED.includes(fn) ? 0 : groups[i].length),
+      0,
+    );
+    if (scriptureRows === 0 && otherRows > 0) {
+      console.info(
+        JSON.stringify({
+          level: "info",
+          event: "search.constraint_failed_open",
+          requestId,
+          constraint: plan.constraints.scripture_references,
+        }),
+      );
+      const unconstrained = { ...constraints, scripture_references: [] };
+      const retried = SCRIPTURE_FILTERED.filter((fn) => toCall.includes(fn));
+      const reopened = await Promise.all(retried.map((fn) => callOne(fn, unconstrained)));
+      tableRpcCount += retried.length;
+      retried.forEach((fn, i) => {
+        groups[toCall.indexOf(fn)] = reopened[i];
+      });
+    }
+  }
 
   return {
     groups,
-    tableRpcCount: toCall.length,
+    tableRpcCount,
     vocabularyRpcCount: plan.vocabulary_candidates.length > 0 ? 1 : 0,
     embeddingProviderCalls: embedded.providerCalls,
     resolvedSlugs: slugs,

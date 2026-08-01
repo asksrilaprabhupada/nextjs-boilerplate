@@ -12,7 +12,7 @@ Next.js 16 App Router project. Supabase backend. The only app/ folder is the Nex
 npm install
 npm run dev
 npm run build
-npm test          # vitest — fusion weighting, dedup, selection, planners, verbatim validator
+npm test          # vitest — fusion weighting, junk floor, dedup, prefilter, tiering, snippets, planners, verbatim validator
 SITE=<url> bash scripts/verify-release.sh   # release acceptance checks against any deployment
 ```
 
@@ -56,13 +56,15 @@ Cinematic + simple: the dark frames (the doorway, the Journey opening, the Featu
 
 **ONE ENGINE, ONE ROAD.** There is a single pipeline. No flag, no environment variable, no `mode=` parameter and no question-classifier selects a different one, because there is no different one. A `mode=` parameter in the URL is ignored silently so old links keep working.
 
-GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood → expanding → searching → reranking → weaving, then `result`, then `done`).
+GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood → expanding → searching → reranking → weaving, then `result`, then `done`). An optional `only_his=1` restricts recorded talks to paragraphs whose labelled speaker is Śrīla Prabhupāda; any other parameter is ignored silently.
 
-`route.ts` is the request boundary only — validate, read cache, call pipeline, log, respond. The stages live in `app/lib/search-v2/`, joined in `pipeline.ts`:
+`route.ts` is the request boundary only — validate, read cache, call pipeline, log, respond (with a 3 MB payload tripwire that should never fire). The stages live in `app/lib/search-v2/`, joined in `pipeline.ts` as a **cascade — a spending plan, never a filter**: retrieve wide, spend the reranker on a few hundred, render ~20 in full, return everything else as citations:
 
-Gemini query plan (one schema-constrained call, ≤6 distinct search angles, 4 s cap, rejected rather than repaired on any semantic violation) → batched Voyage embedding of the question and every approved angle → 5 concurrent batched RPCs (verses, verse chunks, prose, transcripts, letters; 400 candidates per table per question) → one weighted RRF pass (the original question always outweighs any angle) → real-duplicate collapse only (identical text, or ≥90% containment within the same source+reference — never "sounds similar") → Cohere rerank of EVERY candidate in concurrent batches of 200, then one final rerank of everything above the relevance line so the order is one true order → selection by relevance, not by counting: every passage scoring ≥ `RELEVANCE_THRESHOLD` (0.30, a starting value, every score logged for tuning) is kept — no ceiling; top-10 floor when few clear the line; top-100 fused order when the reranker is down (marked degraded) → **verbatim re-fetch: every selected passage re-read from its source row and asserted byte-identical, or dropped** → Gemini article plan (order and structure only, never words; skipped above its schema's capacity — arrangement changes, nothing is dropped) → the wire response carries `passages`: every kept passage with its full verified text, layers, who-and-when, server-computed label and rerank score, in the reranker's order. The page prints that list; nothing on the client looks anything up.
+Gemini query plan (one schema-constrained call, one attempt, 3 s cap, ≤6 distinct search angles, rejected rather than repaired on any semantic violation; a written reference like "BG 18.66" becomes the siglum `BG` as the scripture filter — the `scripture` column stores only sigla — plus `exact_reference` for the pinned lookup) → batched Voyage embedding of the question and every approved angle → 5 concurrent batched `_v3` RPCs (verses 200, verse chunks 150, prose 120, transcripts 150, letters 80 — unequal on purpose: an equal budget is flooding, not fairness; semantic lane 300, clamped to ef_search 400 in SQL) riding alongside `direct_verse_lookup` when a reference was written (its verse is **pinned**: first in the main tier, immune to every cut); a scripture filter that empties both scripture sources while others found rows **fails open** and re-runs unfiltered — an empty result caused by a filter is a bug, never an answer → junk floor (fragments under 60 chars dropped; verses and pins exempt) → one weighted RRF pass (the original question always outweighs any angle) → real-duplicate collapse only (identical text, or ≥90% containment within the same source+reference — never "sounds similar") → channel-agreement pre-filter (`prefilter.ts`: signals the RPCs already returned, per-source floors so verses can't be outvoted, ~400 earn the cross-encoder; the rest are set aside for the citation tier, not deleted) → Cohere rerank in concurrent batches of 200, then one final pass over the top `RERANK_FINAL_POOL` (200) so the order is one true order (~600 documents per search, not ~4,000) → **adaptive tiering** (`select.ts`: the cut is the largest score gap between positions 8 and 20 — scores are query-dependent, so a fixed threshold is a category error; the cut moves passages to the `additional` tier, it never deletes them) → **verbatim re-fetch of the main tier only: every passage rendered in full is re-read from its source row and asserted byte-identical, or dropped** (citations show no body text, so there is nothing to verify) → Gemini article plan over the main tier (order and structure only, never words) → the wire response carries `passages` (main tier: full verified text, layers, who-and-when, server-computed label, rerank score, reranker's order) plus `additional` (every other survivor: label, citation, sentence-safe snippet — see `snippet.ts`, which never cuts mid-thought). The page prints both lists; nothing on the client looks anything up.
 
-**No limits.** There is no maximum passage count anywhere in the pipeline or the UI. If 240 passages clear the relevance line, all 240 are shown (folded, never dropped). Timeouts match: server `maxDuration` 300 s (needs Fluid compute on Vercel), client waits 330 s, and the loader shows live found-counts from SSE stage events.
+**Nothing is deleted.** Every passage that survives retrieval reaches the response — ~20 in full, the rest grouped and collapsed under "N more passages". `totalResults` counts both tiers. Timeouts match the cascade: server `maxDuration` 300 s (needs Fluid compute on Vercel), client waits 150 s, and the loader shows live found-counts from SSE stage events.
+
+Transcript paragraphs carry `speaker`/`speaker_confidence` (deterministic "Name:" backfill — migration `20260801120000`): a guest's words are labelled "Spoken by X — not Śrīla Prabhupāda", unlabelled paragraphs read "Speaker not identified", and nothing unlabelled is ever assumed to be his.
 
 Failure discipline: a retrieval RPC failure is fatal (503 with a request id) and never becomes "no teachings found". Everything else degrades and says so in `degradedStages`. Only a clean, non-degraded answer is cached. Every serving logs one `search_logs` row via the `log_search` RPC and returns `searchLogId` for feedback/behavior/citation-click telemetry.
 
@@ -101,7 +103,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── 13-site-modals.tsx     (provider: seva modal with India/International toggle + one Bug/Idea/General feedback form, mailto submit)
 │   │   │   └── 14-photo-slot.tsx      (path-addressed photo slot: placeholder until the exact file exists; useImageAvailable for bg swaps)
 │   │   ├── results/
-│   │   │   ├── 01-narrative-response.tsx (prints results.passages first-to-last: label, words, citation, copy; Essay | By source views of the same list)
+│   │   │   ├── 01-narrative-response.tsx (prints results.passages first-to-last: label, words, citation, copy; Essay | By source views of the same list; collapsed "N more passages" citation tier below)
 │   │   │   └── 02-dig-deeper-modal.tsx (retained, unmounted — there is no overflow any more; every passage is in the main list)
 │   │   ├── verse/
 │   │   │   └── 01-verse-view.tsx      (interactive reader: toggleable layers, swipe, cross-ref preview)
@@ -130,14 +132,16 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 20-site.ts                 (canonical origin from NEXT_PUBLIC_SITE_URL)
 │   │   ├── search-v2/                 # THE SEARCH ENGINE — the only one
 │   │   │   ├── pipeline.ts            (the orchestrator; joins every stage, holds the budgets)
-│   │   │   ├── config.ts              (fusion weights, selection sizing, model ids)
-│   │   │   ├── reference.ts           (spots a scripture reference — a retrieval clue, never a road)
+│   │   │   ├── config.ts              (fusion weights, per-source quotas, pool sizes, model ids)
+│   │   │   ├── reference.ts           (spots a scripture reference — siglum for the filter, full form for the pin)
 │   │   │   ├── query-plan.ts          (one schema-constrained Gemini query plan + its validator)
-│   │   │   ├── retrieval.ts           (vocabulary resolve, batched embedding, 5 concurrent RPCs)
-│   │   │   ├── fusion.ts · dedup.ts   (one weighted RRF pass, then duplicate collapse)
-│   │   │   ├── rerank.ts              (one Cohere rerank against the original question)
-│   │   │   ├── select.ts              (rule-based evidence selection)
-│   │   │   ├── refetch.ts             (re-reads every passage from source and asserts it verbatim)
+│   │   │   ├── retrieval.ts           (vocabulary resolve, batched embedding, 5 concurrent RPCs, fail-open)
+│   │   │   ├── fusion.ts · dedup.ts   (junk floor + one weighted RRF pass, then duplicate collapse)
+│   │   │   ├── prefilter.ts           (channel-agreement gate: who earns the reranker; sets aside, never deletes)
+│   │   │   ├── rerank.ts              (Cohere batches + one capped final pass against the original question)
+│   │   │   ├── select.ts              (adaptive tiering: largest-gap cut into main + additional)
+│   │   │   ├── refetch.ts             (re-reads every MAIN-TIER passage from source and asserts it verbatim)
+│   │   │   ├── snippet.ts             (sentence-safe previews — never cut mid-thought)
 │   │   │   ├── article-plan.ts · render.ts (structure only, then the deterministic renderer)
 │   │   │   ├── adapt.ts               (maps pipeline output onto the wire contract the UI renders)
 │   │   │   ├── cache.ts · rpc.ts · errors.ts · citation.ts

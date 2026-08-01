@@ -65,21 +65,23 @@ describe("query planner loop", () => {
     expect(client.calls).toHaveLength(1);
   });
 
-  it("retries exactly once on a truncated body, then succeeds", async () => {
+  it("does NOT retry a truncated body — one attempt, then the honest fallback", async () => {
+    // A retry doubled the pre-retrieval cost on every planner outage while
+    // buying nothing the fallback plan does not already provide.
     const client = scriptedClient(['{"schema_version":"query-pl', goodPlan()]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
-    expect(out.source).toBe("model_retry");
-    expect(client.calls).toHaveLength(2);
+    expect(out.source).toBe("fallback_original_only");
+    expect(client.calls).toHaveLength(1);
     expect(out.rejections.length).toBeGreaterThan(0);
   });
 
-  it("falls back to the original question after two failures — never throws", async () => {
-    const client = scriptedClient([new Error("503"), new Error("503")]);
+  it("falls back to the original question after one failure — never throws", async () => {
+    const client = scriptedClient([new Error("503")]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("fallback_original_only");
     expect(out.plan.subqueries).toHaveLength(0);
     expect(out.plan.canonical_query).toBe(QUESTION);
-    expect(client.calls).toHaveLength(2);
+    expect(client.calls).toHaveLength(1);
   });
 
   it("discards a schema-valid plan that fails semantic validation", async () => {
@@ -90,7 +92,7 @@ describe("query planner loop", () => {
         recipient: "Brahmananda", location: null, date_from: null, date_to: null,
       },
     });
-    const client = scriptedClient([invented, invented]);
+    const client = scriptedClient([invented]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("fallback_original_only");
     expect(out.rejections.join(" ")).toMatch(/invented recipient/);
@@ -99,7 +101,8 @@ describe("query planner loop", () => {
   it("plans a bare scripture reference like any other question", async () => {
     // This used to skip the planner entirely, so "BG 18.66" and "what does BG
     // 18.66 mean" were answered by two different pipelines. One road now: the
-    // reference becomes a retrieval constraint, not a detour.
+    // SIGLUM becomes the retrieval filter (the scripture column stores "BG",
+    // never "BG 18.66") and the full reference rides in exact_reference.
     const client = scriptedClient([
       goodPlan({
         intent: "exact_reference",
@@ -111,7 +114,8 @@ describe("query planner loop", () => {
     const out = await planQuery("BG 18.66", MAX_SUBQUERIES, { client });
     expect(client.calls).toHaveLength(1);
     expect(out.source).toBe("model");
-    expect(out.plan.constraints.scripture_references).toContain("BG 18.66");
+    expect(out.plan.constraints.scripture_references).toEqual(["BG"]);
+    expect(out.plan.exact_reference).toBe("BG 18.66");
   });
 
   it("falls back when no API key is configured", async () => {

@@ -145,8 +145,11 @@ export const cacheKeys = {
     `rerank:v1:${sha256(normalizeQuestion(question))}:${candidateSetHash}`,
   articlePlan: (question: string, selectedIdHash: string) =>
     `article-plan:v1:${sha256(normalizeQuestion(question))}:${selectedIdHash}`,
-  response: (question: string) =>
-    `response:v2:${searchCorpusVersion()}:${sha256(normalizeQuestion(question))}`,
+  // `variant` distinguishes retrieval-changing request options (today only the
+  // "Śrīla Prabhupāda's words only" filter). A filtered answer cached under the
+  // unfiltered key would serve the wrong evidence to the next asker.
+  response: (question: string, variant?: string) =>
+    `response:v3:${searchCorpusVersion()}:${variant ? `${variant}:` : ""}${sha256(normalizeQuestion(question))}`,
 } as const;
 
 /**

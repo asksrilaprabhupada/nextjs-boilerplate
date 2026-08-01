@@ -52,3 +52,21 @@ export function extractReference(query: string): string | null {
   const mention = trimmed.match(REFERENCE_MENTION_RE);
   return mention ? normalizeReference(mention[0]) : null;
 }
+
+/**
+ * The SIGLUM only — "BG" from "BG 18.66". This is what the scripture constraint
+ * must carry: `chapters.scripture` stores "BG", never "BG 18.66", so sending the
+ * full reference as a filter matches zero rows and silently deletes every verse.
+ */
+export function extractSiglum(query: string): string | null {
+  const ref = extractReference(query);
+  if (!ref) return null;
+  const m = ref.match(/^([A-Za-z]+)/);
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** Siglum of an already-extracted reference string ("BG 18.66" → "BG"). */
+export function siglumOf(reference: string): string | null {
+  const m = (reference || "").trim().match(/^([A-Za-z]+)/);
+  return m ? m[1].toUpperCase() : null;
+}

@@ -49,6 +49,13 @@ export interface VerifiedPassage {
   text: string;
   reference: string | null;
   speaker: string | null;
+  /**
+   * How the speaker value was established (transcripts only):
+   * 'labelled' — an explicit "Name:" prefix in the source text;
+   * 'unknown'  — no label; NOT assumed to be Śrīla Prabhupāda's words.
+   * ('inherited' is reserved for a future continuation-paragraph pass.)
+   */
+  speakerConfidence: "labelled" | "inherited" | "unknown" | null;
   recipient: string | null;
   date: string | null;
   location: string | null;
@@ -101,8 +108,10 @@ const COLUMNS: Record<SourceNamespace, string> = {
   purport:
     "id, scripture, chapter_number, verse_number, chunk_number, body_text, verse_id, verses(vedabase_url, chapters(chapter_number, canto_or_division))",
   book: "id, book_slug, paragraph_number, body_text, vedabase_url, vedabase_url_precise, chapter_id",
+  // `speaker`/`speaker_confidence` come from the deterministic backfill
+  // (migration 20260801120000) — a guest's words must never be labelled as his.
   lecture:
-    "id, title, content_type, date, location, occasion, scripture_ref, body_text, vedabase_url, transcript_id",
+    "id, title, content_type, date, location, occasion, scripture_ref, body_text, vedabase_url, transcript_id, speaker, speaker_confidence",
   letter: "id, title, date, location, recipient, body_text, vedabase_url, letter_id",
 };
 
@@ -167,13 +176,35 @@ export async function refetchAndVerify(
         stage: "verify:refetch",
         requestId: ctx.requestId,
       });
-    } catch {
-      // A failed verification read removes the items. It never falls back to the
-      // unverified copy — that is precisely the thing being guarded against.
-      for (const g of group) {
-        dropped.push({ passageKey: g.candidate.passage_key, reason: "fetch_failed" });
+    } catch (err) {
+      // The speaker columns arrive with migration 20260801120000. If this code
+      // is serving against a database that predates it, re-read without them
+      // rather than dropping every lecture — the speaker simply stays unknown,
+      // which is the honest value for an unmigrated corpus anyway.
+      if (ns === "lecture") {
+        try {
+          fetchCount += 1;
+          const legacy = COLUMNS.lecture.replace(/,\s*speaker,\s*speaker_confidence\s*$/, "");
+          const result = await db.from(SOURCE_TABLES.lecture.table).select(legacy).in("id", ids);
+          rows = unwrapOrThrow<Record<string, unknown>[]>(result, "refetch:lecture:legacy", {
+            stage: "verify:refetch",
+            requestId: ctx.requestId,
+          });
+        } catch {
+          for (const g of group) {
+            dropped.push({ passageKey: g.candidate.passage_key, reason: "fetch_failed" });
+          }
+          continue;
+        }
+      } else {
+        // A failed verification read removes the items. It never falls back to the
+        // unverified copy — that is precisely the thing being guarded against.
+        void err;
+        for (const g of group) {
+          dropped.push({ passageKey: g.candidate.passage_key, reason: "fetch_failed" });
+        }
+        continue;
       }
-      continue;
     }
 
     const byId = new Map<string, Record<string, unknown>>();
@@ -244,6 +275,7 @@ function buildVerified(
     text,
     reference: null,
     speaker: null,
+    speakerConfidence: null,
     recipient: null,
     date: null,
     location: null,
@@ -306,13 +338,20 @@ function buildVerified(
         reference: str(row.book_slug),
         vedabaseUrl: str(row.vedabase_url_precise) ?? str(row.vedabase_url),
       };
-    case "lecture":
+    case "lecture": {
+      const confidence = str(row.speaker_confidence);
       return {
         ...base,
         reference: str(row.title) ?? str(row.content_type),
         date: str(row.date),
         location: str(row.location),
+        speaker: str(row.speaker),
+        speakerConfidence:
+          confidence === "labelled" || confidence === "inherited" || confidence === "unknown"
+            ? confidence
+            : null,
       };
+    }
     case "letter":
       return {
         ...base,

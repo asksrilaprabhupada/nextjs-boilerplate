@@ -1,20 +1,20 @@
 /**
- * no-limits.test.ts — The three guarantees of the no-ceiling release.
+ * no-limits.test.ts — The three guarantees of the completeness contract.
  *
- *   1. WORDS, NOT NAMES — every passage in the wire response carries its
- *      actual text. (The end-to-end version of this lives in
+ *   1. WORDS, NOT NAMES — every main-tier passage in the wire response carries
+ *      its actual text. (The end-to-end version of this lives in
  *      search-v2-integration.test.ts; here the adapter is pinned directly.)
- *   2. NO LIMIT — 500 candidates above the relevance line all come out of
- *      selection. Not 8. Not 100.
+ *   2. NOTHING LOST — 500 surviving candidates all come out of selection:
+ *      a readable main tier in full, every other one in `additional`. The cut
+ *      moves passages between tiers; it never deletes them.
  *   3. REAL DUPLICATES ONLY — two different paragraphs of one purport both
  *      survive; two copies of the same paragraph collapse to one.
  */
 import { describe, it, expect } from "vitest";
 import { fuseWeighted, type RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates } from "@/app/lib/search-v2/dedup";
-import { selectEvidence } from "@/app/lib/search-v2/select";
+import { selectEvidence, MAIN_TIER_MIN, MAIN_TIER_MAX } from "@/app/lib/search-v2/select";
 import { toWirePassage } from "@/app/lib/search-v2/adapt";
-import { RELEVANCE_THRESHOLD } from "@/app/lib/search-v2/config";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 
 function candidate(over: Partial<RetrievedCandidate> & { passage_key: string }): RetrievedCandidate {
@@ -61,19 +61,23 @@ describe("1. words, not names", () => {
   });
 });
 
-describe("2. no limit", () => {
-  it("keeps all 500 of 500 candidates that score above the line — not 8, not 100", () => {
+describe("2. nothing lost", () => {
+  it("returns all 500 of 500 surviving candidates across the two tiers", () => {
     const ranked = Array.from({ length: 500 }, (_, i) => ({
       ...fuseWeighted(
         [[candidate({ passage_key: `verse:${i}`, retrieval_text: `distinct passage text number ${i}` })]],
         { q: "original" },
       )[0],
       alternates: [],
-      rerankScore: RELEVANCE_THRESHOLD + 0.5,
+      rerankScore: 0.8,
     }));
 
     const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
-    expect(out.selected).toHaveLength(500);
+    // A reader gets a readable main tier…
+    expect(out.selected.length).toBeGreaterThanOrEqual(MAIN_TIER_MIN);
+    expect(out.selected.length).toBeLessThanOrEqual(MAIN_TIER_MAX);
+    // …and NOTHING is deleted: every other candidate is in the second tier.
+    expect(out.selected.length + out.additional.length).toBe(500);
   });
 });
 

@@ -23,7 +23,7 @@
  * degraded. That is a worse ordering, not a wrong one.
  */
 import { cohereRerank } from "@/app/lib/08-cohere-rerank";
-import { cohereRerankModel, RELEVANCE_THRESHOLD } from "@/app/lib/search-v2/config";
+import { cohereRerankModel } from "@/app/lib/search-v2/config";
 import type { DedupedCandidate } from "@/app/lib/search-v2/dedup";
 
 /** A candidate carrying the reranker's judgement. Null when it was never judged. */
@@ -34,6 +34,19 @@ export interface RankedCandidate extends DedupedCandidate {
 /** Cohere's documented per-request document ceiling is well above this; 200 keeps
  *  each request comfortably inside token limits with 4k-char documents. */
 export const RERANK_BATCH_SIZE = 200;
+
+/**
+ * The final pass exists to produce ONE true order, not to re-judge everything.
+ * Cohere Rerank is a pointwise cross-encoder — each (query, document) pair is
+ * scored independently — so first-pass scores from different batches ARE
+ * comparable and are trustworthy enough to choose the finalists. Only the
+ * finalists need a single-request ordering.
+ */
+export const RERANK_FINAL_POOL = 200;
+
+/** A 200-document final pass with long purports needs more than the default
+ *  10 s; a dead final pass already falls back to batch scores honestly. */
+const FINAL_PASS_TIMEOUT_MS = 25000;
 
 export interface RerankOutcome {
   ranked: RankedCandidate[];
@@ -166,16 +179,30 @@ export async function rerankUnified(input: RerankInput): Promise<RerankOutcome> 
       };
     }
 
-    // ── Pass 2: one true order over everything above the relevance line. ──
-    // Batch-local scores from one cross-encoder call are comparable enough to
-    // draw the line, but the final ORDER shown to a reader must come from a
-    // single judgement — unless only one batch was ever needed, in which case
-    // the first pass already is that single judgement.
-    const above = candidates.filter((c) => (scoreByKey.get(c.passage_key) ?? 0) >= RELEVANCE_THRESHOLD);
-    if (batches.length > 1 && above.length > 1) {
-      const finalDocs = toDocs(above);
+    // ── Pass 2: one true order over a FIXED pool of finalists. ──
+    // The old shape re-sent everything above a threshold that almost nothing
+    // fell below, which meant the entire pool travelled twice. The finalists
+    // are the top RERANK_FINAL_POOL by first-pass score — comparable across
+    // batches, see above — plus every pinned candidate, which is never allowed
+    // to miss the single-judgement ordering. One batch means the first pass
+    // already is that single judgement.
+    const byFirstPass = [...candidates].sort(
+      (a, b) =>
+        (scoreByKey.get(b.passage_key) ?? -1) - (scoreByKey.get(a.passage_key) ?? -1) ||
+        a.passage_key.localeCompare(b.passage_key),
+    );
+    const finalists = byFirstPass.slice(0, RERANK_FINAL_POOL);
+    const finalistKeys = new Set(finalists.map((c) => c.passage_key));
+    for (const c of candidates) {
+      if (c.pinned && !finalistKeys.has(c.passage_key)) {
+        finalists.push(c);
+        finalistKeys.add(c.passage_key);
+      }
+    }
+    if (batches.length > 1 && finalists.length > 1) {
+      const finalDocs = toDocs(finalists);
       documentCount += finalDocs.length;
-      const finalResults = await cohereRerank(question, finalDocs, finalDocs.length);
+      const finalResults = await cohereRerank(question, finalDocs, finalDocs.length, FINAL_PASS_TIMEOUT_MS);
       if (finalResults.some((r) => r.relevance_score > 0)) {
         for (const r of finalResults) {
           scoreByKey.set((r.item as RerankDoc).__key, r.relevance_score);

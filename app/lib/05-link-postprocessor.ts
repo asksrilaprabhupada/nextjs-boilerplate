@@ -91,3 +91,35 @@ export function ensureVerseLinks(
 
   return processed.join("");
 }
+
+/**
+ * Vedabase URL for one formatted verse reference ("BG 18.66", "SB 7.8.9",
+ * "CC Madhya 8.128"), or null when the reference does not parse cleanly or the
+ * book is not on Vedabase. Used for second-tier citation links, which carry no
+ * re-fetched row to take the canonical URL from — a null link is better than a
+ * guessed one that lands a reader on the wrong verse.
+ */
+export function vedabaseUrlForReference(reference: string | null | undefined): string | null {
+  const ref = (reference || "").trim();
+  if (!ref) return null;
+  const m = ref.match(/^(BG|SB|CC|NOI|ISO|BS)\s+(?:(Adi|Madhya|Antya)\s+)?(\d+(?:\.\d+)*(?:[–-]\d+)?)$/i);
+  if (!m) return null;
+  const s = m[1].toUpperCase();
+  const division = m[2];
+  const nums = m[3].split(".");
+  // Each book addresses differently; anything that does not fit its shape
+  // returns null rather than a guessed URL.
+  if ((s === "NOI" || s === "ISO") && nums.length === 1) {
+    return buildVedabaseLink(s, undefined, nums[0], nums[0]);
+  }
+  if (s === "CC" && division && nums.length === 2) {
+    return buildVedabaseLink(s, division, nums[0], nums[1]);
+  }
+  if (s === "SB" && nums.length === 3) {
+    return buildVedabaseLink(s, nums[0], nums[1], nums[2]);
+  }
+  if ((s === "BG" || s === "BS") && nums.length === 2) {
+    return buildVedabaseLink(s, undefined, nums[0], nums[1]);
+  }
+  return null;
+}

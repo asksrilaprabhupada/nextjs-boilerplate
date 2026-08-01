@@ -10,10 +10,21 @@
  * verse collapsed into its purport — rather than around happy paths.
  */
 import { describe, it, expect } from "vitest";
-import { extractReference, normalizeReference } from "@/app/lib/search-v2/reference";
-import { fuseWeighted, buildPriorityMap, type RetrievedCandidate } from "@/app/lib/search-v2/fusion";
+import { extractReference, extractSiglum, normalizeReference } from "@/app/lib/search-v2/reference";
+import {
+  fuseWeighted,
+  buildPriorityMap,
+  applyJunkFloor,
+  type RetrievedCandidate,
+} from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates, mustNotCollapse, normalizeForHash } from "@/app/lib/search-v2/dedup";
-import { selectEvidence, isLabellable } from "@/app/lib/search-v2/select";
+import {
+  selectEvidence,
+  isLabellable,
+  findCut,
+  MAIN_TIER_MIN,
+  MAIN_TIER_MAX,
+} from "@/app/lib/search-v2/select";
 import { semanticRejections, QueryPlanSchema, fallbackPlan } from "@/app/lib/search-v2/query-plan";
 import { SEARCH_V2_CONFIG } from "@/app/lib/search-v2/config";
 
@@ -45,6 +56,14 @@ describe("reference extraction", () => {
     expect(extractReference("  SB 1.2.6 ")).toBe("SB 1.2.6");
     expect(extractReference("what does BG 18.66 mean?")).toBe("BG 18.66");
     expect(normalizeReference("cc  adi 1.1")).toBe("CC adi 1.1");
+  });
+
+  it("extracts the SIGLUM alone for the scripture filter", () => {
+    // The `scripture` column stores "BG", never "BG 18.66": the full reference
+    // as a filter matches zero rows and silently deletes every verse.
+    expect(extractSiglum("BG 18.66")).toBe("BG");
+    expect(extractSiglum("what does sb 1.2.6 mean?")).toBe("SB");
+    expect(extractSiglum("what is bhakti")).toBeNull();
   });
 
   it("does not mistake ordinary prose for a reference", () => {
@@ -273,13 +292,8 @@ describe("evidence selection", () => {
     expect(out.selected[0].contextRequirements).toContain("letter_context");
   });
 
-  it("keeps EVERY passage at or above the relevance line — no ceiling", () => {
-    const ranked = scored(verses(60), Array.from({ length: 60 }, () => 0.55));
-    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
-    expect(out.selected).toHaveLength(60);
-  });
-
-  it("drops what falls below the line", () => {
+  it("cuts at the largest score gap inside the window — passages move tiers, never vanish", () => {
+    // Fifteen strong scores, then a cliff. The cut lands ON the cliff.
     const scores = Array.from({ length: 40 }, (_, i) => (i < 15 ? 0.8 : 0.05));
     const out = selectEvidence({
       ranked: scored(verses(40), scores),
@@ -287,22 +301,50 @@ describe("evidence selection", () => {
       rerankAvailable: true,
     });
     expect(out.selected).toHaveLength(15);
+    expect(out.cutIndex).toBe(15);
+    expect(out.additional).toHaveLength(25);
   });
 
-  it("keeps the top 10 anyway when fewer than 10 clear the threshold", () => {
+  it("falls back to the cap when the curve is flat — no natural boundary exists", () => {
+    const ranked = scored(verses(60), Array.from({ length: 60 }, () => 0.55));
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
+    expect(out.selected).toHaveLength(MAIN_TIER_MAX);
+    expect(out.selected.length + out.additional.length).toBe(60);
+  });
+
+  it("never cuts below the window floor, even when the real falloff is earlier", () => {
+    // The falloff at 3 sits below MAIN_TIER_MIN, so the window sees a flat
+    // curve and the cap governs. The weak tail is still visible as citations.
     const scores = Array.from({ length: 40 }, (_, i) => (i < 3 ? 0.8 : 0.05));
     const out = selectEvidence({
       ranked: scored(verses(40), scores),
       approvedQueryIds: ["q"],
       rerankAvailable: true,
     });
-    expect(out.selected).toHaveLength(10);
+    expect(out.selected.length).toBeGreaterThanOrEqual(MAIN_TIER_MIN);
+    expect(out.selected.length + out.additional.length).toBe(40);
   });
 
-  it("keeps the top 100 of the fused order when the reranker was unreachable", () => {
+  it("takes the cap off the fused order when the reranker was unreachable", () => {
     const ranked = scored(verses(150), Array.from({ length: 150 }, () => null));
     const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: false });
-    expect(out.selected).toHaveLength(100);
+    expect(out.selected).toHaveLength(MAIN_TIER_MAX);
+    expect(out.additional).toHaveLength(150 - MAIN_TIER_MAX);
+  });
+
+  it("prepends a pinned exact-reference passage without consuming a slot", () => {
+    const pool = verses(30);
+    const pinnedPool = [
+      { ...pool[29], passage_key: "verse:pinned", pinned: true },
+      ...pool.slice(0, 29),
+    ];
+    // The pinned verse scored WORST — irrelevant: the devotee asked for it.
+    const ranked = scored(pinnedPool, [0.01, ...Array.from({ length: 29 }, () => 0.7)]);
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
+    expect(out.selected[0].candidate.passage_key).toBe("verse:pinned");
+    expect(out.selected[0].reasons[0]).toBe("exact reference requested");
+    // The flat 0.7 curve caps at MAIN_TIER_MAX; the pin rides on top of it.
+    expect(out.selected).toHaveLength(MAIN_TIER_MAX + 1);
   });
 
   it("preserves the reranker's order — never re-sorts", () => {
@@ -346,6 +388,58 @@ describe("evidence selection", () => {
   });
 });
 
+// ─── the tier cut, in isolation ──────────────────────────────
+
+describe("findCut", () => {
+  it("cuts after the largest drop inside the window", () => {
+    const scores = [0.9, 0.88, 0.87, 0.86, 0.85, 0.84, 0.83, 0.82, 0.81, 0.8, 0.4, 0.39];
+    // The 0.8 → 0.4 cliff sits at index 10, inside [MAIN_TIER_MIN, MAIN_TIER_MAX].
+    expect(findCut(scores)).toEqual({ cutIndex: 10, cutGap: expect.closeTo(0.4, 5) });
+  });
+
+  it("caps a flat curve at MAIN_TIER_MAX — noise is not a boundary", () => {
+    const flat = Array.from({ length: 60 }, () => 0.5);
+    expect(findCut(flat).cutIndex).toBe(MAIN_TIER_MAX);
+  });
+
+  it("keeps everything when fewer than the window floor survive", () => {
+    expect(findCut([0.9, 0.2, 0.1]).cutIndex).toBe(3);
+  });
+
+  it("caps when there are no scores to split on (reranker down)", () => {
+    const nulls = Array.from({ length: 50 }, () => null);
+    expect(findCut(nulls).cutIndex).toBe(MAIN_TIER_MAX);
+  });
+});
+
+// ─── the junk floor ──────────────────────────────────────────
+
+describe("junk floor", () => {
+  const LONG = "A passage long enough to be an actual passage rather than a section header or a one-word reply.";
+
+  it("drops sub-floor fragments and counts them", () => {
+    const groups = [[
+      candidate({ passage_key: "lecture:1", source_type: "lecture", retrieval_text: "Devotee: No." }),
+      candidate({ passage_key: "lecture:2", source_type: "lecture", retrieval_text: LONG }),
+    ]];
+    const out = applyJunkFloor(groups);
+    expect(out.dropped).toBe(1);
+    expect(out.groups[0].map((c) => c.passage_key)).toEqual(["lecture:2"]);
+  });
+
+  it("exempts verses — some translations are legitimately short", () => {
+    const groups = [[candidate({ passage_key: "verse:1", source_type: "verse", retrieval_text: "Tat tvam asi." })]];
+    expect(applyJunkFloor(groups).dropped).toBe(0);
+  });
+
+  it("exempts a pinned passage — the devotee asked for it by name", () => {
+    const groups = [[
+      candidate({ passage_key: "lecture:p", source_type: "lecture", retrieval_text: "Short.", pinned: true }),
+    ]];
+    expect(applyJunkFloor(groups).dropped).toBe(0);
+  });
+});
+
 // ─── B2: query-plan semantic validation ──────────────────────
 
 describe("query plan validation", () => {
@@ -359,11 +453,14 @@ describe("query plan validation", () => {
     expect(QueryPlanSchema.safeParse(base).success).toBe(true);
   });
 
-  it("carries a reference the devotee wrote into the fallback plan's constraints", () => {
-    // A clue for retrieval, not a decision about how the question is handled.
-    expect(fallbackPlan("what does BG 18.66 mean?").constraints.scripture_references)
-      .toEqual(["BG 18.66"]);
+  it("carries a reference the devotee wrote into the fallback plan — siglum as filter, full form as clue", () => {
+    // The `scripture` column stores "BG", never "BG 18.66": the siglum is the
+    // only filterable part, and the full reference drives the pinned lookup.
+    const plan = fallbackPlan("what does BG 18.66 mean?");
+    expect(plan.constraints.scripture_references).toEqual(["BG"]);
+    expect(plan.exact_reference).toBe("BG 18.66");
     expect(base.constraints.scripture_references).toEqual([]);
+    expect(base.exact_reference).toBeNull();
   });
 
   it("rejects more subqueries than the budget permits", () => {
