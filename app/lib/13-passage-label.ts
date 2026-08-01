@@ -19,6 +19,7 @@
  * page all compute identical labels from the same hit fields.
  */
 import { type Authorship, getBookName, authorshipFor, provenanceNoteFor } from "@/app/lib/12-provenance";
+import { isPrabhupada } from "@/app/lib/15-transcript-speakers";
 
 export interface PassageLabel {
   /** Ordered segments joined with " · " for display. */
@@ -191,6 +192,8 @@ interface WirePassageLike {
   division?: string | null;
   chapterNumber?: number | null;
   speaker?: string | null;
+  /** Transcript speaker provenance ('labelled' | 'inherited' | 'unknown'). */
+  speakerConfidence?: string | null;
   recipient?: string | null;
   date?: string | null;
   location?: string | null;
@@ -234,8 +237,57 @@ export function labelForWirePassage(p: WirePassageLike): PassageLabel {
     }
     case "book":
       return labelForProse({ book_slug: p.reference || "" });
-    case "lecture":
-      return labelForTranscript({ title: p.reference || "", date: p.date || "", location: p.location || "" });
+    case "lecture": {
+      const base = labelForTranscript({
+        title: p.reference || "",
+        date: p.date || "",
+        location: p.location || "",
+        speaker: p.speaker || "",
+      });
+      // The speaker column is a deterministic read of the paragraph's own
+      // "Name:" prefix. A guest's words carry an explicit warning — the one
+      // failure this corpus cannot afford is a visitor quoted as Śrīla
+      // Prabhupāda. An unlabelled paragraph is honestly unidentified.
+      if (p.speaker && !isPrabhupada(p.speaker)) {
+        return { ...base, provenanceNote: `Spoken by ${p.speaker} — not Śrīla Prabhupāda` };
+      }
+      if (!p.speaker && p.speakerConfidence === "unknown") {
+        return {
+          ...base,
+          provenanceNote: "Speaker not identified — part of a recorded conversation",
+        };
+      }
+      return base;
+    }
+    case "letter":
+      return labelForLetter({ recipient: p.recipient || "", date: p.date || "" });
+  }
+}
+
+/**
+ * Label for a SECOND-TIER citation line. Deliberately more conservative than
+ * the main-tier labels: additional passages are built from retrieval data
+ * without the re-fetched row fields (canto, chapter, URL) the authorship truth
+ * table needs, so this label never claims "Śrīla Prabhupāda" for a purport or
+ * book passage it cannot verify. Type and citation only — plus the speaker
+ * warning for lecture lines, which retrieval does carry.
+ */
+export function labelForAdditionalPassage(p: WirePassageLike): PassageLabel {
+  switch (p.type) {
+    case "verse":
+      return { parts: [readableReference(p.reference), "Translation"], provenanceNote: "" };
+    case "purport":
+      return { parts: [readableReference(p.reference), "Purport"], provenanceNote: "" };
+    case "book":
+      return { parts: [getBookName(p.reference || ""), "Book passage"], provenanceNote: "" };
+    case "lecture": {
+      const parts = [transcriptKind({ title: p.reference || "" }), placeAndYear(p.location || "", p.date || ""), p.speaker || ""];
+      const note =
+        p.speaker && !isPrabhupada(p.speaker)
+          ? `Spoken by ${p.speaker} — not Śrīla Prabhupāda`
+          : "";
+      return { parts, provenanceNote: note };
+    }
     case "letter":
       return labelForLetter({ recipient: p.recipient || "", date: p.date || "" });
   }

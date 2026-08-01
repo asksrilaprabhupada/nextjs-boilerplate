@@ -22,6 +22,7 @@ import type { ArticlePlan } from "@/app/lib/search-v2/article-plan";
 import { DISCLOSURE } from "@/app/lib/search-v2/article-plan";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { isRenderable } from "@/app/lib/search-v2/refetch";
+import { isPrabhupada } from "@/app/lib/15-transcript-speakers";
 
 /** Server-side heading text. Gemini never writes a heading. */
 const HEADING_TEMPLATES: Record<string, (subject: string) => string> = {
@@ -126,6 +127,29 @@ export function contextNoticeFor(p: VerifiedPassage): { text: string; kind: Cont
         kind: "letter",
       };
     case "lecture":
+      // The speaker column is a deterministic read of the paragraph's own
+      // "Name:" prefix (migration 20260801120000). When it names someone else,
+      // the notice must say so plainly — a devotee could otherwise stand up in
+      // class and quote a visitor's words as Śrīla Prabhupāda's. When there is
+      // no label the speaker is honestly unknown, never assumed to be his.
+      if (p.speaker && !isPrabhupada(p.speaker)) {
+        return {
+          text: `Spoken by ${p.speaker} — not Śrīla Prabhupāda`,
+          kind: "conversation",
+        };
+      }
+      if (p.speaker && isPrabhupada(p.speaker)) {
+        return {
+          text: "Recorded exchange — spoken by Śrīla Prabhupāda",
+          kind: "conversation",
+        };
+      }
+      if (p.speakerConfidence === "unknown") {
+        return {
+          text: "Speaker not identified — part of a recorded conversation",
+          kind: "conversation",
+        };
+      }
       return {
         text: "Recorded exchange — words spoken by Śrīla Prabhupāda highlighted",
         kind: "conversation",

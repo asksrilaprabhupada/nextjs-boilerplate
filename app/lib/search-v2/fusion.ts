@@ -43,6 +43,13 @@ export interface RetrievedCandidate {
   channel_ranks: ChannelRank[] | null;
   channel_scores: Record<string, number> | null;
   tag_matches: number | null;
+  /**
+   * Set only by the pipeline for a verse the devotee asked for BY REFERENCE
+   * (direct_verse_lookup). A pinned candidate skips every cut downstream —
+   * junk floor, pre-filter, rerank pool, tiering — and is never deduplicated
+   * away: the one thing that must not happen to "BG 18.66" is losing BG 18.66.
+   */
+  pinned?: boolean;
 }
 
 export interface FusionContribution {
@@ -65,6 +72,34 @@ export interface FusedCandidate extends RetrievedCandidate {
 export type QueryPriorityMap = Record<string, QueryPriority>;
 
 const KNOWN_CHANNELS = new Set<string>(Object.keys(CHANNEL_WEIGHT_KEY));
+
+/**
+ * The junk floor. The corpus holds roughly 5,000 fragments shorter than this —
+ * section headers, reference labels, single-word replies like "Devotee: No."
+ * They are not passages, and every one that reaches the reranker spends money
+ * to be told so. Verses are exempt: some translations are legitimately short.
+ */
+export const JUNK_FLOOR_CHARS = 60;
+
+/**
+ * Drops sub-floor fragments before fusion. Pure — the pipeline logs the count
+ * (`search.junk_floor`) with its request id. Applied to the raw RPC groups so
+ * fusion never spends a rank on a section header.
+ */
+export function applyJunkFloor<T extends RetrievedCandidate>(
+  groups: T[][],
+): { groups: T[][]; dropped: number } {
+  let dropped = 0;
+  const kept = groups.map((group) =>
+    (group ?? []).filter((c) => {
+      if (c.pinned || c.source_type === "verse") return true;
+      if ((c.retrieval_text || "").trim().length >= JUNK_FLOOR_CHARS) return true;
+      dropped += 1;
+      return false;
+    }),
+  );
+  return { groups: kept, dropped };
+}
 
 /**
  * The pseudo query ids the SQL layer uses for rankings that belong to no single

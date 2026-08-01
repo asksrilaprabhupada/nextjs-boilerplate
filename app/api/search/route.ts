@@ -48,6 +48,42 @@ export const maxDuration = 300;
  */
 const MAX_QUERY_CHARS = 2000;
 
+/**
+ * The payload tripwire. Vercel caps a function response at 4.5 MB; with the
+ * main tier capped and `additional` carrying one line per passage, a response
+ * is ~60–120 KB and this can never fire. If it ever does, the additional array
+ * is truncated, the response says so, and `search.payload_truncated` puts the
+ * evidence in the logs — a log line instead of a blank page.
+ */
+const MAX_PAYLOAD_BYTES = 3 * 1024 * 1024;
+
+function guardPayloadSize(
+  result: Record<string, unknown>,
+  requestId: string,
+): Record<string, unknown> {
+  if (JSON.stringify(result).length <= MAX_PAYLOAD_BYTES) return result;
+  const additional = Array.isArray(result.additional) ? [...result.additional] : [];
+  const originalCount = additional.length;
+  const guarded: Record<string, unknown> = { ...result, additionalTruncated: true };
+  // Halve until it fits. Counts (`additionalCount`, `totalResults`) keep their
+  // honest values — the flag tells the page that the tail is missing.
+  let keep = additional.length;
+  do {
+    keep = Math.floor(keep / 2);
+    guarded.additional = additional.slice(0, keep);
+  } while (keep > 0 && JSON.stringify(guarded).length > MAX_PAYLOAD_BYTES);
+  console.warn(
+    JSON.stringify({
+      level: "warn",
+      event: "search.payload_truncated",
+      requestId,
+      originalAdditionalCount: originalCount,
+      keptAdditionalCount: keep,
+    }),
+  );
+  return guarded;
+}
+
 /** Pipeline progress hook — drives the SSE `stage` events. A stage may be
  *  reported more than once as live counts arrive; the loader shows the latest. */
 type OnStage = (stage: SearchStageKey, labelOverride?: string, found?: number) => void;
@@ -207,12 +243,14 @@ async function getOrComputeResult(
   requestId: string,
   onStage?: OnStage,
   ctx: SearchRequestContext = {},
+  speakerOnly = false,
 ): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
-  // Keyed on the EXACT normalised question plus corpus version. A semantically
+  // Keyed on the EXACT normalised question plus corpus version (and the
+  // speaker filter, which changes what retrieval may return). A semantically
   // close but different question is a different question and never reuses this
   // entry — answering one devotee's question with another's evidence is how
   // words get put in Śrīla Prabhupāda's mouth by accident.
-  const key = cacheKeys.response(query);
+  const key = cacheKeys.response(query, speakerOnly ? "sp-only" : undefined);
   const cached = await readCache(key);
   if (cached) {
     // A cached answer still logs its own row so feedback attributes correctly.
@@ -226,6 +264,7 @@ async function getOrComputeResult(
     query,
     requestId,
     onStage: onStage ? toWireStage(onStage) : undefined,
+    speakerOnly,
   });
   const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
   const searchLogId = await logSearchRow(
@@ -288,6 +327,10 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const rawQuery = url.searchParams.get("q");
   const wantStream = url.searchParams.get("stream") === "1";
+  // "Śrīla Prabhupāda's words only" — restricts the transcripts RPC to
+  // paragraphs whose deterministic speaker label is his. Any other value is
+  // ignored, like the legacy `mode=` parameter: old links keep working.
+  const speakerOnly = url.searchParams.get("only_his") === "1";
 
   const requestId = newRequestId();
 
@@ -317,8 +360,8 @@ export async function GET(request: NextRequest) {
 
   if (!wantStream) {
     try {
-      const { result } = await getOrComputeResult(query, requestId, undefined, ctx);
-      return NextResponse.json(result);
+      const { result } = await getOrComputeResult(query, requestId, undefined, ctx, speakerOnly);
+      return NextResponse.json(guardPayloadSize(result, requestId));
     } catch (err) {
       const { status, body } = failureResponseBody(err, requestId);
       return NextResponse.json(body, { status });
@@ -354,7 +397,7 @@ export async function GET(request: NextRequest) {
 
       try {
         if (inputError) throw inputError;
-        const { result, fromCache } = await getOrComputeResult(query, requestId, onStage, ctx);
+        const { result, fromCache } = await getOrComputeResult(query, requestId, onStage, ctx, speakerOnly);
         if (fromCache) {
           // Cached answer: replay the stages in fast succession so the loader
           // still arcs rather than snapping to a finished result.
@@ -363,7 +406,9 @@ export async function GET(request: NextRequest) {
             await new Promise((r) => setTimeout(r, 120));
           }
         }
-        send("result", result);
+        send("result", guardPayloadSize(result, requestId));
+        // The explicit terminal frame: the client closes on it, so the browser
+        // never auto-reconnects and silently re-runs the whole search.
         send("done", {});
       } catch (err) {
         // Headers are already streamed, so the status code is spent. Emit the

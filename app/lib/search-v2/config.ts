@@ -45,21 +45,32 @@ export const SEARCH_V2_CONFIG = {
   },
 
   /**
-   * Per-table candidate ceiling handed to each batch RPC. Deliberately large:
-   * the reranker's job is to sort the candidates, not the database's job to
-   * pre-shrink them. When a table returns this many rows, retrieval logs it,
-   * because a full table means more may be waiting behind the cut.
+   * DEPRECATED — the old equal-per-table ceiling, kept only so a caller that
+   * missed the per-source shape below does not break. Retrieval no longer
+   * reads it; it reads `perSourceLimit`.
    */
   perTableLimit: 400,
+
+  /**
+   * Per-source candidate ceilings. NOT equal: an equal budget is not fairness, it
+   * is flooding. Letters are personal correspondence and there are 19,468 of them;
+   * given the same 400 seats as verses they crowd out the scripture a devotee came
+   * for. These are starting values to be tuned from the gold set, not truth.
+   */
+  perSourceLimit: {
+    search_verses_hybrid_batch_v3: 200,
+    search_verse_chunks_hybrid_batch_v3: 150,
+    search_prose_hybrid_batch_v3: 120,
+    search_transcripts_hybrid_batch_v3: 150,
+    search_letters_hybrid_batch_v3: 80,
+  },
+  /** Semantic lane ceiling per source. Clamped to ef_search (400) by the RPC. */
+  perSourceSemanticLimit: 300,
 } as const;
 
-/**
- * The relevance line. A passage the reranker scores at or above this is shown;
- * below it, not — however many pass. This is a STARTING VALUE to be tuned from
- * real score distributions, which is why every score is logged at selection
- * time: tuning should come from numbers, not guesses.
- */
-export const RELEVANCE_THRESHOLD = 0.3;
+/** How many candidates earn a cross-encoder reading. The rest are still shown
+ *  as citations — this is a spending decision, not a relevance verdict. */
+export const PREFILTER_POOL = 400;
 
 export type QueryPriority = keyof typeof SEARCH_V2_CONFIG.queryWeights;
 export type ChannelName =

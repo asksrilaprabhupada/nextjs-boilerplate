@@ -39,6 +39,7 @@ import { getBookName } from "@/app/lib/12-provenance";
    importers (e.g. 02-dig-deeper-modal) keep working unchanged. */
 
 import type {
+  AdditionalSearchPassage,
   Citation,
   SearchPassage,
   SearchResults,
@@ -350,6 +351,64 @@ function PreviewSheet({
   );
 }
 
+/* ─────────────────────────── The second tier ───────────────────────────
+   Every passage that survived retrieval but was not rendered in full: label,
+   citation, one sentence-safe snippet, a Vedabase link when one exists.
+   Collapsed by default (progressive disclosure — complete, not drowning), and
+   expanding re-requests NOTHING: the data is already in the response. */
+
+const ADDITIONAL_GROUPS: { type: AdditionalSearchPassage["type"]; title: string }[] = [
+  { type: "verse", title: "Verses" },
+  { type: "purport", title: "Purports" },
+  { type: "book", title: "Books" },
+  { type: "lecture", title: "Lectures & Conversations" },
+  { type: "letter", title: "Letters" },
+];
+
+function AdditionalTier({ list, truncated }: { list: AdditionalSearchPassage[]; truncated?: boolean }) {
+  if (list.length === 0) return null;
+  const count = list.length.toLocaleString("en-US");
+  return (
+    <details className="additional-tier">
+      <summary className="font-body">
+        {count} more {list.length === 1 ? "passage" : "passages"} — every one the library found, as citations
+      </summary>
+      {truncated && (
+        <p className="additional-truncated font-body">
+          This list was shortened to fit the response — the counts above are the true totals.
+        </p>
+      )}
+      {ADDITIONAL_GROUPS.map(({ type, title }) => {
+        const group = list.filter((a) => a.type === type);
+        if (group.length === 0) return null;
+        return (
+          <section key={type} className="additional-group">
+            <h4 className="font-body">
+              {title} · {group.length.toLocaleString("en-US")}
+            </h4>
+            <ul>
+              {group.map((a) => (
+                <li key={a.id} className="additional-row">
+                  <div className="additional-label font-body">
+                    <span>{a.label}</span>
+                    {a.provenanceNote && <span className="passage-label-note">{a.provenanceNote}</span>}
+                    {a.url && (
+                      <a href={a.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${a.reference || a.label} on Vedabase in a new tab`}>
+                        ↗
+                      </a>
+                    )}
+                  </div>
+                  {a.snippet && <p className="additional-snippet font-body">{a.snippet}</p>}
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </details>
+  );
+}
+
 /* ─────────────────────────── Main component ─────────────────────────── */
 
 interface Props {
@@ -578,6 +637,10 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
             ))}
           </motion.div>
         )}
+
+        {/* Below the main article in either view: everything else the library
+            found, grouped by kind, collapsed until asked for. */}
+        <AdditionalTier list={results.additional || []} truncated={results.additionalTruncated} />
       </div>
 
       {/* Mobile floating "next passage" */}
@@ -663,6 +726,21 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
 
         .ref-book { margin-bottom: var(--space-7); }
         .ref-book h3 { font-size: 1.3rem; font-weight: 600; color: var(--ink-strong); margin: 0 0 var(--space-2); }
+
+        /* ── The second tier: complete, collapsed, citation-weight ── */
+        .additional-tier { margin: var(--space-7) 0 0; border: 1px solid var(--border-hair); border-radius: var(--radius-md); background: var(--surface-raised); }
+        .additional-tier > summary { cursor: pointer; padding: 12px 16px; font-size: var(--type-label-size); font-weight: 600; color: var(--ink-muted); list-style: none; }
+        .additional-tier > summary::-webkit-details-marker { display: none; }
+        .additional-tier > summary::before { content: "▸ "; }
+        .additional-tier[open] > summary::before { content: "▾ "; }
+        .additional-truncated { margin: 0 16px var(--space-3); font-size: 0.8rem; color: var(--ink-subtle); font-style: italic; }
+        .additional-group { padding: 0 16px var(--space-4); }
+        .additional-group h4 { margin: var(--space-3) 0 var(--space-2); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-subtle); }
+        .additional-group ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
+        .additional-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 0.82rem; font-weight: 600; color: var(--ink); }
+        .additional-label a { color: var(--accent-strong); text-decoration: none; }
+        .additional-label a:hover { text-decoration: underline; }
+        .additional-snippet { margin: 2px 0 0; font-size: 0.86rem; line-height: 1.55; color: var(--ink-muted); }
 
         /* ── Matched-sentence emphasis (the bloom): lavender→gold, blooms once,
            then settles to a calm resting tint. Never a flat yellow block. ── */

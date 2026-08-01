@@ -5,7 +5,8 @@
  * and drives fuse → dedupe → rerank → select → re-fetch → render in a single
  * pass, against a database fake seeded with REAL rows copied out of the
  * production corpus (BG 6.34, BG 6.26, BG 14.22-25 and their batch-RPC channel
- * ranks, captured verbatim from `search_verses_hybrid_batch_v2`).
+ * ranks, captured verbatim from the batched verse retrieval RPC — the shape is
+ * unchanged between v2 and v3 apart from the added columns).
  *
  * It runs with NO provider keys, which is deliberate — that is the
  * all-providers-down path:
@@ -122,16 +123,25 @@ const VERSE_CANDIDATES = [
 ];
 
 const BATCH_FNS = new Set([
-  "search_verses_hybrid_batch_v2",
-  "search_verse_chunks_hybrid_batch_v2",
-  "search_prose_hybrid_batch_v2",
-  "search_transcripts_hybrid_batch_v2",
-  "search_letters_hybrid_batch_v2",
+  "search_verses_hybrid_batch_v3",
+  "search_verse_chunks_hybrid_batch_v3",
+  "search_prose_hybrid_batch_v3",
+  "search_transcripts_hybrid_batch_v3",
+  "search_letters_hybrid_batch_v3",
 ]);
 
 interface FakeOpts {
   failingRpc?: string;
   verseRows?: Record<string, unknown>[];
+  /** Rows direct_verse_lookup returns — the exact-reference pin's source. */
+  directRows?: Record<string, unknown>[];
+  /**
+   * When true, the verse RPC honours its scripture constraint the way the
+   * real one does when the filter matches nothing: zero rows. Lets the tests
+   * drive the fail-open path.
+   */
+  scriptureFilterEmpties?: boolean;
+  transcriptCandidates?: Record<string, unknown>[];
 }
 
 function fakeDb(opts: FakeOpts = {}) {
@@ -139,13 +149,23 @@ function fakeDb(opts: FakeOpts = {}) {
   const verses = opts.verseRows ?? [BG_6_34, BG_6_26, BG_14_22];
   return {
     calls,
-    rpc(fn: string) {
+    rpc(fn: string, args?: Record<string, unknown>) {
       calls.push(fn);
       if (opts.failingRpc === fn) {
         return Promise.resolve({ data: null, error: { code: "42883" } });
       }
-      if (fn === "search_verses_hybrid_batch_v2") {
+      if (fn === "search_verses_hybrid_batch_v3") {
+        const cons = (args?.p_constraints ?? {}) as { scripture_references?: string[] };
+        if (opts.scriptureFilterEmpties && (cons.scripture_references?.length ?? 0) > 0) {
+          return Promise.resolve({ data: [], error: null });
+        }
         return Promise.resolve({ data: VERSE_CANDIDATES, error: null });
+      }
+      if (fn === "search_transcripts_hybrid_batch_v3" && opts.transcriptCandidates) {
+        return Promise.resolve({ data: opts.transcriptCandidates, error: null });
+      }
+      if (fn === "direct_verse_lookup") {
+        return Promise.resolve({ data: opts.directRows ?? [], error: null });
       }
       if (BATCH_FNS.has(fn)) return Promise.resolve({ data: [], error: null });
       return Promise.resolve({ data: [], error: null });
@@ -287,11 +307,11 @@ describe("V2 pipeline, end to end, with every provider down", () => {
   it("propagates a retrieval RPC failure instead of returning an empty answer", async () => {
     await expect(
       runSearchV2({
-        db: fakeDb({ failingRpc: "search_letters_hybrid_batch_v2" }) as never,
+        db: fakeDb({ failingRpc: "search_letters_hybrid_batch_v3" }) as never,
         query: "how do I control my restless mind",
         requestId: "req_fail",
       }),
-    ).rejects.toThrow(/search_letters_hybrid_batch_v2/);
+    ).rejects.toThrow(/search_letters_hybrid_batch_v3/);
   });
 
   it("drops a passage whose source row changed under it, and renders the rest", async () => {
@@ -332,6 +352,66 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(out.telemetry.degradedStages.map((d) => d.stage)).toContain("reranking");
   });
 
+  it("pins the exact verse first when the devotee asked for it by reference", async () => {
+    const db = fakeDb({ directRows: [BG_6_34] });
+    const out = await runSearchV2({ db: db as never, query: "BG 6.34", requestId: "req_pin" });
+
+    expect(db.calls).toContain("direct_verse_lookup");
+    expect(out.telemetry.pinnedExactReference).toBe(true);
+    // First in the main tier regardless of any score, verified verbatim.
+    expect(out.passages[0]?.reference).toBe("BG 6.34");
+    expect(out.passages[0]?.text).toBe(BG_6_34.translation);
+  });
+
+  it("does not call direct_verse_lookup when no reference was written", async () => {
+    const db = fakeDb();
+    await runSearchV2({
+      db: db as never,
+      query: "how do I control my restless mind",
+      requestId: "req_no_pin",
+    });
+    expect(db.calls).not.toContain("direct_verse_lookup");
+  });
+
+  it("fails OPEN when a scripture filter empties the scripture sources", async () => {
+    // The filter says "BG" but (as with the real bug this guards against) the
+    // constrained calls return nothing while transcripts found rows. An empty
+    // result caused by a filter is a bug, never an answer: the two scripture
+    // calls re-run unfiltered and the verses come back.
+    const db = fakeDb({
+      scriptureFilterEmpties: true,
+      transcriptCandidates: [
+        {
+          passage_key: "lecture:aaaaaaaa-0000-0000-0000-000000000000",
+          source_type: "lecture",
+          row_id: "aaaaaaaa-0000-0000-0000-000000000000",
+          retrieval_text:
+            "A recorded talk paragraph long enough to clear the junk floor and stand in for the 861 unconstrained survivors of the original incident.",
+          reference: "Lecture",
+          speaker: null,
+          recipient: null,
+          occurred_on: null,
+          location: null,
+          matched_query_ids: ["q_original"],
+          channel_ranks: [{ query_id: "q_original", channel: "fts_core", rank: 1 }],
+          channel_scores: {},
+          tag_matches: 0,
+        },
+      ],
+    });
+    const out = await runSearchV2({
+      db: db as never,
+      query: "what does BG 6.34 mean?",
+      requestId: "req_failopen",
+    });
+
+    // Five first-round calls plus the two re-issued scripture calls.
+    expect(db.calls.filter((c) => BATCH_FNS.has(c))).toHaveLength(7);
+    expect(out.telemetry.tableRpcCount).toBe(7);
+    const refs = out.passages.map((p) => p.reference);
+    expect(refs).toContain("BG 6.34");
+  });
+
   it("adapts onto the wire contract: the words themselves, never just names", async () => {
     const out = await runSearchV2({
       db: fakeDb() as never,
@@ -345,7 +425,9 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(wire.requestId).toBe("req_adapt");
     expect(wire.citations.length).toBeGreaterThan(0);
     expect(wire.citations.every((c) => c.ref && c.ref.trim())).toBe(true);
-    expect(wire.totalResults).toBe(wire.passages.length);
+    // The honest total spans both tiers (everything fits in main here).
+    expect(wire.totalResults).toBe(wire.passages.length + wire.additional.length);
+    expect(wire.additionalCount).toBe(wire.additional.length);
 
     // WORDS, NOT NAMES. This must fail if `passages` is ever empty or
     // text-free — that is exactly the blank-page bug.

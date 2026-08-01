@@ -71,6 +71,33 @@ export interface SearchPassage {
   alsoAppearsIn: number;
 }
 
+/**
+ * One second-tier passage: everything that survived retrieval but was not
+ * rendered in full. Citation, label and a sentence-safe snippet — enough to
+ * scan, cite and follow to Vedabase. Built from retrieval data (not re-fetched:
+ * verification is for displayed teaching text, and a citation line shows none),
+ * which is also why the snippet is a preview and never quoted as his words.
+ */
+export interface AdditionalSearchPassage {
+  /** Namespaced key, e.g. "verse:<uuid>". Stable within a response. */
+  id: string;
+  type: "verse" | "purport" | "book" | "lecture" | "letter";
+  reference: string | null;
+  /** Vedabase link when one can be derived from the reference; often null. */
+  url: string | null;
+  /** Server-computed label line. Never claims authorship it cannot prove. */
+  label: string;
+  /** Amber warning (e.g. a lecture line spoken by a guest); empty otherwise. */
+  provenanceNote: string;
+  /** One line, never cut mid-sentence (see search-v2/snippet.ts). */
+  snippet: string;
+  speaker: string | null;
+  recipient: string | null;
+  date: string | null;
+  location: string | null;
+  rerankScore: number | null;
+}
+
 /* ── Legacy hit shapes ──
    Still used by the retained Dig Deeper drawer and the shared label helpers
    (13-passage-label). The live response no longer carries them. */
@@ -110,10 +137,24 @@ export interface LetterHit {
 export interface SearchResults {
   query: string;
   /**
-   * Every passage the engine kept, words included, in the RERANKER'S order.
-   * The page prints this list as it arrives — it is never re-sorted.
+   * The MAIN TIER: every passage rendered in full, words included, in the
+   * RERANKER'S order. The page prints this list as it arrives — never re-sorted.
    */
   passages: SearchPassage[];
+  /**
+   * The SECOND TIER: every other passage that survived retrieval, as
+   * citations with snippets. Collapsed on the page, complete in the payload —
+   * nothing the engine found is dropped.
+   */
+  additional: AdditionalSearchPassage[];
+  additionalCount: number;
+  /**
+   * Set only when the payload tripwire fired and the additional array was
+   * truncated to fit the function response limit. Should never happen with the
+   * tier caps in place — its presence is a bug report, not a feature.
+   */
+  additionalTruncated?: boolean;
+  /** The honest total: passages.length + additionalCount. */
   totalResults: number;
   citations: Citation[];
   /** Honest page title (the article plan's, or a deterministic one). */
