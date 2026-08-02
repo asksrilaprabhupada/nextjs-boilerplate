@@ -120,6 +120,10 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
 
   const passages = out.passages.map(toWirePassage);
   const additional = out.additional.map(toWireAdditional);
+  const degradedSources = [...new Set(telemetry.degradedSources)].map((source) => ({
+    source,
+    reason: "temporarily unavailable" as const,
+  }));
 
   const citations: Citation[] = passages.map((p) => ({
     ref: p.reference ?? p.id,
@@ -142,8 +146,9 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
     validated: true, // every passage came out of refetchAndVerify
     droppedBlocks: telemetry.droppedOnRefetch,
     requestId: telemetry.requestId,
-    retrievalStatus: "complete",
-    degradedStages: telemetry.degradedStages,
+    degraded: telemetry.degraded,
+    retrievalStatus: degradedSources.length > 0 ? "degraded" : "complete",
+    degradedSources,
     disabledLanes: [],
     // Bare row ids (never the namespaced key) — log_search stores uuid[].
     articleVerseIds: passages

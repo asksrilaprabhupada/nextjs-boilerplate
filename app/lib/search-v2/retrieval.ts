@@ -8,22 +8,33 @@
  *
  * Two honesty rules the brief is explicit about, both enforced here:
  *
- *   - A table RPC failing is an INFRASTRUCTURE FAILURE, not a quiet loss of one
- *     source. `rpcOrThrow` propagates; nothing silently drops a corpus.
+ *   - A table RPC failing is never mistaken for an empty source. If another
+ *     requested source succeeds, the answer continues but is explicitly marked
+ *     incomplete; if all requested sources fail, infrastructure failure wins.
  *   - Voyage failing is NOT fatal. Without embeddings the semantic channel goes
  *     dark but fts_core, fts_expansion and validated tags still retrieve, so the
  *     search degrades and says so rather than dying.
  *
- * The RPC count reported in telemetry is honest: `tableRpcCount` counts only the
- * five retrieval calls. Vocabulary resolution and context hydration are counted
- * separately, because folding them in would make the "five RPCs" claim a lie.
+ * The RPC counts reported in telemetry are honest: `tableRpcCount` counts
+ * logical source invocations, while `tableRpcAttemptCount` also includes a
+ * definite-transport retry. Vocabulary and hydration remain separate.
  */
 import { embedQueries } from "@/app/lib/03-embed";
-import { rpcOrThrow, rpcOrDegrade, type RpcCapableClient, DegradationLog } from "@/app/lib/search-v2/rpc";
+import {
+  rpcOrThrowMeasured,
+  rpcOrDegrade,
+  type RpcCapableClient,
+  DegradationLog,
+} from "@/app/lib/search-v2/rpc";
+import {
+  SearchInfrastructureError,
+  type SearchUpstreamAttempt,
+} from "@/app/lib/search-v2/errors";
 import { SEARCH_V2_CONFIG } from "@/app/lib/search-v2/config";
 import type { RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 import type { QueryPlan } from "@/app/lib/search-v2/query-plan";
 import { getCacheAdapter, cacheKeys, TTL } from "@/app/lib/search-v2/cache";
+import type { FriendlyRetrievalSource } from "@/app/lib/types/01-search";
 
 /** The id reserved for the devotee's actual question. */
 export const ORIGINAL_QUERY_ID = "q_original";
@@ -166,6 +177,14 @@ const FUNCTION_SOURCES: Record<BatchFunction, string[]> = {
   search_letters_hybrid_batch_v3: ["letter"],
 };
 
+export const FRIENDLY_SOURCE_BY_FUNCTION: Record<BatchFunction, FriendlyRetrievalSource> = {
+  search_verses_hybrid_batch_v3: "Scripture verses",
+  search_verse_chunks_hybrid_batch_v3: "Purports",
+  search_prose_hybrid_batch_v3: "Books",
+  search_transcripts_hybrid_batch_v3: "Lectures and conversations",
+  search_letters_hybrid_batch_v3: "Letters",
+};
+
 /** The two scripture-constrained sources, for the fail-open rule below. */
 const SCRIPTURE_FILTERED: BatchFunction[] = [
   "search_verses_hybrid_batch_v3",
@@ -175,11 +194,29 @@ const SCRIPTURE_FILTERED: BatchFunction[] = [
 export interface RetrievalResult {
   groups: RetrievedCandidate[][];
   tableRpcCount: number;
+  tableRpcAttemptCount: number;
   vocabularyRpcCount: number;
   embeddingProviderCalls: number;
   resolvedSlugs: string[];
   semanticAvailable: boolean;
   candidateCount: number;
+  sourceRetrieval: RetrievalSourceTelemetry[];
+  degradedSources: FriendlyRetrievalSource[];
+}
+
+export interface RetrievalSourceTelemetry {
+  source: FriendlyRetrievalSource;
+  internalFunction: BatchFunction;
+  stage: string;
+  operation: "initial" | "constraint_fail_open";
+  durationMs: number;
+  success: boolean;
+  code: string | null;
+  candidateCount: number | null;
+  outerLimit: number;
+  semanticLimit: number;
+  attemptCount: number;
+  attempts: SearchUpstreamAttempt[];
 }
 
 export interface RetrievalInput {
@@ -242,8 +279,13 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
     ...(input.speakerOnly ? { speaker_only: true } : {}),
   };
 
-  const callOne = (fn: BatchFunction, cons: Record<string, unknown>) =>
-    rpcOrThrow<RetrievedCandidate[] | null>(
+  const callOne = async (
+    fn: BatchFunction,
+    cons: Record<string, unknown>,
+    operation: RetrievalSourceTelemetry["operation"],
+  ): Promise<{ rows: RetrievedCandidate[]; telemetry: RetrievalSourceTelemetry }> => {
+    const stage = `retrieval:batch:${fn}`;
+    const measured = await rpcOrThrowMeasured<RetrievedCandidate[] | null>(
       db,
       fn,
       {
@@ -254,28 +296,165 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
         p_limit: limitFor(fn),
         p_semantic_limit: SEARCH_V2_CONFIG.perSourceSemanticLimit,
       },
-      { stage: `retrieval:batch:${fn}`, requestId },
-    ).then((rows) => {
-      const out = rows ?? [];
-      // A table that fills its whole budget probably has more relevant rows
-      // waiting behind the cut. Logged so the ceiling is raised from
-      // evidence, not from a hunch.
-      if (out.length >= limitFor(fn)) {
-        console.info(
-          JSON.stringify({
-            level: "info",
-            event: "search.table_at_limit",
-            requestId,
-            table: fn,
-            limit: limitFor(fn),
-          }),
-        );
-      }
-      return out;
-    });
+      { stage, requestId },
+    );
+    if (!Array.isArray(measured.data)) {
+      const attempts = measured.attempts.map((attempt, index) =>
+        index === measured.attempts.length - 1
+          ? { ...attempt, outcome: "invalid_response" as const, code: "invalid_response" }
+          : attempt);
+      throw new SearchInfrastructureError(`${fn} returned an invalid response during ${stage}`, {
+        requestId,
+        stage,
+        source: fn,
+        internalCode: "invalid_response",
+        attemptCount: attempts.length,
+        attempts,
+        totalDurationMs: measured.totalDurationMs,
+      });
+    }
+    const rows = measured.data;
+    // A table that fills its whole budget probably has more relevant rows
+    // waiting behind the cut. Logged so the ceiling is raised from evidence,
+    // not from a hunch.
+    if (rows.length >= limitFor(fn)) {
+      console.info(
+        JSON.stringify({
+          level: "info",
+          event: "search.table_at_limit",
+          requestId,
+          table: fn,
+          limit: limitFor(fn),
+        }),
+      );
+    }
+    return {
+      rows,
+      telemetry: {
+        source: FRIENDLY_SOURCE_BY_FUNCTION[fn],
+        internalFunction: fn,
+        stage,
+        operation,
+        durationMs: measured.totalDurationMs,
+        success: true,
+        code: null,
+        candidateCount: rows.length,
+        outerLimit: limitFor(fn),
+        semanticLimit: SEARCH_V2_CONFIG.perSourceSemanticLimit,
+        attemptCount: measured.attempts.length,
+        attempts: measured.attempts,
+      },
+    };
+  };
 
-  const groups = await Promise.all(toCall.map((fn) => callOne(fn, constraints)));
-  let tableRpcCount = toCall.length;
+  const sourceRetrieval: RetrievalSourceTelemetry[] = [];
+  const degradedSourceSet = new Set<FriendlyRetrievalSource>();
+  const groupsByFunction = new Map<BatchFunction, RetrievedCandidate[]>();
+
+  const recordSource = (telemetry: RetrievalSourceTelemetry): void => {
+    sourceRetrieval.push(telemetry);
+    const entry = JSON.stringify({
+      level: telemetry.success ? "info" : "warn",
+      event: "search.retrieval_source",
+      requestId,
+      ...telemetry,
+    });
+    if (telemetry.success) console.info(entry);
+    else console.warn(entry);
+  };
+
+  const failureTelemetry = (
+    fn: BatchFunction,
+    operation: RetrievalSourceTelemetry["operation"],
+    reason: unknown,
+  ): { error: SearchInfrastructureError; telemetry: RetrievalSourceTelemetry } => {
+    const stage = `retrieval:batch:${fn}`;
+    const error = reason instanceof SearchInfrastructureError
+      ? reason
+      : new SearchInfrastructureError(`${fn} failed unexpectedly during ${stage}`, {
+          requestId,
+          stage,
+          source: fn,
+          attemptCount: 1,
+          cause: reason,
+        });
+    const attempts = error.attempts;
+    return {
+      error,
+      telemetry: {
+        source: FRIENDLY_SOURCE_BY_FUNCTION[fn],
+        internalFunction: fn,
+        stage,
+        operation,
+        durationMs: error.totalDurationMs ?? attempts.reduce((n, attempt) => n + attempt.durationMs, 0),
+        success: false,
+        code: error.databaseCode ?? error.transportCode ?? error.internalCode,
+        candidateCount: null,
+        outerLimit: limitFor(fn),
+        semanticLimit: SEARCH_V2_CONFIG.perSourceSemanticLimit,
+        attemptCount: error.attemptCount || attempts.length,
+        attempts,
+      },
+    };
+  };
+
+  const settleCalls = async (
+    functions: BatchFunction[],
+    cons: Record<string, unknown>,
+    operation: RetrievalSourceTelemetry["operation"],
+  ): Promise<SearchInfrastructureError[]> => {
+    const settled = await Promise.allSettled(functions.map((fn) => callOne(fn, cons, operation)));
+    const failures: SearchInfrastructureError[] = [];
+    settled.forEach((result, index) => {
+      const fn = functions[index];
+      if (result.status === "fulfilled") {
+        groupsByFunction.set(fn, result.value.rows);
+        recordSource(result.value.telemetry);
+        return;
+      }
+      const failure = failureTelemetry(fn, operation, result.reason);
+      recordSource(failure.telemetry);
+      failures.push(failure.error);
+      degradedSourceSet.add(failure.telemetry.source);
+      degraded.record("retrieving", fn, { code: failure.telemetry.code ?? "unknown" });
+    });
+    return failures;
+  };
+
+  const retrievalStarted = globalThis.performance.now();
+  const firstFailures = await settleCalls(toCall, constraints, "initial");
+  if (firstFailures.length === toCall.length) {
+    // All identities and timings have been recorded before the typed failure
+    // escapes. A total outage can therefore never become an empty answer.
+    const failureBySource = new Map(firstFailures.map((error) => [error.source, error]));
+    const sourceFailures = sourceRetrieval.map((source) => ({
+      source: source.internalFunction,
+      stage: source.stage,
+      databaseCode: failureBySource.get(source.internalFunction)?.databaseCode ?? null,
+      transportCode: failureBySource.get(source.internalFunction)?.transportCode ?? null,
+      internalCode: failureBySource.get(source.internalFunction)?.internalCode ?? null,
+      attemptCount: source.attemptCount,
+      durationMs: source.durationMs,
+    }));
+    const sharedCode = (
+      field: "databaseCode" | "transportCode" | "internalCode",
+    ): string | null => {
+      const codes = [...new Set(sourceFailures.map((failure) => failure[field]).filter(Boolean))];
+      return codes.length === 1 ? codes[0] : null;
+    };
+    throw new SearchInfrastructureError("All requested retrieval sources failed", {
+      requestId,
+      stage: "retrieval:batch",
+      source: "all_requested_sources",
+      databaseCode: sharedCode("databaseCode"),
+      transportCode: sharedCode("transportCode"),
+      internalCode: sharedCode("internalCode"),
+      attemptCount: sourceRetrieval.reduce((n, source) => n + source.attemptCount, 0),
+      totalDurationMs: Math.round((globalThis.performance.now() - retrievalStarted) * 1000) / 1000,
+      sourceFailures,
+      cause: new AggregateError(firstFailures, "All requested retrieval sources failed"),
+    });
+  }
 
   // ── Fail open, never closed ──
   // A scripture filter that empties BOTH scripture sources while the
@@ -284,15 +463,14 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
   // An empty result set caused by a filter is always a bug, never an answer.
   const hasScriptureConstraint = plan.constraints.scripture_references.length > 0;
   if (hasScriptureConstraint) {
-    const scriptureRows = toCall.reduce(
-      (n, fn, i) => n + (SCRIPTURE_FILTERED.includes(fn) ? groups[i].length : 0),
-      0,
+    const successfulScripture = SCRIPTURE_FILTERED.filter(
+      (fn) => toCall.includes(fn) && groupsByFunction.has(fn),
     );
-    const otherRows = toCall.reduce(
-      (n, fn, i) => n + (SCRIPTURE_FILTERED.includes(fn) ? 0 : groups[i].length),
-      0,
-    );
-    if (scriptureRows === 0 && otherRows > 0) {
+    const scriptureRows = toCall.reduce((n, fn) =>
+      n + (SCRIPTURE_FILTERED.includes(fn) ? (groupsByFunction.get(fn)?.length ?? 0) : 0), 0);
+    const otherRows = toCall.reduce((n, fn) =>
+      n + (SCRIPTURE_FILTERED.includes(fn) ? 0 : (groupsByFunction.get(fn)?.length ?? 0)), 0);
+    if (successfulScripture.length > 0 && scriptureRows === 0 && otherRows > 0) {
       console.info(
         JSON.stringify({
           level: "info",
@@ -302,23 +480,27 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
         }),
       );
       const unconstrained = { ...constraints, scripture_references: [] };
-      const retried = SCRIPTURE_FILTERED.filter((fn) => toCall.includes(fn));
-      const reopened = await Promise.all(retried.map((fn) => callOne(fn, unconstrained)));
-      tableRpcCount += retried.length;
-      retried.forEach((fn, i) => {
-        groups[toCall.indexOf(fn)] = reopened[i];
-      });
+      // Reopen only scripture sources whose constrained call completed. A
+      // failed call is not retried under the guise of constraint recovery.
+      await settleCalls(successfulScripture, unconstrained, "constraint_fail_open");
     }
   }
 
+  const groups = toCall
+    .filter((fn) => groupsByFunction.has(fn))
+    .map((fn) => groupsByFunction.get(fn) ?? []);
+
   return {
     groups,
-    tableRpcCount,
+    tableRpcCount: sourceRetrieval.length,
+    tableRpcAttemptCount: sourceRetrieval.reduce((n, source) => n + source.attemptCount, 0),
     vocabularyRpcCount: plan.vocabulary_candidates.length > 0 ? 1 : 0,
     embeddingProviderCalls: embedded.providerCalls,
     resolvedSlugs: slugs,
     semanticAvailable: embedded.embeddingAvailable,
     candidateCount: groups.reduce((n, g) => n + g.length, 0),
+    sourceRetrieval,
+    degradedSources: [...degradedSourceSet],
   };
 }
 

@@ -27,7 +27,13 @@ import {
   isSearchError,
   newRequestId,
 } from "@/app/lib/search-v2/errors";
-import { runSearchV2, type PipelineStage, type PipelineStageInfo } from "@/app/lib/search-v2/pipeline";
+import {
+  runSearchV2,
+  type PipelineStage,
+  type PipelineStageInfo,
+  type PipelineOutput,
+  type SearchTelemetry,
+} from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
 import {
   cacheKeys,
@@ -226,6 +232,28 @@ async function writeCache(key: string, value: Record<string, unknown>): Promise<
   }
 }
 
+type CacheAdmissionResult = Pick<PipelineOutput, "evidenceInsufficient"> & {
+  telemetry: Pick<SearchTelemetry, "degraded" | "degradedSources">;
+};
+
+export function shouldCacheSearchResult(out: CacheAdmissionResult): boolean {
+  return !out.telemetry.degraded
+    && out.telemetry.degradedSources.length === 0
+    && !out.evidenceInsufficient;
+}
+
+/** Production cache gate with an injected-writer seam for policy tests. */
+export async function writeResponseCacheIfEligible(
+  key: string,
+  value: Record<string, unknown>,
+  out: CacheAdmissionResult,
+  writer: (cacheKey: string, cacheValue: Record<string, unknown>) => Promise<void> = writeCache,
+): Promise<boolean> {
+  if (!shouldCacheSearchResult(out)) return false;
+  await writer(key, value);
+  return true;
+}
+
 /**
  * Cache-aware pipeline entry — both handlers go through here.
  *
@@ -234,9 +262,9 @@ async function writeCache(key: string, value: Record<string, unknown>): Promise<
  * correlation ids are attached AFTER the cache read so a cached body never
  * replays another request's id.
  *
- * Failures are NOT caught here. A retrieval RPC failure must reach the handler
- * as a SearchInfrastructureError and become a 503; swallowing it would rebuild
- * the disguise that made the last outage invisible.
+ * Failures are NOT caught here. If every requested retrieval source fails, the
+ * SearchInfrastructureError must reach the handler and become a 503; partial
+ * source failure is carried explicitly on the successful result.
  */
 async function getOrComputeResult(
   query: string,
@@ -278,9 +306,7 @@ async function getOrComputeResult(
   // Only a clean, non-degraded answer is cached. A response produced while
   // Voyage or Cohere was down is correct but weaker, and caching it for 24
   // hours would outlive the outage that caused it.
-  if (!out.telemetry.degraded && !out.evidenceInsufficient) {
-    await writeCache(key, adapted);
-  }
+  await writeResponseCacheIfEligible(key, adapted, out);
 
   return { result: { ...adapted, searchLogId, requestId }, fromCache: false };
 }
@@ -296,7 +322,7 @@ async function getOrComputeResult(
  * Everything else is an unexpected 500. No message, SQL or stack ever crosses
  * the boundary — those live in the server logs, joined by request id.
  */
-function failureResponseBody(err: unknown, requestId: string): {
+export function failureResponseBody(err: unknown, requestId: string): {
   status: number;
   body: Record<string, unknown>;
 } {
@@ -308,6 +334,13 @@ function failureResponseBody(err: unknown, requestId: string): {
         requestId,
         code: err.code,
         stage: err.stage ?? null,
+        source: err.source ?? null,
+        databaseCode: err.databaseCode,
+        transportCode: err.transportCode,
+        internalCode: err.internalCode,
+        attemptCount: err.attemptCount,
+        totalDurationMs: err.totalDurationMs,
+        sourceFailures: err.sourceFailures,
         name: err.name,
       }),
     );

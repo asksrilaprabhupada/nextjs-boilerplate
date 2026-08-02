@@ -149,7 +149,7 @@ export const cacheKeys = {
   // "Śrīla Prabhupāda's words only" filter). A filtered answer cached under the
   // unfiltered key would serve the wrong evidence to the next asker.
   response: (question: string, variant?: string) =>
-    `response:v3:${searchCorpusVersion()}:${variant ? `${variant}:` : ""}${sha256(normalizeQuestion(question))}`,
+    `response:v4:${searchCorpusVersion()}:${variant ? `${variant}:` : ""}${sha256(normalizeQuestion(question))}`,
 } as const;
 
 /**

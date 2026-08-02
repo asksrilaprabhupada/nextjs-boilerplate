@@ -27,7 +27,47 @@ export interface SearchErrorContext {
   requestId?: string;
   /** Pipeline stage that failed, e.g. "retrieval:verses:semantic". */
   stage?: string;
+  /** Internal source identity. Server-side only; never serialised to clients. */
+  source?: string;
+  /** Safe Postgres/PostgREST code, when a database response supplied one. */
+  databaseCode?: string | null;
+  /** Safe network code from a branded pre-response fetch rejection. */
+  transportCode?: string | null;
+  /** Stable server-only classification for non-database contract failures. */
+  internalCode?: string | null;
+  /** Number of actual upstream attempts made before the failure. */
+  attemptCount?: number;
+  /** Safe per-attempt evidence. Messages, arguments and stacks are excluded. */
+  attempts?: SearchUpstreamAttempt[];
+  /** Monotonic elapsed time across every attempt and any retry delay. */
+  totalDurationMs?: number;
+  /** Safe per-source summaries when an all-source fan-out fails. */
+  sourceFailures?: SearchSourceFailureSummary[];
   cause?: unknown;
+}
+
+export interface SearchUpstreamAttempt {
+  attempt: number;
+  durationMs: number;
+  outcome:
+    | "success"
+    | "response_error"
+    | "transport_error"
+    | "aborted"
+    | "provider_error"
+    | "invalid_response"
+    | "unknown_error";
+  code: string | null;
+}
+
+export interface SearchSourceFailureSummary {
+  source: string;
+  stage: string;
+  databaseCode: string | null;
+  transportCode: string | null;
+  internalCode: string | null;
+  attemptCount: number;
+  durationMs: number;
 }
 
 export abstract class SearchError extends Error {
@@ -35,13 +75,29 @@ export abstract class SearchError extends Error {
   /** HTTP status the route should map this to. */
   abstract readonly status: number;
   readonly requestId?: string;
-  readonly stage?: string;
+  readonly stage: string | null;
+  readonly source: string | null;
+  readonly databaseCode: string | null;
+  readonly transportCode: string | null;
+  readonly internalCode: string | null;
+  readonly attemptCount: number;
+  readonly attempts: SearchUpstreamAttempt[];
+  readonly totalDurationMs: number | null;
+  readonly sourceFailures: SearchSourceFailureSummary[];
 
   protected constructor(message: string, context: SearchErrorContext = {}) {
     super(message, context.cause !== undefined ? { cause: context.cause } : undefined);
     this.name = new.target.name;
     this.requestId = context.requestId;
-    this.stage = context.stage;
+    this.stage = context.stage ?? null;
+    this.source = context.source ?? null;
+    this.databaseCode = context.databaseCode ?? null;
+    this.transportCode = context.transportCode ?? null;
+    this.internalCode = context.internalCode ?? null;
+    this.attemptCount = context.attemptCount ?? 0;
+    this.attempts = context.attempts ? [...context.attempts] : [];
+    this.totalDurationMs = context.totalDurationMs ?? null;
+    this.sourceFailures = context.sourceFailures ? [...context.sourceFailures] : [];
   }
 
   /**
