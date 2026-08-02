@@ -99,6 +99,19 @@ describe("preview verification RPC client", () => {
     expect(base.rpc).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves bound non-RPC methods used by authoritative refetches", () => {
+    const rpc = vi.fn(() => Promise.resolve(result));
+    const from = vi.fn(function (this: { marker: string }, table: string) {
+      return { marker: this.marker, table };
+    });
+    const base = { marker: "base-client", rpc, from };
+
+    const client = previewVerificationClient(base, "degrade-transcripts");
+
+    expect(client.from("verses")).toEqual({ marker: "base-client", table: "verses" });
+    expect(from).toHaveBeenCalledWith("verses");
+  });
+
   it("fails all five retrieval RPCs but passes unrelated RPCs through", async () => {
     const base = baseClient();
     const client = previewVerificationClient(base.client, "fail-all-sources");
