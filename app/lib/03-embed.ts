@@ -9,7 +9,8 @@
  */
 
 const VOYAGE_URL = "https://api.voyageai.com/v1/contextualizedembeddings";
-const MODEL = "voyage-context-4";
+/** Exported so durable telemetry records the exact embedding space in use. */
+export const VOYAGE_CONTEXT_MODEL = "voyage-context-4";
 const EXPECTED_DIMS = 1024;
 
 /**
@@ -37,7 +38,7 @@ export async function embedQueries(texts: string[]): Promise<number[][]> {
       },
       body: JSON.stringify({
         inputs: texts.map((t) => [t]), // one document per query, one chunk each
-        model: MODEL,
+        model: VOYAGE_CONTEXT_MODEL,
         input_type: "query", // queries use "query"; stored docs used "document"
         output_dimension: EXPECTED_DIMS,
         output_dtype: "float",

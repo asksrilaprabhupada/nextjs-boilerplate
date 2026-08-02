@@ -4,8 +4,9 @@
 > the second engine, the `DEEP_RESEARCH_V2_ENABLED` flag and the two reader
 > modes described below. **There is no rollback to a previous engine and no
 > environment variable that selects one**; any such instruction in this document
-> is history, not a runbook. Kept unedited so the reasoning behind the current
-> pipeline stays readable.
+> is history, not a runbook. Historical passages remain so the reasoning behind
+> the current pipeline stays readable; explicit current-operation notes override
+> them.
 
 The durable spec for the search rebuild. Phase A (search integrity) is
 implemented; B–D are specified here and not yet built. Incident detail lives in
@@ -33,7 +34,7 @@ Original question
   -> deterministic intent + exact-reference router
   -> one schema-constrained Gemini query plan (0–6 approved angles)
   -> one batched embedding request
-  -> five batched table-level hybrid retrieval RPCs
+  -> five batched table-level hybrid retrieval RPCs, serialized heaviest first
   -> one global weighted RRF fusion
   -> exact and near-duplicate collapse
   -> one unified rerank against the ORIGINAL question
@@ -80,6 +81,61 @@ source succeeds, its evidence continues and the result is visibly incomplete,
 names every unavailable source, and cannot enter the response cache. If every
 requested source fails, an aggregate `SearchInfrastructureError` escapes; it may
 not become an empty result or fall through to the legacy v1/`ilike` path.
+
+### Medium serving-tier retrieval policy
+
+Production runs permanently on Medium (4 GB, 2 vCPU). On that tier, warmed solo
+measurements put every source below the eight-second Data API statement timeout:
+transcripts 5,899 ms, verses 3,975 ms, prose 1,565 ms, verse chunks 918 ms, and
+letters 820 ms. At concurrency two, transcripts reached 10,610 ms. The five
+evidence RPCs therefore run one at a time in that measured heaviest-first order:
+transcripts, verses, prose, verse chunks, letters. Every source is still
+attempted and recorded before aggregate failure is evaluated.
+
+This is an execution-scheduling change only. `hnsw.ef_search = 400`, the
+per-source semantic limit of 300, and the source candidate limits remain
+unchanged because lowering them was not recall-neutral. The route retains its
+300-second function budget. The historical Phase B instruction below to run the
+five concurrently is superseded by this policy.
+
+### Authoritative search-run telemetry
+
+`search_logs` is the authoritative lifecycle table; `search_trace` remains
+untouched and has no writer. A valid request creates one `running` row before
+planning and awaits one terminal update (`success`, `degraded`, or `failed`)
+before JSON or SSE closes. Both writes use a two-second aborting deadline and
+fail open: telemetry unavailability is logged but never changes the answer.
+
+The owner chose hash-only ordinary-search storage on 2026-08-02. Every ordinary
+lifecycle row keeps the normalized question's full SHA-256 hash for running,
+successful, degraded, cache-hit, failed, and abandoned states. Raw questions,
+query variants, follow-ups, referrers, visitor IDs, and user agents are not
+written. Ordinary searches no longer update `popular_queries`, and the legacy
+unauthenticated `/api/analytics/log` raw-write proxy returns HTTP 410. Existing
+historical raw rows are left untouched under the task's no-delete/no-rewrite
+boundary. Raw capture remains disabled until a later owner-authenticated,
+explicit diagnostic-session path enables it.
+
+The Phase 3 preview gate uses a separate controlled-failure seam. It is inert
+unless `VERCEL_ENV=preview`, `SEARCH_PREVIEW_VERIFICATION_SECRET` is a server-only
+secret of at least 32 characters, and the request carries an exact-target HMAC
+whose timestamp is within 90 seconds. The two modes synthesize a failure for
+transcripts only or for all five retrieval RPCs; they do not interrupt Supabase
+or a provider. Verification requests bypass response-cache reads and writes and
+mark their minimized telemetry as controlled. Invalid attempts return HTTP 404.
+
+The JSON payload is constructed by a strict server-side allowlist. It contains
+only hashes, cache state, provider/model availability, counts, configured
+limits, safe degradation codes, and pipeline/corpus/config versions. Stage and
+source durations live in dedicated JSON columns. Passage text, complete
+answers, provider responses, embeddings, SQL, stacks, cookies, IP addresses and
+arbitrary errors are excluded.
+
+The matching migration documents the manual statement that marks `running`
+rows older than ten minutes `abandoned`; it is not exposed as an RPC or
+scheduled. No heartbeat is needed because the route's maximum duration is five
+minutes. Application rollback leaves the nullable additive schema inert and
+requires no destructive database action.
 
 ### Response and HTTP contract
 

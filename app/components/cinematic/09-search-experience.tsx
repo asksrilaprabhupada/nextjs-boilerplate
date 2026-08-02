@@ -20,7 +20,7 @@ import SearchLoader from "./10-search-loader";
 import NarrativeResponse from "../results/01-narrative-response";
 import IncompleteSearchWarning from "../results/02-incomplete-search-warning";
 import { useSearchBehaviorTracker } from "@/app/hooks/01-use-search-behavior-tracker";
-import { logBehavior, logCitationClick } from "@/app/lib/02-analytics";
+import { logCitationClick } from "@/app/lib/02-analytics";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
 
 // With the cascade in place a search finishes in well under a minute; waiting
@@ -53,13 +53,9 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
     (next: string) => {
       const trimmed = next.trim();
       if (!trimmed) return;
-      // A follow-up question is itself a behavior signal on the current search.
-      if (searchLogId && trimmed !== q) {
-        logBehavior({ searchLogId, followedUpQuery: trimmed });
-      }
       router.push(`/search?q=${encodeURIComponent(trimmed)}`);
     },
-    [router, searchLogId, q],
+    [router],
   );
 
   // Vedabase citation clicks → citation_clicks table. One delegated listener

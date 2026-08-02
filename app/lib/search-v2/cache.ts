@@ -116,7 +116,12 @@ export function __setCacheAdapter(a: CacheAdapter | null): void {
 }
 
 export function sha256(input: string): string {
-  return createHash("sha256").update(input).digest("hex").slice(0, 32);
+  return fullSha256(input).slice(0, 32);
+}
+
+/** Full digest for durable telemetry; cache keys use the shorter helper above. */
+export function fullSha256(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
 }
 
 /**
