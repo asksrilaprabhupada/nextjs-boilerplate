@@ -7,7 +7,7 @@ const sql = readFileSync(
     process.cwd(),
     "supabase",
     "migrations",
-    "20260802133000_authoritative_search_telemetry.sql",
+    "20260802155648_authoritative_search_telemetry_hash_only.sql",
   ),
   "utf8",
 );
