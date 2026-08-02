@@ -233,6 +233,23 @@ describe("technical telemetry minimization", () => {
     expect(serialized).not.toContain("secret_table");
   });
 
+  it("records article-planner fallback as a provider fact without degradation", () => {
+    const telemetry = telemetryFixture();
+    telemetry.models.articlePlanner = null;
+
+    const stored = allowlistedTechnicalTelemetry(telemetry, "miss", startInput.questionHash);
+
+    expect(stored).toMatchObject({
+      providers: {
+        articlePlanner: {
+          model: expect.any(String),
+          outcome: "fallback",
+        },
+      },
+      degradation: [],
+    });
+  });
+
   it("keeps every duration when one source has a fail-open second invocation", () => {
     const first = telemetryFixture().sourceRetrieval[0];
     const second = { ...first, operation: "constraint_fail_open" as const, durationMs: 275 };

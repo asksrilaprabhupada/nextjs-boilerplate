@@ -410,9 +410,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   onStage?.("organizing", { kept: refetched.verified.length });
   const article = await time("organizing", async () => {
     const plan = await planArticle(query, refetched.verified); // main tier only, ≤ 20 + pins
-    if (plan.plan === null && plan.rejections.length > 0) {
-      degraded.record("organizing", "gemini_article_planner", { code: "plan_rejected" });
-    }
     return renderArticle({ question: query, passages: refetched.verified, plan: plan.plan });
   });
 

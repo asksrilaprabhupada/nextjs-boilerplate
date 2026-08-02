@@ -18,8 +18,10 @@
  *
  * A pipeline that only works when four providers are healthy is a pipeline that
  * will hand a devotee a stack trace on the first bad afternoon. This asserts it
- * still produces a correct, cited, verbatim answer with all four gone — and
- * that it says so in `degradedStages` rather than pretending.
+ * still produces a correct, cited, verbatim answer with all four gone. Provider
+ * failures that reduce recall remain in `degradedStages`; article-planner
+ * fallback is recorded separately because the deterministic renderer is a
+ * complete designed path.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { runSearchV2 } from "@/app/lib/search-v2/pipeline";
@@ -301,6 +303,19 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const codes = out.telemetry.degradedStages.map((d) => d.code).join(" ");
     expect(codes).toMatch(/embeddings_unavailable/);
     expect(out.telemetry.reranked).toBe(false);
+    expect(out.article.planned).toBe(false);
+    expect(out.telemetry.models).toMatchObject({
+      queryPlanner: null,
+      articlePlanner: null,
+    });
+    expect(out.telemetry.degradedStages).toContainEqual({
+      stage: "planning",
+      source: "gemini_query_planner",
+      code: "plan_rejected",
+    });
+    expect(out.telemetry.degradedStages.some(
+      (item) => item.source === "gemini_article_planner",
+    )).toBe(false);
   });
 
   it("calls exactly five table RPCs and counts hydration separately", async () => {
