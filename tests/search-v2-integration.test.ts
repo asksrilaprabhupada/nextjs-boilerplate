@@ -26,6 +26,9 @@ import { runSearchV2 } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
 import { __setCacheAdapter } from "@/app/lib/search-v2/cache";
 import { SearchInfrastructureError } from "@/app/lib/search-v2/errors";
+import { retrieveCandidates } from "@/app/lib/search-v2/retrieval";
+import { fallbackPlan } from "@/app/lib/search-v2/query-plan";
+import { DegradationLog } from "@/app/lib/search-v2/rpc";
 
 // ─── real corpus rows ────────────────────────────────────────
 
@@ -124,10 +127,10 @@ const VERSE_CANDIDATES = [
 ];
 
 const BATCH_FUNCTIONS = [
-  "search_verses_hybrid_batch_v3",
-  "search_verse_chunks_hybrid_batch_v3",
-  "search_prose_hybrid_batch_v3",
   "search_transcripts_hybrid_batch_v3",
+  "search_verses_hybrid_batch_v3",
+  "search_prose_hybrid_batch_v3",
+  "search_verse_chunks_hybrid_batch_v3",
   "search_letters_hybrid_batch_v3",
 ] as const;
 
@@ -312,6 +315,97 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(out.telemetry.tableRpcCount).toBe(5);
     // Verification reads are reported separately so the "five RPCs" claim holds.
     expect(out.telemetry.refetchCount).toBeGreaterThan(0);
+  });
+
+  it("runs table RPCs one at a time in measured heaviest-first order", async () => {
+    const base = fakeDb();
+    const started: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const db = {
+      ...base,
+      async rpc(fn: string, args?: Record<string, unknown>) {
+        if (!BATCH_FNS.has(fn)) return base.rpc(fn, args);
+        started.push(fn);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        try {
+          // A real async boundary makes this fail with maxActive=5 if the
+          // orchestrator ever starts the source promises together again.
+          await new Promise<void>((resolve) => setTimeout(resolve, 2));
+          return await base.rpc(fn, args);
+        } finally {
+          active -= 1;
+        }
+      },
+    };
+
+    const out = await runSearchV2({
+      db: db as never,
+      query: "how do I control my restless mind",
+      requestId: "req_serial_sources",
+    });
+
+    expect(started).toEqual(BATCH_FUNCTIONS);
+    expect(maxActive).toBe(1);
+    expect(out.telemetry.tableRpcCount).toBe(5);
+    expect(base.rpcCalls.filter((call) => BATCH_FNS.has(call.fn)).map((call) => ({
+      fn: call.fn,
+      outer: call.args.p_limit,
+      semantic: call.args.p_semantic_limit,
+    }))).toEqual([
+      { fn: "search_transcripts_hybrid_batch_v3", outer: 150, semantic: 300 },
+      { fn: "search_verses_hybrid_batch_v3", outer: 200, semantic: 300 },
+      { fn: "search_prose_hybrid_batch_v3", outer: 120, semantic: 300 },
+      { fn: "search_verse_chunks_hybrid_batch_v3", outer: 150, semantic: 300 },
+      { fn: "search_letters_hybrid_batch_v3", outer: 80, semantic: 300 },
+    ]);
+    expect(out.telemetry.sourceRetrieval.map((source) => source.internalFunction)).toEqual(
+      BATCH_FUNCTIONS,
+    );
+  });
+
+  it("serializes a filtered source subset in measured heaviest-first order", async () => {
+    const base = fakeDb();
+    const started: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const db = {
+      ...base,
+      async rpc(fn: string, args?: Record<string, unknown>) {
+        if (!BATCH_FNS.has(fn)) return base.rpc(fn, args);
+        started.push(fn);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        try {
+          await new Promise<void>((resolve) => setTimeout(resolve, 2));
+          return await base.rpc(fn, args);
+        } finally {
+          active -= 1;
+        }
+      },
+    };
+    const plan = fallbackPlan("teachings from books, talks, and letters");
+    plan.constraints.source_types = ["letter", "book", "conversation"];
+
+    const out = await retrieveCandidates({
+      db: db as never,
+      original: "teachings from books, talks, and letters",
+      plan,
+      requestId: "req_serial_subset",
+      degraded: new DegradationLog("req_serial_subset"),
+    });
+    const expected = [
+      "search_transcripts_hybrid_batch_v3",
+      "search_prose_hybrid_batch_v3",
+      "search_letters_hybrid_batch_v3",
+    ];
+
+    expect(started).toEqual(expected);
+    expect(maxActive).toBe(1);
+    expect(out.tableRpcCount).toBe(3);
+    expect(out.tableRpcAttemptCount).toBe(3);
+    expect(out.sourceRetrieval.map((source) => source.internalFunction)).toEqual(expected);
   });
 
   it("emits stages in order and finishes degraded rather than complete", async () => {
@@ -647,8 +741,13 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       requestId: "req_failopen",
     });
 
-    // Five first-round calls plus the two re-issued scripture calls.
-    expect(db.calls.filter((c) => BATCH_FNS.has(c))).toHaveLength(7);
+    // Five first-round calls plus the two re-issued scripture calls, all in the
+    // same stable serial order.
+    expect(db.calls.filter((c) => BATCH_FNS.has(c))).toEqual([
+      ...BATCH_FUNCTIONS,
+      "search_verses_hybrid_batch_v3",
+      "search_verse_chunks_hybrid_batch_v3",
+    ]);
     expect(out.telemetry.tableRpcCount).toBe(7);
     const refs = out.passages.map((p) => p.reference);
     expect(refs).toContain("BG 6.34");

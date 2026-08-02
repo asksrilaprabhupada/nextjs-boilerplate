@@ -4,8 +4,9 @@
 > the second engine, the `DEEP_RESEARCH_V2_ENABLED` flag and the two reader
 > modes described below. **There is no rollback to a previous engine and no
 > environment variable that selects one**; any such instruction in this document
-> is history, not a runbook. Kept unedited so the reasoning behind the current
-> pipeline stays readable.
+> is history, not a runbook. Historical passages remain so the reasoning behind
+> the current pipeline stays readable; explicit current-operation notes override
+> them.
 
 The durable spec for the search rebuild. Phase A (search integrity) is
 implemented; B–D are specified here and not yet built. Incident detail lives in
@@ -33,7 +34,7 @@ Original question
   -> deterministic intent + exact-reference router
   -> one schema-constrained Gemini query plan (0–6 approved angles)
   -> one batched embedding request
-  -> five batched table-level hybrid retrieval RPCs
+  -> five batched table-level hybrid retrieval RPCs, serialized heaviest first
   -> one global weighted RRF fusion
   -> exact and near-duplicate collapse
   -> one unified rerank against the ORIGINAL question
@@ -80,6 +81,22 @@ source succeeds, its evidence continues and the result is visibly incomplete,
 names every unavailable source, and cannot enter the response cache. If every
 requested source fails, an aggregate `SearchInfrastructureError` escapes; it may
 not become an empty result or fall through to the legacy v1/`ilike` path.
+
+### Medium serving-tier retrieval policy
+
+Production runs permanently on Medium (4 GB, 2 vCPU). On that tier, warmed solo
+measurements put every source below the eight-second Data API statement timeout:
+transcripts 5,899 ms, verses 3,975 ms, prose 1,565 ms, verse chunks 918 ms, and
+letters 820 ms. At concurrency two, transcripts reached 10,610 ms. The five
+evidence RPCs therefore run one at a time in that measured heaviest-first order:
+transcripts, verses, prose, verse chunks, letters. Every source is still
+attempted and recorded before aggregate failure is evaluated.
+
+This is an execution-scheduling change only. `hnsw.ef_search = 400`, the
+per-source semantic limit of 300, and the source candidate limits remain
+unchanged because lowering them was not recall-neutral. The route retains its
+300-second function budget. The historical Phase B instruction below to run the
+five concurrently is superseded by this policy.
 
 ### Response and HTTP contract
 

@@ -1,10 +1,11 @@
 /**
- * retrieval.ts — Vocabulary resolution, batched embedding, five concurrent RPCs.
+ * retrieval.ts — Vocabulary resolution, batched embedding, five ordered RPCs.
  *
- * This is the whole retrieval stage. Five table-level calls, run concurrently,
- * replacing the ~135-RPC fan-out. Each carries the original question and every
- * approved subquery, so a subquery costs a few milliseconds inside an existing
- * call rather than twelve fresh round trips to Mumbai.
+ * This is the whole retrieval stage. Five table-level calls, run serially in a
+ * measured heaviest-first order, replace the ~135-RPC fan-out. Each carries the
+ * original question and every approved subquery, so a subquery costs a few
+ * milliseconds inside an existing call rather than twelve fresh round trips to
+ * Mumbai.
  *
  * Two honesty rules the brief is explicit about, both enforced here:
  *
@@ -158,11 +159,20 @@ export async function embedPlannedQueries(
 // returned at most 100 rows however many were asked for. v3 raises ef_search to
 // 400 and clamps p_semantic_limit to it, so the truncation that could not be
 // detected also cannot be requested (migration 20260727120000).
+/**
+ * Medium-compute execution order, measured 2026-08-02.
+ *
+ * These calls are deliberately serialized below. On the permanent Medium
+ * serving tier every source completes below the eight-second Data API timeout
+ * when run alone, while transcripts reached 10.61 s with only two calls in
+ * flight. The measured heaviest-first order puts the highest timeout risk first
+ * without changing any source, limit, query, ef_search, or candidate semantics.
+ */
 const BATCH_FUNCTIONS = [
-  "search_verses_hybrid_batch_v3",
-  "search_verse_chunks_hybrid_batch_v3",
-  "search_prose_hybrid_batch_v3",
   "search_transcripts_hybrid_batch_v3",
+  "search_verses_hybrid_batch_v3",
+  "search_prose_hybrid_batch_v3",
+  "search_verse_chunks_hybrid_batch_v3",
   "search_letters_hybrid_batch_v3",
 ] as const;
 
@@ -403,21 +413,27 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
     cons: Record<string, unknown>,
     operation: RetrievalSourceTelemetry["operation"],
   ): Promise<SearchInfrastructureError[]> => {
-    const settled = await Promise.allSettled(functions.map((fn) => callOne(fn, cons, operation)));
     const failures: SearchInfrastructureError[] = [];
-    settled.forEach((result, index) => {
-      const fn = functions[index];
+
+    // Preserve Phase 1's all-settled contract while removing overlap: every
+    // requested source is attempted, every result is recorded, and failure is
+    // evaluated only after the whole ordered list has settled. The singleton
+    // allSettled keeps rejection handling scoped to callOne; bookkeeping bugs
+    // must not be relabelled as source failures.
+    for (const fn of functions) {
+      const [result] = await Promise.allSettled([callOne(fn, cons, operation)]);
       if (result.status === "fulfilled") {
         groupsByFunction.set(fn, result.value.rows);
         recordSource(result.value.telemetry);
-        return;
+        continue;
       }
       const failure = failureTelemetry(fn, operation, result.reason);
       recordSource(failure.telemetry);
       failures.push(failure.error);
       degradedSourceSet.add(failure.telemetry.source);
       degraded.record("retrieving", fn, { code: failure.telemetry.code ?? "unknown" });
-    });
+    }
+
     return failures;
   };
 
