@@ -145,20 +145,27 @@ function controlledFailure(): RpcRequest {
 }
 
 /** Injects only the selected synthetic retrieval failures; every other RPC is real. */
-export function previewVerificationClient(
-  client: RpcCapableClient,
+export function previewVerificationClient<T extends RpcCapableClient>(
+  client: T,
   mode: PreviewVerificationMode | null,
-): RpcCapableClient {
+): T {
   if (mode === null) return client;
 
-  return {
-    rpc(fn, args) {
-      const fail = mode === "fail-all-sources"
-        ? RETRIEVAL_FUNCTIONS.has(fn)
-        : fn === "search_transcripts_hybrid_batch_v3";
-      return fail ? controlledFailure() : client.rpc(fn, args);
+  return new Proxy(client, {
+    get(target, property) {
+      if (property === "rpc") {
+        return (fn: string, args?: Record<string, unknown>) => {
+          const fail = mode === "fail-all-sources"
+            ? RETRIEVAL_FUNCTIONS.has(fn)
+            : fn === "search_transcripts_hybrid_batch_v3";
+          return fail ? controlledFailure() : target.rpc(fn, args);
+        };
+      }
+
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
     },
-  };
+  });
 }
 
 /** Adds one safe technical marker to the already-minimized telemetry payload. */
