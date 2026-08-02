@@ -51,6 +51,12 @@ import {
   sourceDurationsForTelemetry,
   telemetryQuestionHash,
 } from "@/app/lib/search-v2/search-run-telemetry";
+import {
+  markPreviewVerification,
+  previewVerificationClient,
+  readPreviewVerificationMode,
+  type PreviewVerificationMode,
+} from "@/app/lib/search-v2/preview-verification";
 
 // With no candidate caps, a cold search embeds, runs five large RPCs, and
 // reranks the whole pool in Cohere batches — minutes, not seconds, on a broad
@@ -154,17 +160,6 @@ function toWireStage(onStage: OnStage): (stage: PipelineStage, info?: PipelineSt
 }
 
 // =====================================================
-// TELEMETRY
-// =====================================================
-
-/** Request metadata threaded into telemetry (never used for retrieval). */
-interface SearchRequestContext {
-  userAgent?: string | null;
-  referrer?: string | null;
-  visitorId?: string | null;
-}
-
-// =====================================================
 // RESPONSE CACHE
 // =====================================================
 
@@ -233,12 +228,15 @@ async function getOrComputeResult(
   query: string,
   requestId: string,
   onStage?: OnStage,
-  ctx: SearchRequestContext = {},
   speakerOnly = false,
+  verificationMode: PreviewVerificationMode | null = null,
 ): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
+  const now = (): number => globalThis.performance.now();
+  const elapsed = (since: number): number =>
+    Math.round(Math.max(0, now() - since) * 1000) / 1000;
   const questionHash = telemetryQuestionHash(query);
   const searchRun = await beginSearchRun({ requestId, questionHash });
-  const workStartedAt = Date.now();
+  const workStartedAt = now();
   const partialStageDurationsMs: Record<string, number> = {};
 
   try {
@@ -248,22 +246,24 @@ async function getOrComputeResult(
     // entry — answering one devotee's question with another's evidence is how
     // words get put in Śrīla Prabhupāda's mouth by accident.
     const key = cacheKeys.response(query, speakerOnly ? "sp-only" : undefined);
-    const cacheStartedAt = Date.now();
-    const cached = await readCache(key);
-    const cacheDurationMs = Date.now() - cacheStartedAt;
+    const cacheStartedAt = now();
+    // Controlled preview verification must exercise the pipeline, never replay
+    // or populate an ordinary response-cache entry.
+    const cached = verificationMode === null ? await readCache(key) : null;
+    const cacheDurationMs = elapsed(cacheStartedAt);
     if (cached) {
       await completeSearchRun(searchRun, {
         status: "success",
         query,
-        visitorId: ctx.visitorId,
-        userAgent: ctx.userAgent,
-        referrer: ctx.referrer,
         searchMethod: "cache",
         totalDurationMs: cacheDurationMs,
         result: resultFieldsForTelemetry(cached),
         stageDurationsMs: { cache: cacheDurationMs },
         sourceDurationsMs: {},
-        telemetry: cacheHitTechnicalTelemetry(questionHash),
+        telemetry: markPreviewVerification(
+          cacheHitTechnicalTelemetry(questionHash),
+          verificationMode,
+        ),
       });
       onStage?.("weaving");
       return {
@@ -272,8 +272,9 @@ async function getOrComputeResult(
       };
     }
 
+    const baseDb = getSupabaseAdmin() as unknown as RpcCapableClient;
     const out = await runSearchV2({
-      db: getSupabaseAdmin() as unknown as RpcCapableClient,
+      db: previewVerificationClient(baseDb, verificationMode),
       query,
       requestId,
       onStage: onStage ? toWireStage(onStage) : undefined,
@@ -287,7 +288,9 @@ async function getOrComputeResult(
     // Only a clean, non-degraded answer is cached. A response produced while
     // Voyage or Cohere was down is correct but weaker, and caching it for 24
     // hours would outlive the outage that caused it.
-    await writeResponseCacheIfEligible(key, adapted, out);
+    if (verificationMode === null) {
+      await writeResponseCacheIfEligible(key, adapted, out);
+    }
 
     const status = out.telemetry.degraded || out.telemetry.degradedSources.length > 0
       ? "degraded"
@@ -295,15 +298,15 @@ async function getOrComputeResult(
     await completeSearchRun(searchRun, {
       status,
       query,
-      visitorId: ctx.visitorId,
-      userAgent: ctx.userAgent,
-      referrer: ctx.referrer,
       searchMethod: "pipeline",
       totalDurationMs: out.telemetry.totalDurationMs,
       result: resultFieldsForTelemetry(adapted),
       stageDurationsMs: out.telemetry.stageDurationsMs,
       sourceDurationsMs: sourceDurationsForTelemetry(out.telemetry.sourceRetrieval),
-      telemetry: allowlistedTechnicalTelemetry(out.telemetry, "miss", questionHash),
+      telemetry: markPreviewVerification(
+        allowlistedTechnicalTelemetry(out.telemetry, "miss", questionHash),
+        verificationMode,
+      ),
     });
 
     return {
@@ -316,7 +319,7 @@ async function getOrComputeResult(
     if (!(failure.failedStage in stageDurationsMs)) {
       const observedFailureMs = isSearchError(err) && err.totalDurationMs !== null
         ? err.totalDurationMs
-        : Date.now() - workStartedAt;
+        : elapsed(workStartedAt);
       stageDurationsMs[failure.failedStage] = observedFailureMs;
     }
 
@@ -324,13 +327,13 @@ async function getOrComputeResult(
       status: "failed",
       query: null,
       searchMethod: "pipeline",
-      totalDurationMs: Date.now() - workStartedAt,
+      totalDurationMs: elapsed(workStartedAt),
       result: EMPTY_RESULT_FIELDS,
       failedStage: failure.failedStage,
       errorCode: failure.errorCode,
       stageDurationsMs,
       sourceDurationsMs: failure.sourceDurationsMs,
-      telemetry: failure.telemetry,
+      telemetry: markPreviewVerification(failure.telemetry, verificationMode),
     });
     throw err;
   }
@@ -389,6 +392,13 @@ export async function GET(request: NextRequest) {
   // paragraphs whose deterministic speaker label is his. Any other value is
   // ignored, like the legacy `mode=` parameter: old links keep working.
   const speakerOnly = url.searchParams.get("only_his") === "1";
+  let verificationMode: PreviewVerificationMode | null;
+  try {
+    verificationMode = readPreviewVerificationMode(request);
+  } catch {
+    console.warn(JSON.stringify({ level: "warn", event: "search.preview_verification_rejected" }));
+    return NextResponse.json({ error: "Not found." }, { status: 404 });
+  }
 
   const requestId = newRequestId();
 
@@ -410,15 +420,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(body, { status });
   }
 
-  const ctx: SearchRequestContext = {
-    userAgent: request.headers.get("user-agent"),
-    referrer: request.headers.get("referer"),
-    visitorId: request.cookies.get("asp_vid")?.value ?? null,
-  };
-
   if (!wantStream) {
     try {
-      const { result } = await getOrComputeResult(query, requestId, undefined, ctx, speakerOnly);
+      const { result } = await getOrComputeResult(
+        query,
+        requestId,
+        undefined,
+        speakerOnly,
+        verificationMode,
+      );
       return NextResponse.json(guardPayloadSize(result, requestId));
     } catch (err) {
       const { status, body } = failureResponseBody(err, requestId);
@@ -455,7 +465,13 @@ export async function GET(request: NextRequest) {
 
       try {
         if (inputError) throw inputError;
-        const { result, fromCache } = await getOrComputeResult(query, requestId, onStage, ctx, speakerOnly);
+        const { result, fromCache } = await getOrComputeResult(
+          query,
+          requestId,
+          onStage,
+          speakerOnly,
+          verificationMode,
+        );
         if (fromCache) {
           // Cached answer: replay the stages in fast succession so the loader
           // still arcs rather than snapping to a finished result.

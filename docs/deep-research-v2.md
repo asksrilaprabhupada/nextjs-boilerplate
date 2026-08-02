@@ -106,14 +106,23 @@ planning and awaits one terminal update (`success`, `degraded`, or `failed`)
 before JSON or SSE closes. Both writes use a two-second aborting deadline and
 fail open: telemetry unavailability is logged but never changes the answer.
 
-The initial row contains the normalized question's full SHA-256 hash, not
-the raw question. To preserve rather than silently expand current behavior, a
-successful or degraded completion writes the raw question and updates
-`popular_queries`; a failed search remains hash-only. This is an interim
-compatibility policy, not the final privacy decision. The owner must choose a
-documented restricted raw-retention period or hash-only ordinary-user storage;
-that choice also covers query variants, follow-ups, referrers, visitor metadata,
-`popular_queries`, and the legacy analytics route.
+The owner chose hash-only ordinary-search storage on 2026-08-02. Every ordinary
+lifecycle row keeps the normalized question's full SHA-256 hash for running,
+successful, degraded, cache-hit, failed, and abandoned states. Raw questions,
+query variants, follow-ups, referrers, visitor IDs, and user agents are not
+written. Ordinary searches no longer update `popular_queries`, and the legacy
+unauthenticated `/api/analytics/log` raw-write proxy returns HTTP 410. Existing
+historical raw rows are left untouched under the task's no-delete/no-rewrite
+boundary. Raw capture remains disabled until a later owner-authenticated,
+explicit diagnostic-session path enables it.
+
+The Phase 3 preview gate uses a separate controlled-failure seam. It is inert
+unless `VERCEL_ENV=preview`, `SEARCH_PREVIEW_VERIFICATION_SECRET` is a server-only
+secret of at least 32 characters, and the request carries an exact-target HMAC
+whose timestamp is within 90 seconds. The two modes synthesize a failure for
+transcripts only or for all five retrieval RPCs; they do not interrupt Supabase
+or a provider. Verification requests bypass response-cache reads and writes and
+mark their minimized telemetry as controlled. Invalid attempts return HTTP 404.
 
 The JSON payload is constructed by a strict server-side allowlist. It contains
 only hashes, cache state, provider/model availability, counts, configured
