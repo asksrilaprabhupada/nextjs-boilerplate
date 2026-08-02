@@ -40,6 +40,17 @@ import {
   getCacheAdapter,
   TTL,
 } from "@/app/lib/search-v2/cache";
+import {
+  allowlistedTechnicalTelemetry,
+  beginSearchRun,
+  cacheHitTechnicalTelemetry,
+  completeSearchRun,
+  EMPTY_RESULT_FIELDS,
+  failureTechnicalTelemetry,
+  resultFieldsForTelemetry,
+  sourceDurationsForTelemetry,
+  telemetryQuestionHash,
+} from "@/app/lib/search-v2/search-run-telemetry";
 
 // With no candidate caps, a cold search embeds, runs five large RPCs, and
 // reranks the whole pool in Cohere batches — minutes, not seconds, on a broad
@@ -153,54 +164,6 @@ interface SearchRequestContext {
   visitorId?: string | null;
 }
 
-interface SearchDurations {
-  totalMs?: number;
-}
-
-/**
- * Writes one search_logs row via the log_search RPC and returns its id.
- * Shared by the fresh-pipeline path and the cache-hit path (method: "cache").
- * Telemetry never blocks or breaks a search — failures log and return null.
- */
-async function logSearchRow(
-  query: string,
-  result: Record<string, unknown>,
-  method: string,
-  durations: SearchDurations,
-  ctx: SearchRequestContext,
-): Promise<string | null> {
-  try {
-    const supabase = getSupabaseAdmin();
-    const passages = (result.passages as { type: string; id: string; reference?: string | null }[] | undefined) || [];
-    const rowId = (namespaced: string) => namespaced.slice(namespaced.indexOf(":") + 1);
-    const { data, error } = await supabase.rpc("log_search", {
-      p_query: query,
-      p_visitor_id: ctx.visitorId ?? null,
-      p_total_results: (result.totalResults as number) ?? 0,
-      p_verse_ids: (result.articleVerseIds as string[] | undefined) || [],
-      p_prose_ids: passages.filter(p => p.type === "book").map(p => rowId(p.id)),
-      p_books_returned: [...new Set(passages.map(p =>
-        p.type === "lecture" ? "Lectures" : p.type === "letter" ? "Letters" : (p.reference || "").split(/[\s.]/)[0],
-      ).filter(Boolean))],
-      p_search_method: method,
-      p_search_duration_ms: null,
-      p_embedding_duration_ms: null,
-      p_synthesis_duration_ms: null,
-      p_total_duration_ms: durations.totalMs ?? null,
-      p_narrative_length: null,
-      p_source: "web",
-      p_user_agent: ctx.userAgent ?? null,
-      p_referrer: ctx.referrer ?? null,
-      p_query_variants: (result.queryVariants as string[] | undefined) || [],
-    });
-    if (error) throw error;
-    return (data as string) ?? null;
-  } catch (err) {
-    console.error("[log_search] failed (search unaffected):", err);
-    return null;
-  }
-}
-
 // =====================================================
 // RESPONSE CACHE
 // =====================================================
@@ -262,9 +225,9 @@ export async function writeResponseCacheIfEligible(
  * correlation ids are attached AFTER the cache read so a cached body never
  * replays another request's id.
  *
- * Failures are NOT caught here. If every requested retrieval source fails, the
- * SearchInfrastructureError must reach the handler and become a 503; partial
- * source failure is carried explicitly on the successful result.
+ * Failures are caught only long enough to await the terminal telemetry update,
+ * then rethrown unchanged. An all-source failure still reaches the handler and
+ * becomes a 503; partial source failure stays explicit on the successful result.
  */
 async function getOrComputeResult(
   query: string,
@@ -273,42 +236,104 @@ async function getOrComputeResult(
   ctx: SearchRequestContext = {},
   speakerOnly = false,
 ): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
-  // Keyed on the EXACT normalised question plus corpus version (and the
-  // speaker filter, which changes what retrieval may return). A semantically
-  // close but different question is a different question and never reuses this
-  // entry — answering one devotee's question with another's evidence is how
-  // words get put in Śrīla Prabhupāda's mouth by accident.
-  const key = cacheKeys.response(query, speakerOnly ? "sp-only" : undefined);
-  const cached = await readCache(key);
-  if (cached) {
-    // A cached answer still logs its own row so feedback attributes correctly.
-    const searchLogId = await logSearchRow(query, cached, "cache", { totalMs: 0 }, ctx);
-    onStage?.("weaving");
-    return { result: { ...cached, searchLogId, requestId }, fromCache: true };
+  const questionHash = telemetryQuestionHash(query);
+  const searchRun = await beginSearchRun({ requestId, questionHash });
+  const workStartedAt = Date.now();
+  const partialStageDurationsMs: Record<string, number> = {};
+
+  try {
+    // Keyed on the EXACT normalised question plus corpus version (and the
+    // speaker filter, which changes what retrieval may return). A semantically
+    // close but different question is a different question and never reuses this
+    // entry — answering one devotee's question with another's evidence is how
+    // words get put in Śrīla Prabhupāda's mouth by accident.
+    const key = cacheKeys.response(query, speakerOnly ? "sp-only" : undefined);
+    const cacheStartedAt = Date.now();
+    const cached = await readCache(key);
+    const cacheDurationMs = Date.now() - cacheStartedAt;
+    if (cached) {
+      await completeSearchRun(searchRun, {
+        status: "success",
+        query,
+        visitorId: ctx.visitorId,
+        userAgent: ctx.userAgent,
+        referrer: ctx.referrer,
+        searchMethod: "cache",
+        totalDurationMs: cacheDurationMs,
+        result: resultFieldsForTelemetry(cached),
+        stageDurationsMs: { cache: cacheDurationMs },
+        sourceDurationsMs: {},
+        telemetry: cacheHitTechnicalTelemetry(questionHash),
+      });
+      onStage?.("weaving");
+      return {
+        result: { ...cached, searchLogId: searchRun?.rowId ?? null, requestId },
+        fromCache: true,
+      };
+    }
+
+    const out = await runSearchV2({
+      db: getSupabaseAdmin() as unknown as RpcCapableClient,
+      query,
+      requestId,
+      onStage: onStage ? toWireStage(onStage) : undefined,
+      onStageDuration: (stage, durationMs) => {
+        partialStageDurationsMs[stage] = durationMs;
+      },
+      speakerOnly,
+    });
+    const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
+
+    // Only a clean, non-degraded answer is cached. A response produced while
+    // Voyage or Cohere was down is correct but weaker, and caching it for 24
+    // hours would outlive the outage that caused it.
+    await writeResponseCacheIfEligible(key, adapted, out);
+
+    const status = out.telemetry.degraded || out.telemetry.degradedSources.length > 0
+      ? "degraded"
+      : "success";
+    await completeSearchRun(searchRun, {
+      status,
+      query,
+      visitorId: ctx.visitorId,
+      userAgent: ctx.userAgent,
+      referrer: ctx.referrer,
+      searchMethod: "pipeline",
+      totalDurationMs: out.telemetry.totalDurationMs,
+      result: resultFieldsForTelemetry(adapted),
+      stageDurationsMs: out.telemetry.stageDurationsMs,
+      sourceDurationsMs: sourceDurationsForTelemetry(out.telemetry.sourceRetrieval),
+      telemetry: allowlistedTechnicalTelemetry(out.telemetry, "miss", questionHash),
+    });
+
+    return {
+      result: { ...adapted, searchLogId: searchRun?.rowId ?? null, requestId },
+      fromCache: false,
+    };
+  } catch (err) {
+    const failure = failureTechnicalTelemetry(questionHash, err);
+    const stageDurationsMs = { ...partialStageDurationsMs };
+    if (!(failure.failedStage in stageDurationsMs)) {
+      const observedFailureMs = isSearchError(err) && err.totalDurationMs !== null
+        ? err.totalDurationMs
+        : Date.now() - workStartedAt;
+      stageDurationsMs[failure.failedStage] = observedFailureMs;
+    }
+
+    await completeSearchRun(searchRun, {
+      status: "failed",
+      query: null,
+      searchMethod: "pipeline",
+      totalDurationMs: Date.now() - workStartedAt,
+      result: EMPTY_RESULT_FIELDS,
+      failedStage: failure.failedStage,
+      errorCode: failure.errorCode,
+      stageDurationsMs,
+      sourceDurationsMs: failure.sourceDurationsMs,
+      telemetry: failure.telemetry,
+    });
+    throw err;
   }
-
-  const out = await runSearchV2({
-    db: getSupabaseAdmin() as unknown as RpcCapableClient,
-    query,
-    requestId,
-    onStage: onStage ? toWireStage(onStage) : undefined,
-    speakerOnly,
-  });
-  const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
-  const searchLogId = await logSearchRow(
-    query,
-    adapted,
-    "pipeline",
-    { totalMs: out.telemetry.totalDurationMs },
-    ctx,
-  );
-
-  // Only a clean, non-degraded answer is cached. A response produced while
-  // Voyage or Cohere was down is correct but weaker, and caching it for 24
-  // hours would outlive the outage that caused it.
-  await writeResponseCacheIfEligible(key, adapted, out);
-
-  return { result: { ...adapted, searchLogId, requestId }, fromCache: false };
 }
 
 // =====================================================

@@ -98,6 +98,36 @@ unchanged because lowering them was not recall-neutral. The route retains its
 300-second function budget. The historical Phase B instruction below to run the
 five concurrently is superseded by this policy.
 
+### Authoritative search-run telemetry
+
+`search_logs` is the authoritative lifecycle table; `search_trace` remains
+untouched and has no writer. A valid request creates one `running` row before
+planning and awaits one terminal update (`success`, `degraded`, or `failed`)
+before JSON or SSE closes. Both writes use a two-second aborting deadline and
+fail open: telemetry unavailability is logged but never changes the answer.
+
+The initial row contains the normalized question's full SHA-256 hash, not
+the raw question. To preserve rather than silently expand current behavior, a
+successful or degraded completion writes the raw question and updates
+`popular_queries`; a failed search remains hash-only. This is an interim
+compatibility policy, not the final privacy decision. The owner must choose a
+documented restricted raw-retention period or hash-only ordinary-user storage;
+that choice also covers query variants, follow-ups, referrers, visitor metadata,
+`popular_queries`, and the legacy analytics route.
+
+The JSON payload is constructed by a strict server-side allowlist. It contains
+only hashes, cache state, provider/model availability, counts, configured
+limits, safe degradation codes, and pipeline/corpus/config versions. Stage and
+source durations live in dedicated JSON columns. Passage text, complete
+answers, provider responses, embeddings, SQL, stacks, cookies, IP addresses and
+arbitrary errors are excluded.
+
+The matching migration documents the manual statement that marks `running`
+rows older than ten minutes `abandoned`; it is not exposed as an RPC or
+scheduled. No heartbeat is needed because the route's maximum duration is five
+minutes. Application rollback leaves the nullable additive schema inert and
+requires no destructive database action.
+
 ### Response and HTTP contract
 
 Success gains `requestId`, `degraded`, `retrievalStatus` (`complete` or

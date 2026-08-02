@@ -794,6 +794,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     });
     const serialised = JSON.stringify(out.telemetry);
     expect(serialised).not.toContain("distinctive question");
-    expect(out.telemetry.questionHash).toMatch(/^[0-9a-f]{32}$/);
+    expect(out.telemetry.questionHash).toMatch(/^[0-9a-f]{64}$/);
   });
 });

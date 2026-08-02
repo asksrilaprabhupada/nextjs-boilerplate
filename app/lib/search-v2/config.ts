@@ -106,6 +106,15 @@ export function searchCorpusVersion(): string {
   return process.env.SEARCH_CORPUS_VERSION || "2026-07-08-tags-v3";
 }
 
+/**
+ * Identifies the retrieval/ranking budgets independently of code and corpus.
+ * Phase 2 kept ef_search=400 and semanticLimit=300 while serialising the five
+ * content RPCs for the permanent Medium serving tier.
+ */
+export function searchConfigVersion(): string {
+  return process.env.SEARCH_CONFIG_VERSION || "2026-08-02-medium-serial-ef400-sem300-v1";
+}
+
 /** Provider model IDs. Never `NEXT_PUBLIC_*` — these sit beside secrets. */
 export function geminiQueryPlannerModel(): string {
   return process.env.GEMINI_QUERY_PLANNER_MODEL || "gemini-2.5-flash";

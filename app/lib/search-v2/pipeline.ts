@@ -60,7 +60,7 @@ import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/s
 import { searchPipelineVersion, searchCorpusVersion } from "@/app/lib/search-v2/config";
 import { formatVerseReference } from "@/app/lib/search-v2/citation";
 import { makeSnippet } from "@/app/lib/search-v2/snippet";
-import { sha256, normalizeQuestion } from "@/app/lib/search-v2/cache";
+import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/cache";
 import { extractQueryTerms } from "@/app/lib/10-passage-fold";
 import type { DegradedStage } from "@/app/lib/search-v2/rpc";
 
@@ -180,6 +180,8 @@ export interface PipelineInput {
   query: string;
   requestId: string;
   onStage?: OnPipelineStage;
+  /** Receives completed stage timings even when a later stage throws. */
+  onStageDuration?: (stage: string, durationMs: number) => void;
   /** "Śrīla Prabhupāda's words only" — a transcripts-RPC constraint. */
   speakerOnly?: boolean;
 }
@@ -231,12 +233,26 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   const durations: Record<string, number> = {};
   const started = Date.now();
 
+  const recordDuration = (stage: string, durationMs: number): void => {
+    durations[stage] = durationMs;
+    input.onStageDuration?.(stage, durationMs);
+  };
+
   const time = async <T>(stage: string, fn: () => Promise<T>): Promise<T> => {
     const t0 = Date.now();
     try {
       return await fn();
     } finally {
-      durations[stage] = Date.now() - t0;
+      recordDuration(stage, Date.now() - t0);
+    }
+  };
+
+  const timeSync = <T>(stage: string, fn: () => T): T => {
+    const t0 = Date.now();
+    try {
+      return fn();
+    } finally {
+      recordDuration(stage, Date.now() - t0);
     }
   };
 
@@ -316,7 +332,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   }
   const deduped = dedupeCandidates(fused);
   const prefiltered = prefilterCandidates(deduped.candidates);
-  durations.fusing = Date.now() - fuseStart;
+  recordDuration("fusing", Date.now() - fuseStart);
   console.info(
     JSON.stringify({
       level: "info",
@@ -344,12 +360,12 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // ── tier: main rendered in full, everything else kept as citations ──
   onStage?.("selecting", { found: deduped.candidates.length });
   const approvedIds = [ORIGINAL_QUERY_ID, ...planned.plan.subqueries.map((s) => s.id)];
-  const selection = selectEvidence({
+  const selection = timeSync("selecting", () => selectEvidence({
     ranked: rerank.ranked,
     approvedQueryIds: approvedIds,
     rerankAvailable: rerank.reranked,
     requestId,
-  });
+  }));
 
   // The second tier: rerank-judged passages below the cut first, then the
   // pre-filter's set-asides in fused order. Snippets aim at the question's own
@@ -405,7 +421,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   const telemetry: SearchTelemetry = {
     requestId,
     plannedIntent: planned.plan.intent,
-    questionHash: sha256(normalizeQuestion(query)),
+    questionHash: fullSha256(normalizeQuestion(query)),
     pipelineVersion: searchPipelineVersion(),
     corpusVersion: searchCorpusVersion(),
     subqueryCount: planned.plan.subqueries.length,
