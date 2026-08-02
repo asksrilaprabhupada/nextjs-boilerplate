@@ -43,13 +43,17 @@ describe("authoritative search telemetry migration contract", () => {
     expect(sql).toContain("CREATE INDEX IF NOT EXISTS search_logs_status_started_at_idx");
   });
 
-  it("enforces full hashes, known states, and hash-only failed rows in SQL", () => {
+  it("enforces full hashes, known states, and hash-only ordinary rows in SQL", () => {
     expect(sql).toContain("p_environment IS NULL OR p_environment NOT IN ('preview', 'production')");
     expect(sql).toContain("v_hash IS NULL OR v_hash !~ '^[0-9a-f]{64}$'");
     expect(sql).toContain("p_status IS NULL OR p_status NOT IN");
-    expect(sql).toContain("p_status IN ('failed', 'abandoned')");
+    expect(sql).toContain("NOT COALESCE(p_capture_raw, false)");
     expect(sql).toContain("p_query IS NOT NULL");
+    expect(sql).toContain("p_visitor_id IS NOT NULL");
+    expect(sql).toContain("p_user_agent IS NOT NULL");
+    expect(sql).toContain("p_referrer IS NOT NULL");
     expect(sql).toContain("cardinality(COALESCE(p_query_variants, '{}'::text[])) > 0");
+    expect(sql).not.toContain("INSERT INTO public.popular_queries");
   });
 
   it("keeps lifecycle RPCs service-role-only and security-invoker", () => {

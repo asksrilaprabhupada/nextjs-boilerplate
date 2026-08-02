@@ -1,7 +1,7 @@
 /**
  * route.ts — Analytics Behavior Route
  *
- * Logs user behavior events (clicks, scroll depth, follow-up searches) to Supabase.
+ * Logs bounded result-interaction events (clicks, scroll depth, dwell time).
  * Captures interaction patterns to understand how users engage with results.
  */
 import { NextRequest, NextResponse } from "next/server";
@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       searchLogId, clickedCitations, clickedWantMore,
-      scrolledToBottom, timeOnResultMs, followedUpQuery,
+      scrolledToBottom, timeOnResultMs,
     } = body;
 
     if (!searchLogId) {
@@ -27,7 +27,9 @@ export async function POST(request: NextRequest) {
       p_clicked_want_more: clickedWantMore || null,
       p_scrolled_to_bottom: scrolledToBottom ?? null,
       p_time_on_result_ms: timeOnResultMs || null,
-      p_followed_up_query: followedUpQuery || null,
+      // Raw follow-up questions are intentionally never accepted from this
+      // unauthenticated endpoint. The legacy column remains NULL.
+      p_followed_up_query: null,
     });
 
     if (error) {

@@ -4,6 +4,7 @@ import {
   beginSearchRun,
   completeSearchRun,
   failureTechnicalTelemetry,
+  isExpectedSearchRunId,
   resultFieldsForTelemetry,
   sourceDurationsForTelemetry,
   telemetryQuestionHash,
@@ -144,6 +145,31 @@ describe("search telemetry lifecycle writes", () => {
     expect(complete).toHaveBeenCalledOnce();
   });
 
+  it("minimizes ordinary completions to hashes even when a caller supplies raw metadata", async () => {
+    let persisted: SearchRunCompletionInput | undefined;
+    const complete: SearchRunWriteAdapter["complete"] = async (_handle, input) => {
+      persisted = input;
+    };
+    const handle = await beginSearchRun(startInput, { adapter: adapter() });
+
+    await completeSearchRun(handle, {
+      ...completionInput,
+      visitorId: "persistent-id",
+      userAgent: "private user agent",
+      referrer: "https://example.test/search?q=raw",
+      result: { ...completionInput.result, queryVariants: ["mind control"] },
+    }, { adapter: adapter({ complete }) });
+
+    expect(persisted).toMatchObject({
+      captureRaw: false,
+      query: null,
+      visitorId: null,
+      userAgent: null,
+      referrer: null,
+      result: { queryVariants: [] },
+    });
+  });
+
   it("fails open and aborts a write that exceeds its deadline", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let observedSignal: AbortSignal | undefined;
@@ -169,6 +195,13 @@ describe("search telemetry lifecycle writes", () => {
     await expect(completeSearchRun(handle, completionInput, {
       adapter: adapter({ complete }),
     })).resolves.toBe(false);
+  });
+
+  it("does not accept a blank or mismatched terminal RPC id", () => {
+    const expected = "00000000-0000-4000-8000-000000000001";
+    expect(isExpectedSearchRunId(null, expected)).toBe(false);
+    expect(isExpectedSearchRunId("00000000-0000-4000-8000-000000000002", expected)).toBe(false);
+    expect(isExpectedSearchRunId(expected, expected)).toBe(true);
   });
 });
 
@@ -213,7 +246,7 @@ describe("technical telemetry minimization", () => {
     const stored = resultFieldsForTelemetry({
       totalResults: 2,
       articleVerseIds: ["11111111-1111-4111-8111-111111111111"],
-      queryVariants: ["mind control"],
+      queryVariants: [],
       passages: [{
         type: "book",
         id: "book:22222222-2222-4222-8222-222222222222",
@@ -227,9 +260,24 @@ describe("technical telemetry minimization", () => {
       verseIds: ["11111111-1111-4111-8111-111111111111"],
       proseIds: ["22222222-2222-4222-8222-222222222222"],
       booksReturned: ["Bhagavad-gita"],
-      queryVariants: ["mind control"],
+      queryVariants: [],
     });
     expect(JSON.stringify(stored)).not.toContain("exact corpus passage");
+  });
+
+  it("treats malformed cached result fields as empty instead of throwing", () => {
+    expect(resultFieldsForTelemetry({
+      totalResults: "not-a-number",
+      articleVerseIds: "not-an-array",
+      passages: [null, { type: "book", id: null, reference: { private: true } }],
+      queryVariants: "raw text",
+    })).toEqual({
+      totalResults: 0,
+      verseIds: [],
+      proseIds: [],
+      booksReturned: [],
+      queryVariants: [],
+    });
   });
 
   it("reduces a typed failure to safe codes and numeric timings", () => {

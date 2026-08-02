@@ -4,6 +4,8 @@
 -- retrieval indexes. The two RPCs are service-role-only lifecycle writers:
 -- `begin_search_run` creates the row before paid/search work starts, and
 -- `complete_search_run` finalises that same row before the response closes.
+-- Ordinary rows are hash-only. Raw fields require an explicit capture flag;
+-- the application does not set that flag outside a future owner diagnostic.
 
 BEGIN;
 
@@ -143,7 +145,8 @@ CREATE OR REPLACE FUNCTION public.complete_search_run(
   p_error_code text DEFAULT NULL,
   p_stage_durations_ms jsonb DEFAULT '{}'::jsonb,
   p_source_durations_ms jsonb DEFAULT '{}'::jsonb,
-  p_telemetry jsonb DEFAULT '{}'::jsonb
+  p_telemetry jsonb DEFAULT '{}'::jsonb,
+  p_capture_raw boolean DEFAULT false
 )
 RETURNS uuid
 LANGUAGE plpgsql
@@ -159,15 +162,18 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'unknown terminal search status';
   END IF;
 
-  IF p_status IN ('success', 'degraded') AND NULLIF(btrim(p_query), '') IS NULL THEN
-    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'successful searches require a query';
-  END IF;
-
-  IF p_status IN ('failed', 'abandoned') AND (
+  IF NOT COALESCE(p_capture_raw, false) AND (
     p_query IS NOT NULL
+    OR p_visitor_id IS NOT NULL
+    OR p_user_agent IS NOT NULL
+    OR p_referrer IS NOT NULL
     OR cardinality(COALESCE(p_query_variants, '{}'::text[])) > 0
   ) THEN
-    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'failed searches must remain hash-only';
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'ordinary searches must remain hash-only';
+  END IF;
+
+  IF COALESCE(p_capture_raw, false) AND NULLIF(btrim(p_query), '') IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = '22023', MESSAGE = 'diagnostic raw capture requires a query';
   END IF;
 
   v_normalized := CASE
@@ -177,9 +183,9 @@ BEGIN
 
   UPDATE public.search_logs
   SET
-    query = COALESCE(p_query, query),
-    query_normalized = COALESCE(v_normalized, query_normalized),
-    visitor_id = CASE WHEN p_query IS NULL THEN visitor_id ELSE p_visitor_id END,
+    query = CASE WHEN p_capture_raw THEN p_query ELSE query END,
+    query_normalized = CASE WHEN p_capture_raw THEN v_normalized ELSE query_normalized END,
+    visitor_id = CASE WHEN p_capture_raw THEN p_visitor_id ELSE NULL END,
     total_results = GREATEST(COALESCE(p_total_results, 0), 0),
     verse_ids = COALESCE(p_verse_ids, '{}'::uuid[]),
     prose_ids = COALESCE(p_prose_ids, '{}'::uuid[]),
@@ -187,9 +193,12 @@ BEGIN
     search_method = p_search_method,
     total_duration_ms = p_total_duration_ms,
     source = p_source,
-    user_agent = CASE WHEN p_query IS NULL THEN user_agent ELSE p_user_agent END,
-    referrer = CASE WHEN p_query IS NULL THEN referrer ELSE p_referrer END,
-    query_variants = COALESCE(p_query_variants, '{}'::text[]),
+    user_agent = CASE WHEN p_capture_raw THEN p_user_agent ELSE NULL END,
+    referrer = CASE WHEN p_capture_raw THEN p_referrer ELSE NULL END,
+    query_variants = CASE
+      WHEN p_capture_raw THEN COALESCE(p_query_variants, '{}'::text[])
+      ELSE '{}'::text[]
+    END,
     status = p_status,
     failed_stage = p_failed_stage,
     error_code = p_error_code,
@@ -206,31 +215,6 @@ BEGIN
     RAISE EXCEPTION USING ERRCODE = 'P0002', MESSAGE = 'running search row not found';
   END IF;
 
-  -- Preserve the existing behavior for completed answers: successful and
-  -- degraded searches store the raw question and contribute to popular_queries.
-  -- Failed searches remain hash-only, so Phase 3 does not expand raw capture.
-  IF p_query IS NOT NULL THEN
-    INSERT INTO public.popular_queries AS existing (
-      query_normalized,
-      display_query,
-      search_count,
-      last_searched_at
-    ) VALUES (
-      v_normalized,
-      p_query,
-      1,
-      clock_timestamp()
-    )
-    ON CONFLICT (query_normalized) DO UPDATE SET
-      search_count = existing.search_count + 1,
-      last_searched_at = clock_timestamp(),
-      display_query = CASE
-        WHEN length(EXCLUDED.display_query) > length(existing.display_query)
-        THEN EXCLUDED.display_query
-        ELSE existing.display_query
-      END;
-  END IF;
-
   RETURN v_id;
 END;
 $function$;
@@ -238,13 +222,13 @@ $function$;
 REVOKE ALL ON FUNCTION public.begin_search_run(text, text, text, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.complete_search_run(
   text, text, text, text, integer, uuid[], uuid[], text[], text, integer,
-  text, text, text, text[], text, text, jsonb, jsonb, jsonb
+  text, text, text, text[], text, text, jsonb, jsonb, jsonb, boolean
 ) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.begin_search_run(text, text, text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.complete_search_run(
   text, text, text, text, integer, uuid[], uuid[], text[], text, integer,
-  text, text, text, text[], text, text, jsonb, jsonb, jsonb
+  text, text, text, text[], text, text, jsonb, jsonb, jsonb, boolean
 ) TO service_role;
 
 NOTIFY pgrst, 'reload schema';

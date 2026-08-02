@@ -48,7 +48,11 @@ export interface SearchRunResultFields {
 
 export interface SearchRunCompletionInput {
   status: SearchRunStatus;
-  /** Null on failure: failed rows remain question-hash-only. */
+  /**
+   * Raw capture is off by default. It may only be enabled by a future,
+   * owner-authenticated diagnostic session; ordinary searches stay hash-only.
+   */
+  captureRaw?: boolean;
   query: string | null;
   visitorId?: string | null;
   userAgent?: string | null;
@@ -108,6 +112,10 @@ function safeWriteErrorCode(err: unknown): string {
   return "write_failed";
 }
 
+export function isExpectedSearchRunId(data: unknown, expected: string): data is string {
+  return typeof data === "string" && data === expected;
+}
+
 async function withinDeadline<T>(
   operation: (signal: AbortSignal) => Promise<T>,
   deadlineMs: number,
@@ -146,7 +154,7 @@ const supabaseAdapter: SearchRunWriteAdapter = {
   },
 
   async complete(handle, input, signal) {
-    const { error } = await getSupabaseAdmin()
+    const { data, error } = await getSupabaseAdmin()
       .rpc("complete_search_run", {
         p_request_id: handle.requestId,
         p_status: input.status,
@@ -167,9 +175,15 @@ const supabaseAdapter: SearchRunWriteAdapter = {
         p_stage_durations_ms: input.stageDurationsMs,
         p_source_durations_ms: input.sourceDurationsMs,
         p_telemetry: input.telemetry,
+        p_capture_raw: input.captureRaw === true,
       })
       .abortSignal(signal);
     if (error) throw error;
+    if (!isExpectedSearchRunId(data, handle.rowId)) {
+      throw Object.assign(new Error("complete_search_run returned an unexpected id"), {
+        code: "invalid_response",
+      });
+    }
   },
 };
 
@@ -208,9 +222,22 @@ export async function completeSearchRun(
   if (!handle) return false;
   const adapter = options.adapter ?? supabaseAdapter;
   const deadlineMs = options.deadlineMs ?? DEFAULT_WRITE_DEADLINE_MS;
+  // Privacy is enforced at the shared write boundary, not at each route call.
+  // A future diagnostic path must opt in only after authenticating the owner.
+  const minimizedInput: SearchRunCompletionInput = input.captureRaw === true
+    ? input
+    : {
+        ...input,
+        captureRaw: false,
+        query: null,
+        visitorId: null,
+        userAgent: null,
+        referrer: null,
+        result: { ...input.result, queryVariants: [] },
+      };
 
   try {
-    await withinDeadline((signal) => adapter.complete(handle, input, signal), deadlineMs);
+    await withinDeadline((signal) => adapter.complete(handle, minimizedInput, signal), deadlineMs);
     return true;
   } catch (err) {
     console.warn(JSON.stringify({
@@ -227,26 +254,43 @@ export async function completeSearchRun(
 export function resultFieldsForTelemetry(
   result: Record<string, unknown>,
 ): SearchRunResultFields {
-  const passages = (
-    result.passages as { type: string; id: string; reference?: string | null }[] | undefined
-  ) ?? [];
-  const rowId = (namespaced: string) => namespaced.slice(namespaced.indexOf(":") + 1);
+  const passages = Array.isArray(result.passages)
+    ? result.passages.filter((item): item is Record<string, unknown> => (
+        typeof item === "object" && item !== null
+      ))
+    : [];
+  const rowId = (namespaced: unknown): string | null => {
+    if (typeof namespaced !== "string" || namespaced.length === 0) return null;
+    const separator = namespaced.indexOf(":");
+    return separator >= 0 ? namespaced.slice(separator + 1) : namespaced;
+  };
   const books = passages
     .map((passage) => (
       passage.type === "lecture"
         ? "Lectures"
         : passage.type === "letter"
           ? "Letters"
-          : (passage.reference ?? "").split(/[\s.]/)[0]
+          : typeof passage.reference === "string"
+            ? passage.reference.split(/[\s.]/)[0]
+            : ""
     ))
+    .filter((value): value is string => Boolean(value));
+  const verseIds = Array.isArray(result.articleVerseIds)
+    ? result.articleVerseIds.filter((value): value is string => typeof value === "string")
+    : [];
+  const proseIds = passages
+    .filter((passage) => passage.type === "book")
+    .map((passage) => rowId(passage.id))
     .filter((value): value is string => Boolean(value));
 
   return {
     totalResults: Math.max(0, Number(result.totalResults) || 0),
-    verseIds: (result.articleVerseIds as string[] | undefined) ?? [],
-    proseIds: passages.filter((passage) => passage.type === "book").map((passage) => rowId(passage.id)),
+    verseIds,
+    proseIds,
     booksReturned: [...new Set(books)],
-    queryVariants: (result.queryVariants as string[] | undefined) ?? [],
+    // Ordinary lifecycle telemetry never stores generated query variants. A
+    // future owner-controlled snapshot path can capture them separately.
+    queryVariants: [],
   };
 }
 
