@@ -51,6 +51,7 @@ import {
   resultFieldsForTelemetry,
   sourceDurationsForTelemetry,
   telemetryQuestionHash,
+  type SearchRunResultFields,
 } from "@/app/lib/search-v2/search-run-telemetry";
 import {
   markPreviewVerification,
@@ -179,16 +180,34 @@ function toWireStage(onStage: OnStage): (stage: PipelineStage, info?: PipelineSt
  * are deliberately absent from the stored value — each serving logs its own row
  * and carries its own correlation id.
  */
-async function readCache(key: string): Promise<Record<string, unknown> | null> {
+interface CachedSearchResponse {
+  schema: "search-response-v6";
+  result: Record<string, unknown>;
+  resultFields: SearchRunResultFields;
+}
+
+async function readCache(key: string): Promise<CachedSearchResponse | null> {
   try {
     const store = await getCacheAdapter();
-    return await store.get<Record<string, unknown>>(key);
+    const cached = await store.get<unknown>(key);
+    if (!cached || typeof cached !== "object") return null;
+    const envelope = cached as Partial<CachedSearchResponse>;
+    if (envelope.schema !== "search-response-v6"
+        || !envelope.result || typeof envelope.result !== "object"
+        || !envelope.resultFields || typeof envelope.resultFields !== "object") {
+      return null;
+    }
+    return envelope as CachedSearchResponse;
   } catch {
     return null;
   }
 }
 
-async function writeCache(key: string, value: Record<string, unknown>): Promise<void> {
+async function writeCache(
+  key: string,
+  value: Record<string, unknown>,
+  resultFields: SearchRunResultFields = EMPTY_RESULT_FIELDS,
+): Promise<void> {
   try {
     const store = await getCacheAdapter();
     // The exact question is reconstructed from the current request on a hit.
@@ -197,7 +216,12 @@ async function writeCache(key: string, value: Record<string, unknown>): Promise<
     void _perRequest;
     void _rid;
     void _rawQuestion;
-    await store.set(key, cacheable, TTL.response);
+    const envelope: CachedSearchResponse = {
+      schema: "search-response-v6",
+      result: cacheable,
+      resultFields,
+    };
+    await store.set(key, envelope, TTL.response);
   } catch {
     // A failed cache write is not a failed search.
   }
@@ -218,10 +242,16 @@ export async function writeResponseCacheIfEligible(
   key: string,
   value: Record<string, unknown>,
   out: CacheAdmissionResult,
-  writer: (cacheKey: string, cacheValue: Record<string, unknown>) => Promise<void> = writeCache,
+  writer: (
+    cacheKey: string,
+    cacheValue: Record<string, unknown>,
+    resultFields?: SearchRunResultFields,
+  ) => Promise<void> = writeCache,
+  resultFields?: SearchRunResultFields,
 ): Promise<boolean> {
   if (!shouldCacheSearchResult(out)) return false;
-  await writer(key, value);
+  if (resultFields) await writer(key, value, resultFields);
+  else await writer(key, value);
   return true;
 }
 
@@ -279,7 +309,7 @@ async function getOrComputeResult(
         query,
         searchMethod: "cache",
         totalDurationMs: cacheDurationMs,
-        result: resultFieldsForTelemetry(cached),
+        result: cached.resultFields,
         stageDurationsMs: { cache: cacheDurationMs },
         sourceDurationsMs: {},
         telemetry: markPreviewVerification(
@@ -292,7 +322,7 @@ async function getOrComputeResult(
       });
       onStage?.("weaving");
       return {
-        result: { ...cached, query, searchLogId: searchRun?.rowId ?? null, requestId },
+        result: { ...cached.result, query, searchLogId: searchRun?.rowId ?? null, requestId },
         fromCache: true,
       };
     }
@@ -310,12 +340,13 @@ async function getOrComputeResult(
       captureDiagnostics: snapshotSession !== null,
     });
     const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
+    const resultFields = resultFieldsForTelemetry(adapted, out.passages);
 
     // Only a clean, non-degraded answer is cached. A response produced while
     // Voyage or Cohere was down is correct but weaker, and caching it for 24
     // hours would outlive the outage that caused it.
     if (verificationMode === null && snapshotSession === null) {
-      await writeResponseCacheIfEligible(key, adapted, out);
+      await writeResponseCacheIfEligible(key, adapted, out, undefined, resultFields);
     }
 
     const status = out.telemetry.degraded || out.telemetry.degradedSources.length > 0
@@ -326,7 +357,7 @@ async function getOrComputeResult(
       query,
       searchMethod: "pipeline",
       totalDurationMs: out.telemetry.totalDurationMs,
-      result: resultFieldsForTelemetry(adapted, out.passages),
+      result: resultFields,
       stageDurationsMs: out.telemetry.stageDurationsMs,
       sourceDurationsMs: sourceDurationsForTelemetry(out.telemetry.sourceRetrieval),
       telemetry: markPreviewVerification(
@@ -378,6 +409,33 @@ interface PreparedSearchResponse {
 }
 
 /**
+ * Final defence at the public wire boundary. The normal adapter omits corpus
+ * identifiers, but JSON, SSE and cache hits all pass through this function so
+ * a stale or future upstream object cannot put them back in the browser.
+ * Per-request telemetry ids remain because feedback intentionally uses them.
+ */
+export function stripInternalPassageIds(
+  result: Record<string, unknown>,
+): Record<string, unknown> {
+  const stripArray = (value: unknown): unknown => {
+    if (!Array.isArray(value)) return value;
+    return value.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      const { id: _internalPassageId, ...publicItem } = item as Record<string, unknown>;
+      void _internalPassageId;
+      return publicItem;
+    });
+  };
+  const { articleVerseIds: _internalVerseIds, ...publicResult } = result;
+  void _internalVerseIds;
+  return {
+    ...publicResult,
+    passages: stripArray(publicResult.passages),
+    additional: stripArray(publicResult.additional),
+  };
+}
+
+/**
  * Serialize once, persist those exact bytes when authorized, and reuse the same
  * string for delivery. Snapshot failure is deliberately fail-open.
  */
@@ -388,7 +446,7 @@ export async function prepareSuccessfulResponse(
   snapshotSession: SnapshotSession | null,
   snapshotWriter: typeof persistSearchSnapshot = persistSearchSnapshot,
 ): Promise<PreparedSearchResponse> {
-  const guarded = guardPayloadSize(execution.result, requestId);
+  const guarded = guardPayloadSize(stripInternalPassageIds(execution.result), requestId);
   const guardedJson = JSON.stringify(guarded);
   if (snapshotSession) {
     try {
