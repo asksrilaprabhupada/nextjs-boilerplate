@@ -1,5 +1,9 @@
 import { GoogleGenAI } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
+import { createHash, randomBytes } from "node:crypto";
+import { gunzipSync } from "node:zlib";
+import { GET as runSearch } from "@/app/api/search/route";
+import { POST as mintDiagnosticSession } from "@/app/api/search/diagnostic-session/route";
 import {
   ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
   ARTICLE_PLANNER_THINKING_BUDGET,
@@ -8,6 +12,7 @@ import {
   articleRejections,
   planArticle,
 } from "@/app/lib/search-v2/article-plan";
+import { snapshotAuthorizationSignature } from "@/app/lib/search-v2/diagnostic-session";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import inventory from "./inventory.json";
 
@@ -200,6 +205,120 @@ async function runProbe() {
   };
 }
 
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+async function runSnapshotGate() {
+  const secret = process.env.SEARCH_PREVIEW_VERIFICATION_SECRET ?? "";
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+  const deploymentSha = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
+  const deploymentHost = process.env.VERCEL_URL ?? "preview.invalid";
+  if (secret.length < 32 || !supabaseUrl || !serviceKey || !/^[0-9a-f]{40}$/.test(deploymentSha)) {
+    throw new Error("snapshot_gate_env_absent");
+  }
+  const site = `https://${deploymentHost}`;
+  const target = { query: QUESTION, speakerOnly: false };
+  const sessionUrl = `${site}/api/search/diagnostic-session`;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = randomBytes(18).toString("base64url");
+  const signature = snapshotAuthorizationSignature({
+    request: { method: "POST", url: sessionUrl },
+    target,
+    timestamp,
+    nonce,
+    secret,
+  });
+  const sessionRequest = new Request(sessionUrl, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-asp-snapshot-timestamp": timestamp,
+      "x-asp-snapshot-nonce": nonce,
+      "x-asp-snapshot-signature": signature,
+    },
+    body: JSON.stringify({ q: QUESTION, onlyHis: false }),
+  });
+  const sessionResponse = await mintDiagnosticSession(sessionRequest as never);
+  const cookie = sessionResponse.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+  if (sessionResponse.status !== 204 || !cookie.startsWith("__Secure-asp_search_snapshot=")) {
+    throw new Error(`snapshot_session_http_${sessionResponse.status}`);
+  }
+
+  const searchUrl = `${site}/api/search?q=${encodeURIComponent(QUESTION)}&only_his=0`;
+  const authorizedResponse = await runSearch(new Request(`${searchUrl}&stream=1`, {
+    headers: { cookie },
+  }) as never);
+  const sse = await authorizedResponse.text();
+  let event = "";
+  let authorizedResult: Record<string, unknown> | null = null;
+  for (const line of sse.split(/\r?\n/)) {
+    if (line.startsWith("event: ")) event = line.slice(7);
+    if (line.startsWith("data: ") && event === "result") {
+      authorizedResult = JSON.parse(line.slice(6)) as Record<string, unknown>;
+    }
+    if (line.startsWith("data: ") && event === "failure") throw new Error("authorized_search_failure");
+  }
+  const authorizedRequestId = authorizedResult?.requestId;
+  if (typeof authorizedRequestId !== "string") throw new Error("authorized_result_absent");
+
+  const client = createClient(supabaseUrl, serviceKey, {
+    auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
+  });
+  const { data: rows, error: rowError } = await client
+    .from("search_answer_snapshots")
+    .select("request_id,environment,deployment_sha,bucket_id,object_path,payload_sha256,payload_bytes,object_sha256,object_bytes")
+    .eq("request_id", authorizedRequestId);
+  if (rowError || rows?.length !== 1) throw new Error("authorized_snapshot_count");
+  const metadata = rows[0];
+  const { data: object, error: objectError } = await client.storage
+    .from(metadata.bucket_id)
+    .download(metadata.object_path);
+  if (objectError || !object) throw new Error("snapshot_object_download");
+  const compressed = Buffer.from(await object.arrayBuffer());
+  const envelope = JSON.parse(gunzipSync(compressed).toString("utf8")) as {
+    payload: { responses: { guarded: unknown; guardedJson: string } };
+    payloadIntegrity: { bytes: number; sha256: string };
+  };
+  const payloadJson = JSON.stringify(envelope.payload);
+  const guardedJson = JSON.stringify(authorizedResult);
+  const valid = metadata.environment === "preview"
+    && metadata.deployment_sha === deploymentSha
+    && metadata.object_bytes === compressed.byteLength
+    && metadata.object_sha256 === sha256(compressed)
+    && metadata.payload_bytes === Buffer.byteLength(payloadJson, "utf8")
+    && metadata.payload_sha256 === sha256(payloadJson)
+    && envelope.payloadIntegrity.bytes === metadata.payload_bytes
+    && envelope.payloadIntegrity.sha256 === metadata.payload_sha256
+    && envelope.payload.responses.guardedJson === guardedJson
+    && JSON.stringify(envelope.payload.responses.guarded) === guardedJson;
+  if (!valid) throw new Error("snapshot_integrity_mismatch");
+
+  const ordinaryResponse = await runSearch(new Request(searchUrl) as never);
+  const ordinaryResult = await ordinaryResponse.json() as Record<string, unknown>;
+  const ordinaryRequestId = ordinaryResult.requestId;
+  if (!ordinaryResponse.ok || typeof ordinaryRequestId !== "string") {
+    throw new Error(`ordinary_search_http_${ordinaryResponse.status}`);
+  }
+  const { count: ordinarySnapshotCount, error: ordinaryError } = await client
+    .from("search_answer_snapshots")
+    .select("id", { count: "exact", head: true })
+    .eq("request_id", ordinaryRequestId);
+  if (ordinaryError || ordinarySnapshotCount !== 0) throw new Error("ordinary_snapshot_count");
+
+  return {
+    previewSha: deploymentSha,
+    authorizedRequestId,
+    ordinaryRequestId,
+    authorizedSnapshotCount: rows.length,
+    ordinarySnapshotCount,
+    objectSha256: metadata.object_sha256,
+    objectBytes: metadata.object_bytes,
+    guardedResponseMatched: true,
+  };
+}
+
 export default async function Phase5OwnerGatePage({
   searchParams,
 }: {
@@ -212,6 +331,8 @@ export default async function Phase5OwnerGatePage({
       ? await provisionBucket()
       : op === "probe"
         ? await runProbe()
+        : op === "snapshot"
+          ? await runSnapshotGate()
         : { error: "not_found" };
     return <main><pre id="result">{JSON.stringify(result)}</pre></main>;
   } catch (error) {
