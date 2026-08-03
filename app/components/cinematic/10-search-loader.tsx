@@ -18,6 +18,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { SearchStageEvent, SearchStageKey } from "@/app/lib/types/01-search";
+import { SEARCH_PROGRESS_LABELS } from "@/app/lib/24-search-progress";
 
 const MANDALA = Array.from({ length: 12 }, (_, i) => i * 30);
 
@@ -51,8 +52,8 @@ const WAIT_VERSES: { ref: string; text: string }[] = [
 const FALLBACK_STAGES: SearchStageEvent[] = [
   { stage: "understood", pct: 12, label: "Reading your question…" },
   { stage: "searching", pct: 45, label: "Searching 244,148 passages…" },
-  { stage: "reranking", pct: 70, label: "Selecting his words…" },
-  { stage: "weaving", pct: 90, label: "Weaving the essay…" },
+  { stage: "reranking", pct: 70, label: SEARCH_PROGRESS_LABELS.reranking },
+  { stage: "weaving", pct: 90, label: SEARCH_PROGRESS_LABELS.weaving },
 ];
 const FALLBACK_CAP = 92;
 
@@ -162,7 +163,7 @@ export default function SearchLoader({
           <circle cx="200" cy="200" r="70" fill="none" stroke="currentColor" strokeWidth="0.5" />
         </svg>
         <p className="font-display" style={{ margin: 0, fontSize: "clamp(17px, 2.4vw, 21px)", fontStyle: "italic", color: "#51409A", textAlign: "center", maxWidth: 220, position: "relative" }}>
-          {active?.label ?? "Weaving his words…"}
+          {active?.label ?? SEARCH_PROGRESS_LABELS.idle}
         </p>
       </div>
 

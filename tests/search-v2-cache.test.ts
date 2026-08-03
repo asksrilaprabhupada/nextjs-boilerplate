@@ -60,7 +60,7 @@ describe("response key discipline", () => {
     expect(key).toBe(
       cacheKeys.response("  how do i control my MIND  "),
     );
-    expect(key).toMatch(/^response:v4:/);
+    expect(key).toMatch(/^response:v5:/);
   });
 
   it("separates different questions", () => {

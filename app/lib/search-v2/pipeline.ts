@@ -40,6 +40,7 @@ import {
   retrieveCandidates,
   ORIGINAL_QUERY_ID,
   type RetrievalSourceTelemetry,
+  type SpeakerFilterTelemetry,
 } from "@/app/lib/search-v2/retrieval";
 import type { FriendlyRetrievalSource } from "@/app/lib/types/01-search";
 import {
@@ -53,7 +54,11 @@ import { dedupeCandidates } from "@/app/lib/search-v2/dedup";
 import { prefilterCandidates } from "@/app/lib/search-v2/prefilter";
 import { rerankUnified, type RankedCandidate } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
-import { refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
+import {
+  refetchAndVerify,
+  refetchAndVerifyFilteredTranscripts,
+  type VerifiedPassage,
+} from "@/app/lib/search-v2/refetch";
 import { planArticle } from "@/app/lib/search-v2/article-plan";
 import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
@@ -125,6 +130,10 @@ export interface SearchTelemetry {
   cutGap: number;
   pinnedExactReference: boolean;
   droppedOnRefetch: number;
+  speakerFilter: SpeakerFilterTelemetry & {
+    additionalTranscriptRowsVerified: number;
+    additionalTranscriptRowsDropped: number;
+  };
   degraded: boolean;
   degradedStages: DegradedStage[];
   /** Detailed server-only evidence for each actual retrieval RPC invocation. */
@@ -138,17 +147,17 @@ export interface SearchTelemetry {
 }
 
 /**
- * One second-tier passage: citation, who-and-when, and a sentence-safe snippet
- * — built from RETRIEVAL data only. Deliberately not re-fetched: verification
- * exists so that displayed teaching text is provably the source text, and a
- * citation line that shows no body text has nothing to verify. That is what
- * takes the verify step from ~1,000 rows back to ~20.
+ * One second-tier passage: citation, who-and-when, and a sentence-safe snippet.
+ * Identity/metadata normally come from retrieval. In speaker-only mode every
+ * transcript snippet is rebuilt from a fresh, verified canonical projection;
+ * the other second-tier sources keep their existing retrieval previews.
  */
 export interface AdditionalPassage {
   passageKey: string;
   sourceType: string;
   reference: string | null;
   speaker: string | null;
+  speakerUnidentified: boolean;
   recipient: string | null;
   occurredOn: string | null;
   location: string | null;
@@ -173,6 +182,32 @@ export interface PipelineOutput {
   telemetry: SearchTelemetry;
   uncoveredQueryIds: string[];
   evidenceInsufficient: boolean;
+}
+
+interface VerificationDropLike {
+  passageKey: string;
+}
+
+export const FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE =
+  "filtered_transcript_verification_partial";
+
+/**
+ * Report whether speaker-only verification actually lost transcript evidence.
+ * Error reasons are deliberately ignored:
+ * `fetch_failed`, `row_not_found`, `empty_text`, and projection failures are
+ * all incomplete transcript searches, while the same reasons on books or
+ * verses must not masquerade as filtered-transcript verification loss.
+ */
+export function hasFilteredTranscriptVerificationDrop(
+  speakerOnly: boolean | undefined,
+  mainDrops: readonly VerificationDropLike[],
+  filteredAdditionalTranscriptDrops: readonly VerificationDropLike[],
+): boolean {
+  if (!speakerOnly) return false;
+  return (
+    mainDrops.some((item) => item.passageKey.startsWith("lecture:"))
+    || filteredAdditionalTranscriptDrops.length > 0
+  );
 }
 
 export interface PipelineInput {
@@ -374,32 +409,54 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // pre-filter's set-asides in fused order. Snippets aim at the question's own
   // terms and never end mid-sentence.
   const queryTerms = extractQueryTerms(query);
-  const toAdditional = (c: RankedCandidate | FusedCandidate): AdditionalPassage => ({
+  const toAdditional = (
+    c: RankedCandidate | FusedCandidate,
+    verifiedText = c.retrieval_text,
+  ): AdditionalPassage => ({
     passageKey: c.passage_key,
     sourceType: c.source_type,
     reference: c.reference,
     speaker: c.speaker,
+    speakerUnidentified: c.speakerUnidentified ?? (c.source_type === "lecture" && !c.speaker),
     recipient: c.recipient,
     occurredOn: c.occurred_on,
     location: c.location,
     rerankScore: "rerankScore" in c ? (c as RankedCandidate).rerankScore : null,
-    snippet: makeSnippet(c.retrieval_text, 220, queryTerms),
+    snippet: makeSnippet(verifiedText, 220, queryTerms),
   });
-  const additional: AdditionalPassage[] = [
-    ...selection.additional.map(toAdditional),
-    ...prefiltered.setAside.map(toAdditional),
+  const additionalCandidates: Array<RankedCandidate | FusedCandidate> = [
+    ...selection.additional,
+    ...prefiltered.setAside,
   ];
 
-  // ── verify: the hard stop — for everything shown in full ──
-  // Only the main tier is re-fetched. Verification exists so displayed teaching
-  // text is provably the source text; a citation line shows no body text, so
-  // there is nothing to verify and no reason to re-read ~1,000 rows for it.
-  const refetched = await time("verifying", () =>
-    refetchAndVerify(db as never, selection.selected, { requestId }),
-  );
-  if (refetched.dropped.length > 0) {
-    degraded.record("verifying", "refetch", { code: `dropped_${refetched.dropped.length}` });
+  // ── verify: the hard stop ──
+  // Main-tier passages always receive a fresh source-row read. In speaker-only
+  // mode the additional transcript previews do too, because their projected
+  // snippets must not reintroduce a stale guest turn.
+  const verification = await time("verifying", async () => {
+    const main = await refetchAndVerify(db as never, selection.selected, {
+      requestId,
+      speakerOnly: input.speakerOnly,
+    });
+    const additionalTranscripts = input.speakerOnly
+      ? await refetchAndVerifyFilteredTranscripts(db as never, additionalCandidates, { requestId })
+      : { textByPassageKey: new Map<string, string>(), dropped: [], fetchCount: 0 };
+    return { main, additionalTranscripts };
+  });
+  const refetched = verification.main;
+  const speakerAdditional = verification.additionalTranscripts;
+  const verificationDropCount = refetched.dropped.length + speakerAdditional.dropped.length;
+  if (verificationDropCount > 0) {
+    degraded.record("verifying", "refetch", { code: `dropped_${verificationDropCount}` });
   }
+
+  const additional: AdditionalPassage[] = additionalCandidates.flatMap((candidate) => {
+    if (!input.speakerOnly || candidate.source_type !== "lecture") {
+      return [toAdditional(candidate)];
+    }
+    const freshProjection = speakerAdditional.textByPassageKey.get(candidate.passage_key);
+    return freshProjection ? [toAdditional(candidate, freshProjection)] : [];
+  });
 
   // ── organise ──
   // The planner contributes arrangement only, and receives ONLY the main tier
@@ -414,7 +471,20 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   });
 
   const degradedStages = degraded.list();
-  const responseDegraded = degradedStages.length > 0 || retrieved.degradedSources.length > 0;
+  const filteredTranscriptVerificationPartial = hasFilteredTranscriptVerificationDrop(
+    input.speakerOnly,
+    refetched.dropped,
+    speakerAdditional.dropped,
+  );
+  if (filteredTranscriptVerificationPartial) {
+    degradedStages.push({
+      stage: "verification",
+      source: "filtered_transcripts",
+      code: FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE,
+    });
+  }
+  const degradedSources = [...retrieved.degradedSources];
+  const responseDegraded = degradedStages.length > 0 || degradedSources.length > 0;
   onStage?.(responseDegraded ? "degraded" : "complete");
 
   const mainTierCount = refetched.verified.length;
@@ -429,7 +499,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     tableRpcCount: retrieved.tableRpcCount,
     tableRpcAttemptCount: retrieved.tableRpcAttemptCount,
     vocabularyRpcCount: retrieved.vocabularyRpcCount,
-    refetchCount: refetched.fetchCount,
+    refetchCount: refetched.fetchCount + speakerAdditional.fetchCount,
     embeddingProviderCalls: retrieved.embeddingProviderCalls,
     candidatesBeforeFusion: retrieved.candidateCount,
     candidatesAfterFusion: fused.length,
@@ -445,11 +515,16 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     cutIndex: selection.cutIndex,
     cutGap: Math.round(selection.cutGap * 1000) / 1000,
     pinnedExactReference: Boolean(pinnedCandidate),
-    droppedOnRefetch: refetched.dropped.length,
+    droppedOnRefetch: verificationDropCount,
+    speakerFilter: {
+      ...retrieved.speakerFilter,
+      additionalTranscriptRowsVerified: speakerAdditional.textByPassageKey.size,
+      additionalTranscriptRowsDropped: speakerAdditional.dropped.length,
+    },
     degraded: responseDegraded,
     degradedStages,
     sourceRetrieval: retrieved.sourceRetrieval,
-    degradedSources: retrieved.degradedSources,
+    degradedSources,
     stageDurationsMs: durations,
     totalDurationMs: elapsed(started),
     models: {

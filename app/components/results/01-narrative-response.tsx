@@ -32,6 +32,7 @@ import {
 import { stripPurportBoilerplate } from "@/app/lib/09-purport-format";
 import { EASE, SPRING_SETTLE } from "@/app/lib/11-motion";
 import { getBookName } from "@/app/lib/12-provenance";
+import { buildPassageCopyText } from "@/app/lib/23-passage-copy";
 
 /* ─────────────────────────── Data contract ───────────────────────────
    The response types live in the shared server↔client contract
@@ -521,8 +522,16 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
   const copyWithRef = async (p: SearchPassage) => {
     const text = fullTextFor(p);
     if (!text) return;
-    // The reference always includes the passage's own Vedabase URL when it has one.
-    const payload = `"${text}"\n\n— ${citeFor(p)}${p.url ? `\n${p.url}` : ""}`;
+    // Recorded-talk copies carry attribution because visual labels do not
+    // travel with clipboard text.
+    const payload = buildPassageCopyText({
+      type: p.type,
+      text,
+      speaker: p.speaker,
+      speakerUnidentified: p.speakerUnidentified,
+      citation: citeFor(p),
+      url: p.url,
+    });
     try {
       await navigator.clipboard.writeText(payload);
       setToast("Copied with reference");

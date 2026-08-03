@@ -22,7 +22,6 @@ import type { ArticlePlan } from "@/app/lib/search-v2/article-plan";
 import { DISCLOSURE } from "@/app/lib/search-v2/article-plan";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { isRenderable } from "@/app/lib/search-v2/refetch";
-import { isPrabhupada } from "@/app/lib/15-transcript-speakers";
 
 /** Server-side heading text. Gemini never writes a heading. */
 const HEADING_TEMPLATES: Record<string, (subject: string) => string> = {
@@ -51,7 +50,7 @@ const TRANSITIONS: Record<string, (p: VerifiedPassage | null) => string> = {
   source_shift: (p) => {
     switch (p?.sourceType) {
       case "lecture":
-        return "In a recorded lecture, Śrīla Prabhupāda discusses the same subject.";
+        return "The following passage comes from a recorded talk.";
       case "letter":
         return p.recipient && p.date
           ? `The following personal letter was written to ${p.recipient} in ${year(p.date)}.`
@@ -127,33 +126,10 @@ export function contextNoticeFor(p: VerifiedPassage): { text: string; kind: Cont
         kind: "letter",
       };
     case "lecture":
-      // The speaker column is a deterministic read of the paragraph's own
-      // "Name:" prefix (migration 20260801120000). When it names someone else,
-      // the notice must say so plainly — a devotee could otherwise stand up in
-      // class and quote a visitor's words as Śrīla Prabhupāda's. When there is
-      // no label the speaker is honestly unknown, never assumed to be his.
-      if (p.speaker && !isPrabhupada(p.speaker)) {
-        return {
-          text: `Spoken by ${p.speaker} — not Śrīla Prabhupāda`,
-          kind: "conversation",
-        };
-      }
-      if (p.speaker && isPrabhupada(p.speaker)) {
-        return {
-          text: "Recorded exchange — spoken by Śrīla Prabhupāda",
-          kind: "conversation",
-        };
-      }
-      if (p.speakerConfidence === "unknown") {
-        return {
-          text: "Speaker not identified — part of a recorded conversation",
-          kind: "conversation",
-        };
-      }
-      return {
-        text: "Recorded exchange — words spoken by Śrīla Prabhupāda highlighted",
-        kind: "conversation",
-      };
+      // The server-computed label already shows either `Name:` or the single
+      // unidentified-speaker notice. A second context line would duplicate the
+      // same attribution immediately below it.
+      return null;
     default:
       return null;
   }

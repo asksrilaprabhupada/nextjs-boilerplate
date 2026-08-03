@@ -15,7 +15,12 @@
  * Every string here originates from a fresh source-row read (refetch.ts) or a
  * fixed server-side table. No model output reaches this file.
  */
-import type { AdditionalPassage, PipelineOutput } from "@/app/lib/search-v2/pipeline";
+import {
+  FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE,
+  type AdditionalPassage,
+  type PipelineOutput,
+  type SearchTelemetry,
+} from "@/app/lib/search-v2/pipeline";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { contextNoticeFor } from "@/app/lib/search-v2/render";
 import { extractQueryTerms } from "@/app/lib/10-passage-fold";
@@ -28,10 +33,31 @@ import {
 } from "@/app/lib/13-passage-label";
 import type {
   AdditionalSearchPassage,
+  DegradedSource,
   Citation,
   SearchPassage,
   SearchResults,
 } from "@/app/lib/types/01-search";
+
+export function degradedSourcesForWire(
+  telemetry: Pick<SearchTelemetry, "degradedSources" | "degradedStages">,
+): DegradedSource[] {
+  const unavailable = new Set(telemetry.degradedSources);
+  const out: DegradedSource[] = [...unavailable].map((source) => ({
+    source,
+    reason: "temporarily unavailable",
+  }));
+  const transcriptVerificationPartial = telemetry.degradedStages.some(
+    (item) => item.code === FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE,
+  );
+  if (transcriptVerificationPartial && !unavailable.has("Lectures and conversations")) {
+    out.push({
+      source: "Lectures and conversations",
+      reason: "some passages could not be verified",
+    });
+  }
+  return out;
+}
 
 const CITATION_TYPE: Record<string, Citation["type"]> = {
   verse: "verse",
@@ -52,6 +78,7 @@ export function toWirePassage(p: VerifiedPassage): SearchPassage {
     chapterNumber: p.chapterNumber,
     speaker: p.speaker,
     speakerConfidence: p.speakerConfidence,
+    speakerUnidentified: p.speakerConfidence === "unknown",
     recipient: p.recipient,
     date: p.date,
     location: p.location,
@@ -68,6 +95,7 @@ export function toWirePassage(p: VerifiedPassage): SearchPassage {
     synonyms: p.synonyms,
     purport: p.purport,
     speaker: p.speaker,
+    speakerUnidentified: p.speakerConfidence === "unknown",
     recipient: p.recipient,
     date: p.date,
     location: p.location,
@@ -87,6 +115,7 @@ export function toWireAdditional(a: AdditionalPassage): AdditionalSearchPassage 
     type,
     reference: a.reference,
     speaker: a.speaker,
+    speakerUnidentified: a.speakerUnidentified,
     recipient: a.recipient,
     date: a.occurredOn,
     location: a.location,
@@ -97,12 +126,13 @@ export function toWireAdditional(a: AdditionalPassage): AdditionalSearchPassage 
     type,
     reference: a.reference,
     // Derived from the reference when it parses cleanly (verses/purports);
-    // second-tier rows are not re-fetched, so there is no stored URL to use.
+    // the second-tier pipeline does not carry stored source URLs to this adapter.
     url: type === "verse" || type === "purport" ? vedabaseUrlForReference(a.reference) : null,
     label: formatLabel(label),
     provenanceNote: label.provenanceNote,
     snippet: a.snippet,
     speaker: a.speaker,
+    speakerUnidentified: a.speakerUnidentified,
     recipient: a.recipient,
     date: a.occurredOn,
     location: a.location,
@@ -120,10 +150,7 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
 
   const passages = out.passages.map(toWirePassage);
   const additional = out.additional.map(toWireAdditional);
-  const degradedSources = [...new Set(telemetry.degradedSources)].map((source) => ({
-    source,
-    reason: "temporarily unavailable" as const,
-  }));
+  const degradedSources = degradedSourcesForWire(telemetry);
 
   const citations: Citation[] = passages.map((p) => ({
     ref: p.reference ?? p.id,
@@ -143,6 +170,7 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
     citations,
     intro: article.title,
     queryTerms: extractQueryTerms(query),
+    speakerFilter: telemetry.speakerFilter.mode,
     validated: true, // every passage came out of refetchAndVerify
     droppedBlocks: telemetry.droppedOnRefetch,
     requestId: telemetry.requestId,

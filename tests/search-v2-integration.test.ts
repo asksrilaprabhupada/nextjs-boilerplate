@@ -423,6 +423,71 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(out.sourceRetrieval.map((source) => source.internalFunction)).toEqual(expected);
   });
 
+  it("enforces speaker-only segments even when the transcript RPC ignores the constraint", async () => {
+    const mixedText = [
+      "Dr. Patel: guest sentinel.",
+      "Prabhupāda: This canonical answer remains.",
+      "Guest: another guest sentinel.",
+    ].join("\n");
+    const candidate = (id: string, text: string) => ({
+      passage_key: `lecture:${id}`,
+      source_type: "lecture",
+      row_id: id,
+      retrieval_text: text,
+      reference: "Room Conversation",
+      speaker: null,
+      recipient: null,
+      occurred_on: "1974-01-01",
+      location: "Bombay",
+      matched_query_ids: ["q_original"],
+      channel_ranks: [{ query_id: "q_original", channel: "fts_core", rank: 1, score: 1 }],
+      channel_scores: { fts_core: 1 },
+      tag_matches: 0,
+    });
+    const db = fakeDb({
+      transcriptCandidates: [
+        candidate("mixed", mixedText),
+        candidate("guest", "Dr. Patel: guest-only sentinel."),
+        candidate("unknown", "Wholly unlabelled continuation."),
+      ],
+    });
+    const plan = fallbackPlan("control the mind in conversations");
+    plan.constraints.source_types = ["conversation"];
+
+    const out = await retrieveCandidates({
+      db: db as never,
+      original: "control the mind in conversations",
+      plan,
+      requestId: "req_speaker_postcondition",
+      degraded: new DegradationLog("req_speaker_postcondition"),
+      speakerOnly: true,
+    });
+
+    expect(out.groups).toHaveLength(1);
+    expect(out.groups[0]).toHaveLength(1);
+    expect(out.groups[0][0].retrieval_text).toBe("Prabhupāda: This canonical answer remains.\n");
+    expect(out.groups[0][0].retrieval_text).not.toContain("guest sentinel");
+    expect(out.groups[0][0].speakerProjection).toMatchObject({
+      mode: "prabhupada_segments",
+      keptSegments: 1,
+      guestSegmentsRemoved: 2,
+    });
+    expect(out.speakerFilter).toEqual({
+      mode: "prabhupada_segments",
+      rawTranscriptRows: 3,
+      retainedTranscriptRows: 1,
+      droppedTranscriptRows: 2,
+      keptSegments: 1,
+      guestSegmentsRemoved: 3,
+      unknownSegmentsRemoved: 1,
+    });
+    expect(out.sourceRetrieval[0]).toMatchObject({
+      rawCandidateCount: 3,
+      candidateCount: 1,
+    });
+    expect((db.rpcCalls[0].args.p_constraints as Record<string, unknown>).speaker_only).toBe(true);
+  });
+
   it("emits stages in order and finishes degraded rather than complete", async () => {
     const seen: string[] = [];
     await runSearchV2({
