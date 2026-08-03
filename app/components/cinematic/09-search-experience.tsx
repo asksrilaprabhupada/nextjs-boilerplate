@@ -236,7 +236,10 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
             <div aria-hidden style={{ width: ans.rule, height: 1, background: "linear-gradient(90deg, #C9A24B, rgba(201,162,75,0))", margin: "26px 0", transition: "width 1.3s cubic-bezier(0.16,1,0.3,1) 0.5s" }} />
 
             {/* A partial answer must announce itself before counts or teaching text. */}
-            <IncompleteSearchWarning sources={results.degradedSources ?? []} />
+            <IncompleteSearchWarning
+              sources={results.degradedSources ?? []}
+              degraded={results.degraded}
+            />
 
             {/* Counts plus speaker-filter control. The control remains visible
                 at zero results so a filtered empty search can be broadened. */}

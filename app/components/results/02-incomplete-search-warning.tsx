@@ -7,7 +7,10 @@ function friendlyList(names: string[]): string {
 }
 
 /** Stable public copy: no internal source, provider, code or error can enter it. */
-export function incompleteSearchWarning(sources: readonly DegradedSource[]): string {
+export function incompleteSearchWarning(
+  sources: readonly DegradedSource[],
+  degraded = sources.length > 0,
+): string {
   const unavailable = [...new Set(sources
     .filter((item) => item.reason === "temporarily unavailable")
     .map((item) => item.source))];
@@ -15,7 +18,11 @@ export function incompleteSearchWarning(sources: readonly DegradedSource[]): str
     .filter((item) => item.reason === "some passages could not be verified")
     .map((item) => item.source))]
     .filter((source) => !unavailable.includes(source));
-  if (unavailable.length === 0 && partial.length === 0) return "";
+  if (unavailable.length === 0 && partial.length === 0) {
+    return degraded
+      ? "Some search guidance was unavailable this time. This answer may be less complete. Please search again."
+      : "";
+  }
 
   const clauses: string[] = [];
   if (unavailable.length > 0) {
@@ -27,8 +34,14 @@ export function incompleteSearchWarning(sources: readonly DegradedSource[]): str
   return `${clauses.join(" ")} This answer is incomplete. Please search again.`;
 }
 
-export default function IncompleteSearchWarning({ sources }: { sources: readonly DegradedSource[] }) {
-  const message = incompleteSearchWarning(sources);
+export default function IncompleteSearchWarning({
+  sources,
+  degraded = sources.length > 0,
+}: {
+  sources: readonly DegradedSource[];
+  degraded?: boolean;
+}) {
+  const message = incompleteSearchWarning(sources, degraded);
   if (!message) return null;
 
   return (
