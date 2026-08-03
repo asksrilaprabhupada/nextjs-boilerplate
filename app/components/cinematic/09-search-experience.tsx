@@ -19,8 +19,10 @@ import SiteFooter from "./12-site-footer";
 import SearchLoader from "./10-search-loader";
 import NarrativeResponse from "../results/01-narrative-response";
 import IncompleteSearchWarning from "../results/02-incomplete-search-warning";
+import SpeakerFilterControls from "../results/03-speaker-filter-controls";
 import { useSearchBehaviorTracker } from "@/app/hooks/01-use-search-behavior-tracker";
 import { logCitationClick } from "@/app/lib/02-analytics";
+import { buildSearchHref } from "@/app/lib/22-search-navigation";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
 
 // With the cascade in place a search finishes in well under a minute; waiting
@@ -53,9 +55,9 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
     (next: string) => {
       const trimmed = next.trim();
       if (!trimmed) return;
-      router.push(`/search?q=${encodeURIComponent(trimmed)}`);
+      router.push(buildSearchHref(trimmed, onlyHis));
     },
-    [router],
+    [onlyHis, router],
   );
 
   // Vedabase citation clicks → citation_clicks table. One delegated listener
@@ -184,6 +186,9 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
   const passageCount = results?.passages?.length || 0;
   const additionalCount = results?.additionalCount ?? results?.additional?.length ?? 0;
   const variants = (results?.queryVariants || []).slice(0, 6);
+  const speakerFiltered = results?.speakerFilter
+    ? results.speakerFilter === "prabhupada_segments"
+    : onlyHis;
 
   const submitFollowUp = (e: React.FormEvent) => {
     e.preventDefault();
@@ -258,30 +263,15 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
             {/* A partial answer must announce itself before counts or teaching text. */}
             <IncompleteSearchWarning sources={results.degradedSources ?? []} />
 
-            {/* Meta chips — honest live counts, both tiers */}
-            {results.totalResults > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: "clamp(36px,6vh,54px)", opacity: ans.op, transition: "opacity 0.9s ease 0.4s" }}>
-                {passageCount > 0 && (
-                  <span className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", color: "#6E6353", background: "rgba(107,87,201,0.07)", border: "1px solid #E8E0D2", borderRadius: 100, padding: "6px 14px" }}>
-                    {passageCount} {passageCount === 1 ? "passage" : "passages"} in full
-                    {additionalCount > 0 && <> · {additionalCount.toLocaleString("en-US")} more as citations below</>}
-                  </span>
-                )}
-                <button
-                  onClick={() => {
-                    const next = onlyHis ? "" : "&only_his=1";
-                    router.push(`/search?q=${encodeURIComponent(q)}${next}`);
-                  }}
-                  className="font-body"
-                  aria-pressed={onlyHis}
-                  title="Restrict recorded talks to paragraphs whose labelled speaker is Śrīla Prabhupāda"
-                  style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", color: onlyHis ? "#FFFFFF" : "#51409A", background: onlyHis ? "linear-gradient(135deg, #6B57C9, #51409A)" : "rgba(107,87,201,0.06)", border: "1px solid #E8E0D2", borderRadius: 100, padding: "6px 14px", cursor: "pointer" }}
-                >
-                  {onlyHis ? "✓ " : ""}Śrīla Prabhupāda’s words only
-                </button>
-                <span className="font-body" style={{ fontSize: 12, fontWeight: 500, color: "#9A8F7D" }}>Every word below the labels is his — verbatim.</span>
-              </div>
-            )}
+            {/* Counts plus speaker-filter control. The control remains visible
+                at zero results so a filtered empty search can be broadened. */}
+            <SpeakerFilterControls
+              passageCount={passageCount}
+              additionalCount={additionalCount}
+              onlyHis={onlyHis}
+              speakerFiltered={speakerFiltered}
+              onToggle={() => router.push(buildSearchHref(q, !onlyHis))}
+            />
 
             {/* The woven answer — fully data-driven */}
             <NarrativeResponse

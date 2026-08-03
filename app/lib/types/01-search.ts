@@ -50,6 +50,8 @@ export interface SearchPassage {
 
   /* ── who and when ── */
   speaker: string | null;
+  /** True when any displayed transcript bytes have no explicit speaker label. */
+  speakerUnidentified?: boolean;
   recipient: string | null;
   date: string | null;
   location: string | null;
@@ -57,7 +59,7 @@ export interface SearchPassage {
   /* ── labelling, computed once on the server so every surface agrees ── */
   /** "TYPE · SOURCE · SPEAKER" line, e.g. "Bhagavad-gītā 6.34 · Translation". */
   label: string;
-  /** Amber authorship warning; empty when the words are his. */
+  /** Amber provenance notice; empty when the label itself is sufficient. */
   provenanceNote: string;
   /** Label for the folded purport under a verse card, when one exists. */
   purportLabel: string | null;
@@ -74,9 +76,10 @@ export interface SearchPassage {
 /**
  * One second-tier passage: everything that survived retrieval but was not
  * rendered in full. Citation, label and a sentence-safe snippet — enough to
- * scan, cite and follow to Vedabase. Built from retrieval data (not re-fetched:
- * verification is for displayed teaching text, and a citation line shows none),
- * which is also why the snippet is a preview and never quoted as his words.
+ * scan, cite and follow to Vedabase. Most are retrieval previews; speaker-only
+ * transcript snippets are freshly re-read and projected so another speaker's
+ * turn cannot re-enter through this tier. A snippet remains a preview, not a
+ * claim that the whole source row is one speaker's quotation.
  */
 export interface AdditionalSearchPassage {
   /** Namespaced key, e.g. "verse:<uuid>". Stable within a response. */
@@ -87,11 +90,13 @@ export interface AdditionalSearchPassage {
   url: string | null;
   /** Server-computed label line. Never claims authorship it cannot prove. */
   label: string;
-  /** Amber warning (e.g. a lecture line spoken by a guest); empty otherwise. */
+  /** Amber provenance notice; empty when the label itself is sufficient. */
   provenanceNote: string;
   /** One line, never cut mid-sentence (see search-v2/snippet.ts). */
   snippet: string;
   speaker: string | null;
+  /** True when any snippet source bytes have no explicit speaker label. */
+  speakerUnidentified?: boolean;
   recipient: string | null;
   date: string | null;
   location: string | null;
@@ -166,6 +171,8 @@ export interface SearchResults {
   queryTerms?: string[];
   /** Follow-up questions offered under the answer, when available. */
   queryVariants?: string[];
+  /** Speaker policy actually applied to recorded-talk passages in this response. */
+  speakerFilter?: "all" | "prabhupada_segments";
   /** True when every passage was verbatim-verified against its source row. */
   validated?: boolean;
   /** Number of passages dropped by the verbatim validator (0 in the normal case). */
@@ -200,7 +207,7 @@ export type FriendlyRetrievalSource =
 /** The only degradation detail allowed across the browser boundary. */
 export interface DegradedSource {
   source: FriendlyRetrievalSource;
-  reason: "temporarily unavailable";
+  reason: "temporarily unavailable" | "some passages could not be verified";
 }
 
 /* ── SSE stage events (?stream=1) ── */

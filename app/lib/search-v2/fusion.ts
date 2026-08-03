@@ -28,6 +28,19 @@ export interface ChannelRank {
   score?: number | string | null;
 }
 
+/**
+ * Server-only proof that a transcript candidate was projected from one full
+ * source row. This object is deliberately absent from the wire adapters.
+ */
+export interface SpeakerProjectionMarker {
+  mode: "prabhupada_segments";
+  /** SHA-256 of the exact full RPC text, never the text itself. */
+  sourceVerificationHash: string;
+  keptSegments: number;
+  guestSegmentsRemoved: number;
+  unknownSegmentsRemoved: number;
+}
+
 /** A candidate as returned by any of the five batch retrieval RPCs. */
 export interface RetrievedCandidate {
   passage_key: string;
@@ -43,6 +56,10 @@ export interface RetrievedCandidate {
   channel_ranks: ChannelRank[] | null;
   channel_scores: Record<string, number> | null;
   tag_matches: number | null;
+  /** True when any bytes in an unfiltered transcript lack a speaker prefix. */
+  speakerUnidentified?: boolean;
+  /** Present only on speaker-filtered transcript candidates. */
+  speakerProjection?: SpeakerProjectionMarker;
   /**
    * Set only by the pipeline for a verse the devotee asked for BY REFERENCE
    * (direct_verse_lookup). A pinned candidate skips every cut downstream —

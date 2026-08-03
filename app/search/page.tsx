@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
   title: "Answer — Ask Śrīla Prabhupāda",
   description:
-    "His words, woven verbatim. Every passage labelled and cited, every citation linked to Vedabase.io.",
+    "Verbatim source passages with citations and speaker labels where identified.",
   robots: { index: false, follow: true },
 };
 
@@ -29,6 +29,6 @@ export default async function SearchResults({
   const query = (q || "").trim();
   if (!query) redirect("/");
   // "Śrīla Prabhupāda's words only" — forwarded to the search API, where it
-  // restricts recorded talks to paragraphs whose labelled speaker is his.
+  // retains only explicitly labelled Prabhupāda segments from recorded talks.
   return <SearchExperience q={query} onlyHis={only_his === "1"} />;
 }

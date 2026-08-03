@@ -57,6 +57,7 @@ import {
   readPreviewVerificationMode,
   type PreviewVerificationMode,
 } from "@/app/lib/search-v2/preview-verification";
+import { SEARCH_PROGRESS_LABELS } from "@/app/lib/24-search-progress";
 
 // With no candidate caps, a cold search embeds, runs five large RPCs, and
 // reranks the whole pool in Cohere batches — minutes, not seconds, on a broad
@@ -115,8 +116,8 @@ const STAGE_META: Record<SearchStageKey, { pct: number; label: string }> = {
   understood: { pct: 12, label: "Reading your question…" },
   expanding: { pct: 22, label: "Exploring several angles of your question…" },
   searching: { pct: 45, label: "Searching 244,148 passages…" },
-  reranking: { pct: 70, label: "Selecting his words…" },
-  weaving: { pct: 90, label: "Weaving the essay…" },
+  reranking: { pct: 70, label: SEARCH_PROGRESS_LABELS.reranking },
+  weaving: { pct: 90, label: SEARCH_PROGRESS_LABELS.weaving },
 };
 const STAGE_ORDER: SearchStageKey[] = ["understood", "expanding", "searching", "reranking", "weaving"];
 
@@ -261,7 +262,10 @@ async function getOrComputeResult(
         stageDurationsMs: { cache: cacheDurationMs },
         sourceDurationsMs: {},
         telemetry: markPreviewVerification(
-          cacheHitTechnicalTelemetry(questionHash),
+          cacheHitTechnicalTelemetry(
+            questionHash,
+            speakerOnly ? "prabhupada_segments" : "all",
+          ),
           verificationMode,
         ),
       });
@@ -314,7 +318,11 @@ async function getOrComputeResult(
       fromCache: false,
     };
   } catch (err) {
-    const failure = failureTechnicalTelemetry(questionHash, err);
+    const failure = failureTechnicalTelemetry(
+      questionHash,
+      err,
+      speakerOnly ? "prabhupada_segments" : "all",
+    );
     const stageDurationsMs = { ...partialStageDurationsMs };
     if (!(failure.failedStage in stageDurationsMs)) {
       const observedFailureMs = isSearchError(err) && err.totalDurationMs !== null
@@ -388,9 +396,9 @@ export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const rawQuery = url.searchParams.get("q");
   const wantStream = url.searchParams.get("stream") === "1";
-  // "Śrīla Prabhupāda's words only" — restricts the transcripts RPC to
-  // paragraphs whose deterministic speaker label is his. Any other value is
-  // ignored, like the legacy `mode=` parameter: old links keep working.
+  // "Śrīla Prabhupāda's words only" — retains only explicit Prabhupāda
+  // speaker segments from recorded talks. The application enforces this even
+  // when an older transcripts RPC ignores the coarse constraint key.
   const speakerOnly = url.searchParams.get("only_his") === "1";
   let verificationMode: PreviewVerificationMode | null;
   try {

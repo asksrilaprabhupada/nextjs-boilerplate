@@ -5,7 +5,7 @@
  *   Bhagavad-gītā 6.34 · Translation · Arjuna to Kṛṣṇa
  *   Śrīmad-Bhāgavatam 5.6.5 · Purport · Śrīla Prabhupāda
  *   Lecture · Los Angeles, 1969
- *   Conversation · Prabhupāda replying
+ *   Conversation · Dr. Patel:
  *   Letter · to Sharon Suzuki
  *
  * Labels are metadata, never doctrine. A speaker appears ONLY when it is
@@ -19,12 +19,15 @@
  * page all compute identical labels from the same hit fields.
  */
 import { type Authorship, getBookName, authorshipFor, provenanceNoteFor } from "@/app/lib/12-provenance";
-import { isPrabhupada } from "@/app/lib/15-transcript-speakers";
+import {
+  transcriptSpeakerDisplay,
+  UNIDENTIFIED_SPEAKER_NOTICE,
+} from "@/app/lib/21-transcript-attribution";
 
 export interface PassageLabel {
   /** Ordered segments joined with " · " for display. */
   parts: string[];
-  /** Plain-language authorship warning; empty when the words are his. */
+  /** Plain-language provenance notice; empty when the label is sufficient. */
   provenanceNote: string;
 }
 
@@ -164,7 +167,7 @@ export function labelForProse(p: ProseLike): PassageLabel {
 
 export function labelForTranscript(t: TranscriptLike): PassageLabel {
   return {
-    parts: [transcriptKind(t), placeAndYear(t.location, t.date), t.speaker || ""],
+    parts: [transcriptKind(t), placeAndYear(t.location, t.date), transcriptSpeakerDisplay(t.speaker)],
     provenanceNote: t.provenanceNote || "",
   };
 }
@@ -194,6 +197,8 @@ interface WirePassageLike {
   speaker?: string | null;
   /** Transcript speaker provenance ('labelled' | 'inherited' | 'unknown'). */
   speakerConfidence?: string | null;
+  /** True when any displayed transcript bytes have no explicit speaker label. */
+  speakerUnidentified?: boolean;
   recipient?: string | null;
   date?: string | null;
   location?: string | null;
@@ -244,17 +249,13 @@ export function labelForWirePassage(p: WirePassageLike): PassageLabel {
         location: p.location || "",
         speaker: p.speaker || "",
       });
-      // The speaker column is a deterministic read of the paragraph's own
-      // "Name:" prefix. A guest's words carry an explicit warning — the one
-      // failure this corpus cannot afford is a visitor quoted as Śrīla
-      // Prabhupāda. An unlabelled paragraph is honestly unidentified.
-      if (p.speaker && !isPrabhupada(p.speaker)) {
-        return { ...base, provenanceNote: `Spoken by ${p.speaker} — not Śrīla Prabhupāda` };
-      }
-      if (!p.speaker && p.speakerConfidence === "unknown") {
+      // A name is sufficient attribution; repeating a negative comparison on
+      // every guest passage is noisy. Silence is unsafe only when no speaker
+      // is identified, so that case receives one explicit notice.
+      if (!p.speaker || p.speakerUnidentified || p.speakerConfidence === "unknown") {
         return {
           ...base,
-          provenanceNote: "Speaker not identified — part of a recorded conversation",
+          provenanceNote: UNIDENTIFIED_SPEAKER_NOTICE,
         };
       }
       return base;
@@ -266,11 +267,12 @@ export function labelForWirePassage(p: WirePassageLike): PassageLabel {
 
 /**
  * Label for a SECOND-TIER citation line. Deliberately more conservative than
- * the main-tier labels: additional passages are built from retrieval data
- * without the re-fetched row fields (canto, chapter, URL) the authorship truth
- * table needs, so this label never claims "Śrīla Prabhupāda" for a purport or
- * book passage it cannot verify. Type and citation only — plus the speaker
- * warning for lecture lines, which retrieval does carry.
+ * the main-tier labels: additional passages do not carry the fresh canto,
+ * chapter, or URL fields the authorship truth table needs (even when a filtered
+ * transcript's body was freshly verified). This label therefore never claims
+ * "Śrīla Prabhupāda" for a purport or book passage it cannot verify. Type and
+ * citation only — plus plain speaker attribution (or the explicit unidentified
+ * notice) for recorded talks.
  */
 export function labelForAdditionalPassage(p: WirePassageLike): PassageLabel {
   switch (p.type) {
@@ -281,11 +283,12 @@ export function labelForAdditionalPassage(p: WirePassageLike): PassageLabel {
     case "book":
       return { parts: [getBookName(p.reference || ""), "Book passage"], provenanceNote: "" };
     case "lecture": {
-      const parts = [transcriptKind({ title: p.reference || "" }), placeAndYear(p.location || "", p.date || ""), p.speaker || ""];
-      const note =
-        p.speaker && !isPrabhupada(p.speaker)
-          ? `Spoken by ${p.speaker} — not Śrīla Prabhupāda`
-          : "";
+      const parts = [
+        transcriptKind({ title: p.reference || "" }),
+        placeAndYear(p.location || "", p.date || ""),
+        transcriptSpeakerDisplay(p.speaker),
+      ];
+      const note = p.speaker && !p.speakerUnidentified ? "" : UNIDENTIFIED_SPEAKER_NOTICE;
       return { parts, provenanceNote: note };
     }
     case "letter":

@@ -34,8 +34,13 @@ import {
 import { SEARCH_V2_CONFIG } from "@/app/lib/search-v2/config";
 import type { RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 import type { QueryPlan } from "@/app/lib/search-v2/query-plan";
-import { getCacheAdapter, cacheKeys, TTL } from "@/app/lib/search-v2/cache";
+import { getCacheAdapter, cacheKeys, fullSha256, TTL } from "@/app/lib/search-v2/cache";
 import type { FriendlyRetrievalSource } from "@/app/lib/types/01-search";
+import {
+  CANONICAL_PRABHUPADA_SPEAKER,
+  projectPrabhupadaSegments,
+  transcriptSpeakerAttribution,
+} from "@/app/lib/15-transcript-speakers";
 
 /** The id reserved for the devotee's actual question. */
 export const ORIGINAL_QUERY_ID = "q_original";
@@ -212,6 +217,17 @@ export interface RetrievalResult {
   candidateCount: number;
   sourceRetrieval: RetrievalSourceTelemetry[];
   degradedSources: FriendlyRetrievalSource[];
+  speakerFilter: SpeakerFilterTelemetry;
+}
+
+export interface SpeakerFilterTelemetry {
+  mode: "all" | "prabhupada_segments";
+  rawTranscriptRows: number;
+  retainedTranscriptRows: number;
+  droppedTranscriptRows: number;
+  keptSegments: number;
+  guestSegmentsRemoved: number;
+  unknownSegmentsRemoved: number;
 }
 
 export interface RetrievalSourceTelemetry {
@@ -223,6 +239,8 @@ export interface RetrievalSourceTelemetry {
   success: boolean;
   code: string | null;
   candidateCount: number | null;
+  /** Rows returned by the RPC before the application speaker postcondition. */
+  rawCandidateCount?: number | null;
   outerLimit: number;
   semanticLimit: number;
   attemptCount: number;
@@ -238,8 +256,9 @@ export interface RetrievalInput {
   perTableLimit?: number;
   /**
    * "Śrīla Prabhupāda's words only" — forwarded to the transcripts RPC as
-   * `p_constraints -> 'speaker_only'`. The other RPCs (and a transcripts
-   * function that predates the speaker migration) ignore the key.
+   * `p_constraints -> 'speaker_only'`. The application also projects every
+   * returned transcript locally, so an older RPC that ignores the key remains
+   * truth-safe.
    */
   speakerOnly?: boolean;
 }
@@ -289,6 +308,16 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
     ...(input.speakerOnly ? { speaker_only: true } : {}),
   };
 
+  const speakerFilter: SpeakerFilterTelemetry = {
+    mode: input.speakerOnly ? "prabhupada_segments" : "all",
+    rawTranscriptRows: 0,
+    retainedTranscriptRows: 0,
+    droppedTranscriptRows: 0,
+    keptSegments: 0,
+    guestSegmentsRemoved: 0,
+    unknownSegmentsRemoved: 0,
+  };
+
   const callOne = async (
     fn: BatchFunction,
     cons: Record<string, unknown>,
@@ -323,11 +352,49 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
         totalDurationMs: measured.totalDurationMs,
       });
     }
-    const rows = measured.data;
+    const rawRows = measured.data;
+    let rows = rawRows;
+    if (fn === "search_transcripts_hybrid_batch_v3") {
+      speakerFilter.rawTranscriptRows += rawRows.length;
+      if (input.speakerOnly) {
+        rows = rawRows.flatMap((row) => {
+          const source = row.retrieval_text || "";
+          const projection = projectPrabhupadaSegments(source);
+          speakerFilter.keptSegments += projection.keptSegments;
+          speakerFilter.guestSegmentsRemoved += projection.guestSegmentsRemoved;
+          speakerFilter.unknownSegmentsRemoved += projection.unknownSegmentsRemoved;
+          if (!projection.text) return [];
+          return [{
+            ...row,
+            retrieval_text: projection.text,
+            speaker: CANONICAL_PRABHUPADA_SPEAKER,
+            speakerUnidentified: false,
+            speakerProjection: {
+              mode: "prabhupada_segments" as const,
+              sourceVerificationHash: fullSha256(source),
+              keptSegments: projection.keptSegments,
+              guestSegmentsRemoved: projection.guestSegmentsRemoved,
+              unknownSegmentsRemoved: projection.unknownSegmentsRemoved,
+            },
+          }];
+        });
+      } else {
+        rows = rawRows.map((row) => {
+          const attribution = transcriptSpeakerAttribution(row.retrieval_text || "");
+          return {
+            ...row,
+            speaker: attribution.displaySpeaker,
+            speakerUnidentified: attribution.unidentified,
+          };
+        });
+      }
+      speakerFilter.retainedTranscriptRows += rows.length;
+      speakerFilter.droppedTranscriptRows += rawRows.length - rows.length;
+    }
     // A table that fills its whole budget probably has more relevant rows
     // waiting behind the cut. Logged so the ceiling is raised from evidence,
     // not from a hunch.
-    if (rows.length >= limitFor(fn)) {
+    if (rawRows.length >= limitFor(fn)) {
       console.info(
         JSON.stringify({
           level: "info",
@@ -349,6 +416,7 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
         success: true,
         code: null,
         candidateCount: rows.length,
+        rawCandidateCount: rawRows.length,
         outerLimit: limitFor(fn),
         semanticLimit: SEARCH_V2_CONFIG.perSourceSemanticLimit,
         attemptCount: measured.attempts.length,
@@ -400,6 +468,7 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
         success: false,
         code: error.databaseCode ?? error.transportCode ?? error.internalCode,
         candidateCount: null,
+        rawCandidateCount: null,
         outerLimit: limitFor(fn),
         semanticLimit: SEARCH_V2_CONFIG.perSourceSemanticLimit,
         attemptCount: error.attemptCount || attempts.length,
@@ -517,6 +586,7 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
     candidateCount: groups.reduce((n, g) => n + g.length, 0),
     sourceRetrieval,
     degradedSources: [...degradedSourceSet],
+    speakerFilter,
   };
 }
 

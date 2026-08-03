@@ -8,9 +8,23 @@ function friendlyList(names: string[]): string {
 
 /** Stable public copy: no internal source, provider, code or error can enter it. */
 export function incompleteSearchWarning(sources: readonly DegradedSource[]): string {
-  const names = [...new Set(sources.map((item) => item.source))];
-  if (names.length === 0) return "";
-  return `${friendlyList(names)} could not be searched this time. This answer is incomplete. Please search again.`;
+  const unavailable = [...new Set(sources
+    .filter((item) => item.reason === "temporarily unavailable")
+    .map((item) => item.source))];
+  const partial = [...new Set(sources
+    .filter((item) => item.reason === "some passages could not be verified")
+    .map((item) => item.source))]
+    .filter((source) => !unavailable.includes(source));
+  if (unavailable.length === 0 && partial.length === 0) return "";
+
+  const clauses: string[] = [];
+  if (unavailable.length > 0) {
+    clauses.push(`${friendlyList(unavailable)} could not be searched this time.`);
+  }
+  if (partial.length > 0) {
+    clauses.push(`Some passages from ${friendlyList(partial.map((name) => name.toLocaleLowerCase("en")))} could not be verified.`);
+  }
+  return `${clauses.join(" ")} This answer is incomplete. Please search again.`;
 }
 
 export default function IncompleteSearchWarning({ sources }: { sources: readonly DegradedSource[] }) {
