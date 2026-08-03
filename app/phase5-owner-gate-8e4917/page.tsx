@@ -27,6 +27,44 @@ const ALLOWED_MIME_TYPES = ["application/gzip"];
 const MODEL = "gemini-2.5-flash";
 const QUESTION = "how to control the mind";
 
+type SuiteCase = { key: string; category: string; query: string; speakerOnly?: boolean };
+const LONG_VALID_QUERY = (
+  "Please explain from Srila Prabhupada's teachings how a sincere person can remember Krishna, control the mind, serve others, and remain steady through difficulty. "
+    .repeat(20)
+).slice(0, 1990);
+const SUITE_CASES: SuiteCase[] = [
+  { key: "exact_bg_18_66", category: "exact_reference", query: "BG 18.66" },
+  { key: "exact_bg_2_20", category: "exact_reference", query: "BG 2.20" },
+  { key: "exact_sb_8_23_31", category: "exact_reference", query: "SB 8.23.31" },
+  { key: "exact_bg_6_35", category: "exact_reference", query: "BG 6.35" },
+  { key: "exact_sb_1_2_6", category: "exact_reference", query: "SB 1.2.6" },
+  { key: "topic_mind", category: "broad_topic", query: "how to control the mind" },
+  { key: "topic_after_death", category: "broad_topic", query: "what happens after death" },
+  { key: "topic_soul", category: "broad_topic", query: "what is the soul" },
+  { key: "topic_anger_lust", category: "broad_topic", query: "how to overcome anger and lust" },
+  { key: "topic_simple_life", category: "broad_topic", query: "how to lead a simple life" },
+  { key: "topic_chanting", category: "broad_topic", query: "the importance of chanting" },
+  { key: "topic_householder", category: "broad_topic", query: "duties of a householder" },
+  { key: "topic_choose_guru", category: "broad_topic", query: "how to choose a spiritual master" },
+  { key: "topic_bhakti", category: "broad_topic", query: "what is bhakti" },
+  { key: "topic_suffering", category: "broad_topic", query: "why do we suffer" },
+  { key: "trap_sraddha", category: "completeness", query: "śrāddha ceremony" },
+  { key: "trap_women", category: "completeness", query: "the role of women" },
+  { key: "trap_varnasrama", category: "completeness", query: "varṇāśrama" },
+  { key: "trap_sannyasa", category: "completeness", query: "sannyāsa" },
+  { key: "trap_deity_food", category: "completeness", query: "offering food to the Deity" },
+  { key: "conversation_dr_patel", category: "conversation", query: "What did Śrīla Prabhupāda discuss with Dr. Patel about the mind?" },
+  { key: "conversation_ginsberg", category: "conversation", query: "What did Śrīla Prabhupāda discuss with Allen Ginsberg about chanting?" },
+  { key: "conversation_kotovsky", category: "conversation", query: "What did Śrīla Prabhupāda discuss with Professor Kotovsky?" },
+  { key: "conversation_scientists", category: "conversation", query: "What did Śrīla Prabhupāda say to scientists during morning walks?" },
+  { key: "conversation_reporters", category: "conversation", query: "What did Śrīla Prabhupāda tell reporters about Kṛṣṇa consciousness?" },
+  { key: "awkward_one_word", category: "awkward", query: "karma" },
+  { key: "awkward_misspelling", category: "awkward", query: "how to controll the mind" },
+  { key: "awkward_devanagari", category: "awkward", query: "मन को कैसे नियंत्रित करें" },
+  { key: "awkward_long_valid", category: "awkward", query: LONG_VALID_QUERY },
+  { key: "awkward_empty", category: "awkward", query: "   " },
+];
+
 function rejectionCode(reason: string): string {
   if (reason.includes("never supplied")) return "invented_id";
   if (reason.includes("repeats across sections")) return "duplicate_section_id";
@@ -325,13 +363,113 @@ async function runSnapshotGate() {
   };
 }
 
+async function runSuiteCase(testCase: SuiteCase) {
+  const deploymentHost = process.env.VERCEL_URL ?? "preview.invalid";
+  const url = `https://${deploymentHost}/api/search?q=${encodeURIComponent(testCase.query)}&only_his=${testCase.speakerOnly ? "1" : "0"}`;
+  const started = performance.now();
+  const response = await runSearch(new Request(url) as never);
+  const wallMs = Math.round(performance.now() - started);
+  const bodyText = await response.text();
+  let body: Record<string, unknown> = {};
+  try { body = JSON.parse(bodyText) as Record<string, unknown>; } catch { /* recorded below */ }
+  const requestId = typeof body.requestId === "string"
+    ? body.requestId
+    : typeof body.request_id === "string"
+      ? body.request_id
+      : null;
+  let row: Record<string, unknown> | null = null;
+  if (requestId) {
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const serviceKey = process.env.SUPABASE_SERVICE_KEY;
+    if (!supabaseUrl || !serviceKey) throw new Error("suite_supabase_env_absent");
+    const client = createClient(supabaseUrl, serviceKey, {
+      auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
+    });
+    const { data, error } = await client
+      .from("search_logs")
+      .select("request_id,environment,deployment_sha,status,failed_stage,error_code,total_duration_ms,stage_durations_ms,source_durations_ms,telemetry,completed_at,total_results,search_method")
+      .eq("request_id", requestId)
+      .maybeSingle();
+    if (error) throw new Error("suite_telemetry_read_failed");
+    row = data as Record<string, unknown> | null;
+  }
+  const telemetry = row?.telemetry && typeof row.telemetry === "object"
+    ? row.telemetry as Record<string, unknown>
+    : {};
+  const candidates = telemetry.candidates && typeof telemetry.candidates === "object"
+    ? telemetry.candidates as Record<string, unknown>
+    : {};
+  const speakerFilter = telemetry.speakerFilter && typeof telemetry.speakerFilter === "object"
+    ? telemetry.speakerFilter as Record<string, unknown>
+    : {};
+  const degraded = Array.isArray(body.degradedSources)
+    ? body.degradedSources.map((item) => (
+        item && typeof item === "object" && "source" in item ? String((item as { source: unknown }).source) : "unknown"
+      ))
+    : [];
+  const passages = Array.isArray(body.passages) ? body.passages as Array<Record<string, unknown>> : [];
+  return {
+    key: testCase.key,
+    category: testCase.category,
+    queryLength: testCase.query.length,
+    httpStatus: response.status,
+    requestId,
+    wallMs,
+    publicErrorCode: typeof body.code === "string" ? body.code : null,
+    publicDegraded: body.degraded === true,
+    publicDegradedSources: degraded,
+    retrievalStatus: typeof body.retrievalStatus === "string" ? body.retrievalStatus : null,
+    passageCount: passages.length,
+    additionalCount: Number(body.additionalCount ?? 0),
+    firstReference: passages[0] && typeof passages[0].reference === "string" ? passages[0].reference : null,
+    firstType: passages[0] && typeof passages[0].type === "string" ? passages[0].type : null,
+    firstHasPurport: Boolean(passages[0]?.purport),
+    passageIdsPresent: passages.some((passage) => typeof passage.id === "string"),
+    telemetryPresent: row !== null,
+    environment: row?.environment ?? null,
+    deploymentShaPresent: typeof row?.deployment_sha === "string",
+    status: row?.status ?? null,
+    failedStage: row?.failed_stage ?? null,
+    errorCode: row?.error_code ?? null,
+    totalDurationMs: row?.total_duration_ms ?? null,
+    stageDurationsMs: row?.stage_durations_ms ?? {},
+    sourceDurationsMs: row?.source_durations_ms ?? {},
+    completed: typeof row?.completed_at === "string",
+    cache: telemetry.cache ?? null,
+    candidateCount: candidates.beforeFusion ?? null,
+    mainTierCount: candidates.mainTier ?? null,
+    additionalTelemetryCount: candidates.additional ?? null,
+    speakerMode: speakerFilter.mode ?? null,
+    telemetryDegradation: telemetry.degradation ?? [],
+    searchMethod: row?.search_method ?? null,
+  };
+}
+
+async function runSuiteBatch(batch: number) {
+  if (!Number.isInteger(batch) || batch < 0 || batch > 9) throw new Error("suite_batch_invalid");
+  const selected = SUITE_CASES.slice(batch * 3, batch * 3 + 3);
+  const runs = [];
+  for (const testCase of selected) runs.push(await runSuiteCase(testCase));
+  return { batch, repetitions: 1, stoppedAfterOneForCreditBudget: true, runs };
+}
+
+async function runConcurrencyBurst() {
+  const cases: SuiteCase[] = [
+    { key: "burst_restless_mind", category: "concurrency_two", query: "how can I control my restless mind in daily practice" },
+    { key: "burst_soul_after_death", category: "concurrency_two", query: "what happens to the soul after bodily death" },
+  ];
+  const started = performance.now();
+  const runs = await Promise.all(cases.map(runSuiteCase));
+  return { concurrency: 2, wallMs: Math.round(performance.now() - started), runs };
+}
+
 export default async function Phase5OwnerGatePage({
   searchParams,
 }: {
   searchParams: Promise<{ op?: string }>;
 }) {
   if (process.env.VERCEL_ENV !== "preview") return <main>Not found</main>;
-  const { op } = await searchParams;
+  const { op, batch: rawBatch } = await searchParams as { op?: string; batch?: string };
   try {
     const result = op === "bucket"
       ? await provisionBucket()
@@ -339,6 +477,10 @@ export default async function Phase5OwnerGatePage({
         ? await runProbe()
         : op === "snapshot"
           ? await runSnapshotGate()
+          : op === "suite"
+            ? await runSuiteBatch(Number(rawBatch))
+            : op === "burst"
+              ? await runConcurrencyBurst()
         : { error: "not_found" };
     return <main><pre id="result">{JSON.stringify(result)}</pre></main>;
   } catch (error) {
