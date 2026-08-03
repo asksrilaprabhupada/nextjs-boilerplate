@@ -20,8 +20,6 @@ import SearchLoader from "./10-search-loader";
 import NarrativeResponse from "../results/01-narrative-response";
 import IncompleteSearchWarning from "../results/02-incomplete-search-warning";
 import SpeakerFilterControls from "../results/03-speaker-filter-controls";
-import { useSearchBehaviorTracker } from "@/app/hooks/01-use-search-behavior-tracker";
-import { logCitationClick } from "@/app/lib/02-analytics";
 import { buildSearchHref } from "@/app/lib/22-search-navigation";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
 
@@ -46,11 +44,6 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
   const [retryNonce, setRetryNonce] = useState(0);
   const doneRef = useRef(false);
 
-  // Behavior telemetry: time-on-result, scroll depth, citation clicks —
-  // flushed via sendBeacon on unmount/visibility change/pagehide.
-  const searchLogId = results?.searchLogId ?? null;
-  useSearchBehaviorTracker(searchLogId);
-
   const onSearch = useCallback(
     (next: string) => {
       const trimmed = next.trim();
@@ -59,24 +52,6 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
     },
     [onlyHis, router],
   );
-
-  // Vedabase citation clicks → citation_clicks table. One delegated listener
-  // covers every ↗ link (hero cards, essay, context strip, Dig Deeper).
-  useEffect(() => {
-    if (!searchLogId) return;
-    const onClick = (e: MouseEvent) => {
-      const anchor = (e.target as HTMLElement).closest?.('a[href*="vedabase.io"]') as HTMLAnchorElement | null;
-      if (!anchor) return;
-      const all = Array.from(document.querySelectorAll('a[href*="vedabase.io"]'));
-      logCitationClick({
-        searchLogId,
-        citationRef: anchor.getAttribute("href"),
-        clickPosition: all.indexOf(anchor) + 1 || null,
-      });
-    };
-    document.addEventListener("click", onClick, { passive: true });
-    return () => document.removeEventListener("click", onClick);
-  }, [searchLogId]);
 
   useEffect(() => {
     doneRef.current = false;

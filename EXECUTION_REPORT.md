@@ -258,33 +258,26 @@ the Task 16 preview.
 - No-SSE fallback: optimistic timer over the same stages, capped at 92% until the plain fetch
   resolves.
 
-## §14 · Task 14 — Telemetry ✅
+## §14 · Task 14 — Telemetry (current privacy correction)
 
-- **Server**: `runSearchPipeline` ends with a direct `log_search` RPC (service client) carrying
-  measured durations (embedding wall-time from the batched Voyage call, search = hybrid retrieval
-  wall-time, synthesis = remainder, total), result counts, `articleVerseIds`/prose ids, book names,
-  `p_query_variants`, UA/referrer headers, and the `asp_vid` visitor cookie. `searchLogId` rides on
-  the JSON and the SSE `result` event, and is **stripped before setCached** — cache hits log their
-  own fresh row (`p_search_method: "cache"`) so feedback on cached answers attributes correctly.
-  Telemetry failures never break a search (logged, `searchLogId: null`).
-- **Client**: `useSearchBehaviorTracker` (previously orphaned) is mounted in SearchExperience —
-  time-on-result, scroll-to-bottom, citation-ref clicks — flushed beacon-first
-  (`navigator.sendBeacon` with keepalive-fetch fallback; new `pagehide` listener for Safari).
-  Follow-up questions fire `log_search_behavior.followed_up_query`. Thumbs voting was already wired
-  (`06-search-feedback` → `/api/analytics/feedback`) and now receives a real `searchLogId`.
-- **Citation clicks**: new `app/api/analytics/citation-click/route.ts` (service-client insert into
-  `citation_clicks`); one delegated click listener in SearchExperience beacons every
-  `vedabase.io` ↗ link (hero cards, essay, context strip, Dig Deeper) with citation URL + position.
-  Deviation (documented): insert goes through the API route rather than client-side supabase-js —
-  no browser Supabase client exists in this repo and every other telemetry path is a route; the
-  Task 4 anon INSERT policy still exists and was live-verified (transaction-wrapped anon insert
-  accepted, rolled back).
-- `/api/feedback` already accepts type/name/email/message/query/page_url — modal wiring + success
-  toast lands with the Task 11 modals provider.
+- **Server lifecycle**: every valid request creates one `running` `search_logs` row and awaits one
+  terminal update. Ordinary rows contain the normalized question only as `sha256:<64 hex>`;
+  query variants, user agent, referrer, visitor ID, page URL, and follow-up text are null. Cache
+  hits still get a fresh request/search row, while a telemetry failure remains fail-open.
+- **No durable visitor identity**: the live application creates no `asp_vid` cookie or equivalent.
+  The only search cookie is the short-lived, HttpOnly, preview-only diagnostic session described
+  below; it contains a question hash and expires after five minutes.
+- **No automatic behavior profile**: SearchExperience no longer mounts the dwell/scroll tracker or
+  delegated Vedabase click logger. The old API routes remain inert compatibility surfaces, while
+  explicit thumbs feedback still receives the per-search `searchLogId`.
+- **Serving cache minimization**: the 24-hour response cache remains a serving optimization, not an
+  archive. Its key is hashed and its value no longer stores the raw question; the current request
+  reattaches that field after a cache hit.
+- **Owner snapshots**: only a fresh preview HMAC can mint an exact-target diagnostic cookie. That
+  run bypasses response-cache reads/writes and writes one gzip object to a private Storage bucket;
+  the relational row contains hashes, byte counts, versions, expiry, and private object path only.
 
-Verification: build ✅ tests 27/27 ✅ · `log_search` live-verified with variants (Task 3) · anon
-`citation_clicks` INSERT policy verified live ✅. Full loop (search row → thumbs update → feedback
-row) asserted on the Task 16 preview.
+Historical raw telemetry rows and the old analytics endpoints were not deleted or rewritten.
 
 ## §11 · Task 11 — Header/footer unification ✅
 

@@ -32,6 +32,7 @@ import {
   type PipelineStage,
   type PipelineStageInfo,
   type PipelineOutput,
+  type PipelineDiagnostics,
   type SearchTelemetry,
 } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
@@ -58,6 +59,12 @@ import {
   type PreviewVerificationMode,
 } from "@/app/lib/search-v2/preview-verification";
 import { SEARCH_PROGRESS_LABELS } from "@/app/lib/24-search-progress";
+import {
+  clearSnapshotSessionCookie,
+  readSnapshotSession,
+  type SnapshotSession,
+} from "@/app/lib/search-v2/diagnostic-session";
+import { persistSearchSnapshot } from "@/app/lib/search-v2/search-snapshot";
 
 // With no candidate caps, a cold search embeds, runs five large RPCs, and
 // reranks the whole pool in Cohere batches — minutes, not seconds, on a broad
@@ -85,7 +92,9 @@ function guardPayloadSize(
   result: Record<string, unknown>,
   requestId: string,
 ): Record<string, unknown> {
-  if (JSON.stringify(result).length <= MAX_PAYLOAD_BYTES) return result;
+  const byteLength = (value: Record<string, unknown>): number =>
+    new TextEncoder().encode(JSON.stringify(value)).byteLength;
+  if (byteLength(result) <= MAX_PAYLOAD_BYTES) return result;
   const additional = Array.isArray(result.additional) ? [...result.additional] : [];
   const originalCount = additional.length;
   const guarded: Record<string, unknown> = { ...result, additionalTruncated: true };
@@ -95,7 +104,7 @@ function guardPayloadSize(
   do {
     keep = Math.floor(keep / 2);
     guarded.additional = additional.slice(0, keep);
-  } while (keep > 0 && JSON.stringify(guarded).length > MAX_PAYLOAD_BYTES);
+  } while (keep > 0 && byteLength(guarded) > MAX_PAYLOAD_BYTES);
   console.warn(
     JSON.stringify({
       level: "warn",
@@ -182,9 +191,12 @@ async function readCache(key: string): Promise<Record<string, unknown> | null> {
 async function writeCache(key: string, value: Record<string, unknown>): Promise<void> {
   try {
     const store = await getCacheAdapter();
-    const { searchLogId: _perRequest, requestId: _rid, ...cacheable } = value;
+    // The exact question is reconstructed from the current request on a hit.
+    // It is not needed in the 24 h serving cache, whose key is already hashed.
+    const { searchLogId: _perRequest, requestId: _rid, query: _rawQuestion, ...cacheable } = value;
     void _perRequest;
     void _rid;
+    void _rawQuestion;
     await store.set(key, cacheable, TTL.response);
   } catch {
     // A failed cache write is not a failed search.
@@ -231,7 +243,14 @@ async function getOrComputeResult(
   onStage?: OnStage,
   speakerOnly = false,
   verificationMode: PreviewVerificationMode | null = null,
-): Promise<{ result: Record<string, unknown>; fromCache: boolean }> {
+  snapshotSession: SnapshotSession | null = null,
+): Promise<{
+  result: Record<string, unknown>;
+  fromCache: boolean;
+  diagnostics?: PipelineDiagnostics;
+  telemetry?: SearchTelemetry;
+  searchLogId?: string | null;
+}> {
   const now = (): number => globalThis.performance.now();
   const elapsed = (since: number): number =>
     Math.round(Math.max(0, now() - since) * 1000) / 1000;
@@ -250,7 +269,9 @@ async function getOrComputeResult(
     const cacheStartedAt = now();
     // Controlled preview verification must exercise the pipeline, never replay
     // or populate an ordinary response-cache entry.
-    const cached = verificationMode === null ? await readCache(key) : null;
+    const cached = verificationMode === null && snapshotSession === null
+      ? await readCache(key)
+      : null;
     const cacheDurationMs = elapsed(cacheStartedAt);
     if (cached) {
       await completeSearchRun(searchRun, {
@@ -271,7 +292,7 @@ async function getOrComputeResult(
       });
       onStage?.("weaving");
       return {
-        result: { ...cached, searchLogId: searchRun?.rowId ?? null, requestId },
+        result: { ...cached, query, searchLogId: searchRun?.rowId ?? null, requestId },
         fromCache: true,
       };
     }
@@ -286,13 +307,14 @@ async function getOrComputeResult(
         partialStageDurationsMs[stage] = durationMs;
       },
       speakerOnly,
+      captureDiagnostics: snapshotSession !== null,
     });
     const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
 
     // Only a clean, non-degraded answer is cached. A response produced while
     // Voyage or Cohere was down is correct but weaker, and caching it for 24
     // hours would outlive the outage that caused it.
-    if (verificationMode === null) {
+    if (verificationMode === null && snapshotSession === null) {
       await writeResponseCacheIfEligible(key, adapted, out);
     }
 
@@ -316,6 +338,9 @@ async function getOrComputeResult(
     return {
       result: { ...adapted, searchLogId: searchRun?.rowId ?? null, requestId },
       fromCache: false,
+      ...(out.diagnostics ? { diagnostics: out.diagnostics } : {}),
+      telemetry: out.telemetry,
+      searchLogId: searchRun?.rowId ?? null,
     };
   } catch (err) {
     const failure = failureTechnicalTelemetry(
@@ -345,6 +370,54 @@ async function getOrComputeResult(
     });
     throw err;
   }
+}
+
+interface PreparedSearchResponse {
+  guarded: Record<string, unknown>;
+  guardedJson: string;
+}
+
+/**
+ * Serialize once, persist those exact bytes when authorized, and reuse the same
+ * string for delivery. Snapshot failure is deliberately fail-open.
+ */
+export async function prepareSuccessfulResponse(
+  execution: Awaited<ReturnType<typeof getOrComputeResult>>,
+  query: string,
+  requestId: string,
+  snapshotSession: SnapshotSession | null,
+  snapshotWriter: typeof persistSearchSnapshot = persistSearchSnapshot,
+): Promise<PreparedSearchResponse> {
+  const guarded = guardPayloadSize(execution.result, requestId);
+  const guardedJson = JSON.stringify(guarded);
+  if (snapshotSession) {
+    try {
+      if (!execution.diagnostics || !execution.telemetry || !execution.searchLogId) {
+        throw new Error("authorized snapshot is missing its technical trace");
+      }
+      const artifact = await snapshotWriter({
+        session: snapshotSession,
+        searchLogId: execution.searchLogId,
+        requestId,
+        question: query,
+        telemetry: execution.telemetry,
+        diagnostics: execution.diagnostics,
+        internalResponse: execution.result,
+        guardedResponse: guarded,
+        guardedResponseJson: guardedJson,
+      });
+      console.info(JSON.stringify({
+        level: "info",
+        event: "search.snapshot_saved",
+        requestId,
+        objectBytes: artifact.objectBytes,
+        objectSha256: artifact.objectSha256,
+      }));
+    } catch {
+      console.error(JSON.stringify({ level: "error", event: "search.snapshot_failed", requestId }));
+    }
+  }
+  return { guarded, guardedJson };
 }
 
 // =====================================================
@@ -428,19 +501,56 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(body, { status });
   }
 
+  let snapshotSession: SnapshotSession | null = null;
+  if (!inputError) {
+    try {
+      snapshotSession = readSnapshotSession(request, { query, speakerOnly });
+    } catch {
+      console.warn(JSON.stringify({ level: "warn", event: "search.snapshot_session_rejected" }));
+      return new Response(JSON.stringify({ error: "Not found." }), {
+        status: 404,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "private, no-store",
+          "Set-Cookie": clearSnapshotSessionCookie(),
+        },
+      });
+    }
+  }
+
   if (!wantStream) {
     try {
-      const { result } = await getOrComputeResult(
+      const execution = await getOrComputeResult(
         query,
         requestId,
         undefined,
         speakerOnly,
         verificationMode,
+        snapshotSession,
       );
-      return NextResponse.json(guardPayloadSize(result, requestId));
+      const prepared = await prepareSuccessfulResponse(execution, query, requestId, snapshotSession);
+      return new Response(prepared.guardedJson, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          ...(snapshotSession ? {
+            "Cache-Control": "private, no-store",
+            "Set-Cookie": clearSnapshotSessionCookie(),
+          } : {}),
+        },
+      });
     } catch (err) {
       const { status, body } = failureResponseBody(err, requestId);
-      return NextResponse.json(body, { status });
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          ...(snapshotSession ? {
+            "Cache-Control": "private, no-store",
+            "Set-Cookie": clearSnapshotSessionCookie(),
+          } : {}),
+        },
+      });
     }
   }
 
@@ -453,8 +563,10 @@ export async function GET(request: NextRequest) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(chunk)); } catch { closed = true; }
       };
+      const sendSerialized = (event: string, json: string) =>
+        write(`event: ${event}\ndata: ${json}\n\n`);
       const send = (event: string, data: unknown) =>
-        write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        sendSerialized(event, JSON.stringify(data));
       // Comment heartbeat defeats proxy buffering and keeps the connection alive
       // through the long cold path.
       const heartbeat = setInterval(() => write(`: ping\n\n`), 15000);
@@ -473,14 +585,15 @@ export async function GET(request: NextRequest) {
 
       try {
         if (inputError) throw inputError;
-        const { result, fromCache } = await getOrComputeResult(
+        const execution = await getOrComputeResult(
           query,
           requestId,
           onStage,
           speakerOnly,
           verificationMode,
+          snapshotSession,
         );
-        if (fromCache) {
+        if (execution.fromCache) {
           // Cached answer: replay the stages in fast succession so the loader
           // still arcs rather than snapping to a finished result.
           for (const s of STAGE_ORDER) {
@@ -488,7 +601,8 @@ export async function GET(request: NextRequest) {
             await new Promise((r) => setTimeout(r, 120));
           }
         }
-        send("result", guardPayloadSize(result, requestId));
+        const prepared = await prepareSuccessfulResponse(execution, query, requestId, snapshotSession);
+        sendSerialized("result", prepared.guardedJson);
         // The explicit terminal frame: the client closes on it, so the browser
         // never auto-reconnects and silently re-runs the whole search.
         send("done", {});
@@ -512,6 +626,7 @@ export async function GET(request: NextRequest) {
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",
+      ...(snapshotSession ? { "Set-Cookie": clearSnapshotSessionCookie() } : {}),
     },
   });
 }

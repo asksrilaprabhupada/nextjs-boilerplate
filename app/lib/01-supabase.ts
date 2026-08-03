@@ -72,3 +72,39 @@ export function getSupabaseAdmin(): SupabaseClient {
   }
   return client;
 }
+
+/**
+ * Creates a service-role client whose individual HTTP requests are aborted at
+ * the supplied deadline. Snapshot persistence uses this instead of the shared
+ * retrieval client so a slow optional write can never hold the search open.
+ */
+export function createBoundedSupabaseAdmin(timeoutMs: number): SupabaseClient {
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new SearchInfrastructureError(
+      `Supabase server credentials missing (url: ${supabaseUrl ? "set" : "absent"}, service key: ${supabaseServiceKey ? "set" : "absent"})`,
+      { stage: "config", source: "supabase", attemptCount: 0 },
+    );
+  }
+  const boundedFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const upstream = init?.signal;
+    const abortFromUpstream = () => controller.abort(upstream?.reason);
+    if (upstream?.aborted) abortFromUpstream();
+    else upstream?.addEventListener("abort", abortFromUpstream, { once: true });
+    try {
+      return await fetchWithTransportEvidence(input, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+      upstream?.removeEventListener("abort", abortFromUpstream);
+    }
+  };
+  return createClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      persistSession: false,
+    },
+    global: { fetch: boundedFetch },
+  });
+}
