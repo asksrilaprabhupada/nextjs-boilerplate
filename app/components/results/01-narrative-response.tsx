@@ -20,7 +20,6 @@
 "use client";
 
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
-import Link from "next/link";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import SearchFeedback from "../search/06-search-feedback";
 import {
@@ -90,7 +89,7 @@ function citeFor(p: SearchPassage): string {
       .filter(Boolean)
       .join(" · ");
   }
-  return formatCiteRef(p.reference || p.id);
+  return formatCiteRef(p.reference || p.label);
 }
 
 /** The book-shelf name a passage files under in the "By source" view. */
@@ -102,13 +101,8 @@ function shelfFor(p: SearchPassage): string {
   return m ? getBookName(m[1].toLowerCase()) : "Other sources";
 }
 
-function scrollToSource(id: string) {
-  document.getElementById(`source-${id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
-}
-
-/** Row id inside a namespaced passage key ("verse:<uuid>" → "<uuid>"). */
-function rowIdOf(p: SearchPassage): string {
-  return p.id.slice(p.id.indexOf(":") + 1);
+function scrollToSource(index: number) {
+  document.getElementById(`source-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 /** Cite-dot palette key. */
@@ -169,10 +163,11 @@ function LabelLine({ p }: { p: SearchPassage }) {
 /* ─────────────────────────── One passage card ─────────────────────────── */
 
 function PassageCard({
-  p, index = 0, queryTerms, onCopy, onOpenPreview,
+  p, index = 0, anchorIndex = index, queryTerms, onCopy, onOpenPreview,
 }: {
   p: SearchPassage;
   index?: number;
+  anchorIndex?: number;
   queryTerms: string[];
   onCopy: (p: SearchPassage) => void;
   onOpenPreview: (p: SearchPassage) => void;
@@ -267,7 +262,7 @@ function PassageCard({
 
   return (
     <motion.article
-      id={`source-${p.id}`}
+      id={`source-${anchorIndex}`}
       className="passage"
       data-passage-type={p.type}
       initial={{ opacity: 0, y: 10 }}
@@ -339,9 +334,6 @@ function PreviewSheet({
         <div className="preview-actions">
           <CopyButton onCopy={() => onCopy(p)} label="Copy with reference" />
           <span className="preview-links">
-            {p.type === "verse" && (
-              <Link className="vedabase-link" href={`/verse/${rowIdOf(p)}`}>Read this verse →</Link>
-            )}
             {p.url && (
               <a className="vedabase-link" href={p.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
             )}
@@ -388,8 +380,8 @@ function AdditionalTier({ list, truncated }: { list: AdditionalSearchPassage[]; 
               {title} · {group.length.toLocaleString("en-US")}
             </h4>
             <ul>
-              {group.map((a) => (
-                <li key={a.id} className="additional-row">
+              {group.map((a, index) => (
+                <li key={`${type}:${a.reference ?? a.label}:${index}`} className="additional-row">
                   <div className="additional-label font-body">
                     <span>{a.label}</span>
                     {a.provenanceNote && <span className="passage-label-note">{a.provenanceNote}</span>}
@@ -544,7 +536,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
     if (passages.length === 0) return;
     const i = nextIdxRef.current % passages.length;
     nextIdxRef.current = i + 1;
-    scrollToSource(passages[i].id);
+    scrollToSource(i);
   };
 
   if (isLoading) return null;
@@ -608,9 +600,9 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
               <details className="contents">
                 <summary className="font-body">Contents · {passages.length} passages</summary>
                 <ol>
-                  {passages.map(p => (
-                    <li key={p.id}>
-                      <button className="font-body" onClick={() => scrollToSource(p.id)}>{citeFor(p)}</button>
+                  {passages.map((p, index) => (
+                    <li key={`${p.type}:${p.reference ?? p.label}:${index}`}>
+                      <button className="font-body" onClick={() => scrollToSource(index)}>{citeFor(p)}</button>
                     </li>
                   ))}
                 </ol>
@@ -621,7 +613,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
             <div className="essay-flow">
               {passages.map((p, i) => (
                 <PassageCard
-                  key={`${results.query}:${p.id}`}
+                  key={`${results.query}:${p.type}:${p.reference ?? p.label}:${i}`}
                   p={p} index={i}
                   queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreview}
                 />
@@ -638,13 +630,17 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
               <section key={shelf.name} className="ref-book">
                 <h3 className="font-display">{shelf.name}</h3>
                 <div className="essay-flow">
-                  {shelf.passages.map(p => (
-                    <PassageCard
-                      key={`${results.query}:ref:${p.id}`}
-                      p={p}
-                      queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreview}
-                    />
-                  ))}
+                  {shelf.passages.map((p, shelfIndex) => {
+                    const sourceIndex = passages.indexOf(p);
+                    return (
+                      <PassageCard
+                        key={`${results.query}:ref:${shelf.name}:${shelfIndex}`}
+                        p={p}
+                        anchorIndex={sourceIndex}
+                        queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreview}
+                      />
+                    );
+                  })}
                 </div>
               </section>
             ))}

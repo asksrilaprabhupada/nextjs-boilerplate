@@ -32,8 +32,6 @@ export interface Citation {
  * a card needs to render, with no look-up anywhere.
  */
 export interface SearchPassage {
-  /** Namespaced key, e.g. "verse:<uuid>". Stable within a response. */
-  id: string;
   type: "verse" | "purport" | "book" | "lecture" | "letter";
   reference: string | null;
   /** Vedabase link, when the source has one. */
@@ -82,8 +80,6 @@ export interface SearchPassage {
  * claim that the whole source row is one speaker's quotation.
  */
 export interface AdditionalSearchPassage {
-  /** Namespaced key, e.g. "verse:<uuid>". Stable within a response. */
-  id: string;
   type: "verse" | "purport" | "book" | "lecture" | "letter";
   reference: string | null;
   /** Vedabase link when one can be derived from the reference; often null. */
@@ -164,8 +160,6 @@ export interface SearchResults {
   citations: Citation[];
   /** Honest page title (the article plan's, or a deterministic one). */
   intro?: string;
-  /** Bare verse row ids among the passages — telemetry attribution. */
-  articleVerseIds?: string[];
   suggestion?: string | null;
   suggestionDisplay?: string | null;
   queryTerms?: string[];

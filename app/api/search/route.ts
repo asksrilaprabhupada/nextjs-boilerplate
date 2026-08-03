@@ -326,7 +326,7 @@ async function getOrComputeResult(
       query,
       searchMethod: "pipeline",
       totalDurationMs: out.telemetry.totalDurationMs,
-      result: resultFieldsForTelemetry(adapted),
+      result: resultFieldsForTelemetry(adapted, out.passages),
       stageDurationsMs: out.telemetry.stageDurationsMs,
       sourceDurationsMs: sourceDurationsForTelemetry(out.telemetry.sourceRetrieval),
       telemetry: markPreviewVerification(

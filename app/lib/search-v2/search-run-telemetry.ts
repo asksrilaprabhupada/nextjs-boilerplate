@@ -253,6 +253,11 @@ export async function completeSearchRun(
 /** Existing successful-search fields, without passage text. */
 export function resultFieldsForTelemetry(
   result: Record<string, unknown>,
+  internalPassages: readonly {
+    passageKey: string;
+    sourceType: string;
+    reference: string | null;
+  }[] = [],
 ): SearchRunResultFields {
   const passages = Array.isArray(result.passages)
     ? result.passages.filter((item): item is Record<string, unknown> => (
@@ -275,12 +280,16 @@ export function resultFieldsForTelemetry(
             : ""
     ))
     .filter((value): value is string => Boolean(value));
-  const verseIds = Array.isArray(result.articleVerseIds)
-    ? result.articleVerseIds.filter((value): value is string => typeof value === "string")
-    : [];
-  const proseIds = passages
-    .filter((passage) => passage.type === "book")
-    .map((passage) => rowId(passage.id))
+  // Database identifiers stay server-side. They are taken from the verified
+  // pipeline passages, never copied into the browser response merely so the
+  // telemetry writer can recover them later.
+  const verseIds = internalPassages
+    .filter((passage) => passage.sourceType === "verse")
+    .map((passage) => rowId(passage.passageKey))
+    .filter((value): value is string => Boolean(value));
+  const proseIds = internalPassages
+    .filter((passage) => passage.sourceType === "book")
+    .map((passage) => rowId(passage.passageKey))
     .filter((value): value is string => Boolean(value));
 
   return {

@@ -854,7 +854,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     // text-free — that is exactly the blank-page bug.
     expect(wire.passages.length).toBeGreaterThan(0);
     for (const p of wire.passages) {
-      expect(p.text, `passage ${p.id} arrived without its words`).toBeTruthy();
+      expect(p.text, `passage ${p.reference ?? p.label} arrived without its words`).toBeTruthy();
       expect(p.text.trim().length).toBeGreaterThan(0);
       expect(p.label.length).toBeGreaterThan(0);
     }
@@ -864,6 +864,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(bg634).toBeDefined();
     expect(bg634!.text).toBe(BG_6_34.translation);
     expect(bg634!.url).toBe("https://vedabase.io/en/library/bg/6/34/");
+    expect(JSON.stringify(wire)).not.toMatch(/\b(?:articleVerseIds|id)\b/);
   });
 
   it("never leaks the question into telemetry", async () => {
