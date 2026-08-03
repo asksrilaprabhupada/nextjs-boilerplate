@@ -216,7 +216,13 @@ async function runSnapshotGate() {
   const deploymentSha = process.env.VERCEL_GIT_COMMIT_SHA ?? "";
   const deploymentHost = process.env.VERCEL_URL ?? "preview.invalid";
   if (secret.length < 32 || !supabaseUrl || !serviceKey || !/^[0-9a-f]{40}$/.test(deploymentSha)) {
-    throw new Error("snapshot_gate_env_absent");
+    const missing = [
+      ...(secret.length < 32 ? ["preview_secret"] : []),
+      ...(!supabaseUrl ? ["supabase_url"] : []),
+      ...(!serviceKey ? ["supabase_service_key"] : []),
+      ...(!/^[0-9a-f]{40}$/.test(deploymentSha) ? ["deployment_sha"] : []),
+    ];
+    throw new Error(`snapshot_gate_env_absent_${missing.join("_")}`);
   }
   const site = `https://${deploymentHost}`;
   const target = { query: QUESTION, speakerOnly: false };
