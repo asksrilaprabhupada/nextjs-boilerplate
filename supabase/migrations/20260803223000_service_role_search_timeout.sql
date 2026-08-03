@@ -17,6 +17,38 @@
 -- Apply only after a fresh exact owner approval packet. After application,
 -- verify through the preview application's real service-role Data API path.
 
+DO $preflight$
+DECLARE
+  service_role_oid oid;
+  role_settings text[];
+BEGIN
+  SELECT role.oid, role.rolconfig
+  INTO service_role_oid, role_settings
+  FROM pg_catalog.pg_roles AS role
+  WHERE role.rolname = 'service_role';
+
+  IF service_role_oid IS NULL THEN
+    RAISE EXCEPTION 'service_role does not exist';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM unnest(COALESCE(role_settings, ARRAY[]::text[])) AS setting(value)
+    WHERE setting.value LIKE 'statement_timeout=%'
+  ) THEN
+    RAISE EXCEPTION 'service_role already has an explicit statement_timeout; aborting without overwrite';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_catalog.pg_db_role_setting AS scoped
+    CROSS JOIN LATERAL unnest(COALESCE(scoped.setconfig, ARRAY[]::text[])) AS setting(value)
+    WHERE scoped.setrole = service_role_oid
+      AND setting.value LIKE 'statement_timeout=%'
+  ) THEN
+    RAISE EXCEPTION 'service_role has a database-specific statement_timeout; aborting without overwrite';
+  END IF;
+END
+$preflight$;
+
 ALTER ROLE service_role SET statement_timeout = '20s';
 
 DO $verify$
