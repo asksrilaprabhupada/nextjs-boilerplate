@@ -11,6 +11,7 @@ import {
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 
 export const runtime = "nodejs";
+// Temporary Preview-only owner verification endpoint; removed after the gates run.
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
