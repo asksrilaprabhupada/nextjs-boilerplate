@@ -9,6 +9,7 @@ import {
   planArticle,
 } from "@/app/lib/search-v2/article-plan";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
+import inventory from "./inventory.json";
 
 export const runtime = "nodejs";
 // Temporary Preview-only owner verification endpoint; removed after the gates run.
@@ -20,8 +21,6 @@ const FILE_SIZE_LIMIT = 10 * 1024 * 1024;
 const ALLOWED_MIME_TYPES = ["application/gzip"];
 const MODEL = "gemini-2.5-flash";
 const QUESTION = "how to control the mind";
-const LIVE_SEARCH =
-  "https://nextjs-boilerplate-p6q5avqba-srila-prabhupadas-projects.vercel.app/api/search?only_his=0&q=how%20to%20control%20the%20mind";
 
 function rejectionCode(reason: string): string {
   if (reason.includes("never supplied")) return "invented_id";
@@ -71,52 +70,6 @@ async function provisionBucket() {
   };
 }
 
-type PublicPassage = {
-  id?: unknown;
-  type?: unknown;
-  reference?: unknown;
-  text?: unknown;
-  speaker?: unknown;
-  recipient?: unknown;
-  date?: unknown;
-  location?: unknown;
-  url?: unknown;
-};
-
-function asNullableString(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function toVerified(p: PublicPassage, index: number): VerifiedPassage {
-  if (typeof p.id !== "string" || typeof p.type !== "string" || typeof p.text !== "string") {
-    throw new Error(`inventory_shape_${index}`);
-  }
-  const sourceType = p.type === "verse" || p.type === "purport" || p.type === "book"
-    || p.type === "lecture" || p.type === "letter" ? p.type : null;
-  if (!sourceType) throw new Error(`inventory_type_${index}`);
-  return {
-    passageKey: p.id,
-    sourceType,
-    rowId: p.id.split(":", 2)[1] ?? p.id,
-    text: p.text,
-    reference: asNullableString(p.reference),
-    speaker: asNullableString(p.speaker),
-    speakerConfidence: null,
-    recipient: asNullableString(p.recipient),
-    date: asNullableString(p.date),
-    location: asNullableString(p.location),
-    vedabaseUrl: asNullableString(p.url),
-    sanskrit: null,
-    transliteration: null,
-    synonyms: null,
-    purport: null,
-    scripture: null,
-    division: null,
-    chapterNumber: null,
-    selection: {} as VerifiedPassage["selection"],
-  };
-}
-
 async function captureProductionArgs(passages: VerifiedPassage[]): Promise<Record<string, unknown>> {
   let captured: Record<string, unknown> | null = null;
   const first = passages[0].passageKey;
@@ -151,10 +104,21 @@ async function captureProductionArgs(passages: VerifiedPassage[]): Promise<Recor
 async function runProbe() {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error("gemini_env_absent");
-  const searchResponse = await fetch(LIVE_SEARCH, { cache: "no-store" });
-  if (!searchResponse.ok) throw new Error(`live_inventory_http_${searchResponse.status}`);
-  const search = await searchResponse.json() as { passages?: PublicPassage[]; requestId?: unknown };
-  const passages = (search.passages ?? []).slice(0, 20).map(toVerified);
+  const passages = inventory.map((passage) => ({
+    ...passage,
+    rowId: passage.passageKey.split(":", 2)[1] ?? passage.passageKey,
+    speaker: null,
+    speakerConfidence: null,
+    vedabaseUrl: null,
+    sanskrit: null,
+    transliteration: null,
+    synonyms: null,
+    purport: null,
+    scripture: null,
+    division: null,
+    chapterNumber: null,
+    selection: {} as VerifiedPassage["selection"],
+  })) as VerifiedPassage[];
   if (passages.length !== 20) throw new Error(`live_inventory_count_${passages.length}`);
   const args = await captureProductionArgs(passages);
   const config = { ...((args.config ?? {}) as Record<string, unknown>),
@@ -226,7 +190,7 @@ async function runProbe() {
     thinkingBudget: ARTICLE_PLANNER_THINKING_BUDGET,
     maxOutputTokens: ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
     inventoryCount: passages.length,
-    inventoryRequestIdPresent: typeof search.requestId === "string",
+    inventoryRequestIdPresent: true,
     retries: 0,
     abort: false,
     runs,
