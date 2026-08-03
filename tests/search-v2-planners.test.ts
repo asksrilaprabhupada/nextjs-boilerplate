@@ -12,7 +12,12 @@
  */
 import { describe, it, expect } from "vitest";
 import { planQuery, fallbackPlan } from "@/app/lib/search-v2/query-plan";
-import { planArticle, DISCLOSURE } from "@/app/lib/search-v2/article-plan";
+import {
+  ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
+  ARTICLE_PLANNER_THINKING_BUDGET,
+  planArticle,
+  DISCLOSURE,
+} from "@/app/lib/search-v2/article-plan";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 
 /** A client that returns a scripted body per call, or throws. */
@@ -205,10 +210,12 @@ describe("article planner loop", () => {
   it("does not send passage text to the planner, only metadata and an opening snippet", async () => {
     const client = scriptedClient([goodArticle()]);
     const seen: string[] = [];
+    const configs: Record<string, unknown>[] = [];
     const spy = {
       models: {
         async generateContent(args: Record<string, unknown>) {
           seen.push(String(args.contents ?? ""));
+          configs.push((args.config ?? {}) as Record<string, unknown>);
           return { text: goodArticle() };
         },
       },
@@ -221,6 +228,9 @@ describe("article planner loop", () => {
     expect(prompt).toContain("verse:1");
     expect(prompt).toMatch(/opening_words/);
     expect(prompt).toMatch(/You do not write, summarise, quote or explain/);
+    const config = configs[0];
+    expect(config.maxOutputTokens).toBe(ARTICLE_PLANNER_MAX_OUTPUT_TOKENS);
+    expect(config.thinkingConfig).toEqual({ thinkingBudget: ARTICLE_PLANNER_THINKING_BUDGET });
   });
 
   it("skips the model when the list exceeds its schema's capacity — arrangement only, nothing dropped", async () => {

@@ -12,6 +12,22 @@ const unavailable = (source: DegradedSource["source"]): DegradedSource => ({
 });
 
 describe("incomplete search warning", () => {
+  it("renders a safe generic warning when non-retrieval guidance is degraded", () => {
+    const expected =
+      "Some search guidance was unavailable this time. This answer may be less complete. Please search again.";
+
+    expect(incompleteSearchWarning([], true)).toBe(expected);
+    expect(incompleteSearchWarning([], false)).toBe("");
+
+    const html = renderToStaticMarkup(
+      createElement(IncompleteSearchWarning, { sources: [], degraded: true }),
+    );
+    expect(html).toContain('role="alert"');
+    expect(html).toContain(expected);
+    expect(html).not.toContain("Gemini");
+    expect(html).not.toContain("plan_rejected");
+  });
+
   it("renders the exact transcript warning before an incomplete answer", () => {
     const sources = [unavailable("Lectures and conversations")];
     const expected =

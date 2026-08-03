@@ -35,7 +35,7 @@
  * Telemetry carries a hash of the question, never the question itself, plus the
  * counts that let a bad result be diagnosed without re-running it.
  */
-import { planQuery } from "@/app/lib/search-v2/query-plan";
+import { planQuery, type PlannedQuery } from "@/app/lib/search-v2/query-plan";
 import {
   retrieveCandidates,
   ORIGINAL_QUERY_ID,
@@ -50,7 +50,7 @@ import {
   type FusedCandidate,
   type RetrievedCandidate,
 } from "@/app/lib/search-v2/fusion";
-import { dedupeCandidates } from "@/app/lib/search-v2/dedup";
+import { dedupeCandidates, type DedupDecision } from "@/app/lib/search-v2/dedup";
 import { prefilterCandidates } from "@/app/lib/search-v2/prefilter";
 import { rerankUnified, type RankedCandidate } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
@@ -59,7 +59,7 @@ import {
   refetchAndVerifyFilteredTranscripts,
   type VerifiedPassage,
 } from "@/app/lib/search-v2/refetch";
-import { planArticle } from "@/app/lib/search-v2/article-plan";
+import { planArticle, type PlannedArticle } from "@/app/lib/search-v2/article-plan";
 import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
 import { searchPipelineVersion, searchCorpusVersion } from "@/app/lib/search-v2/config";
@@ -182,6 +182,78 @@ export interface PipelineOutput {
   telemetry: SearchTelemetry;
   uncoveredQueryIds: string[];
   evidenceInsufficient: boolean;
+  /** Built only for a validated preview diagnostic session; never on the wire. */
+  diagnostics?: PipelineDiagnostics;
+}
+
+export interface CandidateDiagnostic {
+  passageKey: string;
+  sourceType: string;
+  rowId: string;
+  reference: string | null;
+  speaker: string | null;
+  recipient: string | null;
+  occurredOn: string | null;
+  location: string | null;
+  matchedQueryIds: string[];
+  channelRanks: unknown[];
+  channelScores: Record<string, number> | null;
+  tagMatches: number | null;
+  textSha256: string;
+  textBytes: number;
+  pinned: boolean;
+  fusedScore?: number;
+  contributions?: unknown[];
+  queryCoverage?: string[];
+  alternates?: unknown[];
+  rerankScore?: number | null;
+}
+
+/** Private review trace. It contains identities and decisions, not candidate text. */
+export interface PipelineDiagnostics {
+  queryPlan: PlannedQuery;
+  retrieval: {
+    sources: RetrievalSourceTelemetry[];
+    candidates: CandidateDiagnostic[];
+  };
+  junkFloor: { droppedPassageKeys: string[] };
+  fusion: { candidates: CandidateDiagnostic[] };
+  deduplication: {
+    stats: { input: number; exactCollapsed: number; containedCollapsed: number; output: number };
+    decisions: DedupDecision[];
+    candidates: CandidateDiagnostic[];
+  };
+  prefilter: {
+    stats: unknown;
+    passedPassageKeys: string[];
+    setAsidePassageKeys: string[];
+  };
+  rerank: {
+    model: string;
+    reranked: boolean;
+    degradedReason: string | null;
+    documentCount: number;
+    candidates: CandidateDiagnostic[];
+  };
+  tiering: {
+    cutIndex: number;
+    cutGap: number;
+    uncoveredQueryIds: string[];
+    evidenceInsufficient: boolean;
+    selected: Array<{
+      passageKey: string;
+      reasons: string[];
+      contextRequirements: string[];
+      rerankPosition: number | null;
+    }>;
+    additionalPassageKeys: string[];
+  };
+  verification: {
+    verifiedPassageKeys: string[];
+    mainDrops: unknown[];
+    additionalTranscriptDrops: unknown[];
+  };
+  articlePlan: PlannedArticle;
 }
 
 interface VerificationDropLike {
@@ -219,6 +291,40 @@ export interface PipelineInput {
   onStageDuration?: (stage: string, durationMs: number) => void;
   /** "Śrīla Prabhupāda's words only" — a transcripts-RPC constraint. */
   speakerOnly?: boolean;
+  /** Allocate the private decision trace only for an authorized preview run. */
+  captureDiagnostics?: boolean;
+}
+
+function diagnosticCandidate(candidate: RetrievedCandidate | FusedCandidate | RankedCandidate): CandidateDiagnostic {
+  const fused = "fusedScore" in candidate ? candidate as FusedCandidate : null;
+  const ranked = "rerankScore" in candidate ? candidate as RankedCandidate : null;
+  const alternates = "alternates" in candidate
+    ? (candidate as RankedCandidate).alternates
+    : undefined;
+  return {
+    passageKey: candidate.passage_key,
+    sourceType: candidate.source_type,
+    rowId: candidate.row_id,
+    reference: candidate.reference,
+    speaker: candidate.speaker,
+    recipient: candidate.recipient,
+    occurredOn: candidate.occurred_on,
+    location: candidate.location,
+    matchedQueryIds: candidate.matched_query_ids ?? [],
+    channelRanks: candidate.channel_ranks ?? [],
+    channelScores: candidate.channel_scores,
+    tagMatches: candidate.tag_matches,
+    textSha256: fullSha256(candidate.retrieval_text),
+    textBytes: new TextEncoder().encode(candidate.retrieval_text).byteLength,
+    pinned: Boolean(candidate.pinned),
+    ...(fused ? {
+      fusedScore: fused.fusedScore,
+      contributions: fused.contributions,
+      queryCoverage: fused.queryCoverage,
+    } : {}),
+    ...(alternates ? { alternates } : {}),
+    ...(ranked ? { rerankScore: ranked.rerankScore } : {}),
+  };
 }
 
 /** Row shape of public.direct_verse_lookup — the exact-reference short-circuit. */
@@ -465,10 +571,14 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // every verified passage is shown: the renderer appends whatever a plan
   // leaves unplaced.
   onStage?.("organizing", { kept: refetched.verified.length });
-  const article = await time("organizing", async () => {
+  const organized = await time("organizing", async () => {
     const plan = await planArticle(query, refetched.verified); // main tier only, ≤ 20 + pins
-    return renderArticle({ question: query, passages: refetched.verified, plan: plan.plan });
+    return {
+      plan,
+      article: renderArticle({ question: query, passages: refetched.verified, plan: plan.plan }),
+    };
   });
+  const article = organized.article;
 
   const degradedStages = degraded.list();
   const filteredTranscriptVerificationPartial = hasFilteredTranscriptVerificationDrop(
@@ -537,6 +647,63 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   console.info(JSON.stringify({ level: "info", event: "search.complete", ...telemetry }));
 
+  const diagnostics: PipelineDiagnostics | undefined = input.captureDiagnostics
+    ? (() => {
+        const retrievedCandidates = retrieved.groups.flat();
+        const flooredKeys = new Set(floored.groups.flat().map((candidate) => candidate.passage_key));
+        const droppedPassageKeys = [...new Set(
+          retrievedCandidates
+            .map((candidate) => candidate.passage_key)
+            .filter((key) => !flooredKeys.has(key)),
+        )];
+        return {
+          queryPlan: planned,
+          retrieval: {
+            sources: retrieved.sourceRetrieval,
+            candidates: retrievedCandidates.map(diagnosticCandidate),
+          },
+          junkFloor: { droppedPassageKeys },
+          fusion: { candidates: fused.map(diagnosticCandidate) },
+          deduplication: {
+            stats: deduped.stats,
+            decisions: deduped.decisions,
+            candidates: deduped.candidates.map(diagnosticCandidate),
+          },
+          prefilter: {
+            stats: prefiltered.stats,
+            passedPassageKeys: prefiltered.passed.map((candidate) => candidate.passage_key),
+            setAsidePassageKeys: prefiltered.setAside.map((candidate) => candidate.passage_key),
+          },
+          rerank: {
+            model: rerank.model,
+            reranked: rerank.reranked,
+            degradedReason: rerank.degradedReason,
+            documentCount: rerank.documentCount,
+            candidates: rerank.ranked.map(diagnosticCandidate),
+          },
+          tiering: {
+            cutIndex: selection.cutIndex,
+            cutGap: selection.cutGap,
+            uncoveredQueryIds: selection.uncoveredQueryIds,
+            evidenceInsufficient: selection.evidenceInsufficient,
+            selected: selection.selected.map((item) => ({
+              passageKey: item.candidate.passage_key,
+              reasons: item.reasons,
+              contextRequirements: item.contextRequirements,
+              rerankPosition: item.rerankPosition,
+            })),
+            additionalPassageKeys: additionalCandidates.map((candidate) => candidate.passage_key),
+          },
+          verification: {
+            verifiedPassageKeys: refetched.verified.map((passage) => passage.passageKey),
+            mainDrops: refetched.dropped,
+            additionalTranscriptDrops: speakerAdditional.dropped,
+          },
+          articlePlan: organized.plan,
+        };
+      })()
+    : undefined;
+
   return {
     article,
     passages: refetched.verified,
@@ -544,5 +711,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     telemetry,
     uncoveredQueryIds: selection.uncoveredQueryIds,
     evidenceInsufficient: article.evidenceInsufficient || selection.evidenceInsufficient,
+    ...(diagnostics ? { diagnostics } : {}),
   };
 }

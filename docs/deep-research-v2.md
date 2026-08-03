@@ -113,8 +113,8 @@ query variants, follow-ups, referrers, visitor IDs, and user agents are not
 written. Ordinary searches no longer update `popular_queries`, and the legacy
 unauthenticated `/api/analytics/log` raw-write proxy returns HTTP 410. Existing
 historical raw rows are left untouched under the task's no-delete/no-rewrite
-boundary. Raw capture remains disabled until a later owner-authenticated,
-explicit diagnostic-session path enables it.
+boundary. `captureRaw` remains disabled; exact owner review uses the separate
+private-object path below and never puts raw questions into `search_logs`.
 
 The Phase 3 preview gate uses a separate controlled-failure seam. It is inert
 unless `VERCEL_ENV=preview`, `SEARCH_PREVIEW_VERIFICATION_SECRET` is a server-only
@@ -137,6 +137,40 @@ scheduled. No heartbeat is needed because the route's maximum duration is five
 minutes. Application rollback leaves the nullable additive schema inert and
 requires no destructive database action.
 
+### Owner-controlled exact snapshots
+
+Snapshot capture is disabled by default and exists only in Vercel Preview. An
+owner-side command signs one POST with the existing server-only preview secret.
+The server mints a five-minute HttpOnly, Secure, SameSite=Strict cookie bound to
+the normalized question and speaker-filter mode. The cookie contains no raw
+question or visitor identity, is cleared on the search response, and cannot be
+enabled with a public search parameter. Invalid attempts return HTTP 404.
+
+An authorized run bypasses response-cache reads and writes and allocates one
+private decision trace. Candidate text is represented by passage identity,
+channel ranks/scores, and a SHA-256; exact displayed text appears only where it
+already belongs in the captured response. The trace includes the accepted plan
+and rejection reasons, retrieval timings/counts, junk/dedup/prefilter/rerank/
+tier/verification decisions, article plan, the internal response, and the exact
+guarded JSON string reused for browser delivery.
+
+The payload is wrapped with its uncompressed SHA-256 and UTF-8 byte size, then
+gzipped. The exact compressed bytes receive a second SHA-256 and byte count.
+One object is uploaded with `upsert: false` to the private
+`search-answer-snapshots` bucket. `search_answer_snapshots` stores metadata,
+hashes, versions, expiry, and private path only; RLS is enabled, no browser
+policy exists, and table privileges are explicitly service-role-only. Default
+retention is 30 days. Object deletion must use the Storage API and remains a
+separately approved operation. Upload/metadata failures are bounded and cannot
+change the search response.
+
+The live page no longer mounts automatic dwell, scroll, or citation-click
+tracking, and it creates no durable visitor identifier. Explicit thumbs
+feedback remains a deliberate user action. The 24-hour serving cache keeps the
+answer needed to serve repeat requests but no longer keeps the raw question in
+its value; its key is a cryptographic hash and the current request reattaches
+the question after a hit.
+
 ### Response and HTTP contract
 
 Success gains `requestId`, `degraded`, `retrievalStatus` (`complete` or
@@ -147,8 +181,8 @@ remain server-side. `validated` keeps its existing meaning. Invalid input → 40
 database/config → 503 `search_infrastructure_error`; required provider → 503
 `provider_unavailable`; unexpected → 500. SSE keeps the `failure` event name.
 Query capped at 2,000 chars; modes limited to `article` and `references`.
-The response-cache namespace is `v4`; errors are never cached; request ids are attached
-after the cache read.
+The response-cache namespace is `v4`; errors are never cached; request ids and
+the current raw question are attached after the cache read.
 
 `GET /api/health` reports only status, search availability and request id,
 backed by `search_rpc_contract_v1`, calling no paid provider.

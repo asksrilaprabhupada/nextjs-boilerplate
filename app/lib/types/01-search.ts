@@ -184,11 +184,11 @@ export interface SearchResults {
 
   /** Correlates this response with server logs. Non-sensitive. */
   requestId?: string;
-  /** True when any requested retrieval source was unavailable. */
+  /** True when any recall-affecting pipeline stage degraded. */
   degraded: boolean;
   /**
-   * "complete" means every requested source completed. "degraded" means the
-   * answer is visibly partial; a total failure returns a typed error instead.
+   * Source-specific status. A planner/provider degradation can leave this
+   * "complete" while `degraded` still requires the generic visible warning.
    */
   retrievalStatus: "complete" | "degraded";
   /** Public, allowlisted identities for unavailable retrieval sources. */

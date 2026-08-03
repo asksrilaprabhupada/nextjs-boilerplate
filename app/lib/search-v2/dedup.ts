@@ -47,6 +47,14 @@ export interface DedupStats {
 export interface DedupResult {
   candidates: DedupedCandidate[];
   stats: DedupStats;
+  /** Exact audit trail for owner-authorized snapshots; no passage text. */
+  decisions: DedupDecision[];
+}
+
+export interface DedupDecision {
+  keptPassageKey: string;
+  droppedPassageKey: string;
+  reason: "exact_text" | "same_source_containment";
 }
 
 /**
@@ -135,6 +143,7 @@ export function dedupeCandidates(candidates: FusedCandidate[]): DedupResult {
   const input = candidates.length;
   let exactCollapsed = 0;
   let containedCollapsed = 0;
+  const decisions: DedupDecision[] = [];
 
   // ── Stage 1: exact / normalised text ──
   const byHash = new Map<string, DedupedCandidate>();
@@ -151,14 +160,22 @@ export function dedupeCandidates(candidates: FusedCandidate[]): DedupResult {
     if (seen && !mustNotCollapse(seen, c)) {
       const winner = preferComplete(seen, c);
       const loser = winner === seen ? c : seen;
+      // Copy the losing identity before Object.assign can promote `c` into the
+      // existing map entry. Otherwise the alternate would repeat the winner.
+      const loserSource: AlternateSource = {
+        passageKey: loser.passage_key,
+        sourceType: loser.source_type,
+        reference: loser.reference,
+      };
       if (winner !== seen) {
         // Promote the better representative in place, keeping list position.
         Object.assign(seen, winner, { alternates: seen.alternates });
       }
-      seen.alternates.push({
-        passageKey: loser.passage_key,
-        sourceType: loser.source_type,
-        reference: loser.reference,
+      seen.alternates.push(loserSource);
+      decisions.push({
+        keptPassageKey: seen.passage_key,
+        droppedPassageKey: loserSource.passageKey,
+        reason: "exact_text",
       });
       exactCollapsed += 1;
       continue;
@@ -200,6 +217,11 @@ export function dedupeCandidates(candidates: FusedCandidate[]): DedupResult {
             sourceType: dropped.source_type,
             reference: dropped.reference,
           });
+          decisions.push({
+            keptPassageKey: keeper.passage_key,
+            droppedPassageKey: dropped.passage_key,
+            reason: "same_source_containment",
+          });
           absorbed.add(dropped.passage_key);
           containedCollapsed += 1;
         }
@@ -212,6 +234,7 @@ export function dedupeCandidates(candidates: FusedCandidate[]): DedupResult {
   return {
     candidates: kept,
     stats: { input, exactCollapsed, containedCollapsed, output: kept.length },
+    decisions,
   };
 }
 
