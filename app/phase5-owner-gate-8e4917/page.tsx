@@ -23,10 +23,6 @@ const QUESTION = "how to control the mind";
 const LIVE_SEARCH =
   "https://nextjs-boilerplate-p6q5avqba-srila-prabhupadas-projects.vercel.app/api/search?only_his=0&q=how%20to%20control%20the%20mind";
 
-function unavailable() {
-  return Response.json({ error: "not_found" }, { status: 404 });
-}
-
 function rejectionCode(reason: string): string {
   if (reason.includes("never supplied")) return "invented_id";
   if (reason.includes("repeats across sections")) return "duplicate_section_id";
@@ -240,12 +236,20 @@ async function runProbe() {
   };
 }
 
-export async function GET(request: Request) {
-  if (process.env.VERCEL_ENV !== "preview") return unavailable();
-  const op = new URL(request.url).searchParams.get("op");
+export default async function Phase5OwnerGatePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ op?: string }>;
+}) {
+  if (process.env.VERCEL_ENV !== "preview") return <main>Not found</main>;
+  const { op } = await searchParams;
   try {
-    if (op === "bucket") return Response.json(await provisionBucket());
-    if (op === "probe") return Response.json(await runProbe());
+    const result = op === "bucket"
+      ? await provisionBucket()
+      : op === "probe"
+        ? await runProbe()
+        : { error: "not_found" };
+    return <main><pre id="result">{JSON.stringify(result)}</pre></main>;
   } catch (error) {
     console.error(JSON.stringify({
       level: "error",
@@ -253,7 +257,6 @@ export async function GET(request: Request) {
       op,
       code: error instanceof Error ? error.message : "unknown",
     }));
-    return Response.json({ error: "operation_failed" }, { status: 500 });
+    return <main><pre id="result">{JSON.stringify({ error: "operation_failed" })}</pre></main>;
   }
-  return unavailable();
 }
