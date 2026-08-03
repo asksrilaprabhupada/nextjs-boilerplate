@@ -1,23 +1,29 @@
 -- ============================================================================
--- search_transcripts_hybrid_batch_v3: surface the speaker, honour speaker_only
+-- search_transcripts_hybrid_batch_v3: coarse speaker-segment presence filter
+-- New forward migration after the already-applied 20260802155648 telemetry change.
 -- ============================================================================
 --
 -- Re-runs the v3 template generator from 20260727120000 for the TRANSCRIPTS
--- row only, with two changes and nothing else:
+-- row only, changing only the function body:
 --
---   1. The @SPEAKER@ slot — hardcoded to 'NULL::text' for every table in the
---      original — becomes 't.speaker', so retrieval carries the deterministic
---      speaker label added by 20260801120000 and the application can warn when
---      a candidate's words are a guest's, not Śrīla Prabhupāda's.
+--   `p_constraints -> 'speaker_only'` becomes a coarse candidate gate. When
+--   true, a candidate must contain a line beginning with a canonical
+--   Prabhupāda label. This predicate runs only after every semantic, FTS,
+--   lexical and tag lane has completed and `agg` has joined the source row.
+--   It therefore cannot reduce an ANN/FTS lane's candidate allowance or change
+--   its ranking. The application still has to segment the fresh source text and
+--   retain only explicitly labelled Prabhupāda turns before reranking/rendering.
 --
---   2. The transcripts constraint gains `p_constraints -> 'speaker_only'`:
---      when true, only paragraphs whose labelled speaker IS Śrīla Prabhupāda
---      are returned. Unlabelled ('unknown') paragraphs are excluded under the
---      filter — "probably him" is not "him". Absent or false, nothing changes.
+-- The other four functions are untouched and the six-argument/result signature
+-- stays backwards compatible. Activating speaker_only still requires the
+-- segment-safe application path described above; this database gate alone does
+-- not remove other speakers' turns from a mixed block. This migration creates
+-- no columns and rewrites no corpus rows.
 --
--- The other four functions are untouched. The function signature is untouched,
--- so the application needs no coordination: an app running against the old
--- body simply receives NULL speakers and an ignored constraint key.
+-- ROLLBACK: apply a new forward migration restoring the exact transcript
+-- function definition AND COMMENT from 20260727120000, repeat the
+-- service_role-only grants below, and `NOTIFY pgrst, 'reload schema'`.
+-- No table/data/index rollback is needed.
 --
 -- Everything else — clamped p_semantic_limit, ef_search 400, channel_saturated,
 -- SECURITY INVOKER, pinned search_path, service_role-only grants — is copied
@@ -247,7 +253,41 @@ SELECT
 FROM agg a
 JOIN public.@TBL@ t ON t.id = a.row_id
 CROSS JOIN sat st
+CROSS JOIN cons cn
 @JOINS@
+WHERE (
+  NOT cn.speaker_only
+  OR EXISTS (
+    SELECT 1
+    FROM pg_catalog.regexp_split_to_table(
+      COALESCE(t.body_text, ''),
+      E'\\r?\\n'
+    ) AS speaker_line(line_text)
+    -- This coarse gate must be a SUPERSET of the application projector. Match
+    -- the projector's label normalization: take bytes before the first colon,
+    -- fold case/diacritics, remove non-letters except spaces, then compare.
+    -- The app still performs the authoritative segment projection afterward.
+    WHERE speaker_line.line_text ~ E'^[^:：]*[:：]'
+      AND pg_catalog.btrim(
+        pg_catalog.regexp_replace(
+          pg_catalog.lower(
+            pg_catalog.regexp_replace(
+              pg_catalog.normalize(
+                pg_catalog.regexp_replace(speaker_line.line_text, E'[:：].*$', ''),
+                'NFD'
+              ),
+              U&'[\0300-\036f]',
+              '',
+              'g'
+            )
+          ),
+          '[^a-z ]',
+          '',
+          'g'
+        )
+      ) IN ('prabhupada', 'srila prabhupada')
+  )
+)
 ORDER BY a.provisional DESC
 LIMIT p_limit;
 $fn$;
@@ -259,11 +299,10 @@ BEGIN
 
   FOR r IN
     SELECT * FROM (VALUES
-    ('search_transcripts_hybrid_batch_v3', 'transcript_paragraphs', 'lecture', 'lecture', 'COALESCE(t.body_text, '''')', 'COALESCE(NULLIF(t.title,''''), COALESCE(t.content_type,''Recorded talk''))', 't.speaker', 'NULL::text', 't.date', 't.location', '', '
+    ('search_transcripts_hybrid_batch_v3', 'transcript_paragraphs', 'lecture', 'lecture', 'COALESCE(t.body_text, '''')', 'COALESCE(NULLIF(t.title,''''), COALESCE(t.content_type,''Recorded talk''))', 'NULL::text', 'NULL::text', 't.date', 't.location', '', '
         AND (cn.location IS NULL OR t.location ILIKE ''%'' || cn.location || ''%'')
         AND (cn.date_from IS NULL OR t.date >= cn.date_from)
-        AND (cn.date_to IS NULL OR t.date <= cn.date_to)
-        AND (NOT cn.speaker_only OR t.speaker = ''Śrīla Prabhupāda'')')
+        AND (cn.date_to IS NULL OR t.date <= cn.date_to)')
     ) AS v(fn, tbl, src, prefix, text_expr, ref_expr, speaker,
            recipient, dt, loc, joins, cons)
   LOOP
@@ -299,11 +338,11 @@ BEGIN
       || '(<#>), fts_core, fts_expansion, caller phrases and controlled tags, '
       || 'keeping every query id separate. Returns raw per-query-per-channel ranks '
       || 'with NO fusion and NO source-type weighting. ef_search is 400 and '
-      || 'p_semantic_limit is clamped to it. Returns t.speaker (deterministic '
-      || '"Name:" backfill, 20260801120000) and honours p_constraints->speaker_only '
-      || '(true = only paragraphs labelled as Śrīla Prabhupāda; unlabelled rows are '
-      || 'excluded under the filter, because "probably him" is not "him"). '
-      || 'Regenerated from the 20260727120000 template on 2026-08-01.');
+      || 'p_semantic_limit is clamped to it. The speaker output remains NULL; '
+      || 'p_constraints->speaker_only is a coarse canonical-line-label presence '
+      || 'gate applied only after agg joins transcript_paragraphs. The application '
+      || 'must segment fresh text before reranking or rendering. Regenerated from '
+      || 'the 20260727120000 template on 2026-08-02.');
   END LOOP;
 END
 $emit$;
@@ -316,19 +355,67 @@ DO $verify$
 DECLARE
   problem text;
   body text;
+  fn_oid oid;
+  output_names text[];
+  output_types text[];
+  agg_pos integer;
+  regex_pos integer;
 BEGIN
-  SELECT pg_get_functiondef(p.oid) INTO body
+  fn_oid := pg_catalog.to_regprocedure(
+    'public.search_transcripts_hybrid_batch_v3(jsonb,text[],text[],jsonb,integer,integer)'
+  );
+  IF fn_oid IS NULL THEN
+    RAISE EXCEPTION 'search_transcripts_hybrid_batch_v3 exact six-argument signature missing after apply';
+  END IF;
+
+  SELECT
+    pg_catalog.pg_get_functiondef(p.oid),
+    p.proargnames[7:20],
+    ARRAY(
+      SELECT pg_catalog.format_type(a.type_oid, NULL)
+      FROM unnest(p.proallargtypes) WITH ORDINALITY AS a(type_oid, ord)
+      WHERE a.ord > 6
+      ORDER BY a.ord
+    )
+  INTO body, output_names, output_types
   FROM pg_catalog.pg_proc p
-  JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-  WHERE n.nspname = 'public' AND p.proname = 'search_transcripts_hybrid_batch_v3';
-  IF body IS NULL THEN
-    RAISE EXCEPTION 'search_transcripts_hybrid_batch_v3 missing after apply';
+  WHERE p.oid = fn_oid;
+
+  IF output_names IS DISTINCT FROM ARRAY[
+    'passage_key', 'source_type', 'row_id', 'retrieval_text', 'reference',
+    'speaker', 'recipient', 'occurred_on', 'location', 'matched_query_ids',
+    'channel_ranks', 'channel_scores', 'tag_matches', 'channel_saturated'
+  ]::text[] THEN
+    RAISE EXCEPTION 'search_transcripts_hybrid_batch_v3 RETURNS column names changed: %', output_names;
   END IF;
-  IF body NOT LIKE '%t.speaker%' THEN
-    RAISE EXCEPTION 'speaker slot still NULL — the regeneration did not take';
+
+  IF output_types IS DISTINCT FROM ARRAY[
+    'text', 'text', 'uuid', 'text', 'text', 'text', 'text', 'date', 'text',
+    'text[]', 'jsonb', 'jsonb', 'integer', 'jsonb'
+  ]::text[] THEN
+    RAISE EXCEPTION 'search_transcripts_hybrid_batch_v3 RETURNS column types changed: %', output_types;
   END IF;
-  IF body NOT LIKE '%speaker_only%' THEN
-    RAISE EXCEPTION 'speaker_only constraint missing from the regenerated body';
+
+  IF body NOT LIKE '%speaker_only%' OR body NOT LIKE '%NOT cn.speaker_only%' THEN
+    RAISE EXCEPTION 'speaker_only final candidate gate missing from regenerated body';
+  END IF;
+  IF body NOT LIKE '%regexp_split_to_table%'
+     OR body NOT LIKE '%normalize(%'
+     OR body NOT LIKE '%[^a-z ]%'
+     OR body NOT LIKE '%srila prabhupada%' THEN
+    RAISE EXCEPTION 'canonical line-label normalization missing from regenerated body';
+  END IF;
+  IF body LIKE '%t.speaker%' THEN
+    RAISE EXCEPTION 'regenerated body must not depend on a transcript speaker column';
+  END IF;
+  IF body NOT LIKE '%NULL::text%' THEN
+    RAISE EXCEPTION 'speaker return slot no longer projects NULL::text';
+  END IF;
+
+  agg_pos := pg_catalog.strpos(pg_catalog.lower(body), 'from agg a');
+  regex_pos := pg_catalog.strpos(pg_catalog.lower(body), 'regexp_split_to_table');
+  IF agg_pos = 0 OR regex_pos = 0 OR regex_pos < agg_pos THEN
+    RAISE EXCEPTION 'speaker_only regex must occur only after the final agg/source-row join';
   END IF;
 
   -- ef_search still pinned to 400 and search_path still pinned, as in v3.
@@ -349,22 +436,31 @@ $verify$;
 -- ---------------------------------------------------------------------------
 -- Grants. Service role only, matching the other v3 functions.
 -- ---------------------------------------------------------------------------
-DO $c_grants$
-DECLARE fn record;
+REVOKE ALL ON FUNCTION public.search_transcripts_hybrid_batch_v3(
+  jsonb, text[], text[], jsonb, integer, integer
+) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION public.search_transcripts_hybrid_batch_v3(
+  jsonb, text[], text[], jsonb, integer, integer
+) FROM anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public.search_transcripts_hybrid_batch_v3(
+  jsonb, text[], text[], jsonb, integer, integer
+) TO service_role;
+
+DO $verify_grants$
+DECLARE
+  sig regprocedure := pg_catalog.to_regprocedure(
+    'public.search_transcripts_hybrid_batch_v3(jsonb,text[],text[],jsonb,integer,integer)'
+  );
 BEGIN
-  FOR fn IN
-    SELECT p.oid::regprocedure AS sig
-    FROM pg_catalog.pg_proc p
-    JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
-    WHERE n.nspname = 'public'
-      AND p.proname = 'search_transcripts_hybrid_batch_v3'
-  LOOP
-    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM PUBLIC', fn.sig);
-    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM anon', fn.sig);
-    EXECUTE format('REVOKE ALL ON FUNCTION %s FROM authenticated', fn.sig);
-    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO service_role', fn.sig);
-  END LOOP;
+  IF sig IS NULL
+     OR NOT pg_catalog.has_function_privilege('service_role', sig, 'EXECUTE')
+     OR pg_catalog.has_function_privilege('anon', sig, 'EXECUTE')
+     OR pg_catalog.has_function_privilege('authenticated', sig, 'EXECUTE') THEN
+    RAISE EXCEPTION 'search_transcripts_hybrid_batch_v3 grants are not service_role-only';
+  END IF;
 END
-$c_grants$;
+$verify_grants$;
 
 NOTIFY pgrst, 'reload schema';
