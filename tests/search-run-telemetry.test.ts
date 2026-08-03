@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   allowlistedTechnicalTelemetry,
   beginSearchRun,
+  cacheHitTechnicalTelemetry,
   completeSearchRun,
   failureTechnicalTelemetry,
   isExpectedSearchRunId,
@@ -75,6 +76,17 @@ function telemetryFixture(): SearchTelemetry {
     cutGap: 0.2,
     pinnedExactReference: false,
     droppedOnRefetch: 0,
+    speakerFilter: {
+      mode: "all",
+      rawTranscriptRows: 150,
+      retainedTranscriptRows: 150,
+      droppedTranscriptRows: 0,
+      keptSegments: 0,
+      guestSegmentsRemoved: 0,
+      unknownSegmentsRemoved: 0,
+      additionalTranscriptRowsVerified: 0,
+      additionalTranscriptRowsDropped: 0,
+    },
     degraded: false,
     degradedStages: [],
     sourceRetrieval: [{
@@ -248,6 +260,62 @@ describe("technical telemetry minimization", () => {
       },
       degradation: [],
     });
+  });
+
+  it("records speaker-filter mode and counts without names or transcript text", () => {
+    const telemetry = telemetryFixture();
+    telemetry.speakerFilter = {
+      mode: "prabhupada_segments",
+      rawTranscriptRows: 12,
+      retainedTranscriptRows: 7,
+      droppedTranscriptRows: 5,
+      keptSegments: 9,
+      guestSegmentsRemoved: 6,
+      unknownSegmentsRemoved: 2,
+      additionalTranscriptRowsVerified: 3,
+      additionalTranscriptRowsDropped: 0,
+    };
+
+    const miss = allowlistedTechnicalTelemetry(telemetry, "miss", startInput.questionHash);
+    const hit = cacheHitTechnicalTelemetry(startInput.questionHash, "prabhupada_segments");
+    const failure = failureTechnicalTelemetry(
+      startInput.questionHash,
+      new Error("private text"),
+      "prabhupada_segments",
+    );
+
+    expect(miss).toMatchObject({ speakerFilter: telemetry.speakerFilter });
+    expect(hit).toMatchObject({ speakerFilter: { mode: "prabhupada_segments" } });
+    expect(failure.telemetry).toMatchObject({ speakerFilter: { mode: "prabhupada_segments" } });
+    expect(JSON.stringify({ miss, hit, failure })).not.toContain("Śrīla Prabhupāda");
+  });
+
+  it("strictly allowlists nested speaker-filter fields", () => {
+    const telemetry = telemetryFixture();
+    const runtimeValue = telemetry.speakerFilter as typeof telemetry.speakerFilter & {
+      rawTranscriptText: string;
+      speakerName: string;
+      providerPayload: { secret: string };
+    };
+    runtimeValue.rawTranscriptText = "private transcript sentinel";
+    runtimeValue.speakerName = "private speaker sentinel";
+    runtimeValue.providerPayload = { secret: "provider secret sentinel" };
+
+    const out = allowlistedTechnicalTelemetry(telemetry, "miss", startInput.questionHash);
+    expect(out.speakerFilter).toEqual({
+      mode: "all",
+      rawTranscriptRows: 150,
+      retainedTranscriptRows: 150,
+      droppedTranscriptRows: 0,
+      keptSegments: 0,
+      guestSegmentsRemoved: 0,
+      unknownSegmentsRemoved: 0,
+      additionalTranscriptRowsVerified: 0,
+      additionalTranscriptRowsDropped: 0,
+    });
+    expect(JSON.stringify(out)).not.toContain("private transcript sentinel");
+    expect(JSON.stringify(out)).not.toContain("private speaker sentinel");
+    expect(JSON.stringify(out)).not.toContain("provider secret sentinel");
   });
 
   it("keeps every duration when one source has a fail-open second invocation", () => {
