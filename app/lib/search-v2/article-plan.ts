@@ -233,6 +233,8 @@ export function articleRejections({
  * either way: unplaced passages are always appended after the sections.
  */
 export const ARTICLE_PLANNER_CAPACITY = 23;
+export const ARTICLE_PLANNER_THINKING_BUDGET = 0;
+export const ARTICLE_PLANNER_MAX_OUTPUT_TOKENS = 4096;
 
 /** JSON Schema handed to Gemini, mirroring the Zod schema. */
 export function articlePlanResponseSchema(maxPassages: number): Record<string, unknown> {
@@ -414,7 +416,8 @@ export async function planArticle(
             responseMimeType: "application/json",
             responseJsonSchema: articlePlanResponseSchema(passages.length),
             temperature: 0.1,
-            maxOutputTokens: 1400,
+            thinkingConfig: { thinkingBudget: ARTICLE_PLANNER_THINKING_BUDGET },
+            maxOutputTokens: ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
           },
         }),
         timeoutMs,
