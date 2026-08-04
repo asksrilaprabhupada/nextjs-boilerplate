@@ -290,4 +290,32 @@ describe("private snapshot artifact", () => {
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("search.snapshot_failed"));
     errorSpy.mockRestore();
   });
+  it("removes corpus ids at the final JSON/SSE boundary but keeps the private snapshot trace", async () => {
+    const input = snapshotInput();
+    const internalResponse = {
+      ...input.internalResponse,
+      articleVerseIds: ["verse-row-1"],
+      passages: [{ id: "verse:verse-row-1", reference: "BG 18.66", text: "exact words" }],
+      additional: [{ id: "lecture:talk-row-1", reference: "Lecture", snippet: "exact words" }],
+    };
+    const writer = vi.fn(async (
+      _snapshot: Parameters<typeof persistSearchSnapshot>[0],
+    ) => ({ objectBytes: 1, objectSha256: "abc" }) as never);
+    const result = await prepareSuccessfulResponse({
+      result: internalResponse,
+      fromCache: false,
+      diagnostics: input.diagnostics,
+      telemetry: input.telemetry,
+      searchLogId: input.searchLogId,
+    }, input.question, input.requestId, input.session, writer);
+
+    expect(result.guarded).not.toHaveProperty("articleVerseIds");
+    expect(result.guarded.passages).toEqual([{ reference: "BG 18.66", text: "exact words" }]);
+    expect(result.guarded.additional).toEqual([{ reference: "Lecture", snippet: "exact words" }]);
+    expect(result.guardedJson).not.toContain("verse-row-1");
+    expect(result.guardedJson).not.toContain("talk-row-1");
+    expect(writer.mock.calls[0][0].internalResponse).toEqual(internalResponse);
+    expect(writer.mock.calls[0][0].guardedResponse).toEqual(result.guarded);
+  });
+
 });

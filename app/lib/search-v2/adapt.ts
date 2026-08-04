@@ -85,7 +85,6 @@ export function toWirePassage(p: VerifiedPassage): SearchPassage {
   };
   const label = labelForWirePassage(shape);
   return {
-    id: p.passageKey,
     type: p.sourceType,
     reference: p.reference,
     url: p.vedabaseUrl,
@@ -122,7 +121,6 @@ export function toWireAdditional(a: AdditionalPassage): AdditionalSearchPassage 
   };
   const label = labelForAdditionalPassage(shape);
   return {
-    id: a.passageKey,
     type,
     reference: a.reference,
     // Derived from the reference when it parses cleanly (verses/purports);
@@ -153,7 +151,7 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
   const degradedSources = degradedSourcesForWire(telemetry);
 
   const citations: Citation[] = passages.map((p) => ({
-    ref: p.reference ?? p.id,
+    ref: p.reference ?? p.label,
     book: p.type,
     url: p.url ?? "",
     type: CITATION_TYPE[p.type] ?? "prose",
@@ -178,9 +176,5 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
     retrievalStatus: degradedSources.length > 0 ? "degraded" : "complete",
     degradedSources,
     disabledLanes: [],
-    // Bare row ids (never the namespaced key) — log_search stores uuid[].
-    articleVerseIds: passages
-      .filter((p) => p.type === "verse")
-      .map((p) => p.id.slice(p.id.indexOf(":") + 1)),
   };
 }

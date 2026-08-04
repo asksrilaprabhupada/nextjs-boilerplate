@@ -154,7 +154,9 @@ export const cacheKeys = {
   // "Śrīla Prabhupāda's words only" filter). A filtered answer cached under the
   // unfiltered key would serve the wrong evidence to the next asker.
   response: (question: string, variant?: string) =>
-    `response:v5:${searchCorpusVersion()}:${variant ? `${variant}:` : ""}${sha256(normalizeQuestion(question))}`,
+    // v6 makes every pre-ID-removal response unreachable. Runtime Cache has
+    // no required delete step: old v5 entries expire naturally after 24 h.
+    `response:v6:${searchCorpusVersion()}:${variant ? `${variant}:` : ""}${sha256(normalizeQuestion(question))}`,
 } as const;
 
 /**

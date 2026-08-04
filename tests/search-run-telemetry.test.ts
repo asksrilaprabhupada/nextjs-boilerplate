@@ -330,15 +330,24 @@ describe("technical telemetry minimization", () => {
   it("extracts result ids and counts without passage text", () => {
     const stored = resultFieldsForTelemetry({
       totalResults: 2,
-      articleVerseIds: ["11111111-1111-4111-8111-111111111111"],
       queryVariants: [],
       passages: [{
         type: "book",
-        id: "book:22222222-2222-4222-8222-222222222222",
         reference: "Bhagavad-gita chapter",
         text: "exact corpus passage must not be logged here",
       }],
-    });
+    }, [
+      {
+        passageKey: "verse:11111111-1111-4111-8111-111111111111",
+        sourceType: "verse",
+        reference: "BG 6.34",
+      },
+      {
+        passageKey: "book:22222222-2222-4222-8222-222222222222",
+        sourceType: "book",
+        reference: "Bhagavad-gita chapter",
+      },
+    ]);
 
     expect(stored).toEqual({
       totalResults: 2,
@@ -353,8 +362,7 @@ describe("technical telemetry minimization", () => {
   it("treats malformed cached result fields as empty instead of throwing", () => {
     expect(resultFieldsForTelemetry({
       totalResults: "not-a-number",
-      articleVerseIds: "not-an-array",
-      passages: [null, { type: "book", id: null, reference: { private: true } }],
+      passages: [null, { type: "book", reference: { private: true } }],
       queryVariants: "raw text",
     })).toEqual({
       totalResults: 0,
