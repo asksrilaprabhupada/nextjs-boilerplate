@@ -443,8 +443,16 @@ describe("junk floor", () => {
 // ─── B2: query-plan semantic validation ──────────────────────
 
 describe("query plan validation", () => {
-  /** The one fan-out ceiling. Every question is planned against it. */
-  const MAX_SUBQUERIES = 6;
+  /** The one fan-out size. Every question is planned to hit it exactly. */
+  const MAX_SUBQUERIES = 5;
+  /** Five angles, five different roles — the shape a valid plan must have. */
+  const fiveAngles = () => [
+    { id: "s1", text: "why the mind becomes restless", role: "cause" as const, priority: "primary" as const },
+    { id: "s2", text: "what scripture teaches about its nature", role: "scriptural_basis" as const, priority: "primary" as const },
+    { id: "s3", text: "practice and detachment as the way", role: "method" as const, priority: "supporting" as const },
+    { id: "s4", text: "obstacles a devotee meets in steadying it", role: "practice" as const, priority: "supporting" as const },
+    { id: "s5", text: "analogies for the wandering senses", role: "example" as const, priority: "exploratory" as const },
+  ];
   const base = fallbackPlan("how do I control my mind");
   const check = (query: string, plan: typeof base) =>
     semanticRejections({ query, plan, maxSubqueries: MAX_SUBQUERIES });
@@ -463,30 +471,55 @@ describe("query plan validation", () => {
     expect(base.exact_reference).toBeNull();
   });
 
-  it("rejects more subqueries than the budget permits", () => {
+  it("rejects more subqueries than the plan calls for", () => {
     const plan = {
       ...base,
-      subqueries: Array.from({ length: MAX_SUBQUERIES + 1 }, (_, i) => ({
-        id: `s${i}`,
-        text: `distinct angle number ${i} about steadiness`,
-        role: "cause" as const,
-        priority: "supporting" as const,
-      })),
+      subqueries: [
+        ...fiveAngles(),
+        { id: "s6", text: "one angle too many about steadiness", role: "context" as const, priority: "exploratory" as const },
+      ],
     };
-    expect(check("how do I control my mind", plan).join(" ")).toMatch(/budget permits/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/exactly 5 are required/);
+  });
+
+  it("rejects FEWER than five — this is the bug that produced 56 zero-angle searches", () => {
+    // Both the old prompt and the old schema said fewer was fine, so the two
+    // planner calls that beat the timeout still returned nothing to search with.
+    const plan = { ...base, subqueries: fiveAngles().slice(0, 2) };
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/exactly 5 are required/);
+  });
+
+  it("rejects an EMPTY subquery list — the exact shape production kept accepting", () => {
+    expect(check("how do I control my mind", { ...base, subqueries: [] }).join(" "))
+      .toMatch(/returned 0 subqueries/);
   });
 
   it("accepts a plan that spends the budget exactly", () => {
+    const plan = { ...base, subqueries: fiveAngles() };
+    expect(check("how do I control my mind", plan)).toEqual([]);
+  });
+
+  it("rejects five angles that all serve the same purpose", () => {
+    // Five rows is not five angles. A repeated role is one angle billed twice.
     const plan = {
       ...base,
-      subqueries: Array.from({ length: MAX_SUBQUERIES }, (_, i) => ({
-        id: `s${i}`,
-        text: `distinct angle number ${i} about steadiness`,
-        role: "cause" as const,
-        priority: "supporting" as const,
-      })),
+      subqueries: fiveAngles().map((s, i) => ({ ...s, role: "cause" as const, id: `s${i}` })),
     };
-    expect(check("how do I control my mind", plan).join(" ")).not.toMatch(/budget permits/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/both serve the "cause" purpose/);
+  });
+
+  it("sees through a reworded duplicate that differs only by inflection", () => {
+    // Without stemming "control" and "controlling" are different tokens, so
+    // these two scored 0.33 and sailed past the old 0.85 pair threshold.
+    const plan = {
+      ...base,
+      subqueries: [
+        ...fiveAngles().slice(0, 3),
+        { id: "s4", text: "control of the restless mind", role: "practice" as const, priority: "supporting" as const },
+        { id: "s5", text: "controlling the restless mind", role: "example" as const, priority: "exploratory" as const },
+      ],
+    };
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/near-identical/);
   });
 
   it("rejects a subquery equivalent to the original question", () => {
@@ -528,13 +561,7 @@ describe("query plan validation", () => {
   });
 
   it("accepts a well-formed plan with genuinely distinct angles", () => {
-    const plan = {
-      ...base,
-      subqueries: [
-        { id: "s1", text: "the mind as friend and enemy of the soul", role: "scriptural_basis" as const, priority: "primary" as const },
-        { id: "s2", text: "why the mind is restless and flickering", role: "cause" as const, priority: "supporting" as const },
-      ],
-    };
+    const plan = { ...base, subqueries: fiveAngles() };
     expect(check("how do I control my mind", plan)).toEqual([]);
   });
 });

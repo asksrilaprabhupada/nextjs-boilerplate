@@ -311,7 +311,10 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(out.telemetry.degradedStages).toContainEqual({
       stage: "planning",
       source: "gemini_query_planner",
-      code: "plan_rejected",
+      // The specific reason, not the old catch-all `plan_rejected`. With no
+      // GEMINI_API_KEY in the test environment, that reason is "no key" — which
+      // is a deployment fault, not a model that answered badly.
+      code: "plan_api_key_absent",
     });
     expect(out.telemetry.degradedStages.some(
       (item) => item.source === "gemini_article_planner",

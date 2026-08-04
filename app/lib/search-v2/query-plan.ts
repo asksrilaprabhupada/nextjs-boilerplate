@@ -18,6 +18,14 @@
  * enemy" (scriptural_basis) and "why the mind is restless" (cause) each reach
  * passages the other misses. Ten paraphrases of one sentence reach the same
  * passages ten times and cost ten seconds.
+ *
+ * FIVE ANGLES ARE REQUIRED, NOT OFFERED. Between 3 and 4 August every one of
+ * the 56 production searches planned zero angles: 54 because default Gemini
+ * thinking overran the 3 s cap, and 2 that arrived in time and still returned
+ * an empty list, because both the prompt and the schema told the model that
+ * fewer was fine. Both causes are fixed here — thinking is off, and a plan
+ * carrying fewer than {@link REQUIRED_SUBQUERIES} distinct angles is a recorded
+ * failure rather than a quiet success.
  */
 import { z } from "zod";
 import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
@@ -59,6 +67,24 @@ const SUBQUERY_ROLES = [
 
 const SOURCE_TYPES = ["verse", "purport", "book", "lecture", "conversation", "letter"] as const;
 
+/**
+ * Exactly this many extra search angles, every time. One original question plus
+ * five distinct angles is six searches across all five sources — the owner's
+ * decision, and the reason "up to six, fewer is fine" is gone from both the
+ * prompt and the schema.
+ */
+export const REQUIRED_SUBQUERIES = 5;
+
+/** Thinking off. Default thinking is what pushed every planner call past 3 s. */
+export const QUERY_PLANNER_THINKING_BUDGET = 0;
+
+/**
+ * Room for five angles plus the constraint block. Measured at ~450 output
+ * tokens for a full plan; the headroom is deliberate, and with thinking at 0
+ * none of it is spent on reasoning the way the article planner's was.
+ */
+export const QUERY_PLANNER_MAX_OUTPUT_TOKENS = 1600;
+
 export const QueryPlanSchema = z
   .object({
     schema_version: z.literal("query-plan-v1"),
@@ -78,7 +104,14 @@ export const QueryPlanSchema = z
           })
           .strict(),
       )
-      .max(6),
+      /**
+       * The SHAPE ceiling only. "Exactly five" is asserted in
+       * `semanticProblems` instead, so that a short plan is recorded as the
+       * specific failure `too_few_angles` rather than as an anonymous schema
+       * error — and so `fallbackPlan`, which legitimately carries none, still
+       * validates against the shape it must satisfy everywhere else.
+       */
+      .max(REQUIRED_SUBQUERIES),
     constraints: z
       .object({
         scripture_references: z.array(z.string().max(50)).max(5),
@@ -104,15 +137,57 @@ export const QueryPlanSchema = z
 
 export type QueryPlan = z.infer<typeof QueryPlanSchema>;
 
-/** How the plan was arrived at. Degraded states are reported, never hidden.
- *  There is no retry state: the planner gets one attempt (see PLANNER_TIMEOUT_MS). */
+/** How the plan was arrived at. Degraded states are reported, never hidden. */
 export type PlanSource = "model" | "fallback_original_only";
+
+/**
+ * WHY the plan fell back — the single most useful field for diagnosing the
+ * planner, and the one the database did not have. Until now every failure was
+ * stored as the same opaque `plan_rejected`, and the detail that would have
+ * separated "Gemini was slow" from "Gemini answered but returned nothing"
+ * lived only in Vercel logs that expire.
+ */
+export type PlanFailureKind =
+  /** No GEMINI_API_KEY in the environment. Not a model failure at all. */
+  | "api_key_absent"
+  /** The call did not return inside PLANNER_TIMEOUT_MS. */
+  | "timeout"
+  /** The provider rejected or dropped the call (5xx, network, abort). */
+  | "provider_error"
+  /** A 200 carrying nothing — usually an output-token budget spent on thinking. */
+  | "empty_body"
+  /** Structured output came back unparseable, normally truncated mid-object. */
+  | "invalid_json"
+  /** Valid JSON, wrong shape. */
+  | "schema_rejected"
+  /** Right shape, fewer than REQUIRED_SUBQUERIES angles. */
+  | "too_few_angles"
+  /** Right count, but the angles repeat each other or the question. */
+  | "near_duplicate_angles"
+  /** A constraint or name the question never contained: a misreading. */
+  | "semantic_rejected";
+
+/** Provider cost of the planning stage. Recorded so a search has a price. */
+export interface PlannerUsage {
+  /** 1, or 2 when a repairable plan earned its single retry. */
+  attempts: number;
+  promptTokens: number;
+  outputTokens: number;
+  /** Non-zero here would mean thinkingBudget: 0 was not honoured. */
+  thoughtsTokens: number;
+  totalTokens: number;
+  /** Wall-clock across every attempt, including the rejected one. */
+  durationMs: number;
+}
 
 export interface PlannedQuery {
   plan: QueryPlan;
   source: PlanSource;
   /** Populated when validation rejected something; surfaced in telemetry. */
   rejections: string[];
+  /** Null on success. The recorded reason a fallback plan is being used. */
+  failureKind: PlanFailureKind | null;
+  usage: PlannerUsage;
 }
 
 /**
@@ -144,7 +219,12 @@ export function queryPlanResponseSchema(maxSubqueries: number): Record<string, u
       vocabulary_candidates: { type: "array", maxItems: 10, items: { type: "string" } },
       subqueries: {
         type: "array",
+        // Both bounds, deliberately equal: the model is told the count is
+        // mandatory in the one place it cannot talk itself out of.
+        minItems: Math.max(0, maxSubqueries),
         maxItems: Math.max(0, maxSubqueries),
+        description:
+          `Exactly ${maxSubqueries} search angles, each with a different role and each reaching passages the others would miss.`,
         items: {
           type: "object",
           required: ["id", "text", "role", "priority"],
@@ -242,10 +322,31 @@ const FUNCTION_WORDS = new Set([
   "who", "whom", "which", "one", "ones", "s",
 ]);
 
+/**
+ * Crude suffix stripping, and deliberately crude. Without it "control",
+ * "controls" and "controlling" are three different tokens, so "how to control
+ * the mind" and "controlling the mind" score 0.33 and sail past any threshold
+ * that does not also reject genuinely different angles. It over-stems ("bliss"
+ * → "bliss", but "goodness" → "good"); over-stemming can only make two texts
+ * look MORE alike, which costs a retry, never a false acceptance.
+ */
+function stem(token: string): string {
+  for (const suffix of ["ations", "ation", "ings", "ing", "edly", "ed", "es", "s"]) {
+    if (token.length <= suffix.length + 2 || !token.endsWith(suffix)) continue;
+    const root = token.slice(0, -suffix.length);
+    // English doubles the final consonant before -ing/-ed: controlling →
+    // controll, stopped → stopp. Without collapsing it, "control the mind" and
+    // "controlling the mind" stay two different tokens and score 0.5 — under
+    // any threshold that also lets five genuinely different angles through.
+    return /[bdfglmnprt]{2}$/.test(root) ? root.slice(0, -1) : root;
+  }
+  return token;
+}
+
 /** Content-word Jaccard. Cheap, and adequate for "is this the same question?". */
 function jaccard(a: string, b: string): number {
   const tokens = (s: string) => {
-    const all = normalise(s).split(" ").filter(Boolean);
+    const all = normalise(s).split(" ").filter(Boolean).map(stem);
     const content = all.filter((t) => !FUNCTION_WORDS.has(t));
     // Fall back to raw tokens rather than comparing two empty sets.
     return new Set(content.length > 0 ? content : all);
@@ -271,44 +372,101 @@ function significantTokens(query: string): string[] {
 export interface SemanticCheckInput {
   query: string;
   plan: QueryPlan;
-  /** The fan-out ceiling this plan was asked to respect. */
+  /** The fan-out size this plan was asked to hit exactly. */
   maxSubqueries: number;
+}
+
+/**
+ * How alike two angles may be before they stop being two angles.
+ *
+ * Content-word Jaccard after stemming. Five angles on one subject share the
+ * subject word by construction ("the mind" appears in all of them), so a
+ * genuinely distinct set scores around 0.1–0.25 on this measure; the old 0.85
+ * pair threshold was loose enough that only near-copies tripped it. These are
+ * starting values, tightened once and to be moved only from measured
+ * acceptance rates, never from a guess.
+ */
+export const NEAR_DUPLICATE_OF_ORIGINAL = 0.8;
+export const NEAR_DUPLICATE_PAIR = 0.7;
+
+/** A rejection, and whether a second attempt could plausibly repair it. */
+export interface PlanProblem {
+  kind: PlanFailureKind;
+  message: string;
+  /**
+   * True for a plan the model simply built carelessly — too few angles,
+   * repeated angles, repeated roles. False for a MISREADING (an invented
+   * constraint, a dropped name): asking the same model to re-read the same
+   * question is not a repair, it is a second chance at the same mistake.
+   */
+  repairable: boolean;
 }
 
 /**
  * Semantic validation — the checks a JSON schema cannot express.
  *
- * Returns the list of reasons the plan is untrustworthy. A non-empty list means
- * the plan is rejected outright, not repaired: a planner that invented a
- * constraint or dropped a name has misread the question, and silently trimming
- * its output hides that.
+ * A non-empty list means the plan is rejected, never trimmed into shape.
+ * Repairable problems earn exactly one retry (see `planQuery`); everything else
+ * lands on the honest fallback immediately.
  */
-export function semanticRejections({ query, plan, maxSubqueries }: SemanticCheckInput): string[] {
-  const problems: string[] = [];
+export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckInput): PlanProblem[] {
+  const problems: PlanProblem[] = [];
   const subs = plan.subqueries;
+  const push = (kind: PlanFailureKind, message: string, repairable: boolean): void => {
+    problems.push({ kind, message, repairable });
+  };
 
-  if (subs.length > maxSubqueries) {
-    problems.push(`plan returned ${subs.length} subqueries; the budget permits ${maxSubqueries}`);
+  // EXACTLY this many. "Fewer is fine" is what produced 56 zero-angle searches.
+  if (subs.length !== maxSubqueries) {
+    push(
+      subs.length < maxSubqueries ? "too_few_angles" : "semantic_rejected",
+      `plan returned ${subs.length} subqueries; exactly ${maxSubqueries} are required`,
+      subs.length < maxSubqueries,
+    );
   }
 
   const ids = new Set<string>();
   for (const sq of subs) {
-    if (ids.has(sq.id)) problems.push(`duplicate subquery id "${sq.id}"`);
+    if (ids.has(sq.id)) push("semantic_rejected", `duplicate subquery id "${sq.id}"`, false);
     ids.add(sq.id);
     // A reserved id would collide with the SQL layer's pseudo-queries and
     // silently inherit the original question's weight in fusion.
     if (sq.id === "__lexical__" || sq.id === "__tags__" || sq.id === "q_original") {
-      problems.push(`subquery id "${sq.id}" is reserved`);
+      push("semantic_rejected", `subquery id "${sq.id}" is reserved`, false);
     }
-    if (jaccard(sq.text, query) >= 0.9) {
-      problems.push(`subquery "${sq.id}" is equivalent to the original question`);
+    if (jaccard(sq.text, query) >= NEAR_DUPLICATE_OF_ORIGINAL) {
+      push(
+        "near_duplicate_angles",
+        `subquery "${sq.id}" is equivalent to the original question`,
+        true,
+      );
+    }
+  }
+
+  // Five angles serving one purpose are one angle billed five times. A repeated
+  // role is the cheapest reliable signal of that, and the model is told so.
+  const seenRoles = new Map<string, string>();
+  for (const sq of subs) {
+    const owner = seenRoles.get(sq.role);
+    if (owner) {
+      push(
+        "near_duplicate_angles",
+        `subqueries "${owner}" and "${sq.id}" both serve the "${sq.role}" purpose`,
+        true,
+      );
+    } else {
+      seenRoles.set(sq.role, sq.id);
     }
   }
 
   for (let i = 0; i < subs.length; i++) {
     for (let j = i + 1; j < subs.length; j++) {
-      if (jaccard(subs[i].text, subs[j].text) >= 0.85) {
-        problems.push(`subqueries "${subs[i].id}" and "${subs[j].id}" are near-identical`);
+      if (jaccard(subs[i].text, subs[j].text) >= NEAR_DUPLICATE_PAIR) {
+        push(
+          "near_duplicate_angles",
+          `subqueries "${subs[i].id}" and "${subs[j].id}" are near-identical`,
+          true,
+        );
       }
     }
   }
@@ -321,7 +479,7 @@ export function semanticRejections({ query, plan, maxSubqueries }: SemanticCheck
     const t = token.toLowerCase();
     if (t.length < 3) continue;
     if (!planText.includes(t.replace(/\s+/g, " "))) {
-      problems.push(`plan dropped "${token}" from the original question`);
+      push("semantic_rejected", `plan dropped "${token}" from the original question`, false);
       break; // one report is enough; the plan is already rejected
     }
   }
@@ -330,31 +488,35 @@ export function semanticRejections({ query, plan, maxSubqueries }: SemanticCheck
   const q = query.toLowerCase();
   const c = plan.constraints;
   if (c.recipient && !q.includes(c.recipient.toLowerCase().split(/\s+/)[0])) {
-    problems.push(`invented recipient constraint "${c.recipient}"`);
+    push("semantic_rejected", `invented recipient constraint "${c.recipient}"`, false);
   }
   if (c.location && !q.includes(c.location.toLowerCase().split(/\s+/)[0])) {
-    problems.push(`invented location constraint "${c.location}"`);
+    push("semantic_rejected", `invented location constraint "${c.location}"`, false);
   }
   if (c.speaker && !q.includes(c.speaker.toLowerCase().split(/\s+/)[0])) {
-    problems.push(`invented speaker constraint "${c.speaker}"`);
+    push("semantic_rejected", `invented speaker constraint "${c.speaker}"`, false);
   }
   for (const ref of c.scripture_references) {
     const siglum = ref.trim().split(/[\s.]/)[0]?.toLowerCase();
     if (siglum && siglum.length >= 2 && !q.includes(siglum)) {
-      problems.push(`invented scripture constraint "${ref}"`);
+      push("semantic_rejected", `invented scripture constraint "${ref}"`, false);
       break;
     }
   }
   for (const d of [c.date_from, c.date_to]) {
     if (d && !/^\d{4}(-\d{2}(-\d{2})?)?$/.test(d)) {
-      problems.push(`malformed date constraint "${d}"`);
+      push("semantic_rejected", `malformed date constraint "${d}"`, false);
     }
   }
 
   // Arbitrary database slugs are the model guessing at internals.
   for (const v of plan.vocabulary_candidates) {
     if (/^[a-z0-9]+(-[a-z0-9]+){3,}$/.test(v) && !q.includes(v.replace(/-/g, " "))) {
-      problems.push(`vocabulary candidate "${v}" looks like an invented database slug`);
+      push(
+        "semantic_rejected",
+        `vocabulary candidate "${v}" looks like an invented database slug`,
+        false,
+      );
       break;
     }
   }
@@ -362,26 +524,38 @@ export function semanticRejections({ query, plan, maxSubqueries }: SemanticCheck
   return problems;
 }
 
-function buildPrompt(query: string, maxSubqueries: number): string {
+/** Message-only view, for callers and tests that only need the reasons. */
+export function semanticRejections(input: SemanticCheckInput): string[] {
+  return semanticProblems(input).map((problem) => problem.message);
+}
+
+function buildPrompt(query: string, maxSubqueries: number, repairNotes: string[] = []): string {
   return [
     "You plan a RETRIEVAL STRATEGY over a fixed library of Śrīla Prabhupāda's",
     "books, lectures, conversations and letters. You never answer the question.",
     "",
     "You are producing search angles for a librarian, not a reply for a reader.",
     "",
-    `You may return AT MOST ${maxSubqueries} subqueries. Returning more is a failure.`,
-    "Returning fewer is fine, and often right: a narrow question needs one or two",
-    "angles, and padding it out to the ceiling only retrieves noise.",
+    `Return EXACTLY ${maxSubqueries} subqueries. Not fewer, not more. A shorter`,
+    "list is a failed plan and is thrown away — even for a narrow question, even",
+    "for a bare scripture reference, even when the question looks fully covered",
+    `by itself. The library is searched with the original question PLUS your ${maxSubqueries}`,
+    `angles, so ${maxSubqueries + 1} searches run and their results are merged.`,
     "",
-    "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE — a different role",
-    "from the enum, reaching passages the others would miss. Rephrasing the same",
-    "sentence is worthless: it retrieves the same rows twice.",
+    "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE — a different `role`",
+    "value, reaching passages the others would miss. Never use a role twice.",
+    "Rephrasing the same sentence is worthless: it retrieves the same rows twice",
+    "and wastes one of your five angles.",
     "",
-    "Good, for 'how do I control my mind':",
-    '  - "the mind as friend and enemy of the soul"   (scriptural_basis)',
-    '  - "why the mind is restless and flickering"     (cause)',
-    '  - "practice and detachment to steady the mind"  (method)',
-    "Bad: 'how can I control the mind', 'controlling one's mind', 'mind control'.",
+    "Worked example — 'how do I control my mind' (the original question is",
+    "searched too, so do not restate it):",
+    '  1. "why the mind becomes restless and uncontrolled"      (cause)',
+    '  2. "what the scriptures teach about the nature of the mind" (scriptural_basis)',
+    '  3. "practice and detachment as the method of control"    (method)',
+    '  4. "obstacles a practitioner meets in steadying the mind" (practice)',
+    '  5. "analogies and examples for the wandering mind"       (example)',
+    "Bad: 'how can I control the mind', 'controlling one's mind', 'mind control'",
+    "— three rewordings of one angle.",
     "",
     "RULES",
     "- Preserve every proper name, place, recipient and scripture reference.",
@@ -394,15 +568,36 @@ function buildPrompt(query: string, maxSubqueries: number): string {
     "  the corpus may not support.",
     "- Never write doctrine, never answer, never cite.",
     "",
+    // The retry is told what was wrong with the first plan. A blind second
+    // attempt at the same prompt tends to reproduce the same mistake.
+    ...(repairNotes.length > 0
+      ? [
+          "YOUR PREVIOUS PLAN WAS REJECTED:",
+          ...repairNotes.map((note) => `  - ${note}`),
+          `Return ${maxSubqueries} angles that are clearly different from one another,`,
+          "each with its own role. Do not repeat the wording of the question.",
+          "",
+        ]
+      : []),
     `Question: ${JSON.stringify(query)}`,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
+/** The token accounting Gemini returns beside the body. All fields optional. */
+interface GenAiUsage {
+  promptTokenCount?: number | null;
+  candidatesTokenCount?: number | null;
+  thoughtsTokenCount?: number | null;
+  totalTokenCount?: number | null;
+}
+
 interface GenAiLike {
   models: {
-    generateContent(args: Record<string, unknown>): Promise<{ text?: string | null }>;
+    generateContent(
+      args: Record<string, unknown>,
+    ): Promise<{ text?: string | null; usageMetadata?: GenAiUsage | null }>;
   };
 }
 
@@ -410,46 +605,88 @@ interface GenAiLike {
 export interface PlannerDeps {
   client?: GenAiLike;
   timeoutMs?: number;
+  /** Test seam for deterministic durations. */
+  now?: () => number;
 }
 
 /**
- * 3 s, one attempt, no retry. Every observed production trace showed the
- * planner failing (503 or timeout) and the retry doubling the cost to over
- * eight seconds before retrieval even began. The fallback plan is a perfectly
- * serviceable degraded path; paying twice to avoid it is not.
+ * 3 s PER ATTEMPT.
+ *
+ * The cap itself was never the whole bug — default Gemini thinking was. With
+ * `thinkingBudget: 0` the call returns in roughly 2.2–2.5 s, inside this cap
+ * with room to spare, so the cap stays where it is rather than being raised on
+ * a guess. If Preview measurement ever shows it too tight, the replacement
+ * comes from the measured p95 plus a second, not from a round number.
  */
 const PLANNER_TIMEOUT_MS = 3000;
+
+/** Distinguishes "took too long" from "came back wrong" at the call boundary. */
+class PlannerCallError extends Error {
+  constructor(readonly kind: PlanFailureKind, message: string) {
+    super(message);
+    this.name = "PlannerCallError";
+  }
+}
+
+interface PlannerCallResult {
+  raw: unknown;
+  usage: GenAiUsage;
+}
 
 async function callPlanner(
   client: GenAiLike,
   query: string,
   maxSubqueries: number,
   timeoutMs: number,
-): Promise<unknown> {
-  const response = await withTimeout(
-    client.models.generateContent({
-      model: geminiQueryPlannerModel(),
-      contents: buildPrompt(query, maxSubqueries),
-      config: {
-        responseMimeType: "application/json",
-        responseJsonSchema: queryPlanResponseSchema(maxSubqueries),
-        temperature: 0.2,
-        maxOutputTokens: 1200,
-      },
-    }),
-    timeoutMs,
-  );
+  repairNotes: string[],
+): Promise<PlannerCallResult> {
+  let response: Awaited<ReturnType<GenAiLike["models"]["generateContent"]>>;
+  try {
+    response = await withTimeout(
+      client.models.generateContent({
+        model: geminiQueryPlannerModel(),
+        contents: buildPrompt(query, maxSubqueries, repairNotes),
+        config: {
+          responseMimeType: "application/json",
+          responseJsonSchema: queryPlanResponseSchema(maxSubqueries),
+          temperature: 0.2,
+          // Thinking OFF. Default thinking is what put every 2026-08 planner
+          // call past the 3 s cap, and it is the same failure that truncated
+          // the article planner's output when it spent 1,340 of 1,400 tokens
+          // reasoning. A retrieval plan is a structural task; it does not need
+          // deliberation, it needs to arrive.
+          thinkingConfig: { thinkingBudget: QUERY_PLANNER_THINKING_BUDGET },
+          maxOutputTokens: QUERY_PLANNER_MAX_OUTPUT_TOKENS,
+        },
+      }),
+      timeoutMs,
+    );
+  } catch (err) {
+    if (err instanceof PlannerCallError) throw err;
+    throw new PlannerCallError(
+      "provider_error",
+      err instanceof Error ? err.message : "planner call failed",
+    );
+  }
 
+  const usage = response?.usageMetadata ?? {};
   const text = response?.text ?? "";
-  if (!text.trim()) throw new Error("planner returned an empty body");
-  // Structured output means this is JSON, but the parse is still guarded:
-  // an unparseable body must degrade, never throw into the request path.
-  return JSON.parse(text) as unknown;
+  if (!text.trim()) throw new PlannerCallError("empty_body", "planner returned an empty body");
+  try {
+    // Structured output means this is JSON, but the parse is still guarded:
+    // an unparseable body must degrade, never throw into the request path.
+    return { raw: JSON.parse(text) as unknown, usage };
+  } catch {
+    throw new PlannerCallError("invalid_json", "planner body was not parseable JSON");
+  }
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`planner timed out after ${ms}ms`)), ms);
+    const timer = setTimeout(
+      () => reject(new PlannerCallError("timeout", `planner timed out after ${ms}ms`)),
+      ms,
+    );
     p.then(
       (v) => {
         clearTimeout(timer);
@@ -473,14 +710,47 @@ export async function planQuery(
   maxSubqueries: number,
   deps: PlannerDeps = {},
 ): Promise<PlannedQuery> {
+  const now = deps.now ?? (() => globalThis.performance.now());
+  const startedAt = now();
+  const usage: PlannerUsage = {
+    attempts: 0,
+    promptTokens: 0,
+    outputTokens: 0,
+    thoughtsTokens: 0,
+    totalTokens: 0,
+    durationMs: 0,
+  };
+  const finish = (
+    plan: QueryPlan,
+    source: PlanSource,
+    rejections: string[],
+    failureKind: PlanFailureKind | null,
+  ): PlannedQuery => {
+    usage.durationMs = Math.round(Math.max(0, now() - startedAt) * 1000) / 1000;
+    if (failureKind !== null) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "search.query_plan_degraded",
+          failureKind,
+          attempts: usage.attempts,
+          durationMs: usage.durationMs,
+          rejections,
+        }),
+      );
+    }
+    return { plan, source, rejections, failureKind, usage };
+  };
+
   let client = deps.client;
   if (!client) {
     if (!process.env.GEMINI_API_KEY) {
-      return {
-        plan: fallbackPlan(query),
-        source: "fallback_original_only",
-        rejections: ["GEMINI_API_KEY absent"],
-      };
+      return finish(
+        fallbackPlan(query),
+        "fallback_original_only",
+        ["GEMINI_API_KEY absent"],
+        "api_key_absent",
+      );
     }
     const { GoogleGenAI } = await import("@google/genai");
     client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) as unknown as GenAiLike;
@@ -488,30 +758,51 @@ export async function planQuery(
 
   const timeoutMs = deps.timeoutMs ?? PLANNER_TIMEOUT_MS;
   const rejections: string[] = [];
+  let failureKind: PlanFailureKind = "provider_error";
+  let repairNotes: string[] = [];
 
-  // ONE attempt. A retry here doubled the pre-retrieval cost on every planner
-  // outage while buying nothing the fallback plan does not already provide.
-  try {
-    const raw = await callPlanner(client, query, maxSubqueries, timeoutMs);
-    const parsed = QueryPlanSchema.safeParse(raw);
-    if (!parsed.success) {
-      rejections.push(`model: schema — ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`);
-    } else {
-      const problems = semanticRejections({ query, plan: parsed.data, maxSubqueries });
-      if (problems.length > 0) {
-        rejections.push(...problems.map((p) => `model: ${p}`));
-      } else {
-        return { plan: withExtractedReference(query, parsed.data), source: "model", rejections };
+  // AT MOST TWO attempts, and the second one only happens for a plan the model
+  // could plainly do better on: too few angles, or angles that repeat one
+  // another. A timeout, an outage or a misread question do not earn a retry —
+  // paying twice for the same answer is what the single-attempt rule was
+  // protecting against, and the fallback plan is still an honest search.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    usage.attempts = attempt;
+    try {
+      const called = await callPlanner(client, query, maxSubqueries, timeoutMs, repairNotes);
+      usage.promptTokens += called.usage.promptTokenCount ?? 0;
+      usage.outputTokens += called.usage.candidatesTokenCount ?? 0;
+      usage.thoughtsTokens += called.usage.thoughtsTokenCount ?? 0;
+      usage.totalTokens += called.usage.totalTokenCount ?? 0;
+
+      const parsed = QueryPlanSchema.safeParse(called.raw);
+      if (!parsed.success) {
+        failureKind = "schema_rejected";
+        rejections.push(
+          `model: schema — ${parsed.error.issues.map((i) => i.path.join(".") + " " + i.message).join("; ")}`,
+        );
+        break;
       }
+
+      const problems = semanticProblems({ query, plan: parsed.data, maxSubqueries });
+      if (problems.length === 0) {
+        return finish(withExtractedReference(query, parsed.data), "model", rejections, null);
+      }
+      rejections.push(...problems.map((p) => `model: ${p.message}`));
+      // The kind reported is the FIRST problem's, so "too few angles" is not
+      // buried under the duplicate-role reports it inevitably drags with it.
+      failureKind = problems[0].kind;
+      const repairable = problems.every((p) => p.repairable);
+      if (!repairable || attempt === 2) break;
+      repairNotes = problems.map((p) => p.message);
+    } catch (err) {
+      failureKind = err instanceof PlannerCallError ? err.kind : "provider_error";
+      rejections.push(`model: ${err instanceof Error ? err.message : "planner call failed"}`);
+      break;
     }
-  } catch (err) {
-    rejections.push(`model: ${err instanceof Error ? err.message : "planner call failed"}`);
   }
 
-  console.warn(
-    JSON.stringify({ level: "warn", event: "search.query_plan_degraded", rejections }),
-  );
-  return { plan: fallbackPlan(query), source: "fallback_original_only", rejections };
+  return finish(fallbackPlan(query), "fallback_original_only", rejections, failureKind);
 }
 
 /**
