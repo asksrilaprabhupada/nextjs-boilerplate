@@ -20,7 +20,6 @@ on:
   push:
     paths:
       - ".github/gate/**"
-      - ".github/workflows/planner-gate.yml"
   workflow_dispatch:
     inputs:
       runs:
@@ -93,25 +92,33 @@ jobs:
           echo "Preview URL: ${url:-<none found>}"
 
       - name: Probe the Preview deployment
-        if: steps.preview.outputs.url != ''
+        if: steps.paths.outputs.has_key != 'true' && steps.preview.outputs.url != ''
+        env:
+          # Vercel's "Protection Bypass for Automation" secret, when one exists.
+          # It lets CI through while the preview stays closed to everyone else.
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           set -uo pipefail
           URL="${{ steps.preview.outputs.url }}/api/search/plan-probe?runs=${{ github.event.inputs.runs || '3' }}&format=text"
-          code=$(curl -sS -L --max-time 290 -o probe.txt -w '%{http_code}' "$URL" || echo "000")
-          echo "HTTP $code from the plan-probe endpoint"
-          echo "--- first 60 lines of the response ---"
-          head -c 200000 probe.txt | head -n 60
-          if [ "$code" != "200" ]; then
+          code=$(curl -sS -L --max-time 290 \
+            ${BYPASS:+-H "x-vercel-protection-bypass: $BYPASS"} \
+            -o probe.txt -w '%{http_code}' "$URL" || echo "000")
+          echo "HTTP $code"
+
+          if grep -qi "Log in to Vercel" probe.txt 2>/dev/null; then
             echo
-            echo "The Preview deployment did not serve the gate."
-            echo "401/403 with an HTML body means Vercel Deployment Protection is on:"
-            echo "either disable it for Preview, or add GEMINI_API_KEY as a repository"
-            echo "secret so the gate runs in this runner instead."
+            echo "BLOCKED: Vercel Deployment Protection redirected this request to a Vercel login."
+            echo "The gate cannot be measured this way. Either:"
+            echo "  (a) add GEMINI_API_KEY as a repository secret — the gate then runs here, or"
+            echo "  (b) add VERCEL_AUTOMATION_BYPASS_SECRET from Vercel's"
+            echo "      Settings > Deployment Protection > Protection Bypass for Automation."
+            exit 1
           fi
 
-      - name: Report the full probe output
-        if: steps.preview.outputs.url != ''
-        run: cat probe.txt || true
+          # Never dump the whole body: a protection page is ~700 KB of HTML and
+          # buries the one line that matters.
+          head -c 40000 probe.txt
+          [ "$code" = "200" ] || { echo; echo "The deployment did not serve the gate."; exit 1; }
 
       - name: Fail when nothing could be measured
         if: steps.paths.outputs.has_key != 'true' && steps.preview.outputs.url == ''
