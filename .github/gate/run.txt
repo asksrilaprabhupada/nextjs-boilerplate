@@ -1,5 +1,7 @@
 Planner gate runs — bump this file to start one.
 
-run 1 — Part A1, PR #137. Question: do all 65 gold questions plan five
-distinct angles, three runs each, inside the 3 s cap? And is the Preview
-deployment reachable from CI at all, given a browser could not open it?
+run 2 — Part A1, PR #137. Fixes the deployment lookup: Vercel records a
+deployment's ref as the commit SHA, so the branch-name filter matched
+nothing and the first run waited five minutes for a deployment that was
+already there. Question unchanged: do all 65 gold questions plan five
+distinct angles, three runs each, inside the 3 s cap?

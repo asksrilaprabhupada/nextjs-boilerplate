@@ -75,10 +75,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          # By SHA, not by branch: Vercel records a deployment's `ref` as the
+          # commit SHA, so ?ref=<branch> matches nothing and waits out the clock.
           url=""
           for attempt in $(seq 1 20); do
-            for dep in $(gh api "repos/$GITHUB_REPOSITORY/deployments?ref=$GITHUB_REF_NAME&per_page=5" --jq '.[].id'); do
+            for dep in $(gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$GITHUB_SHA&per_page=5" --jq '.[].id'); do
               found=$(gh api "repos/$GITHUB_REPOSITORY/deployments/$dep/statuses" \
                 --jq '[.[] | select(.state=="success") | .environment_url] | first // empty')
               if [ -n "$found" ]; then url="$found"; break; fi
