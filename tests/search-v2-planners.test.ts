@@ -11,7 +11,13 @@
  * devotee, so it is tested against a fake client rather than trusted.
  */
 import { describe, it, expect } from "vitest";
-import { planQuery, fallbackPlan } from "@/app/lib/search-v2/query-plan";
+import {
+  planQuery,
+  fallbackPlan,
+  REQUIRED_SUBQUERIES,
+  QUERY_PLANNER_THINKING_BUDGET,
+  QUERY_PLANNER_MAX_OUTPUT_TOKENS,
+} from "@/app/lib/search-v2/query-plan";
 import {
   ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
   ARTICLE_PLANNER_THINKING_BUDGET,
@@ -23,22 +29,45 @@ import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 /** A client that returns a scripted body per call, or throws. */
 function scriptedClient(bodies: (string | Error)[]) {
   const calls: string[] = [];
+  const prompts: string[] = [];
+  const configs: Record<string, unknown>[] = [];
   return {
     calls,
+    prompts,
+    configs,
     models: {
       async generateContent(args: Record<string, unknown>) {
         calls.push(String(args.model ?? ""));
+        prompts.push(String(args.contents ?? ""));
+        configs.push((args.config ?? {}) as Record<string, unknown>);
         const next = bodies.shift();
         if (next instanceof Error) throw next;
-        return { text: next ?? "" };
+        return {
+          text: next ?? "",
+          usageMetadata: {
+            promptTokenCount: 500,
+            candidatesTokenCount: 300,
+            thoughtsTokenCount: 0,
+            totalTokenCount: 800,
+          },
+        };
       },
     },
   };
 }
 
 const QUESTION = "how do I control my restless mind";
-/** The one fan-out ceiling. Every question is planned against it. */
-const MAX_SUBQUERIES = 6;
+/** The one fan-out size: exactly this many angles, every question, every time. */
+const MAX_SUBQUERIES = REQUIRED_SUBQUERIES;
+
+/** Five angles, five different roles, no two of them the same question twice. */
+const FIVE_ANGLES = [
+  { id: "s1", text: "why the mind becomes restless and uncontrolled", role: "cause", priority: "primary" },
+  { id: "s2", text: "what the scriptures teach about the nature of the mind", role: "scriptural_basis", priority: "primary" },
+  { id: "s3", text: "practice and detachment as the way to steadiness", role: "method", priority: "supporting" },
+  { id: "s4", text: "obstacles a devotee meets in steadying it", role: "practice", priority: "supporting" },
+  { id: "s5", text: "analogies for the wandering senses", role: "example", priority: "exploratory" },
+];
 
 function goodPlan(over: Record<string, unknown> = {}) {
   return JSON.stringify({
@@ -48,10 +77,7 @@ function goodPlan(over: Record<string, unknown> = {}) {
     preserve_terms: ["mind"],
     lexical_phrases: [],
     vocabulary_candidates: ["the mind"],
-    subqueries: [
-      { id: "s1", text: "the mind as friend and enemy of the soul", role: "scriptural_basis", priority: "primary" },
-      { id: "s2", text: "why the mind is restless and flickering", role: "cause", priority: "supporting" },
-    ],
+    subqueries: FIVE_ANGLES,
     constraints: {
       scripture_references: [], source_types: [], speaker: null,
       recipient: null, location: null, date_from: null, date_to: null,
@@ -66,8 +92,130 @@ describe("query planner loop", () => {
     const client = scriptedClient([goodPlan()]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("model");
-    expect(out.plan.subqueries).toHaveLength(2);
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
+    expect(out.failureKind).toBeNull();
     expect(client.calls).toHaveLength(1);
+  });
+
+  it("runs with thinking OFF — the cause of every 3 s planner timeout", async () => {
+    const client = scriptedClient([goodPlan()]);
+    await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(client.configs[0].thinkingConfig).toEqual({
+      thinkingBudget: QUERY_PLANNER_THINKING_BUDGET,
+    });
+    expect(QUERY_PLANNER_THINKING_BUDGET).toBe(0);
+    expect(client.configs[0].maxOutputTokens).toBe(QUERY_PLANNER_MAX_OUTPUT_TOKENS);
+  });
+
+  it("tells the model five angles are required, never that fewer will do", async () => {
+    const client = scriptedClient([goodPlan()]);
+    await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(client.prompts[0]).toContain("Return EXACTLY 5 subqueries");
+    expect(client.prompts[0]).not.toMatch(/Returning fewer is fine/);
+    const schema = client.configs[0].responseJsonSchema as Record<string, never>;
+    const subqueries = (schema.properties as Record<string, Record<string, number>>).subqueries;
+    expect(subqueries.minItems).toBe(REQUIRED_SUBQUERIES);
+    expect(subqueries.maxItems).toBe(REQUIRED_SUBQUERIES);
+  });
+
+  it("records what the planning stage cost — attempts, tokens and wall-clock", async () => {
+    const client = scriptedClient([goodPlan()]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(out.usage.attempts).toBe(1);
+    expect(out.usage.promptTokens).toBe(500);
+    expect(out.usage.outputTokens).toBe(300);
+    // Non-zero here would mean thinkingBudget: 0 stopped being honoured.
+    expect(out.usage.thoughtsTokens).toBe(0);
+    expect(out.usage.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("REJECTS a plan carrying no angles — the exact response production accepted twice", async () => {
+    // An empty list is repairable, so it earns the one retry; a second empty
+    // list is a recorded failure, never a quiet success as it was before.
+    const empty = goodPlan({ subqueries: [] });
+    const client = scriptedClient([empty, empty]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(client.calls).toHaveLength(2);
+    expect(out.source).toBe("fallback_original_only");
+    expect(out.failureKind).toBe("too_few_angles");
+  });
+
+  it("repairs a short plan on the retry rather than searching with one query", async () => {
+    const client = scriptedClient([goodPlan({ subqueries: FIVE_ANGLES.slice(0, 2) }), goodPlan()]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(out.source).toBe("model");
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
+  });
+
+  it("retries ONCE when the angles repeat one another, and takes the repaired plan", async () => {
+    const duplicated = goodPlan({
+      subqueries: [
+        ...FIVE_ANGLES.slice(0, 3),
+        { id: "s4", text: "control of the restless mind", role: "practice", priority: "supporting" },
+        { id: "s5", text: "controlling the restless mind", role: "example", priority: "exploratory" },
+      ],
+    });
+    const client = scriptedClient([duplicated, goodPlan()]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(client.calls).toHaveLength(2);
+    expect(out.source).toBe("model");
+    expect(out.usage.attempts).toBe(2);
+    // The second attempt is told what was wrong; a blind retry repeats it.
+    expect(client.prompts[1]).toContain("YOUR PREVIOUS PLAN WAS REJECTED");
+  });
+
+  it("retries at most once, then falls back and says the angles were duplicates", async () => {
+    const duplicated = goodPlan({
+      subqueries: FIVE_ANGLES.map((angle) => ({ ...angle, role: "cause" })),
+    });
+    const client = scriptedClient([duplicated, duplicated, goodPlan()]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(client.calls).toHaveLength(2);
+    expect(out.source).toBe("fallback_original_only");
+    expect(out.failureKind).toBe("near_duplicate_angles");
+  });
+
+  it("does NOT retry a misread question — a second look is not a repair", async () => {
+    const invented = goodPlan({
+      constraints: {
+        scripture_references: [], source_types: [], speaker: null,
+        recipient: "Brahmananda", location: null, date_from: null, date_to: null,
+      },
+    });
+    const client = scriptedClient([invented, goodPlan()]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(client.calls).toHaveLength(1);
+    expect(out.failureKind).toBe("semantic_rejected");
+  });
+
+  it("names the failure kind for each way the call can fail", async () => {
+    const timeout = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: {
+        models: {
+          generateContent: () => new Promise(() => {}) as Promise<{ text?: string }>,
+        },
+      },
+      timeoutMs: 10,
+    });
+    expect(timeout.failureKind).toBe("timeout");
+
+    const truncated = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: scriptedClient(['{"schema_version":"query-pl']),
+    });
+    expect(truncated.failureKind).toBe("invalid_json");
+
+    const empty = await planQuery(QUESTION, MAX_SUBQUERIES, { client: scriptedClient([""]) });
+    expect(empty.failureKind).toBe("empty_body");
+
+    const wrongShape = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: scriptedClient(['{"schema_version":"query-plan-v1"}']),
+    });
+    expect(wrongShape.failureKind).toBe("schema_rejected");
+
+    const outage = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: scriptedClient([new Error("503")]),
+    });
+    expect(outage.failureKind).toBe("provider_error");
   });
 
   it("does NOT retry a truncated body — one attempt, then the honest fallback", async () => {
@@ -78,6 +226,7 @@ describe("query planner loop", () => {
     expect(out.source).toBe("fallback_original_only");
     expect(client.calls).toHaveLength(1);
     expect(out.rejections.length).toBeGreaterThan(0);
+    expect(out.failureKind).toBe("invalid_json");
   });
 
   it("falls back to the original question after one failure — never throws", async () => {
@@ -113,11 +262,20 @@ describe("query planner loop", () => {
         intent: "exact_reference",
         canonical_query: "BG 18.66",
         preserve_terms: ["BG 18.66"],
-        subqueries: [],
+        // A bare reference is planned like anything else: five angles, so the
+        // verse arrives with its purport, its lectures and its letters.
+        subqueries: [
+          { id: "s1", text: "surrender as the final instruction", role: "scriptural_basis", priority: "primary" },
+          { id: "s2", text: "why abandoning other duties is enjoined", role: "cause", priority: "primary" },
+          { id: "s3", text: "how a devotee practises full surrender", role: "method", priority: "supporting" },
+          { id: "s4", text: "purport commentary on that instruction", role: "context", priority: "supporting" },
+          { id: "s5", text: "lectures given on this same passage", role: "example", priority: "exploratory" },
+        ],
       }),
     ]);
     const out = await planQuery("BG 18.66", MAX_SUBQUERIES, { client });
     expect(client.calls).toHaveLength(1);
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
     expect(out.source).toBe("model");
     expect(out.plan.constraints.scripture_references).toEqual(["BG"]);
     expect(out.plan.exact_reference).toBe("BG 18.66");
@@ -130,6 +288,7 @@ describe("query planner loop", () => {
       const out = await planQuery(QUESTION, MAX_SUBQUERIES);
       expect(out.source).toBe("fallback_original_only");
       expect(out.rejections.join(" ")).toMatch(/GEMINI_API_KEY absent/);
+      expect(out.failureKind).toBe("api_key_absent");
     } finally {
       if (saved !== undefined) process.env.GEMINI_API_KEY = saved;
     }

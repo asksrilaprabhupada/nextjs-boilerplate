@@ -328,11 +328,26 @@ export function allowlistedTechnicalTelemetry(
     plan: {
       source: telemetry.planSource,
       subqueryCount: telemetry.subqueryCount,
+      /**
+       * WHICH failure it was — timeout, invalid JSON, schema rejection or a
+       * semantic rejection. Until this field existed the database stored the
+       * single value `plan_rejected` for all of them and the detail died with
+       * the short-lived Vercel logs.
+       */
+      failureKind: telemetry.planFailureKind,
+      attempts: telemetry.planUsage.attempts,
+      durationMs: telemetry.planUsage.durationMs,
     },
     providers: {
       queryPlanner: {
         model: geminiQueryPlannerModel(),
         outcome: telemetry.models.queryPlanner !== null ? "accepted" : "fallback",
+        promptTokens: telemetry.planUsage.promptTokens,
+        outputTokens: telemetry.planUsage.outputTokens,
+        // Must stay 0. A non-zero value means thinkingBudget: 0 stopped being
+        // honoured, which is the exact regression that broke the planner.
+        thoughtsTokens: telemetry.planUsage.thoughtsTokens,
+        totalTokens: telemetry.planUsage.totalTokens,
       },
       embeddings: {
         model: VOYAGE_CONTEXT_MODEL,

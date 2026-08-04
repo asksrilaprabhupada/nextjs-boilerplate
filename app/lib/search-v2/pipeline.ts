@@ -35,7 +35,12 @@
  * Telemetry carries a hash of the question, never the question itself, plus the
  * counts that let a bad result be diagnosed without re-running it.
  */
-import { planQuery, type PlannedQuery } from "@/app/lib/search-v2/query-plan";
+import {
+  planQuery,
+  REQUIRED_SUBQUERIES,
+  type PlannedQuery,
+  type PlannerUsage,
+} from "@/app/lib/search-v2/query-plan";
 import {
   retrieveCandidates,
   ORIGINAL_QUERY_ID,
@@ -70,11 +75,11 @@ import { extractQueryTerms } from "@/app/lib/10-passage-fold";
 import type { DegradedStage } from "@/app/lib/search-v2/rpc";
 
 /**
- * Six angles is the design of the query plan, not a limit on the answer: each
- * approved angle serves a different retrieval purpose, and past six they stop
- * being different purposes.
+ * Five angles, required — never "up to five". One original question plus five
+ * distinct angles is six searches, run across all five sources and merged. See
+ * REQUIRED_SUBQUERIES in query-plan.ts for why the count is mandatory.
  */
-const MAX_SUBQUERIES = 6;
+const PLANNED_SUBQUERIES = REQUIRED_SUBQUERIES;
 
 export type PipelineStage =
   | "planning"
@@ -110,6 +115,10 @@ export interface SearchTelemetry {
   corpusVersion: string;
   subqueryCount: number;
   planSource: string;
+  /** Why the plan fell back, or null when the model's plan was accepted. */
+  planFailureKind: string | null;
+  /** Attempts, tokens and wall-clock for the planning stage. */
+  planUsage: PlannerUsage;
   tableRpcCount: number;
   tableRpcAttemptCount: number;
   vocabularyRpcCount: number;
@@ -402,9 +411,14 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   // ── plan ──
   onStage?.("planning");
-  const planned = await time("planning", () => planQuery(query, MAX_SUBQUERIES));
+  const planned = await time("planning", () => planQuery(query, PLANNED_SUBQUERIES));
   if (planned.source === "fallback_original_only" && planned.rejections.length > 0) {
-    degraded.record("planning", "gemini_query_planner", { code: "plan_rejected" });
+    // The CODE carries the reason. `plan_rejected` was the only value the
+    // database ever held, so a timeout, a truncated body and a misread question
+    // were indistinguishable once the Vercel logs expired.
+    degraded.record("planning", "gemini_query_planner", {
+      code: `plan_${planned.failureKind ?? "rejected"}`,
+    });
   }
 
   // ── retrieve, with the exact-reference lookup riding alongside ──
@@ -606,6 +620,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     corpusVersion: searchCorpusVersion(),
     subqueryCount: planned.plan.subqueries.length,
     planSource: planned.source,
+    planFailureKind: planned.failureKind,
+    planUsage: planned.usage,
     tableRpcCount: retrieved.tableRpcCount,
     tableRpcAttemptCount: retrieved.tableRpcAttemptCount,
     vocabularyRpcCount: retrieved.vocabularyRpcCount,
