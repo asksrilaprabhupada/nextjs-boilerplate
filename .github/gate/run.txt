@@ -1,0 +1,5 @@
+Planner gate runs — bump this file to start one.
+
+run 1 — Part A1, PR #137. Question: do all 65 gold questions plan five
+distinct angles, three runs each, inside the 3 s cap? And is the Preview
+deployment reachable from CI at all, given a browser could not open it?
