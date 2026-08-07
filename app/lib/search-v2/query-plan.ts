@@ -386,6 +386,39 @@ function jaccard(a: string, b: string): number {
   return inter / (sa.size + sb.size - inter);
 }
 
+/**
+ * Books written out in full, mapped to the siglum they are.
+ *
+ * Used ONLY to judge whether a scripture constraint was invented. A devotee who
+ * writes "Bhagavad-gita 6.6" has named the book as plainly as one who writes
+ * "BG 6.6", and a plan constraining to BG has read the question correctly — but
+ * "bhagavad-gita 6.6" contains no literal "bg", so the check called it an
+ * invention and threw the plan away.
+ *
+ * Deliberately not wired into `extractSiglum`: that feeds the retrieval filter
+ * and the pinned lookup, and widening what those match is a change to search
+ * behaviour, not to this validator. Worth doing separately, on its own evidence.
+ */
+const SPELLED_OUT_BOOKS: [RegExp, string][] = [
+  [/bhagavad\s*-?\s*gita/, "BG"],
+  [/srimad\s*-?\s*bhagavatam|bhagavata\s*purana/, "SB"],
+  [/caitanya\s*-?\s*caritamrta|chaitanya\s*-?\s*charitamrta/, "CC"],
+  [/nectar\s+of\s+instruction/, "NOI"],
+  [/isopanisad|ishopanishad/, "ISO"],
+  [/brahma\s*-?\s*samhita/, "BS"],
+];
+
+function siglumOfSpelledOutBook(query: string): string | null {
+  const folded = query
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase();
+  for (const [pattern, siglum] of SPELLED_OUT_BOOKS) {
+    if (pattern.test(folded)) return siglum;
+  }
+  return null;
+}
+
 /** How many content words a text carries, after stemming and stop-words. */
 function contentTokenCount(text: string): number {
   const all = normalise(text).split(" ").filter(Boolean).map(stem);
@@ -539,7 +572,7 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
   }
   // Compare SIGLA, not raw text. "Bhagavad-gita 6.6" contains no "bg", so the
   // correct constraint "Bg 6.6" read as invented and threw the plan away.
-  const querySiglum = extractSiglum(query);
+  const querySiglum = extractSiglum(query) ?? siglumOfSpelledOutBook(query);
   for (const ref of c.scripture_references) {
     const planSiglum = siglumOf(ref);
     if (!planSiglum) continue;

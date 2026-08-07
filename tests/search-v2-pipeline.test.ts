@@ -566,3 +566,44 @@ describe("query plan validation", () => {
     expect(check("how do I control my mind", plan)).toEqual([]);
   });
 });
+
+// ─── B3: constraints a correct plan is allowed to carry ──────
+
+describe("scripture and speaker constraints the question really implies", () => {
+  const check = (query: string, over: Partial<ReturnType<typeof fallbackPlan>["constraints"]>) =>
+    semanticRejections({
+      query,
+      plan: {
+        ...fallbackPlan(query),
+        constraints: { ...fallbackPlan(query).constraints, ...over },
+      },
+      maxSubqueries: 5,
+    }).join(" ");
+
+  it("accepts BG when the devotee wrote the book's name in full", () => {
+    // "Bhagavad-gita 6.6" contains no literal "bg", so the correct constraint
+    // read as invented and cost the whole plan.
+    expect(check("Bhagavad-gita 6.6", { scripture_references: ["Bg 6.6"] }))
+      .not.toMatch(/invented scripture/);
+    expect(check("Śrīmad-Bhāgavatam 1.2.6", { scripture_references: ["SB"] }))
+      .not.toMatch(/invented scripture/);
+  });
+
+  it("still rejects a scripture the question never named", () => {
+    expect(check("how do I control my mind", { scripture_references: ["CC Adi 1.1"] }))
+      .toMatch(/invented scripture/);
+  });
+
+  it("accepts Śrīla Prabhupāda as the speaker — the whole library is his", () => {
+    // "In a morning walk, what did HE say about scientists?" resolves to him.
+    expect(check("In a morning walk, what did he say about scientists?", { speaker: "Prabhupāda" }))
+      .not.toMatch(/invented speaker/);
+    expect(check("what did he say in a room conversation?", { speaker: "Srila Prabhupada" }))
+      .not.toMatch(/invented speaker/);
+  });
+
+  it("still rejects a guest speaker the question never mentioned", () => {
+    expect(check("what did he say about scientists?", { speaker: "Dr. Svarupa Damodara" }))
+      .toMatch(/invented speaker/);
+  });
+});

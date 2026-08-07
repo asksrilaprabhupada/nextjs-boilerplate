@@ -1,10 +1,7 @@
 Planner gate runs — bump this file to start one.
 
-run 9 — Part A1, PR #137. Run 8 reached 63 of 65 with zero timeouts, so
-the 4 s cap is right: per-call p95 2,797 ms, slowest 3,681 ms — the tail
-that the 3 s cap used to truncate is now visible and inside the cap.
-
-Both remaining failures were angle-distinctness on pointer questions,
-and one had a real cause: "SB 1.2.6" tokenises as four content words
-{sb,1,2,6}, so two angles that merely both cite the verse share four
-tokens and read as identical. A reference is now one token.
+run 10 — Part A1, PR #137. Run 9 exposed one more false rejection:
+"Bhagavad-gita 6.6" spelled out contains no literal "bg", so the correct
+constraint "Bg 6.6" still read as invented. Book names written in full
+now map to their siglum for that check only — not for retrieval, which
+is a separate change on separate evidence.
