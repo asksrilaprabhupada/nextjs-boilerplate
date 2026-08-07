@@ -1,7 +1,6 @@
 Planner gate runs — bump this file to start one.
 
-run 2 — Part A1, PR #137. Fixes the deployment lookup: Vercel records a
-deployment's ref as the commit SHA, so the branch-name filter matched
-nothing and the first run waited five minutes for a deployment that was
-already there. Question unchanged: do all 65 gold questions plan five
-distinct angles, three runs each, inside the 3 s cap?
+run 3 — Part A1, PR #137. A GEMINI_API_KEY repository secret now exists,
+so the gate runs in the runner and needs no deployment at all. Question:
+do all 65 gold questions plan five distinct angles, three runs each,
+inside the 3 s cap? Report times, tokens and cost per search.
