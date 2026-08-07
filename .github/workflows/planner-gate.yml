@@ -63,7 +63,9 @@ jobs:
           PLANNER_GATE_LIVE: "1"
           PLANNER_GATE_RUNS: ${{ github.event.inputs.runs || '3' }}
           PLANNER_GATE_LIMIT: ${{ github.event.inputs.limit }}
-        run: npx vitest run tests/planner-gate.live.test.ts --reporter=basic
+        # No --reporter flag: vitest 4 removed "basic", and the default reporter
+        # already prints the report the test writes to stdout.
+        run: npx vitest run tests/planner-gate.live.test.ts
 
       # ── Path 2: ask the Preview deployment, which has the key already. ──
       # Also the one way to learn whether that deployment is reachable at all:

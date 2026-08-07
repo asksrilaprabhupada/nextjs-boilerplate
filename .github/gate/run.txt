@@ -1,6 +1,6 @@
 Planner gate runs — bump this file to start one.
 
-run 3 — Part A1, PR #137. A GEMINI_API_KEY repository secret now exists,
-so the gate runs in the runner and needs no deployment at all. Question:
-do all 65 gold questions plan five distinct angles, three runs each,
-inside the 3 s cap? Report times, tokens and cost per search.
+run 4 — Part A1, PR #137. Run 3 never started: vitest 4 removed the
+"basic" reporter, so the CLI died before the first planner call. Same
+question: do all 65 gold questions plan five distinct angles, three runs
+each, inside the 3 s cap? Report times, tokens and cost per search.
