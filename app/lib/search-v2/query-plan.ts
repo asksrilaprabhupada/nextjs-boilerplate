@@ -309,8 +309,24 @@ export function fallbackPlan(query: string): QueryPlan {
   };
 }
 
+/**
+ * A scripture reference is ONE thing, not four words.
+ *
+ * "SB 1.2.6" tokenises as {sb, 1, 2, 6}, which wrecks every similarity
+ * judgement built on top: it clears the four-content-word floor on numerals
+ * alone, and two angles that merely both cite the verse share four tokens and
+ * read as identical. Collapsing each reference to a single token restores the
+ * meaning — "purport to SB 1.2.6" and "lectures on SB 1.2.6" are then two
+ * words apart, which is what they are.
+ */
+const REFERENCE_RE = /\b(?:BG|SB|CC|NOI|ISO|BS|NBS|MMS)\.?\s*\d+(?:[.\s]\d+)*/gi;
+
+function collapseReferences(text: string): string {
+  return text.replace(REFERENCE_RE, (match) => ` ref${match.toLowerCase().replace(/[^a-z0-9]/g, "")} `);
+}
+
 function normalise(s: string): string {
-  return s
+  return collapseReferences(s)
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
