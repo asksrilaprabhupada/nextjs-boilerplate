@@ -98,7 +98,11 @@ export const QueryPlanSchema = z
       .array(
         z
           .object({
-            id: z.string().min(1).max(30),
+            // Generous on purpose. This is an internal correlation id for
+            // fusion weighting, never shown and never stored; a model that
+            // emits a descriptive id was failing the WHOLE plan on a limit
+            // that protects nothing (3 of 3 runs for one gold question).
+            id: z.string().min(1).max(120),
             text: z.string().min(3).max(160),
             role: z.enum(SUBQUERY_ROLES),
             priority: z.enum(["primary", "supporting", "exploratory"]),
@@ -179,6 +183,12 @@ export interface PlannerUsage {
   totalTokens: number;
   /** Wall-clock across every attempt, including the rejected one. */
   durationMs: number;
+  /**
+   * One entry per planner call. The 3 s cap applies to a SINGLE call, so a
+   * total that happens to span a retry must never be mistaken for the latency
+   * the cap is judged against.
+   */
+  attemptDurationsMs: number[];
 }
 
 export interface PlannedQuery {
@@ -360,6 +370,12 @@ function jaccard(a: string, b: string): number {
   return inter / (sa.size + sb.size - inter);
 }
 
+/** How many content words a text carries, after stemming and stop-words. */
+function contentTokenCount(text: string): number {
+  const all = normalise(text).split(" ").filter(Boolean).map(stem);
+  return new Set(all.filter((t) => !FUNCTION_WORDS.has(t))).size;
+}
+
 /** Proper names and scripture sigla that must survive into the plan. */
 function significantTokens(query: string): string[] {
   const tokens: string[] = [];
@@ -426,6 +442,15 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     );
   }
 
+  /**
+   * "Is this angle just the question again?" only means something when the
+   * question has enough content words to overlap on. "SB 1.2.6" has three
+   * tokens, so "purport to SB 1.2.6" scores 0.75 against it and reads as a
+   * duplicate — while actually reaching a different table. Below this floor,
+   * distinctness is judged between the angles alone.
+   */
+  const queryIsSubstantial = contentTokenCount(query) >= 4;
+
   const ids = new Set<string>();
   for (const sq of subs) {
     if (ids.has(sq.id)) push("semantic_rejected", `duplicate subquery id "${sq.id}"`, false);
@@ -435,7 +460,7 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     if (sq.id === "__lexical__" || sq.id === "__tags__" || sq.id === "q_original") {
       push("semantic_rejected", `subquery id "${sq.id}" is reserved`, false);
     }
-    if (jaccard(sq.text, query) >= NEAR_DUPLICATE_OF_ORIGINAL) {
+    if (queryIsSubstantial && jaccard(sq.text, query) >= NEAR_DUPLICATE_OF_ORIGINAL) {
       push(
         "near_duplicate_angles",
         `subquery "${sq.id}" is equivalent to the original question`,
@@ -725,6 +750,7 @@ export async function planQuery(
     thoughtsTokens: 0,
     totalTokens: 0,
     durationMs: 0,
+    attemptDurationsMs: [],
   };
   const finish = (
     plan: QueryPlan,
@@ -774,8 +800,15 @@ export async function planQuery(
   // protecting against, and the fallback plan is still an honest search.
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     usage.attempts = attempt;
+    const attemptStartedAt = now();
+    const recordAttempt = (): void => {
+      usage.attemptDurationsMs.push(
+        Math.round(Math.max(0, now() - attemptStartedAt) * 1000) / 1000,
+      );
+    };
     try {
       const called = await callPlanner(client, query, maxSubqueries, timeoutMs, repairNotes);
+      recordAttempt();
       usage.promptTokens += called.usage.promptTokenCount ?? 0;
       usage.outputTokens += called.usage.candidatesTokenCount ?? 0;
       usage.thoughtsTokens += called.usage.thoughtsTokenCount ?? 0;
@@ -802,6 +835,7 @@ export async function planQuery(
       if (!repairable || attempt === 2) break;
       repairNotes = problems.map((p) => p.message);
     } catch (err) {
+      recordAttempt();
       failureKind = err instanceof PlannerCallError ? err.kind : "provider_error";
       rejections.push(`model: ${err instanceof Error ? err.message : "planner call failed"}`);
       break;

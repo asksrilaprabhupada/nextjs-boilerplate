@@ -64,6 +64,7 @@ function telemetryFixture(): SearchTelemetry {
       thoughtsTokens: 0,
       totalTokens: 730,
       durationMs: 2200,
+      attemptDurationsMs: [2200],
     },
     tableRpcCount: 1,
     tableRpcAttemptCount: 1,

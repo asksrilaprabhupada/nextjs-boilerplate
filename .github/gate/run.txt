@@ -1,15 +1,15 @@
 Planner gate runs — bump this file to start one.
 
-run 6 — Part A1, PR #137. Run 5 measured properly and failed honestly:
-42 of 65, with 23 questions failing for four reasons. Three of them were
-the validator rejecting CORRECT plans, and are now fixed:
+run 7 — Part A1, PR #137. Run 6 reached 58 of 65 serially. The seven
+that remained had three causes, all now addressed:
 
-  - a repeated role was treated as a repeated angle (22 rejections), but
-    "compare karma-yoga and bhakti-yoga" wants two definitions;
-  - naming Śrīla Prabhupāda as the speaker read as invented (15), though
-    the whole library is his and "what did HE say" resolves to him;
-  - "Bhagavad-gita 6.6" contains no "bg", so the correct constraint
-    "Bg 6.6" read as invented (3).
-
-The fourth was my own harness: latency was measured with six planner
-calls in flight, which is not how a search runs. This run is serial.
+  - one question failed 3/3 on a 30-character cap for an INTERNAL id
+    that is never shown or stored (raised to 120);
+  - "is this angle just the question again?" was applied to questions
+    with almost no content words, where "SB 1.2.6" and "purport to
+    SB 1.2.6" score 0.75 and reach different tables. The check now
+    needs at least four content words to mean anything;
+  - four timeouts. This run reports PER-CALL latency separately from
+    the whole stage, because the 3 s cap bounds one call and run 6's
+    p95 of 3,970 ms included totals that spanned a retry. The cap will
+    be set from the per-call p95 plus one second, per the brief.

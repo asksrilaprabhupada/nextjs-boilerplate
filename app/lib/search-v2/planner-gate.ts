@@ -49,6 +49,8 @@ export interface PlannerGateRun {
   angleCount: number;
   attempts: number;
   durationMs: number;
+  /** Each individual planner call. The cap is judged against these, not totals. */
+  attemptDurationsMs: number[];
   promptTokens: number;
   outputTokens: number;
   thoughtsTokens: number;
@@ -75,6 +77,12 @@ export interface PlannerGateReport {
   passedQuestions: number;
   failedQuestionIds: string[];
   failureKindCounts: Record<string, number>;
+  /**
+   * Latency of a SINGLE planner call — the quantity PLANNER_TIMEOUT_MS bounds.
+   * Totals that span a retry are reported separately and must never be used to
+   * set the cap.
+   */
+  attemptDurationMs: { count: number; min: number; median: number; p95: number; max: number };
   durationMs: { min: number; median: number; p95: number; max: number };
   tokens: { promptTotal: number; outputTotal: number; thoughtsTotal: number };
   /** Per accepted search, at the rates above. */
@@ -142,6 +150,7 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
       angleCount: planned.plan.subqueries.length,
       attempts: planned.usage.attempts,
       durationMs: round(planned.usage.durationMs),
+      attemptDurationsMs: planned.usage.attemptDurationsMs.map((d) => round(d)),
       promptTokens: planned.usage.promptTokens,
       outputTokens: planned.usage.outputTokens,
       thoughtsTokens: planned.usage.thoughtsTokens,
@@ -177,6 +186,9 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
 
   const allRuns = results.flatMap((r) => r.runs);
   const durations = allRuns.map((r) => r.durationMs).sort((a, b) => a - b);
+  const attemptDurations = allRuns
+    .flatMap((r) => r.attemptDurationsMs)
+    .sort((a, b) => a - b);
   const failureKindCounts: Record<string, number> = {};
   for (const run of allRuns) {
     if (run.failureKind === null) continue;
@@ -197,6 +209,13 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
     passedQuestions: results.filter((r) => r.passed).length,
     failedQuestionIds: results.filter((r) => !r.passed).map((r) => r.id),
     failureKindCounts,
+    attemptDurationMs: {
+      count: attemptDurations.length,
+      min: attemptDurations[0] ?? 0,
+      median: quantile(attemptDurations, 0.5),
+      p95: quantile(attemptDurations, 0.95),
+      max: attemptDurations[attemptDurations.length - 1] ?? 0,
+    },
     durationMs: {
       min: durations[0] ?? 0,
       median: quantile(durations, 0.5),
@@ -246,12 +265,18 @@ export function renderPlannerGateText(
     + `(${pct(report.acceptedRuns, report.totalRuns)})`,
   );
   lines.push("");
-  lines.push("PLANNING TIME (milliseconds, one planner call each)");
+  lines.push(`ONE PLANNER CALL, milliseconds (${report.attemptDurationMs.count} calls)`);
+  lines.push(
+    `  fastest ${report.attemptDurationMs.min}   median ${report.attemptDurationMs.median}`
+    + `   p95 ${report.attemptDurationMs.p95}   slowest ${report.attemptDurationMs.max}`,
+  );
+  lines.push("  THIS is what the per-attempt cap must clear. p95 + 1 s sets it.");
+  lines.push("");
+  lines.push("WHOLE PLANNING STAGE, milliseconds (a retry makes this two calls)");
   lines.push(
     `  fastest ${report.durationMs.min}   median ${report.durationMs.median}`
     + `   p95 ${report.durationMs.p95}   slowest ${report.durationMs.max}`,
   );
-  lines.push("  the cap is 3000 ms per attempt — p95 is the number that matters");
   lines.push("");
   lines.push("TOKENS AND COST");
   lines.push(`  prompt tokens   ${report.tokens.promptTotal.toLocaleString("en-US")}`);
