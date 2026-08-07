@@ -3,7 +3,7 @@
  *
  * The A1 acceptance gate is a claim about the planner: every gold-set question
  * must produce five valid, genuinely distinct angles, repeatably, inside the
- * 3 s cap. Proving that by running whole searches would cost five database
+ * per-attempt cap. Proving that by running whole searches would cost five database
  * fan-outs, a Voyage batch and ~600 Cohere documents per question — minutes and
  * real money per run, to measure a stage that finishes in two seconds. So this
  * runs the planner alone: same module, same prompt, same schema, same timeout.

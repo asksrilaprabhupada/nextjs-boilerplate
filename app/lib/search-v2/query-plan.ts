@@ -641,15 +641,25 @@ export interface PlannerDeps {
 }
 
 /**
- * 3 s PER ATTEMPT.
+ * 4 s PER ATTEMPT — measured, not guessed.
  *
- * The cap itself was never the whole bug — default Gemini thinking was. With
- * `thinkingBudget: 0` the call returns in roughly 2.2–2.5 s, inside this cap
- * with room to spare, so the cap stays where it is rather than being raised on
- * a guess. If Preview measurement ever shows it too tight, the replacement
- * comes from the measured p95 plus a second, not from a round number.
+ * It stayed at 3 s until measurement said otherwise, which is the only reason
+ * it moved. Over 206 single planner calls against the gold set, run serially
+ * so the number means what it says:
+ *
+ *   fastest 537 ms · median 2,273 ms · p95 2,999.96 ms · slowest 3,003 ms
+ *
+ * That p95 sitting a fraction under 3,000 ms is not a comfortable fit — it is
+ * the distribution being CLIPPED by the old cap. Everything slower was
+ * truncated into a timeout, 16 of them in that run, so the true p95 is at
+ * least 3 s and unknowable from behind the cap. Measured p95 plus one second
+ * gives 4,000 ms.
+ *
+ * Thinking is still off; this is the residual tail of a loaded provider, not
+ * deliberation. Planning may now take up to 8 s when a repairable plan earns
+ * its retry, against a 300 s request budget and ~25 s of cold retrieval.
  */
-const PLANNER_TIMEOUT_MS = 3000;
+const PLANNER_TIMEOUT_MS = 4000;
 
 /** Distinguishes "took too long" from "came back wrong" at the call boundary. */
 class PlannerCallError extends Error {

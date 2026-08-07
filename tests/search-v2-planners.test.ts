@@ -97,7 +97,7 @@ describe("query planner loop", () => {
     expect(client.calls).toHaveLength(1);
   });
 
-  it("runs with thinking OFF — the cause of every 3 s planner timeout", async () => {
+  it("runs with thinking OFF — the cause of every planner timeout in production", async () => {
     const client = scriptedClient([goodPlan()]);
     await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(client.configs[0].thinkingConfig).toEqual({

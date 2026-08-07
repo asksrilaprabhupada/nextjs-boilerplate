@@ -1,15 +1,14 @@
 Planner gate runs — bump this file to start one.
 
-run 7 — Part A1, PR #137. Run 6 reached 58 of 65 serially. The seven
-that remained had three causes, all now addressed:
+run 8 — Part A1, PR #137. The per-call cap moves 3000 -> 4000 ms, set
+the way the brief requires: from the measured p95 plus one second, not
+from a round number. Run 7 measured 206 serial calls at
 
-  - one question failed 3/3 on a 30-character cap for an INTERNAL id
-    that is never shown or stored (raised to 120);
-  - "is this angle just the question again?" was applied to questions
-    with almost no content words, where "SB 1.2.6" and "purport to
-    SB 1.2.6" score 0.75 and reach different tables. The check now
-    needs at least four content words to mean anything;
-  - four timeouts. This run reports PER-CALL latency separately from
-    the whole stage, because the 3 s cap bounds one call and run 6's
-    p95 of 3,970 ms included totals that spanned a retry. The cap will
-    be set from the per-call p95 plus one second, per the brief.
+  fastest 537 · median 2273 · p95 2999.96 · slowest 3003 ms
+
+and that p95 a hair under the old 3000 ms cap is the distribution being
+clipped by it, not fitting inside it — 16 calls were truncated into
+timeouts. Measured p95 + 1 s = 4000.
+
+Run 7 also showed the provider itself varying: 5 x HTTP 503 "high
+demand". Those fall back honestly and earn no retry, by design.
