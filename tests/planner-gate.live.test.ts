@@ -18,8 +18,23 @@ import {
 } from "@/app/lib/search-v2/planner-gate";
 
 const enabled = process.env.PLANNER_GATE_LIVE === "1" && Boolean(process.env.GEMINI_API_KEY);
-const runs = Number(process.env.PLANNER_GATE_RUNS ?? 3);
-const limit = Number(process.env.PLANNER_GATE_LIMIT ?? GATE_QUESTIONS.length);
+
+/**
+ * An unset workflow input arrives as "", not as undefined, so `??` does not
+ * catch it and Number("") is 0 — which the harness clamps to 1. That is how a
+ * run measured ONE question out of sixty-five and still reported green. Read
+ * the value only when it is a usable positive number.
+ */
+function envCount(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const parsed = Number(raw);
+  return raw !== undefined && raw !== "" && Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : fallback;
+}
+
+const runs = envCount("PLANNER_GATE_RUNS", 3);
+const limit = envCount("PLANNER_GATE_LIMIT", GATE_QUESTIONS.length);
 
 describe.skipIf(!enabled)("live planner gate", () => {
   it(
@@ -28,6 +43,12 @@ describe.skipIf(!enabled)("live planner gate", () => {
       const startedAt = Date.now();
       const report = await runPlannerGate({ runsPerQuestion: runs, limit, concurrency: 6 });
       console.log(renderPlannerGateText({ ...report, wallClockMs: Date.now() - startedAt }));
+
+      // COVERAGE FIRST. A gate that measured one question out of sixty-five
+      // and reported green is worse than no gate, because it is believed.
+      expect(report.questionCount).toBe(limit);
+      expect(report.runsPerQuestion).toBe(runs);
+      expect(report.totalRuns).toBe(limit * runs);
 
       // The gate is "every one of them", not "most of them".
       expect(report.failedQuestionIds).toEqual([]);

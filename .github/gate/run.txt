@@ -1,6 +1,9 @@
 Planner gate runs — bump this file to start one.
 
-run 4 — Part A1, PR #137. Run 3 never started: vitest 4 removed the
-"basic" reporter, so the CLI died before the first planner call. Same
-question: do all 65 gold questions plan five distinct angles, three runs
-each, inside the 3 s cap? Report times, tokens and cost per search.
+run 5 — Part A1, PR #137. Run 4 reported green having measured ONE
+question of sixty-five: an unset workflow input arrives as "", which
+Number() turns into 0 and the harness clamped to 1. The live test now
+asserts its own coverage before it asserts anything about the planner.
+
+Same question, for real this time: do all 65 gold questions plan five
+distinct angles, three runs each, inside the 3 s cap?
