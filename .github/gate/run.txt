@@ -1,9 +1,15 @@
 Planner gate runs — bump this file to start one.
 
-run 5 — Part A1, PR #137. Run 4 reported green having measured ONE
-question of sixty-five: an unset workflow input arrives as "", which
-Number() turns into 0 and the harness clamped to 1. The live test now
-asserts its own coverage before it asserts anything about the planner.
+run 6 — Part A1, PR #137. Run 5 measured properly and failed honestly:
+42 of 65, with 23 questions failing for four reasons. Three of them were
+the validator rejecting CORRECT plans, and are now fixed:
 
-Same question, for real this time: do all 65 gold questions plan five
-distinct angles, three runs each, inside the 3 s cap?
+  - a repeated role was treated as a repeated angle (22 rejections), but
+    "compare karma-yoga and bhakti-yoga" wants two definitions;
+  - naming Śrīla Prabhupāda as the speaker read as invented (15), though
+    the whole library is his and "what did HE say" resolves to him;
+  - "Bhagavad-gita 6.6" contains no "bg", so the correct constraint
+    "Bg 6.6" read as invented (3).
+
+The fourth was my own harness: latency was measured with six planner
+calls in flight, which is not how a search runs. This run is serial.

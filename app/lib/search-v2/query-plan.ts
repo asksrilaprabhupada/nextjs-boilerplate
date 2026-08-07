@@ -30,6 +30,7 @@
 import { z } from "zod";
 import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
 import { extractReference, extractSiglum, siglumOf } from "@/app/lib/search-v2/reference";
+import { isPrabhupada } from "@/app/lib/15-transcript-speakers";
 
 /**
  * What the planner may say a question IS. This is a DESCRIPTION, recorded for
@@ -443,22 +444,13 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     }
   }
 
-  // Five angles serving one purpose are one angle billed five times. A repeated
-  // role is the cheapest reliable signal of that, and the model is told so.
-  const seenRoles = new Map<string, string>();
-  for (const sq of subs) {
-    const owner = seenRoles.get(sq.role);
-    if (owner) {
-      push(
-        "near_duplicate_angles",
-        `subqueries "${owner}" and "${sq.id}" both serve the "${sq.role}" purpose`,
-        true,
-      );
-    } else {
-      seenRoles.set(sq.role, sq.id);
-    }
-  }
-
+  // A REPEATED ROLE IS NOT A REPEATED ANGLE. This was rejected here until the
+  // gate showed what it was throwing away: "Compare karma-yoga and bhakti-yoga"
+  // wants two `definition` angles, one per thing being compared, and they
+  // retrieve entirely different passages. Twenty-two of the gate's rejections
+  // were plans exactly like that. Role diversity stays in the prompt as
+  // guidance; distinctness is judged on the TEXT below, which is the thing that
+  // actually decides whether two angles reach the same rows.
   for (let i = 0; i < subs.length; i++) {
     for (let j = i + 1; j < subs.length; j++) {
       if (jaccard(subs[i].text, subs[j].text) >= NEAR_DUPLICATE_PAIR) {
@@ -493,12 +485,25 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
   if (c.location && !q.includes(c.location.toLowerCase().split(/\s+/)[0])) {
     push("semantic_rejected", `invented location constraint "${c.location}"`, false);
   }
-  if (c.speaker && !q.includes(c.speaker.toLowerCase().split(/\s+/)[0])) {
+  // Naming Śrīla Prabhupāda is not an invention and narrows nothing — the whole
+  // library is his. "In a morning walk, what did HE say about scientists?"
+  // resolves to him correctly, and rejecting that cost fifteen good plans in the
+  // gate. A guest the question never mentioned is still a misreading.
+  if (
+    c.speaker
+    && !isPrabhupada(c.speaker)
+    && !q.includes(c.speaker.toLowerCase().split(/\s+/)[0])
+  ) {
     push("semantic_rejected", `invented speaker constraint "${c.speaker}"`, false);
   }
+  // Compare SIGLA, not raw text. "Bhagavad-gita 6.6" contains no "bg", so the
+  // correct constraint "Bg 6.6" read as invented and threw the plan away.
+  const querySiglum = extractSiglum(query);
   for (const ref of c.scripture_references) {
-    const siglum = ref.trim().split(/[\s.]/)[0]?.toLowerCase();
-    if (siglum && siglum.length >= 2 && !q.includes(siglum)) {
+    const planSiglum = siglumOf(ref);
+    if (!planSiglum) continue;
+    if (querySiglum && planSiglum === querySiglum) continue;
+    if (!q.includes(planSiglum.toLowerCase())) {
       push("semantic_rejected", `invented scripture constraint "${ref}"`, false);
       break;
     }
@@ -542,10 +547,11 @@ function buildPrompt(query: string, maxSubqueries: number, repairNotes: string[]
     `by itself. The library is searched with the original question PLUS your ${maxSubqueries}`,
     `angles, so ${maxSubqueries + 1} searches run and their results are merged.`,
     "",
-    "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE — a different `role`",
-    "value, reaching passages the others would miss. Never use a role twice.",
-    "Rephrasing the same sentence is worthless: it retrieves the same rows twice",
-    "and wastes one of your five angles.",
+    "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE, reaching passages",
+    "the others would miss. Prefer a different `role` for each, but two angles",
+    "may share a role when they genuinely differ — comparing two things means",
+    "defining both. Rephrasing the same sentence is worthless: it retrieves the",
+    "same rows twice and wastes one of your five angles.",
     "",
     "Worked example — 'how do I control my mind' (the original question is",
     "searched too, so do not restate it):",

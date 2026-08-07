@@ -499,13 +499,14 @@ describe("query plan validation", () => {
     expect(check("how do I control my mind", plan)).toEqual([]);
   });
 
-  it("rejects five angles that all serve the same purpose", () => {
-    // Five rows is not five angles. A repeated role is one angle billed twice.
+  it("allows two angles to share a role when their texts genuinely differ", () => {
+    // "Compare karma-yoga and bhakti-yoga" wants two `definition` angles, one
+    // per thing compared. Rejecting a repeated role threw away plans like that.
     const plan = {
       ...base,
-      subqueries: fiveAngles().map((s, i) => ({ ...s, role: "cause" as const, id: `s${i}` })),
+      subqueries: fiveAngles().map((s, i) => ({ ...s, role: "definition" as const, id: `s${i}` })),
     };
-    expect(check("how do I control my mind", plan).join(" ")).toMatch(/both serve the "cause" purpose/);
+    expect(check("how do I control my mind", plan)).toEqual([]);
   });
 
   it("sees through a reworded duplicate that differs only by inflection", () => {

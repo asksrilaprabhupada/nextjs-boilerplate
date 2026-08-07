@@ -165,8 +165,13 @@ describe("query planner loop", () => {
   });
 
   it("retries at most once, then falls back and says the angles were duplicates", async () => {
+    // Five angles that really are one angle: same words, five times over.
     const duplicated = goodPlan({
-      subqueries: FIVE_ANGLES.map((angle) => ({ ...angle, role: "cause" })),
+      subqueries: FIVE_ANGLES.map((angle, i) => ({
+        ...angle,
+        id: `s${i}`,
+        text: "controlling the restless mind by practice",
+      })),
     });
     const client = scriptedClient([duplicated, duplicated, goodPlan()]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });

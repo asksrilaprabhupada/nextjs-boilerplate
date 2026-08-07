@@ -41,7 +41,15 @@ describe.skipIf(!enabled)("live planner gate", () => {
     "plans five distinct angles for every gold-set question, on every run",
     async () => {
       const startedAt = Date.now();
-      const report = await runPlannerGate({ runsPerQuestion: runs, limit, concurrency: 6 });
+      // ONE AT A TIME. A search makes exactly one planner call, so latency
+      // measured six-in-flight is not the latency the 3 s cap applies to: the
+      // first gate run read a p95 of 4,459 ms and blamed the planner for its
+      // own harness. Serial is slower to run and is the only honest number.
+      const report = await runPlannerGate({
+        runsPerQuestion: runs,
+        limit,
+        concurrency: Number(process.env.PLANNER_GATE_CONCURRENCY) || 1,
+      });
       console.log(renderPlannerGateText({ ...report, wallClockMs: Date.now() - startedAt }));
 
       // COVERAGE FIRST. A gate that measured one question out of sixty-five
