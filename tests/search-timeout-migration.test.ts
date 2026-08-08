@@ -25,7 +25,7 @@ describe("service-role search timeout migration", () => {
     expect(rollback).toContain("ALTER ROLE service_role RESET statement_timeout");
     expect(rollback).toContain("NOTIFY pgrst, 'reload config'");
     const executable = rollback
-      .split("\n")
+      .split(/\r?\n/)
       .filter((line) => !line.trimStart().startsWith("--"))
       .join("\n")
       .trim();
