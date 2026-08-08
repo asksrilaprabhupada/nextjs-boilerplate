@@ -364,7 +364,12 @@ function AdditionalTier({ list, truncated }: { list: AdditionalSearchPassage[]; 
   return (
     <details className="additional-tier">
       <summary className="font-body">
-        {count} more {list.length === 1 ? "passage" : "passages"} — every one the library found, as citations
+        {/* "every one the library found" was not true and could not be.
+            This tier holds what THIS SEARCH retrieved — a pool capped at 700
+            candidates across the five sources — not everything the library
+            holds on the subject. Honesty is the point of this project, so the
+            line says what actually happened and claims nothing more. */}
+        {count} more {list.length === 1 ? "passage" : "passages"} retrieved in this search
       </summary>
       {truncated && (
         <p className="additional-truncated font-body">
@@ -647,8 +652,9 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
           </motion.div>
         )}
 
-        {/* Below the main article in either view: everything else the library
-            found, grouped by kind, collapsed until asked for. */}
+        {/* Below the main article in either view: every other passage THIS
+            SEARCH retrieved, grouped by kind, collapsed until asked for. Not
+            everything the library holds — the candidate pool is capped. */}
         <AdditionalTier list={results.additional || []} truncated={results.additionalTruncated} />
       </div>
 
