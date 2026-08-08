@@ -160,11 +160,33 @@ const supplementalQuestions: GoldQuestion[] = suggestionSet.supplemental_cases.m
   needs_human_review: true,
 }));
 const runQuestions = [...goldSet.questions, ...supplementalQuestions];
-const A2_SCHEMA_VERSION = "a2-rerank-comparison-v4";
-const A2_MANIFEST_SCHEMA_VERSION = "a2-run-manifest-v1";
+const A2_SCHEMA_VERSION = "a2-rerank-comparison-v5";
+const A2_MANIFEST_SCHEMA_VERSION = "a2-run-manifest-v2";
 const A2_RETRY_MANIFEST_SCHEMA_VERSION = "a2-retry-manifest-v1";
-const A2_APPROVED_RUN_ID = "a2-20260808-owner-approved-25usd";
+const A2_APPROVED_RUN_ID = "a2-20260808-validator-restart";
 const A2_SUPABASE_PROJECT_REF = "wzktlpjtqmjxvragwhqg";
+const A2_LIFETIME_MAX_MICROUSD = 25_000_000;
+const A2_PRIOR_COMMITTED_MICROUSD = 2_716_439;
+const A2_RESTART_MAX_MICROUSD = A2_LIFETIME_MAX_MICROUSD - A2_PRIOR_COMMITTED_MICROUSD;
+const A2_PRIOR_EVIDENCE = Object.freeze({
+  runId: "a2-20260808-owner-approved-25usd",
+  definitionSha256: "3481a216f29568a71e3004d294492331407eff3d61ad0139c7318315abe63b14",
+  manifestSha256: "b8026c4d6df6a46c9b931ab39e3ea4d34df80b47cc74f4b4a89b8d35769f70c7",
+  files: Object.freeze({
+    "comparison-report.json": "3df3f0989a91b220dc8bbf7213972611c96725f864cda3c143b0b44a133bac8c",
+    "retry-manifest.json": "406747da0cb5c9aba32f9bb6fdfb4dc0b76a5a3f01e8937e6e875b2882083528",
+    "run-manifest.json": "aef81cde3265aa125801b1f9dc8c6c39487993d3420b71f251bd170ca28950c8",
+    "spend-ledger.jsonl": "c1e68fcc6c3d6a609c8fc43795b78e048bee9922ddf9d6145d4aa55e149f833a",
+    "pools/q001-r01-a02.json": "ba9776edf7ad3e9fbb935c3fc619ca232cd2b72c03f6806d2e06ce56a842aee5",
+  }),
+});
+const A2_LIFETIME_BUDGET = Object.freeze({
+  lifetimeMaxTotalUsd: microusdToUsd(A2_LIFETIME_MAX_MICROUSD),
+  priorRunId: A2_PRIOR_EVIDENCE.runId,
+  priorCommittedUsd: microusdToUsd(A2_PRIOR_COMMITTED_MICROUSD),
+  currentRunMaxTotalUsd: microusdToUsd(A2_RESTART_MAX_MICROUSD),
+  priorEvidence: A2_PRIOR_EVIDENCE,
+});
 
 type A2Mode = "PRECHECK" | "RUN" | "RECOVER";
 
@@ -349,6 +371,7 @@ function runDefinitionSha256(
     usdPerThousandSearchUnits,
     maxTotalUsd,
     budgetDefinition: A2_BUDGET_DEFINITION,
+    lifetimeBudget: A2_LIFETIME_BUDGET,
     approvedRunId: A2_APPROVED_RUN_ID,
     supabaseProjectRef: A2_SUPABASE_PROJECT_REF,
     runtime: {
@@ -375,6 +398,45 @@ function writeJson(path: string, value: unknown, exclusive = false): void {
 
 function sha256Json(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function assertPriorRunEvidence(): void {
+  const directory = resolve("work/a2-rerank-comparison", A2_PRIOR_EVIDENCE.runId);
+  for (const [relativePath, expectedSha256] of Object.entries(A2_PRIOR_EVIDENCE.files)) {
+    const path = join(directory, ...relativePath.split("/"));
+    if (!existsSync(path) || sha256File(path) !== expectedSha256) {
+      throw new Error(`A2 prior-run evidence differs at ${relativePath}`);
+    }
+  }
+  const poolFiles = readdirSync(join(directory, "pools")).sort();
+  if (JSON.stringify(poolFiles) !== JSON.stringify(["q001-r01-a02.json"])) {
+    throw new Error("A2 prior-run pool evidence differs from the carry-forward definition");
+  }
+  const checkpoint = JSON.parse(
+    readFileSync(join(directory, "comparison-report.json"), "utf8"),
+  ) as Record<string, unknown>;
+  if (checkpoint.runId !== A2_PRIOR_EVIDENCE.runId
+    || checkpoint.definitionSha256 !== A2_PRIOR_EVIDENCE.definitionSha256
+    || checkpoint.manifestSha256 !== A2_PRIOR_EVIDENCE.manifestSha256
+    || checkpoint.maxTotalUsd !== A2_LIFETIME_BUDGET.lifetimeMaxTotalUsd
+    || checkpoint.budgetCommittedUsd !== A2_LIFETIME_BUDGET.priorCommittedUsd
+    || checkpoint.completedRows !== 1
+    || checkpoint.attempts !== 4
+    || !Array.isArray(checkpoint.budgetOpenAttempts)
+    || checkpoint.budgetOpenAttempts.length !== 0) {
+    throw new Error("A2 prior-run checkpoint does not prove the carry-forward amount");
+  }
+}
+
+export function recoveryStateAvailable(
+  restartStateExists: boolean,
+  priorLockPath: string,
+): boolean {
+  return restartStateExists || existsSync(priorLockPath);
 }
 
 function logicalRowKey(questionId: string, repeat: number): string {
@@ -404,6 +466,7 @@ export function buildRunManifest(preflight: A2Preflight) {
     nodeVersion: process.version,
     repeats: preflight.repeats,
     maxTotalUsd: preflight.maxTotalUsd,
+    lifetimeBudget: A2_LIFETIME_BUDGET,
     cohereUsdPerThousandSearchUnits: preflight.usdPerThousandSearchUnits,
     budgetDefinition: A2_BUDGET_DEFINITION,
     models: {
@@ -427,6 +490,21 @@ export function buildRunManifest(preflight: A2Preflight) {
       }))).flat(),
   };
   return { ...manifest, manifestSha256: sha256Json(manifest) };
+}
+
+export function paidRunApproval(
+  preflight: A2Preflight,
+  manifestSha256: string,
+): string {
+  const digest = sha256Json({
+    schemaVersion: "a2-paid-run-approval-v2",
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256,
+    maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
+    lifetimeBudget: A2_LIFETIME_BUDGET,
+  });
+  return `I_APPROVE_PAID_A2:${digest}`;
 }
 
 function assertPreflight(): A2Preflight {
@@ -467,9 +545,14 @@ function assertPreflight(): A2Preflight {
   }
   const maxTotalText = process.env.A2_MAX_TOTAL_USD;
   const maxTotalUsd = Number(maxTotalText);
-  if (maxTotalText === undefined || !Number.isFinite(maxTotalUsd) || maxTotalUsd !== 25) {
-    throw new Error("A2_MAX_TOTAL_USD must equal the owner-approved hard limit of 25");
+  if (maxTotalText === undefined
+    || !Number.isFinite(maxTotalUsd)
+    || maxTotalUsd !== A2_LIFETIME_BUDGET.currentRunMaxTotalUsd) {
+    throw new Error(
+      `A2_MAX_TOTAL_USD must equal the remaining lifetime allowance of ${A2_LIFETIME_BUDGET.currentRunMaxTotalUsd}`,
+    );
   }
+  assertPriorRunEvidence();
   if (geminiQueryPlannerModel() !== A2_BUDGET_DEFINITION.geminiModel
     || VOYAGE_CONTEXT_MODEL !== A2_BUDGET_DEFINITION.voyageModel
     || COHERE_RERANK_MODEL !== A2_BUDGET_DEFINITION.cohereModel) {
@@ -542,9 +625,6 @@ function assertPreflight(): A2Preflight {
     }
   }
   if (mode === "RUN") {
-    if (process.env.A2_PAID_RUN_APPROVED !== "I_APPROVE_PAID_A2") {
-      throw new Error("A2 paid run is blocked without the exact approval marker");
-    }
     const required = ["VOYAGE_API_KEY", "GEMINI_API_KEY", "COHERE_API_KEY", "SUPABASE_SERVICE_KEY"];
     const missing = required.filter((name) => !process.env[name]);
     if (missing.length > 0) throw new Error(`A2 paid run is missing ${missing.join(", ")}`);
@@ -555,7 +635,13 @@ function assertPreflight(): A2Preflight {
       throw new Error("A2 resume marker was supplied but no approved run directory exists");
     }
   } else if (mode === "RECOVER") {
-    if (!resumed) throw new Error("A2 recovery requires the existing approved run directory");
+    const priorLockPath = join(
+      resolve("work/a2-rerank-comparison", A2_PRIOR_EVIDENCE.runId),
+      "paid-run.lock",
+    );
+    if (!recoveryStateAvailable(resumed, priorLockPath)) {
+      throw new Error("A2 recovery requires restart state or the prior lifetime lock");
+    }
     if (process.env.A2_RESUME_RUN !== "I_APPROVE_RESUME_A2") {
       throw new Error("A2 recovery requires the exact approved-run resume marker");
     }
@@ -616,16 +702,17 @@ function armTotals(rows: Array<Record<string, unknown>>, arm: "current" | "globa
   };
 }
 
-function assertCompleteRow(row: Record<string, unknown>, key: string): void {
+export function assertCompleteRow(row: Record<string, unknown>, key: string): void {
   if (typeof row.poolSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(row.poolSha256)) {
     throw new Error(`A2 completed row has no valid pool hash: ${key}`);
   }
   const timing = row.searchToTop20Ms as Record<string, unknown> | undefined;
   const order = Array.isArray(row.armExecutionOrder) ? row.armExecutionOrder : [];
   const arms = row.arms as Record<string, Record<string, unknown>> | undefined;
+  const candidateCount = finiteCount(row.candidateCount);
   const sharedPreparationMs = row.sharedPreparationMs;
   const pipelineTotalMs = row.comparisonPipelineTotalMs;
-  if (!timing || !arms
+  if (!timing || !arms || candidateCount === null || candidateCount < 2 || candidateCount > 400
     || order.length !== 2 || new Set(order).size !== 2
     || !order.includes(RERANK_ARMS.current) || !order.includes(RERANK_ARMS.global)
     || typeof sharedPreparationMs !== "number" || !Number.isFinite(sharedPreparationMs)
@@ -640,11 +727,12 @@ function assertCompleteRow(row: Record<string, unknown>, key: string): void {
     const requests = outcome?.providerRequests;
     if (!outcome || outcome.reranked !== true || outcome.degradedReason !== null
       || !Array.isArray(outcome.top)
-      || outcome.top.length < 1 || outcome.top.length > 20
+      || outcome.top.length !== Math.min(RERANK_COMPARISON_TOP_N, candidateCount)
       || outcome.arm !== arm
       || outcome.model !== COHERE_RERANK_MODEL
-      || outcome.topN !== 20
-      || outcome.documentCount !== row.candidateCount
+      || outcome.topN !== RERANK_COMPARISON_TOP_N
+      || typeof outcome.documentCount !== "number"
+      || !Number.isSafeInteger(outcome.documentCount) || outcome.documentCount < 2
       || typeof outcome.durationMs !== "number"
       || !Number.isFinite(outcome.durationMs) || outcome.durationMs < 0
       || typeof duration !== "number" || !Number.isFinite(duration) || duration < 0
@@ -665,10 +753,38 @@ function assertCompleteRow(row: Record<string, unknown>, key: string): void {
     }
     const documentCounts = (requests as Array<Record<string, unknown>>)
       .map((request) => Number(request.documentCount));
-    const ceilings = arm === RERANK_ARMS.current ? [200, 200, 201] : [400];
-    if (documentCounts.length > ceilings.length
-      || documentCounts.some((count, index) => count > ceilings[index])) {
-      throw new Error(`A2 completed row exceeds the approved ${arm} Cohere request shape: ${key}`);
+    const requestTopNs = (requests as Array<Record<string, unknown>>)
+      .map((request) => Number(request.topN));
+    if (sum(documentCounts) !== outcome.documentCount) {
+      throw new Error(`A2 completed row has inconsistent ${arm} document accounting: ${key}`);
+    }
+    if (arm === RERANK_ARMS.global) {
+      if (documentCounts.length !== 1
+        || documentCounts[0] !== candidateCount
+        || requestTopNs[0] !== Math.min(RERANK_COMPARISON_TOP_N, candidateCount)) {
+        throw new Error(`A2 completed row has an invalid global Cohere request shape: ${key}`);
+      }
+      continue;
+    }
+
+    const expectedFirstPassCounts: number[] = [];
+    for (let offset = 0; offset < candidateCount; offset += RERANK_BATCH_SIZE) {
+      const count = Math.min(RERANK_BATCH_SIZE, candidateCount - offset);
+      // The low-level helper handles a singleton locally, without a network request.
+      if (count > 1) expectedFirstPassCounts.push(count);
+    }
+    const hasFinalPass = candidateCount > RERANK_BATCH_SIZE;
+    const expectedRequestCount = expectedFirstPassCounts.length + (hasFinalPass ? 1 : 0);
+    const firstPassIsExact = expectedFirstPassCounts.every((count, index) =>
+      documentCounts[index] === count && requestTopNs[index] === count);
+    const finalCount = hasFinalPass ? documentCounts.at(-1) : null;
+    const finalTopN = hasFinalPass ? requestTopNs.at(-1) : null;
+    if (documentCounts.length !== expectedRequestCount || !firstPassIsExact
+      || (hasFinalPass && (
+        (finalCount !== RERANK_FINAL_POOL && finalCount !== RERANK_FINAL_POOL + 1)
+        || finalTopN !== finalCount
+      ))) {
+      throw new Error(`A2 completed row has an invalid current Cohere request shape: ${key}`);
     }
   }
   if (row.pipelineDegraded !== false || row.providerUsageComplete !== true) {
@@ -1260,8 +1376,17 @@ export function recoverInterruptedRun(
   spendLedger: A2SpendLedger,
   checkpointPath: string,
   rows: Array<Record<string, unknown>>,
-  recoveredArchivePath: string,
+  recoveredArchivePathInput: string | string[],
 ): void {
+  const recoveredArchivePaths = [...new Set(
+    (Array.isArray(recoveredArchivePathInput)
+      ? recoveredArchivePathInput
+      : [recoveredArchivePathInput])
+      .filter((path) => typeof path === "string" && path.length > 0),
+  )];
+  if (recoveredArchivePaths.length === 0) {
+    throw new Error("A2 recovery requires at least one recovered lock archive");
+  }
   validateAttemptHistory(preflight, rows);
   assertLedgerBijection(preflight, rows, spendLedger, true);
   const recoveryDirectory = join(preflight.runDirectory, "recovery");
@@ -1294,18 +1419,19 @@ export function recoverInterruptedRun(
   let intent: Record<string, unknown>;
   if (incompleteNumbers.length === 1) {
     intent = JSON.parse(readFileSync(intentPath, "utf8")) as Record<string, unknown>;
-    if (intent.schemaVersion !== "a2-recovery-intent-v1"
+    if (intent.schemaVersion !== "a2-recovery-intent-v2"
       || intent.generation !== generation
       || intent.runId !== preflight.runId
       || intent.definitionSha256 !== preflight.definitionSha256
       || intent.manifestSha256 !== manifestSha256
       || !Array.isArray(intent.openAttempts)
-      || typeof intent.recoveredLockArchive !== "string") {
+      || !Array.isArray(intent.recoveredLockArchives)
+      || intent.recoveredLockArchives.some((path) => typeof path !== "string")) {
       throw new Error("A2 recovery intent differs from this approved run; manual audit required");
     }
   } else {
     intent = {
-      schemaVersion: "a2-recovery-intent-v1",
+      schemaVersion: "a2-recovery-intent-v2",
       generation,
       runId: preflight.runId,
       definitionSha256: preflight.definitionSha256,
@@ -1313,7 +1439,7 @@ export function recoverInterruptedRun(
       ledgerSha256Before: spendLedger.sha256(),
       committedMicrousdBefore: spendLedger.committedMicrousd(),
       openAttempts: currentlyOpenAttempts,
-      recoveredLockArchive: recoveredArchivePath,
+      recoveredLockArchives: recoveredArchivePaths,
       startedAt: new Date().toISOString(),
     };
     writeJson(intentPath, intent, true);
@@ -1405,8 +1531,8 @@ export function recoverInterruptedRun(
     manifestSha256,
     recoveredAt: new Date().toISOString(),
     recoveredLockArchives: [...new Set([
-      String(intent.recoveredLockArchive),
-      recoveredArchivePath,
+      ...(intent.recoveredLockArchives as string[]),
+      ...recoveredArchivePaths,
     ])],
     recoveredAttempts: intendedAttempts,
     settledThisInvocation,
@@ -1426,6 +1552,10 @@ describe("paid A2 rerank comparison", () => {
   it("runs the complete key with repeated shared-pool comparisons", async () => {
     const preflight = assertPreflight();
     const sanitizedManifest = buildRunManifest(preflight);
+    const requiredPaidRunApproval = paidRunApproval(
+      preflight,
+      sanitizedManifest.manifestSha256,
+    );
     if (preflight.mode === "PRECHECK") {
       process.stderr.write(`${JSON.stringify({
         mode: preflight.mode,
@@ -1436,28 +1566,56 @@ describe("paid A2 rerank comparison", () => {
         repeats: preflight.repeats,
         rows: runQuestions.length * preflight.repeats,
         maxTotalUsd: preflight.maxTotalUsd,
+        lifetimeBudget: A2_LIFETIME_BUDGET,
+        requiredPaidRunApproval,
         externalCallsMade: 0,
         artifactsWritten: 0,
       })}\n`);
       expect(runQuestions).toHaveLength(66);
       return;
     }
+    if (preflight.mode === "RUN"
+      && process.env.A2_PAID_RUN_APPROVED !== requiredPaidRunApproval) {
+      throw new Error(`A2 paid run requires the exact marker ${requiredPaidRunApproval}`);
+    }
+    let priorRunLock: A2RunLock | null = null;
+    let runLock: A2RunLock | null = null;
+    let activeSpendLedger: A2SpendLedger | null = null;
+    let priorLockDisposed = false;
+    let runLockDisposed = false;
+    try {
+    const lockMode = preflight.mode === "RECOVER" ? "recover" : "run";
+    const priorRunDirectory = resolve("work/a2-rerank-comparison", A2_PRIOR_EVIDENCE.runId);
+    // Hold the immutable prior run closed before taking the restart lock. This
+    // makes the carried-forward $2.716439 and the restart ledger one canonical-
+    // worktree critical section instead of two independently spendable runs.
+    priorRunLock = A2RunLock.acquire(join(priorRunDirectory, "paid-run.lock"), {
+      runId: A2_PRIOR_EVIDENCE.runId,
+      definitionSha256: A2_PRIOR_EVIDENCE.definitionSha256,
+      mode: lockMode,
+      staleLockApproval: process.env.A2_PRIOR_STALE_LOCK_APPROVAL,
+    });
+    // Close the check/acquire race: the pinned prior files must still be the
+    // exact evidence used for the carry-forward after we own its lock.
+    assertPriorRunEvidence();
+
     if (!preflight.resumed) {
       mkdirSync(join(preflight.runDirectory, "pools"), { recursive: true });
     }
-    const runLock = A2RunLock.acquire(join(preflight.runDirectory, "paid-run.lock"), {
+    runLock = A2RunLock.acquire(join(preflight.runDirectory, "paid-run.lock"), {
       runId: preflight.runId,
       definitionSha256: preflight.definitionSha256,
-      mode: preflight.mode === "RECOVER" ? "recover" : "run",
+      mode: lockMode,
       staleLockApproval: process.env.A2_STALE_LOCK_APPROVAL,
     });
-    let activeSpendLedger: A2SpendLedger | null = null;
-    let lockDisposed = false;
-    try {
-    if (preflight.mode === "RECOVER" && (!runLock.recovered || !runLock.recoveredArchivePath)) {
-      throw new Error("A2 RECOVER is allowed only for an exact approved stale-lock recovery");
+    const recoveredArchivePaths = [
+      priorRunLock.recoveredArchivePath,
+      runLock.recoveredArchivePath,
+    ].filter((path): path is string => path !== null);
+    if (preflight.mode === "RECOVER" && recoveredArchivePaths.length === 0) {
+      throw new Error("A2 RECOVER requires a stale prior or restart lock with its exact approval");
     }
-    if (preflight.mode === "RECOVER") {
+    if (preflight.mode === "RECOVER" && preflight.resumed) {
       completeInterruptedInitialization(preflight, sanitizedManifest);
     }
     const {
@@ -1474,7 +1632,7 @@ describe("paid A2 rerank comparison", () => {
         spendLedger,
         checkpointPath,
         rows,
-        runLock.recoveredArchivePath!,
+        recoveredArchivePaths,
       );
       expect(spendLedger.openRowKeys()).toEqual([]);
       return;
@@ -1850,6 +2008,17 @@ describe("paid A2 rerank comparison", () => {
       budget: {
         maxTotalUsd: preflight.maxTotalUsd,
         committedUsd: microusdToUsd(spendLedger.committedMicrousd()),
+        lifetimeMaxTotalUsd: A2_LIFETIME_BUDGET.lifetimeMaxTotalUsd,
+        priorRunId: A2_LIFETIME_BUDGET.priorRunId,
+        priorCommittedUsd: A2_LIFETIME_BUDGET.priorCommittedUsd,
+        aggregateCommittedUsd: microusdToUsd(
+          A2_PRIOR_COMMITTED_MICROUSD + spendLedger.committedMicrousd(),
+        ),
+        aggregateRemainingUsd: microusdToUsd(
+          A2_LIFETIME_MAX_MICROUSD
+            - A2_PRIOR_COMMITTED_MICROUSD
+            - spendLedger.committedMicrousd(),
+        ),
         openRows: spendLedger.openRowKeys(),
         ledgerSchemaVersion: A2_SPEND_LEDGER_SCHEMA_VERSION,
         definition: A2_BUDGET_DEFINITION,
@@ -1906,21 +2075,86 @@ describe("paid A2 rerank comparison", () => {
     );
     expect(completedRowKeys.size).toBe(preflight.repeats * runQuestions.length);
     } catch (error) {
-      if (preflight.mode === "RECOVER" && runLock.recovered) {
-        runLock.restoreRecoveredLock();
-        lockDisposed = true;
+      if (preflight.mode === "RECOVER") {
+        const restorationErrors: string[] = [];
+        if (runLock !== null) {
+          runLockDisposed = true;
+          try {
+            if (runLock.recovered) runLock.restoreRecoveredLock();
+            else runLock.release();
+          } catch (lockError) {
+            restorationErrors.push(
+              lockError instanceof Error ? lockError.message : "restart lock restoration failed",
+            );
+          }
+        }
+        if (priorRunLock !== null) {
+          priorLockDisposed = true;
+          try {
+            if (priorRunLock.recovered) priorRunLock.restoreRecoveredLock();
+            else priorRunLock.release();
+          } catch (lockError) {
+            restorationErrors.push(
+              lockError instanceof Error ? lockError.message : "prior lock restoration failed",
+            );
+          }
+        }
+        if (restorationErrors.length > 0) {
+          throw new Error(
+            `A2 recovery failed and lock restoration was incomplete: ${restorationErrors.join("; ")}`,
+          );
+        }
       } else if (preflight.mode === "RUN"
         && activeSpendLedger !== null
         && activeSpendLedger.openRowKeys().length > 0) {
-        // Preserve the JSON lock if an unexpected local failure leaves money
+        // Preserve both JSON locks if an unexpected local failure leaves money
         // reserved without a settled outcome. A later RECOVER invocation must
-        // reconcile that attempt before any more providers can run.
-        runLock.retainForRecovery();
-        lockDisposed = true;
+        // reconcile that attempt before either lifetime-budget run can proceed.
+        const retentionErrors: string[] = [];
+        if (runLock !== null) {
+          runLockDisposed = true;
+          try { runLock.retainForRecovery(); } catch (lockError) {
+            retentionErrors.push(
+              lockError instanceof Error ? lockError.message : "restart lock retention failed",
+            );
+          }
+        }
+        if (priorRunLock !== null) {
+          priorLockDisposed = true;
+          try { priorRunLock.retainForRecovery(); } catch (lockError) {
+            retentionErrors.push(
+              lockError instanceof Error ? lockError.message : "prior lock retention failed",
+            );
+          }
+        }
+        if (retentionErrors.length > 0) {
+          throw new Error(
+            `A2 failed with an open reservation and lock retention was incomplete: ${retentionErrors.join("; ")}`,
+          );
+        }
       }
       throw error;
     } finally {
-      if (!lockDisposed) runLock.release();
+      const releaseErrors: string[] = [];
+      if (runLock !== null && !runLockDisposed) {
+        runLockDisposed = true;
+        try { runLock.release(); } catch (lockError) {
+          releaseErrors.push(
+            lockError instanceof Error ? lockError.message : "restart lock release failed",
+          );
+        }
+      }
+      if (priorRunLock !== null && !priorLockDisposed) {
+        priorLockDisposed = true;
+        try { priorRunLock.release(); } catch (lockError) {
+          releaseErrors.push(
+            lockError instanceof Error ? lockError.message : "prior lock release failed",
+          );
+        }
+      }
+      if (releaseErrors.length > 0) {
+        throw new Error(`A2 lock release was incomplete: ${releaseErrors.join("; ")}`);
+      }
     }
   });
 });
