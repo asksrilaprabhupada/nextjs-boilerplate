@@ -1,0 +1,390 @@
+{
+  "schema_version": "gold-set-suggestions-v1",
+  "gold_set_schema_version": "gold-set-v1",
+  "gold_set_fingerprint_sha256": "fba5677de3cd750caca0aaadded657257018d9dfb2f5d1c4871d158fa3c15939",
+  "corpus_version": "2026-07-08-tags-v3",
+  "note": "These are read-only corpus candidates prepared by Codex. They are provisional, are not human-approved gold labels, and must remain separate from owner-approved ranking metrics until reviewed.",
+  "suggestions": [
+    {
+      "question_id": "q013",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["purport:f303ec99-b5a1-44aa-b85b-f7c9d57b49fe", "lecture:46b5e81b-d504-4ab4-9da0-815c6e4b4d0e"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence biographical candidates; owner must approve their gold status."
+    },
+    {
+      "question_id": "q014",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:a80f0d97-ba90-4a7d-a228-f65379d9ecfd", "lecture:b66247bf-9355-459b-8308-7406ab60dc04", "lecture:190c86cd-2ab1-471f-b4d7-68f7f12b11ee"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence identity and mission candidates; owner review remains required."
+    },
+    {
+      "question_id": "q015",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["purport:df843562-b1bb-4901-be16-d081799f35cf", "purport:840d1cce-1a0a-422c-b065-be6da7025aa7"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Owner must decide whether the question means earthly Vṛndāvana, eternal Vṛndāvana, or both."
+    },
+    {
+      "question_id": "q016",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:de764d9e-fee6-4167-a80b-8806942bdcc1", "verse:e8c11311-a154-4fb6-85de-406d41a2d694"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence biographical anchors; owner review remains required."
+    },
+    {
+      "question_id": "q017",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:bf289662-05c6-4e0c-bba5-67b632aa104d", "verse:bb3c7be9-30aa-4306-b097-e5ee47da39de", "verse:128b0d26-fe17-469f-b24d-74b6859801a0"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence definition candidates; owner review remains required."
+    },
+    {
+      "question_id": "q018",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:7b96f3b1-26ce-4a75-a7d2-fb30acfe9381", "verse:962c16ed-df15-4c3d-8c10-a2a93ff99856"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence definition candidates; owner review remains required."
+    },
+    {
+      "question_id": "q019",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:74c1655e-6d8d-406c-a287-2c406418a254", "verse:a9c6028c-544b-4b4b-a080-2ba9dea42e57"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Owner should decide whether māyā means illusion, potency, material energy, or a combination."
+    },
+    {
+      "question_id": "q021",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:4efe9f39-81e0-426d-a396-f0d319318722", "verse:7bc96700-0992-4ecd-a896-fc672d9bf144", "verse:4526a3b3-1db1-4149-b8f2-4d75d3510325"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence bhakti-yoga candidates; owner review remains required."
+    },
+    {
+      "question_id": "q023",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:6ea63494-f060-41b5-a7a9-57f01a78bbe6", "verse:5953d0a2-0159-445f-8121-bd58d8b9b790"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Covers disposition and availability; owner should decide whether physical technique, attention, or count is intended."
+    },
+    {
+      "question_id": "q026",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["purport:ee3906d9-924f-445b-ae42-4575d13346f1", "purport:74445d04-9ea5-4257-aaff-92386c5115ef", "purport:aac38154-8772-461b-a360-b78c9be129c1"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Retain the context that sixteen rounds is Prabhupāda's prescribed minimum for his students and movement."
+    },
+    {
+      "question_id": "q029",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:21c6ab2a-32f5-4d7e-aa1c-573379c961e5", "verse:e5bf660c-8db8-42f9-9157-547da94dfd77"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "The question is broad; candidates must not be presented as an exhaustive explanation of individual hardship."
+    },
+    {
+      "question_id": "q030",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:74c1655e-6d8d-406c-a287-2c406418a254", "verse:91521200-67b3-4979-9f77-7af1294cd19c", "verse:d2975058-a9be-4f5e-9b3a-c3a30bc8c92e"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence surrender candidates; owner review remains required."
+    },
+    {
+      "question_id": "q031",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:a7a10678-810b-42ac-bb72-c6f5579415fe", "verse:85afd607-0ea7-405d-81a4-aa326c18ba54", "purport:3f659f68-abef-45c9-8a3b-4ce0677a71ce"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Narrative anchors only; do not turn them automatically into a universal instruction."
+    },
+    {
+      "question_id": "q032",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:282c2ef8-9230-43f7-bddb-45818f01f32d", "verse:b76e4478-110e-49c4-9f21-0581b03f3187", "verse:ff1bf51a-7e84-43c9-ac8d-3dbd54101068"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Narrative context; owner review remains required."
+    },
+    {
+      "question_id": "q033",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:b3d73b05-75eb-4954-bd54-d1a9af5257a4", "verse:43a4f4de-ba15-4775-8a30-5951528b75f5", "verse:5dcaa9b2-281b-4c49-ab99-11ab1d00bea8"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Narrative context; owner review remains required."
+    },
+    {
+      "question_id": "q034",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:ebc6d3f9-7eeb-40b0-8976-6489424fe7c6", "lecture:510551d0-75eb-4bb1-b59b-e048d350bfa7"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "The interview candidate was excluded because the question specifically asks for lectures."
+    },
+    {
+      "question_id": "q035",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:c2da87de-5c59-429d-812c-daa1a699ef31", "lecture:861efff8-61fe-4826-8914-71830354fe12", "lecture:841c0d96-0e23-43f5-948f-8c048d02a09f"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "The topic is broad; these are examples rather than a unique must-find answer."
+    },
+    {
+      "question_id": "q036",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:fdff1866-1d80-4caa-b3b4-e36c558b0aaf", "lecture:d62c5470-4911-444a-acfe-1090e4c06f4f", "lecture:ed19f92f-caf9-43fa-b675-49ffd06a780a"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-fit room-conversation candidates; owner review remains required."
+    },
+    {
+      "question_id": "q037",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["letter:bc8524d5-68c5-4237-a889-63a73e32d893", "letter:5a21b296-4afd-4bef-8613-5e65b08563ee", "letter:e29cef18-1218-4782-836b-ccf8a3a7bfc0"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence letter candidates; owner review remains required."
+    },
+    {
+      "question_id": "q038",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["letter:f14f7cdd-d2b0-45e2-99cb-2dfc894cc814", "letter:67893b4a-c113-47c5-a266-557b570b9346", "letter:a1a4307d-2fea-4bd9-adea-a94bea3d5242"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "The management topic is broad; owner should choose the intended aspect."
+    },
+    {
+      "question_id": "q039",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["letter:3a08d1b2-cc5c-475e-b9d2-bcce51079187", "letter:27054eae-7ca4-42c1-97e3-916c23a9a69e", "letter:d00e7c97-3bfc-4901-a15c-5709aeffd6e8"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence book-distribution letter candidates; owner review remains required."
+    },
+    {
+      "question_id": "q040",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "metadata",
+      "candidate_passage_ids": ["letter:9714e8d8-f559-4ecd-a777-5a367ffa063e", "letter:ed637cfc-ea08-4cfc-bf57-19ba061e3e80"],
+      "required_metadata": [{"source_type": "letter", "recipient_contains": "Brahmananda", "occurred_year": 1968}],
+      "unacceptable_passage_ids": [],
+      "notes": "Collection query: score the recipient and year constraint, not one arbitrary passage ID."
+    },
+    {
+      "question_id": "q041",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "metadata",
+      "candidate_passage_ids": ["letter:b11692ae-6e73-4d23-b520-98d8593a3392", "letter:caee4e81-e730-4c2d-87d3-ed170707a91b"],
+      "required_metadata": [{"source_type": "letter", "recipient_required": true, "location_contains": "Los Angeles", "occurred_year": 1970}],
+      "unacceptable_passage_ids": [],
+      "notes": "Collection query: score source, location, and year metadata."
+    },
+    {
+      "question_id": "q042",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "metadata",
+      "candidate_passage_ids": ["letter:c324f8c7-6dd2-46e1-8c57-bdc0e9aaea48", "letter:de91f3c7-20b8-46b4-86d9-433f8387327d", "letter:67ee58b6-74ac-4335-99dd-6736e31ceb00"],
+      "required_metadata": [{"source_type": "letter", "recipient_contains": "Rayarama", "occurred_on_required": true}],
+      "unacceptable_passage_ids": [],
+      "notes": "Collection query: score exact recipient metadata rather than a single passage."
+    },
+    {
+      "question_id": "q043",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:171b9d1f-de99-4fd5-be52-946d0e6ea5ea", "book:a1b14e56-7f64-4f92-9c35-3a8a1b9377a3", "book:55a7faad-4d05-42a7-8e18-a89a29137792"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-fit comparison candidates; owner review remains required."
+    },
+    {
+      "question_id": "q044",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["letter:9f19c524-7808-41a3-9a1b-471f91b6f241", "book:0e7a12b8-e152-495e-9102-049b9eb91713", "lecture:21cfb7a2-76b5-4599-b2ea-c45c6c5c5b4f"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-fit comparison candidates; owner review remains required."
+    },
+    {
+      "question_id": "q045",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["book:e784f571-2e67-4620-b51e-39cb386f256b", "lecture:c58f4107-bcbb-473c-8506-ee29c74f7039"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence Brahman and Bhagavān comparison candidates; owner review remains required."
+    },
+    {
+      "question_id": "q046",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "manual",
+      "candidate_passage_ids": [],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Ambiguous one-word query. Expected behavior is clarification or explicitly broad results, not a confident synthesized answer."
+    },
+    {
+      "question_id": "q047",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "manual",
+      "candidate_passage_ids": [],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Ambiguous phrase. Expected behavior is clarification or explicitly broad results, not a confident synthesized answer."
+    },
+    {
+      "question_id": "q048",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "manual",
+      "candidate_passage_ids": [],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Ambiguous one-word query. Expected behavior is clarification or explicitly broad results, not a confident synthesized answer."
+    },
+    {
+      "question_id": "q049",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:58c1712f-a1e5-49f2-a0af-2564d27f3690", "verse:ab223068-3ab0-4fdc-ad94-f0c648990772", "verse:f724377e-a73a-49de-b148-af7ca1ab3cd7"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Typo-recovery candidates for a broad corrected query; no single candidate is yet mandatory."
+    },
+    {
+      "question_id": "q050",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["book:8d4639ae-d572-496b-a629-5113f25b7050", "lecture:149a8479-9689-436e-9aff-de80bd4d836c", "lecture:71037718-858f-4d56-a4b0-3b11ada0d3a4"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence typo-recovery and definition candidates; owner review remains required."
+    },
+    {
+      "question_id": "q051",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:44005f44-f75e-4f92-a558-bbd29c5814c4", "lecture:1563db0e-22f3-447b-aff3-623f8d7cd672", "lecture:decde51c-7535-4b0b-a15f-f71089765e9d"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence typo-recovery candidates containing the complete mahā-mantra; owner review remains required."
+    },
+    {
+      "question_id": "q053",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:c58f4107-bcbb-473c-8506-ee29c74f7039", "lecture:fc371c8a-9a58-4640-93c1-7ebe6fc0e14a", "lecture:45feea48-396c-4c54-ae10-37d1d2dcab9a"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence vairāgya definition candidates; owner review remains required."
+    },
+    {
+      "question_id": "q054",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:6c874c80-09c3-4475-834f-7b3181760221", "lecture:2cc56916-2184-46a1-bb18-a73ee512e12a", "lecture:c5363d15-7671-441a-858d-3e0cf859710c"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "High-confidence ānanda-mayo 'bhyāsāt candidates; owner review remains required."
+    },
+    {
+      "question_id": "q055",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["lecture:64b54374-07db-4b17-8d92-ed8894eeda8f", "lecture:267d4cae-96f0-4fba-a184-f07fd34b8875", "verse:02b60759-f6fd-44d4-91bc-ba8ca78aa75b"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Retain the source warning about inattention without turning it into blame or diagnosing the questioner's spiritual standing."
+    },
+    {
+      "question_id": "q056",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["letter:3fe13fb2-2f38-4694-aa19-79d8a2f49f1e", "letter:f7abf644-249a-46fd-bc27-bcc3461b6680"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Personal letters support a balanced answer but must not become a universal command to leave home or remain there."
+    },
+    {
+      "question_id": "q059",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:74c1655e-6d8d-406c-a287-2c406418a254", "verse:bf7121cb-c786-413a-b723-0afd0eed9d54", "verse:8d94a6fe-d2ea-48d4-854b-31b99203cdaa"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "BG 7.14 is the cleanest anchor; the other candidates separately cover definition and practice."
+    },
+    {
+      "question_id": "q060",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "manual",
+      "candidate_passage_ids": ["lecture:c9da5285-a8f2-48fd-8f1e-6abee4a4c697", "lecture:e48615cb-948f-4ff5-a659-c88f62e68494"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Sensitivity review required. Preserve recorded context and speaker labels, include spiritual-equality qualifications, and never present the premise as a universal fact."
+    },
+    {
+      "question_id": "q061",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:2f87fadf-57bd-4006-9b73-7fec7e040c0c", "lecture:267d4cae-96f0-4fba-a184-f07fd34b8875", "lecture:27623227-ed88-4533-84b3-36daf2b9bbc9"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Corrective evidence: the searched corpus did not support the premise that advanced devotees stop chanting."
+    },
+    {
+      "question_id": "q062",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["verse:d2975058-a9be-4f5e-9b3a-c3a30bc8c92e", "verse:7b96f3b1-26ce-4a75-a7d2-fb30acfe9381", "lecture:64591666-06d1-4d34-8848-735406dcc4a6"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Corrective evidence only. State that the targeted search found no matching verse; do not claim exhaustive absence or invent an equal-path verse."
+    }
+  ],
+  "supplemental_cases": [
+    {
+      "id": "supplemental-sraddha-001",
+      "question": "What does Śrīla Prabhupāda say about the purpose of the śrāddha ceremony and its relation to a fully surrendered devotee?",
+      "status": "suggested_pending_owner_review",
+      "evaluation_kind": "passage_ids",
+      "candidate_passage_ids": ["purport:3138e5bc-e1bb-463c-bcf6-c37e3b2f2a2e", "lecture:2f020c0f-ec31-49b8-b8bf-41148355760a", "lecture:f879b1ec-4c1e-49ad-8fce-d054a2857e40"],
+      "required_metadata": [],
+      "unacceptable_passage_ids": [],
+      "notes": "Separate difficult-case proposal because the fixed 65-question key contains no Śrāddha row. Owner must approve running it as a supplemental 66th case."
+    }
+  ]
+}

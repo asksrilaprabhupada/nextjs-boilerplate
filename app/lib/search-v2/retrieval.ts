@@ -254,6 +254,8 @@ export interface RetrievalInput {
   requestId: string;
   degraded: DegradationLog;
   perTableLimit?: number;
+  /** Private evaluator bookkeeping; observer failures never affect retrieval. */
+  onEmbeddingUsage?: (providerCalls: number) => void;
   /**
    * "Śrīla Prabhupāda's words only" — forwarded to the transcripts RPC as
    * `p_constraints -> 'speaker_only'`. The application also projects every
@@ -275,7 +277,10 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
 
   const [vocab, embedded] = await Promise.all([
     resolveVocabulary(db, plan.vocabulary_candidates, { requestId }, degraded),
-    embedPlannedQueries(original, plan),
+    embedPlannedQueries(original, plan).then((result) => {
+      try { input.onEmbeddingUsage?.(result.providerCalls); } catch { /* bookkeeping only */ }
+      return result;
+    }),
   ]);
 
   const slugs = [...new Set(vocab.map((v) => v.slug))];

@@ -5,6 +5,7 @@
 
 # testing
 /coverage
+/work/a2-rerank-comparison/
 
 # next.js
 /.next/

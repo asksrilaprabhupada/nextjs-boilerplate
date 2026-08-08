@@ -58,7 +58,12 @@ import {
 } from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates, type DedupDecision } from "@/app/lib/search-v2/dedup";
 import { prefilterCandidates } from "@/app/lib/search-v2/prefilter";
-import { rerankUnified, type RankedCandidate } from "@/app/lib/search-v2/rerank";
+import {
+  rerankUnified,
+  type RankedCandidate,
+  type RerankInput,
+  type RerankOutcome,
+} from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
 import {
   refetchAndVerify,
@@ -303,6 +308,23 @@ export interface PipelineInput {
   speakerOnly?: boolean;
   /** Allocate the private decision trace only for an authorized preview run. */
   captureDiagnostics?: boolean;
+  /**
+   * Private test seam after the shared candidate pool is ready. The public
+   * route never supplies it. The A2 evaluator runs both arms here, then returns
+   * Arm A so the rest of the production pipeline remains unchanged.
+   */
+  privateRerankExecutor?: (input: RerankInput) => Promise<RerankOutcome>;
+  /** Private evaluator seam used to avoid an unrelated paid article-planner call. */
+  privateArticlePlanner?: typeof planArticle;
+  /**
+   * Private evaluator-only usage checkpoint. It fires as soon as each paid
+   * upstream stage finishes so a later verification/rendering failure cannot
+   * erase already-incurred Gemini or Voyage usage from the local report.
+   */
+  privatePaidUsageObserver?: (event:
+    | { stage: "query_planner"; usage: PlannerUsage }
+    | { stage: "embeddings"; providerCalls: number }
+  ) => void;
 }
 
 function diagnosticCandidate(candidate: RetrievedCandidate | FusedCandidate | RankedCandidate): CandidateDiagnostic {
@@ -413,6 +435,11 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // ── plan ──
   onStage?.("planning");
   const planned = await time("planning", () => planQuery(query, PLANNED_SUBQUERIES));
+  try {
+    input.privatePaidUsageObserver?.({ stage: "query_planner", usage: planned.usage });
+  } catch {
+    // An evaluator observer is bookkeeping only and must never affect search.
+  }
   if (
     planned.source === "fallback_original_only"
     && planned.rejections.length > 0
@@ -443,6 +470,13 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
         requestId,
         degraded,
         speakerOnly: input.speakerOnly,
+        onEmbeddingUsage: (providerCalls) => {
+          try {
+            input.privatePaidUsageObserver?.({ stage: "embeddings", providerCalls });
+          } catch {
+            // An evaluator observer is bookkeeping only and must never affect search.
+          }
+        },
       }),
       planned.plan.exact_reference
         ? rpcOrDegrade<DirectVerseRow[] | null>(
@@ -512,8 +546,9 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   // ── rerank: the pre-filtered pool judged against the original question ──
   onStage?.("reranking", { found: deduped.candidates.length });
+  const rerankExecutor = input.privateRerankExecutor ?? rerankUnified;
   const rerank = await time("reranking", () =>
-    rerankUnified({
+    rerankExecutor({
       question: query, // the ORIGINAL question, never the canonicalisation
       candidates: prefiltered.passed,
     }),
@@ -592,8 +627,9 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // every verified passage is shown: the renderer appends whatever a plan
   // leaves unplaced.
   onStage?.("organizing", { kept: refetched.verified.length });
+  const articlePlanner = input.privateArticlePlanner ?? planArticle;
   const organized = await time("organizing", async () => {
-    const plan = await planArticle(query, refetched.verified); // main tier only, ≤ 20 + pins
+    const plan = await articlePlanner(query, refetched.verified); // main tier only, ≤ 20 + pins
     return {
       plan,
       article: renderArticle({ question: query, passages: refetched.verified, plan: plan.plan }),
