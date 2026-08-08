@@ -19,7 +19,6 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  writeFileSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -33,11 +32,20 @@ import {
   searchPipelineVersion,
 } from "@/app/lib/search-v2/config";
 import { runSearchV2 } from "@/app/lib/search-v2/pipeline";
-import type { PlannerUsage } from "@/app/lib/search-v2/query-plan";
+import {
+  QUERY_PLANNER_MAX_OUTPUT_TOKENS,
+  QUERY_PLANNER_THINKING_BUDGET,
+  type PlannerUsage,
+} from "@/app/lib/search-v2/query-plan";
 import {
   RERANK_ARMS,
+  RERANK_BATCH_SIZE,
+  RERANK_COMPARISON_TOP_N,
+  RERANK_FINAL_POOL,
   buildPrivateRerankPoolArtifact,
   compareRerankArms,
+  type PrivateRerankPoolArtifact,
+  type PreparedRerankPool,
   type RankedCandidate,
   type RerankComparisonArmOutcome,
   type RerankComparisonOutcome,
@@ -50,10 +58,12 @@ import {
   A2_SPEND_LEDGER_SCHEMA_VERSION,
   A2RunLock,
   A2SpendLedger,
+  a2RetryApproval,
   chargeA2Row,
   microusdToUsd,
   reserveA2Row,
   usdToMicrousdCeiling,
+  writeJsonDurably,
   type A2KnownRowUsage,
 } from "@/tests/a2-spend-budget";
 
@@ -150,9 +160,25 @@ const supplementalQuestions: GoldQuestion[] = suggestionSet.supplemental_cases.m
   needs_human_review: true,
 }));
 const runQuestions = [...goldSet.questions, ...supplementalQuestions];
-const A2_SCHEMA_VERSION = "a2-rerank-comparison-v3";
+const A2_SCHEMA_VERSION = "a2-rerank-comparison-v4";
+const A2_MANIFEST_SCHEMA_VERSION = "a2-run-manifest-v1";
+const A2_RETRY_MANIFEST_SCHEMA_VERSION = "a2-retry-manifest-v1";
 const A2_APPROVED_RUN_ID = "a2-20260808-owner-approved-25usd";
 const A2_SUPABASE_PROJECT_REF = "wzktlpjtqmjxvragwhqg";
+
+type A2Mode = "PRECHECK" | "RUN" | "RECOVER";
+
+export interface A2Preflight {
+  mode: A2Mode;
+  repeats: number;
+  usdPerThousandSearchUnits: number;
+  maxTotalUsd: number;
+  runId: string;
+  runDirectory: string;
+  definitionSha256: string;
+  supabaseOrigin: string;
+  resumed: boolean;
+}
 
 function activeLabels(question: GoldQuestion): ActiveLabels {
   if (!question.needs_human_review) {
@@ -344,41 +370,70 @@ function runDefinitionSha256(
 }
 
 function writeJson(path: string, value: unknown, exclusive = false): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, {
-    encoding: "utf8",
-    ...(exclusive ? { flag: "wx" as const } : {}),
-  });
+  writeJsonDurably(path, value, exclusive);
 }
 
-function assertPreflight(): {
-  repeats: number;
-  usdPerThousandSearchUnits: number;
-  maxTotalUsd: number;
-  runId: string;
-  runDirectory: string;
-  definitionSha256: string;
-  resumed: boolean;
-  initialRows: Array<Record<string, unknown>>;
-  initialFailures: Array<Record<string, unknown>>;
-} {
-  if (process.env.A2_PAID_RUN_APPROVED !== "I_APPROVE_PAID_A2") {
-    throw new Error("A2 paid run is blocked without the exact approval marker");
-  }
-  const required = ["VOYAGE_API_KEY", "GEMINI_API_KEY", "COHERE_API_KEY", "SUPABASE_SERVICE_KEY"];
-  const missing = required.filter((name) => !process.env[name]);
-  if (!(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL)) missing.push("SUPABASE_URL");
-  if (missing.length > 0) throw new Error(`A2 paid run is missing ${missing.join(", ")}`);
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  let supabaseHostname: string;
-  try {
-    supabaseHostname = new URL(supabaseUrl).hostname;
-  } catch {
-    throw new Error("A2 Supabase URL is malformed");
-  }
-  if (supabaseHostname !== `${A2_SUPABASE_PROJECT_REF}.supabase.co`) {
-    throw new Error("A2 Supabase project differs from the owner-approved corpus project");
-  }
+function sha256Json(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
 
+function logicalRowKey(questionId: string, repeat: number): string {
+  return `${questionId}:${repeat}`;
+}
+
+function attemptKey(logicalKey: string, attempt: number): string {
+  return `${logicalKey}@${attempt}`;
+}
+
+function armOrderFor(questionIndex: number, repeat: number) {
+  return (questionIndex + repeat - 1) % 2 === 0
+    ? [RERANK_ARMS.current, RERANK_ARMS.global] as const
+    : [RERANK_ARMS.global, RERANK_ARMS.current] as const;
+}
+
+export function buildRunManifest(preflight: A2Preflight) {
+  const manifest = {
+    schemaVersion: A2_MANIFEST_SCHEMA_VERSION,
+    runSchemaVersion: A2_SCHEMA_VERSION,
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    supabaseOrigin: preflight.supabaseOrigin,
+    corpusVersion: searchCorpusVersion(),
+    pipelineVersion: searchPipelineVersion(),
+    configVersion: searchConfigVersion(),
+    nodeVersion: process.version,
+    repeats: preflight.repeats,
+    maxTotalUsd: preflight.maxTotalUsd,
+    cohereUsdPerThousandSearchUnits: preflight.usdPerThousandSearchUnits,
+    budgetDefinition: A2_BUDGET_DEFINITION,
+    models: {
+      gemini: geminiQueryPlannerModel(),
+      voyage: VOYAGE_CONTEXT_MODEL,
+      cohere: COHERE_RERANK_MODEL,
+    },
+    questions: runQuestions.map((question) => ({
+      id: question.id,
+      category: question.category,
+      questionSha256: createHash("sha256").update(question.question).digest("hex"),
+      labelsSha256: sha256Json(activeLabels(question)),
+      supplemental: question.id.startsWith("supplemental-"),
+    })),
+    logicalRows: Array.from({ length: preflight.repeats }, (_, repeatIndex) =>
+      runQuestions.map((question, questionIndex) => ({
+        logicalRowKey: logicalRowKey(question.id, repeatIndex + 1),
+        questionId: question.id,
+        repeat: repeatIndex + 1,
+        armExecutionOrder: armOrderFor(questionIndex, repeatIndex + 1),
+      }))).flat(),
+  };
+  return { ...manifest, manifestSha256: sha256Json(manifest) };
+}
+
+function assertPreflight(): A2Preflight {
+  const mode = process.env.A2_MODE;
+  if (mode !== "PRECHECK" && mode !== "RUN" && mode !== "RECOVER") {
+    throw new Error("A2_MODE must be exactly PRECHECK, RUN, or RECOVER");
+  }
   if (goldSet.questions.length !== 65) {
     throw new Error(`A2 expected exactly 65 questions, found ${goldSet.questions.length}`);
   }
@@ -407,6 +462,9 @@ function assertPreflight(): {
   if (priceText === undefined || usdPerThousandSearchUnits !== 2.50) {
     throw new Error("A2_COHERE_USD_PER_1000_SEARCH_UNITS must equal the owner-approved rate of 2.50");
   }
+  for (const question of runQuestions) {
+    reserveA2Row(question.question, usdPerThousandSearchUnits);
+  }
   const maxTotalText = process.env.A2_MAX_TOTAL_USD;
   const maxTotalUsd = Number(maxTotalText);
   if (maxTotalText === undefined || !Number.isFinite(maxTotalUsd) || maxTotalUsd !== 25) {
@@ -417,6 +475,47 @@ function assertPreflight(): {
     || COHERE_RERANK_MODEL !== A2_BUDGET_DEFINITION.cohereModel) {
     throw new Error("A2 provider model differs from the owner-approved budget definition");
   }
+  if (RERANK_BATCH_SIZE !== 200
+    || RERANK_FINAL_POOL !== 200
+    || RERANK_COMPARISON_TOP_N !== 20) {
+    throw new Error("A2 Cohere request constants differ from the approved spend ceiling");
+  }
+  if (QUERY_PLANNER_MAX_OUTPUT_TOKENS
+      !== A2_BUDGET_DEFINITION.geminiMaxOutputTokensPerAttempt
+    || QUERY_PLANNER_THINKING_BUDGET !== 0) {
+    throw new Error("A2 Gemini request constants differ from the approved spend ceiling");
+  }
+  const plannerSource = readFileSync(resolve("app/lib/search-v2/query-plan.ts"), "utf8");
+  const voyageSource = readFileSync(resolve("app/lib/03-embed.ts"), "utf8");
+  const cohereSource = readFileSync(resolve("app/lib/08-cohere-rerank.ts"), "utf8");
+  if (!plannerSource.includes("for (let attempt = 1; attempt <= 2; attempt += 1)")
+    || (plannerSource.match(/models\.generateContent\(/gu) ?? []).length !== 1
+    || (voyageSource.match(/await fetch\(/gu) ?? []).length !== 1
+    || !voyageSource.includes('input_type: "query"')
+    || (cohereSource.match(/await fetch\(/gu) ?? []).length !== 1
+    || !cohereSource.includes("const MAX_TOKENS_PER_DOC = 4096;")) {
+    throw new Error("A2 provider call shape differs from the approved spend ceiling");
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!supabaseUrl) throw new Error("A2 requires the exact owner-approved SUPABASE_URL");
+  let parsedSupabaseUrl: URL;
+  try {
+    parsedSupabaseUrl = new URL(supabaseUrl);
+  } catch {
+    throw new Error("A2 Supabase URL is malformed");
+  }
+  const supabaseOrigin = `https://${A2_SUPABASE_PROJECT_REF}.supabase.co`;
+  if (parsedSupabaseUrl.origin !== supabaseOrigin
+    || parsedSupabaseUrl.protocol !== "https:"
+    || parsedSupabaseUrl.pathname !== "/"
+    || parsedSupabaseUrl.search !== ""
+    || parsedSupabaseUrl.hash !== ""
+    || parsedSupabaseUrl.username !== ""
+    || parsedSupabaseUrl.password !== "") {
+    throw new Error("A2 Supabase URL is not the exact HTTPS origin of the owner-approved corpus project");
+  }
+
   const definitionSha256 = runDefinitionSha256(
     repeats,
     usdPerThousandSearchUnits,
@@ -430,58 +529,48 @@ function assertPreflight(): {
   // Private corpus text is allowed only in this gitignored, repository-local directory.
   const outputRoot = resolve("work/a2-rerank-comparison");
   const runDirectory = join(outputRoot, runId);
-  if (existsSync(runDirectory)) {
-    if (process.env.A2_RESUME_RUN !== "I_APPROVE_RESUME_A2") {
+  let resumed = existsSync(runDirectory);
+  if (resumed) {
+    const entries = readdirSync(runDirectory);
+    const poolsDirectory = join(runDirectory, "pools");
+    if (entries.length === 1 && entries[0] === "pools"
+      && existsSync(poolsDirectory) && readdirSync(poolsDirectory).length === 0) {
+      // A process can stop after creating the empty private directory but
+      // before acquiring the lock. No ledger or client can exist yet, so this
+      // exact empty shape is safe to initialize as a fresh run.
+      resumed = false;
+    }
+  }
+  if (mode === "RUN") {
+    if (process.env.A2_PAID_RUN_APPROVED !== "I_APPROVE_PAID_A2") {
+      throw new Error("A2 paid run is blocked without the exact approval marker");
+    }
+    const required = ["VOYAGE_API_KEY", "GEMINI_API_KEY", "COHERE_API_KEY", "SUPABASE_SERVICE_KEY"];
+    const missing = required.filter((name) => !process.env[name]);
+    if (missing.length > 0) throw new Error(`A2 paid run is missing ${missing.join(", ")}`);
+    if (resumed && process.env.A2_RESUME_RUN !== "I_APPROVE_RESUME_A2") {
       throw new Error("A2 run directory exists; use the exact resume marker instead of paying twice");
     }
-    const checkpointPath = join(runDirectory, "comparison-report.json");
-    if (!existsSync(checkpointPath)) throw new Error("A2 resume checkpoint is missing");
-    const checkpoint = JSON.parse(readFileSync(checkpointPath, "utf8")) as Record<string, unknown>;
-    if (checkpoint.schemaVersion !== A2_SCHEMA_VERSION) {
-      throw new Error("A2 resume checkpoint schema differs from this runner");
+    if (!resumed && process.env.A2_RESUME_RUN) {
+      throw new Error("A2 resume marker was supplied but no approved run directory exists");
     }
-    if (checkpoint.runId !== runId) throw new Error("A2 resume checkpoint run id does not match");
-    if (checkpoint.definitionSha256 !== definitionSha256) {
-      throw new Error("A2 resume definition differs from the checkpointed code, corpus, labels, models, or cost inputs");
+  } else if (mode === "RECOVER") {
+    if (!resumed) throw new Error("A2 recovery requires the existing approved run directory");
+    if (process.env.A2_RESUME_RUN !== "I_APPROVE_RESUME_A2") {
+      throw new Error("A2 recovery requires the exact approved-run resume marker");
     }
-    if (checkpoint.repeatsPlanned !== undefined && checkpoint.repeatsPlanned !== repeats) {
-      throw new Error("A2 resume repeat count differs from the checkpoint");
-    }
-    if (checkpoint.questionsPlanned !== undefined && checkpoint.questionsPlanned !== runQuestions.length) {
-      throw new Error("A2 resume question count differs from the checkpoint");
-    }
-    if (checkpoint.maxTotalUsd !== maxTotalUsd) {
-      throw new Error("A2 resume maximum spend differs from the checkpoint");
-    }
-    const initialRows = Array.isArray(checkpoint.rows)
-      ? checkpoint.rows as Array<Record<string, unknown>>
-      : [];
-    const initialFailures = Array.isArray(checkpoint.failures)
-      ? checkpoint.failures as Array<Record<string, unknown>>
-      : [];
-    return {
-      repeats,
-      usdPerThousandSearchUnits,
-      maxTotalUsd,
-      runId,
-      runDirectory,
-      definitionSha256,
-      resumed: true,
-      initialRows,
-      initialFailures,
-    };
   }
-  mkdirSync(join(runDirectory, "pools"), { recursive: true });
+
   return {
+    mode,
     repeats,
     usdPerThousandSearchUnits,
     maxTotalUsd,
     runId,
     runDirectory,
     definitionSha256,
-    resumed: false,
-    initialRows: [],
-    initialFailures: [],
+    supabaseOrigin,
+    resumed,
   };
 }
 
@@ -534,9 +623,15 @@ function assertCompleteRow(row: Record<string, unknown>, key: string): void {
   const timing = row.searchToTop20Ms as Record<string, unknown> | undefined;
   const order = Array.isArray(row.armExecutionOrder) ? row.armExecutionOrder : [];
   const arms = row.arms as Record<string, Record<string, unknown>> | undefined;
+  const sharedPreparationMs = row.sharedPreparationMs;
+  const pipelineTotalMs = row.comparisonPipelineTotalMs;
   if (!timing || !arms
     || order.length !== 2 || new Set(order).size !== 2
-    || !order.includes(RERANK_ARMS.current) || !order.includes(RERANK_ARMS.global)) {
+    || !order.includes(RERANK_ARMS.current) || !order.includes(RERANK_ARMS.global)
+    || typeof sharedPreparationMs !== "number" || !Number.isFinite(sharedPreparationMs)
+    || sharedPreparationMs < 0
+    || typeof pipelineTotalMs !== "number" || !Number.isFinite(pipelineTotalMs)
+    || pipelineTotalMs < 0) {
     throw new Error(`A2 completed row is missing comparison structure: ${key}`);
   }
   for (const arm of [RERANK_ARMS.current, RERANK_ARMS.global]) {
@@ -545,6 +640,13 @@ function assertCompleteRow(row: Record<string, unknown>, key: string): void {
     const requests = outcome?.providerRequests;
     if (!outcome || outcome.reranked !== true || outcome.degradedReason !== null
       || !Array.isArray(outcome.top)
+      || outcome.top.length < 1 || outcome.top.length > 20
+      || outcome.arm !== arm
+      || outcome.model !== COHERE_RERANK_MODEL
+      || outcome.topN !== 20
+      || outcome.documentCount !== row.candidateCount
+      || typeof outcome.durationMs !== "number"
+      || !Number.isFinite(outcome.durationMs) || outcome.durationMs < 0
       || typeof duration !== "number" || !Number.isFinite(duration) || duration < 0
       || typeof outcome.providerCallCount !== "number"
       || !Number.isSafeInteger(outcome.providerCallCount)
@@ -561,6 +663,27 @@ function assertCompleteRow(row: Record<string, unknown>, key: string): void {
       })) {
       throw new Error(`A2 completed row has an invalid ${arm} outcome: ${key}`);
     }
+    const documentCounts = (requests as Array<Record<string, unknown>>)
+      .map((request) => Number(request.documentCount));
+    const ceilings = arm === RERANK_ARMS.current ? [200, 200, 201] : [400];
+    if (documentCounts.length > ceilings.length
+      || documentCounts.some((count, index) => count > ceilings[index])) {
+      throw new Error(`A2 completed row exceeds the approved ${arm} Cohere request shape: ${key}`);
+    }
+  }
+  if (row.pipelineDegraded !== false || row.providerUsageComplete !== true) {
+    throw new Error(`A2 completed row is degraded or lacks complete provider usage: ${key}`);
+  }
+  const planner = row.plannerUsage as Record<string, unknown> | undefined;
+  const attemptDurations = planner?.attemptDurationsMs;
+  if (!planner || planner.attempts !== 1
+    || !Array.isArray(attemptDurations) || attemptDurations.length !== 1
+    || attemptDurations.some((value) => typeof value !== "number"
+      || !Number.isFinite(value) || value < 0)
+    || typeof planner.durationMs !== "number" || !Number.isFinite(planner.durationMs)
+    || planner.durationMs < 0
+    || finiteCount(row.embeddingProviderCalls) !== 1) {
+    throw new Error(`A2 completed row has invalid paid-provider timing or call counts: ${key}`);
   }
 }
 
@@ -592,124 +715,824 @@ function knownUsageForBudget(row: Record<string, unknown>): A2KnownRowUsage | nu
   };
 }
 
+function assertBudgetedCoherePool(pool: PreparedRerankPool): void {
+  const pinnedCount = pool.candidates.filter((candidate) => candidate.pinned).length;
+  if (pool.candidates.length > 400 || pool.documents.length !== pool.candidates.length) {
+    throw new Error("A2 candidate pool exceeds the approved Cohere budget shape");
+  }
+  if (pinnedCount > 1) {
+    throw new Error("A2 candidate pool has more than one pinned passage; Cohere budget is invalid");
+  }
+}
+
+function runtimeModels() {
+  return {
+    gemini: geminiQueryPlannerModel(),
+    voyage: VOYAGE_CONTEXT_MODEL,
+    cohere: COHERE_RERANK_MODEL,
+  };
+}
+
+function poolArtifactPath(questionId: string, repeat: number, attempt: number): string {
+  return `pools/${questionId}-r${String(repeat).padStart(2, "0")}-a${String(attempt).padStart(2, "0")}.json`;
+}
+
+export function plannedRows(preflight: A2Preflight) {
+  return Array.from({ length: preflight.repeats }, (_, repeatIndex) =>
+    runQuestions.map((question, questionIndex) => ({
+      logicalRowKey: logicalRowKey(question.id, repeatIndex + 1),
+      question,
+      questionIndex,
+      repeat: repeatIndex + 1,
+      armExecutionOrder: armOrderFor(questionIndex, repeatIndex + 1),
+    }))).flat();
+}
+
+function privateCandidateMatchesId(
+  candidate: RankedPrivatePassage,
+  passageId: string,
+): boolean {
+  return candidate.passageId === passageId
+    || candidate.alternatePassageIds.includes(passageId);
+}
+
+function privateCandidateMatchesMetadata(
+  candidate: RankedPrivatePassage,
+  rule: RequiredMetadata,
+): boolean {
+  return (rule.source_type === undefined || candidate.sourceType === rule.source_type)
+    && (rule.recipient_required !== true || Boolean(candidate.recipient?.trim()))
+    && includesFolded(candidate.recipient, rule.recipient_contains)
+    && (rule.occurred_on_required !== true || Boolean(candidate.occurredOn?.trim()))
+    && includesFolded(candidate.location, rule.location_contains)
+    && includesFolded(candidate.reference, rule.reference_contains)
+    && (rule.occurred_year === undefined
+      || candidate.occurredOn?.slice(0, 4) === String(rule.occurred_year));
+}
+
+function scorePrivateTop(top: RankedPrivatePassage[], labels: ActiveLabels) {
+  const expectedPositions = labels.expectedIds.map((passageId) => ({
+    passageId,
+    position: (() => {
+      const index = top.findIndex((candidate) => privateCandidateMatchesId(candidate, passageId));
+      return index < 0 ? null : index + 1;
+    })(),
+  }));
+  const unacceptableHits = labels.unacceptableIds.flatMap((passageId) => {
+    const index = top.findIndex((candidate) => privateCandidateMatchesId(candidate, passageId));
+    return index < 0 ? [] : [{ passageId, position: index + 1 }];
+  });
+  const metadataPositions = labels.requiredMetadata.map((rule) => {
+    const index = top.findIndex((candidate) => privateCandidateMatchesMetadata(candidate, rule));
+    return { rule, position: index < 0 ? null : index + 1 };
+  });
+  const foundExpected = expectedPositions.filter((item) => item.position !== null);
+  const foundMetadata = metadataPositions.filter((item) => item.position !== null);
+  const hasNoUnacceptableEvidence = unacceptableHits.length === 0;
+  return {
+    automaticPass: labels.evaluationKind === "passage_ids"
+      ? foundExpected.length > 0 && hasNoUnacceptableEvidence
+      : labels.evaluationKind === "metadata"
+        ? foundMetadata.length > 0 && hasNoUnacceptableEvidence
+        : null,
+    expectedPassageAppears: labels.expectedIds.length > 0 ? foundExpected.length > 0 : null,
+    firstExpectedPosition: foundExpected.length > 0
+      ? Math.min(...foundExpected.map((item) => item.position!))
+      : null,
+    expectedPassagesFound: foundExpected.length,
+    expectedPassagesTotal: labels.expectedIds.length,
+    expectedPositions,
+    metadataPositions,
+    unacceptableHits,
+  };
+}
+
+function changesForPrivateTop(
+  currentTop: RankedPrivatePassage[],
+  globalTop: RankedPrivatePassage[],
+  labels: ActiveLabels,
+  currentScore: ReturnType<typeof scorePrivateTop>,
+  globalScore: ReturnType<typeof scorePrivateTop>,
+) {
+  const currentIds = currentTop.map((candidate) => candidate.passageId);
+  const globalIds = globalTop.map((candidate) => candidate.passageId);
+  const firstPositionDelta = currentScore.firstExpectedPosition !== null
+    && globalScore.firstExpectedPosition !== null
+    ? globalScore.firstExpectedPosition - currentScore.firstExpectedPosition
+    : null;
+  const unacceptableRankRegression = globalScore.unacceptableHits.some((globalHit) => {
+    const currentHit = currentScore.unacceptableHits.find(
+      (item) => item.passageId === globalHit.passageId,
+    );
+    return currentHit !== undefined && globalHit.position < currentHit.position;
+  });
+  const overlap = jaccard(currentIds, globalIds);
+  return {
+    top20Jaccard: overlap,
+    removedFromCurrent: currentIds.filter((passageId) => !globalIds.includes(passageId)),
+    appearedInGlobal: globalIds.filter((passageId) => !currentIds.includes(passageId)),
+    importantDisappeared: labels.expectedIds.filter((passageId) =>
+      currentTop.some((candidate) => privateCandidateMatchesId(candidate, passageId))
+      && !globalTop.some((candidate) => privateCandidateMatchesId(candidate, passageId))),
+    importantAppeared: labels.expectedIds.filter((passageId) =>
+      !currentTop.some((candidate) => privateCandidateMatchesId(candidate, passageId))
+      && globalTop.some((candidate) => privateCandidateMatchesId(candidate, passageId))),
+    firstExpectedPositionDelta: firstPositionDelta,
+    unacceptableRankRegression,
+    materialChange: currentScore.automaticPass !== globalScore.automaticPass
+      || (firstPositionDelta !== null && Math.abs(firstPositionDelta) >= 5)
+      || currentScore.unacceptableHits.length !== globalScore.unacceptableHits.length
+      || unacceptableRankRegression
+      || overlap < 0.75,
+    globalQualityRegression: (
+      currentScore.automaticPass === true && globalScore.automaticPass !== true
+    ) || globalScore.unacceptableHits.length > currentScore.unacceptableHits.length
+      || unacceptableRankRegression,
+  };
+}
+
+function assertPoolArtifact(
+  preflight: A2Preflight,
+  row: Record<string, unknown>,
+  key: string,
+): void {
+  const expectedRelativePath = poolArtifactPath(
+    String(row.questionId),
+    Number(row.repeat),
+    Number(row.attempt),
+  );
+  if (row.poolArtifact !== expectedRelativePath) {
+    throw new Error(`A2 completed row points to the wrong pool artifact: ${key}`);
+  }
+  const path = join(preflight.runDirectory, ...expectedRelativePath.split("/"));
+  if (!existsSync(path)) throw new Error(`A2 completed row pool artifact is missing: ${key}`);
+  const artifact = JSON.parse(readFileSync(path, "utf8")) as PrivateRerankPoolArtifact;
+  if (artifact.schemaVersion !== "a2-rerank-pool-v1"
+    || artifact.question !== row.question
+    || artifact.model !== COHERE_RERANK_MODEL
+    || artifact.poolSha256 !== row.poolSha256
+    || artifact.candidateCount !== row.candidateCount
+    || artifact.candidateCount !== artifact.candidates.length
+    || artifact.candidateCount > 400
+    || artifact.candidates.filter((candidate) => candidate.pinned).length > 1) {
+    throw new Error(`A2 completed row pool artifact is invalid: ${key}`);
+  }
+  const candidateIds = artifact.candidates.map((candidate) => candidate.passageId);
+  if (new Set(candidateIds).size !== candidateIds.length) {
+    throw new Error(`A2 completed row pool contains duplicate ids: ${key}`);
+  }
+  for (const candidate of artifact.candidates) {
+    if (candidate.documentSha256 !== createHash("sha256").update(candidate.document).digest("hex")
+      || candidate.documentBytes !== Buffer.byteLength(candidate.document, "utf8")) {
+      throw new Error(`A2 completed row pool document hash is invalid: ${key}`);
+    }
+  }
+  const poolIdentity = JSON.stringify({
+    question: artifact.question,
+    model: artifact.model,
+    candidates: artifact.candidates.map((candidate) => ({
+      passageId: candidate.passageId,
+      pinned: candidate.pinned,
+      alternatePassageIds: candidate.alternatePassageIds,
+      document: candidate.document,
+    })),
+  });
+  if (createHash("sha256").update(poolIdentity).digest("hex") !== artifact.poolSha256) {
+    throw new Error(`A2 completed row pool identity hash is invalid: ${key}`);
+  }
+  const arms = row.arms as Record<string, { top: RankedPrivatePassage[] }>;
+  const artifactById = new Map(artifact.candidates.map((candidate) => [candidate.passageId, candidate]));
+  for (const arm of [RERANK_ARMS.current, RERANK_ARMS.global]) {
+    const ids = arms[arm].top.map((candidate) => candidate.passageId);
+    if (new Set(ids).size !== ids.length || ids.some((id) => !candidateIds.includes(id))) {
+      throw new Error(`A2 completed row ${arm} top ids do not belong to its pool: ${key}`);
+    }
+    for (const candidate of arms[arm].top) {
+      const source = artifactById.get(candidate.passageId);
+      if (!source
+        || candidate.sourceType !== source.sourceType
+        || candidate.reference !== source.reference
+        || candidate.recipient !== source.recipient
+        || candidate.occurredOn !== source.occurredOn
+        || candidate.location !== source.location
+        || JSON.stringify(candidate.alternatePassageIds)
+          !== JSON.stringify(source.alternatePassageIds)) {
+        throw new Error(`A2 completed row ${arm} top metadata differs from its pool: ${key}`);
+      }
+    }
+  }
+}
+
+export function validateAttemptHistory(
+  preflight: A2Preflight,
+  rows: Array<Record<string, unknown>>,
+) {
+  const planned = plannedRows(preflight);
+  const plannedByKey = new Map(planned.map((row) => [row.logicalRowKey, row]));
+  const attemptsByLogical = new Map<string, Array<Record<string, unknown>>>();
+  const seenAttempts = new Set<string>();
+  const completedRowKeys = new Set<string>();
+  for (const row of rows) {
+    const questionId = row.questionId;
+    const repeat = row.repeat;
+    const attempt = row.attempt;
+    if (typeof questionId !== "string" || !Number.isSafeInteger(repeat)
+      || !Number.isSafeInteger(attempt) || Number(attempt) < 1) {
+      throw new Error("A2 checkpoint contains an invalid attempt identity");
+    }
+    const logicalKey = logicalRowKey(questionId, Number(repeat));
+    const key = attemptKey(logicalKey, Number(attempt));
+    const expected = plannedByKey.get(logicalKey);
+    if (!expected || row.logicalRowKey !== logicalKey || row.attemptKey !== key) {
+      throw new Error(`A2 checkpoint attempt is outside this run: ${key}`);
+    }
+    if (seenAttempts.has(key)) throw new Error(`A2 checkpoint has a duplicate attempt: ${key}`);
+    seenAttempts.add(key);
+    if (row.question !== expected.question.question
+      || row.category !== expected.question.category
+      || JSON.stringify(row.armExecutionOrder) !== JSON.stringify(expected.armExecutionOrder)
+      || JSON.stringify(row.models) !== JSON.stringify(runtimeModels())) {
+      throw new Error(`A2 checkpoint attempt differs from its run manifest: ${key}`);
+    }
+    const status = row.status;
+    if (status !== "complete" && status !== "invalid"
+      && status !== "failed" && status !== "interrupted") {
+      throw new Error(`A2 checkpoint attempt has an unknown status: ${key}`);
+    }
+    if (status === "complete") {
+      assertCompleteRow(row, key);
+      assertPoolArtifact(preflight, row, key);
+      const reservation = reserveA2Row(
+        expected.question.question,
+        preflight.usdPerThousandSearchUnits,
+      );
+      if (!chargeA2Row(reservation, knownUsageForBudget(row)).completeUsage) {
+        throw new Error(`A2 completed row cannot be reconciled from provider usage: ${key}`);
+      }
+      const arms = row.arms as Record<string, { top: RankedPrivatePassage[] }>;
+      const recomputedScores = {
+        current: scorePrivateTop(arms.current.top, activeLabels(expected.question)),
+        global: scorePrivateTop(arms.global.top, activeLabels(expected.question)),
+      };
+      if (JSON.stringify(row.scores) !== JSON.stringify(recomputedScores)) {
+        throw new Error(`A2 completed row scores do not match its saved rankings: ${key}`);
+      }
+      const recomputedChanges = changesForPrivateTop(
+        arms.current.top,
+        arms.global.top,
+        activeLabels(expected.question),
+        recomputedScores.current,
+        recomputedScores.global,
+      );
+      if (JSON.stringify(row.changes) !== JSON.stringify(recomputedChanges)) {
+        throw new Error(`A2 completed row changes do not match its saved rankings: ${key}`);
+      }
+      if (completedRowKeys.has(logicalKey)) {
+        throw new Error(`A2 checkpoint has more than one completed attempt: ${logicalKey}`);
+      }
+      completedRowKeys.add(logicalKey);
+    }
+    attemptsByLogical.set(logicalKey, [...(attemptsByLogical.get(logicalKey) ?? []), row]);
+  }
+  for (const [logicalKey, attempts] of attemptsByLogical) {
+    attempts.sort((left, right) => Number(left.attempt) - Number(right.attempt));
+    attempts.forEach((row, index) => {
+      if (row.attempt !== index + 1) {
+        throw new Error(`A2 checkpoint attempt sequence has a gap: ${logicalKey}`);
+      }
+      if (row.status === "complete" && index !== attempts.length - 1) {
+        throw new Error(`A2 checkpoint contains an attempt after completion: ${logicalKey}`);
+      }
+    });
+  }
+  return { attemptsByLogical, completedRowKeys };
+}
+
+function failureSummaries(rows: Array<Record<string, unknown>>) {
+  return rows.filter((row) => row.status !== "complete").map((row) => ({
+    logicalRowKey: row.logicalRowKey,
+    attemptKey: row.attemptKey,
+    questionId: row.questionId,
+    repeat: row.repeat,
+    attempt: row.attempt,
+    kind: row.kind,
+    failure: row.failure,
+  }));
+}
+
+export function checkpointDocument(
+  preflight: A2Preflight,
+  manifestSha256: string,
+  spendLedger: A2SpendLedger,
+  rows: Array<Record<string, unknown>>,
+) {
+  const completedRows = rows.filter((row) => row.status === "complete").length;
+  return {
+    schemaVersion: A2_SCHEMA_VERSION,
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256,
+    repeatsPlanned: preflight.repeats,
+    questionsPlanned: runQuestions.length,
+    maxTotalUsd: preflight.maxTotalUsd,
+    budgetCommittedUsd: microusdToUsd(spendLedger.committedMicrousd()),
+    budgetOpenAttempts: spendLedger.openRowKeys(),
+    completedRows,
+    attempts: rows.length,
+    failures: failureSummaries(rows),
+    attemptHistory: rows,
+  };
+}
+
+function loadCheckpoint(
+  preflight: A2Preflight,
+  manifestSha256: string,
+): Array<Record<string, unknown>> {
+  const path = join(preflight.runDirectory, "comparison-report.json");
+  if (!existsSync(path)) throw new Error("A2 resume checkpoint is missing");
+  const checkpoint = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  if (checkpoint.schemaVersion !== A2_SCHEMA_VERSION
+    || checkpoint.runId !== preflight.runId
+    || checkpoint.definitionSha256 !== preflight.definitionSha256
+    || checkpoint.manifestSha256 !== manifestSha256
+    || checkpoint.repeatsPlanned !== preflight.repeats
+    || checkpoint.questionsPlanned !== runQuestions.length
+    || checkpoint.maxTotalUsd !== preflight.maxTotalUsd
+    || !Array.isArray(checkpoint.attemptHistory)) {
+    throw new Error("A2 resume checkpoint differs from the approved run manifest");
+  }
+  return checkpoint.attemptHistory as Array<Record<string, unknown>>;
+}
+
+function assertLedgerBijection(
+  preflight: A2Preflight,
+  rows: Array<Record<string, unknown>>,
+  spendLedger: A2SpendLedger,
+  allowOpenWithoutOutcome: boolean,
+): void {
+  const rowsByAttempt = new Map(rows.map((row) => [String(row.attemptKey), row]));
+  for (const row of rows) {
+    const state = spendLedger.rowState(String(row.attemptKey));
+    const planned = runQuestions.find((question) => question.id === row.questionId);
+    const expectedReservation = planned
+      ? reserveA2Row(planned.question, preflight.usdPerThousandSearchUnits)
+      : null;
+    if (!state) {
+      throw new Error(`A2 checkpoint attempt has no durable spend reservation: ${String(row.attemptKey)}`);
+    }
+    if (!expectedReservation || state.reservedMicrousd !== expectedReservation.totalMicrousd) {
+      throw new Error(`A2 checkpoint attempt has the wrong spend reservation: ${String(row.attemptKey)}`);
+    }
+    if (state.chargedMicrousd !== null) {
+      const expectedCharge = chargeA2Row(expectedReservation, knownUsageForBudget(row));
+      if (state.chargedMicrousd !== expectedCharge.totalMicrousd
+        || state.completeUsage !== expectedCharge.completeUsage) {
+        throw new Error(`A2 checkpoint attempt has the wrong spend settlement: ${String(row.attemptKey)}`);
+      }
+    }
+  }
+  for (const key of spendLedger.rowKeys()) {
+    const row = rowsByAttempt.get(key);
+    const state = spendLedger.rowState(key)!;
+    if (!row && state.chargedMicrousd !== null) {
+      throw new Error(`A2 settled ledger attempt has no durable outcome; manual audit required: ${key}`);
+    }
+    if (!row && !allowOpenWithoutOutcome) {
+      throw new Error(`A2 open ledger attempt requires recovery-only mode: ${key}`);
+    }
+  }
+  if (!allowOpenWithoutOutcome && spendLedger.openRowKeys().length > 0) {
+    throw new Error("A2 ledger has an open attempt; use recovery-only mode");
+  }
+}
+
+function buildRetryManifest(
+  preflight: A2Preflight,
+  manifestSha256: string,
+  spendLedger: A2SpendLedger,
+  rows: Array<Record<string, unknown>>,
+) {
+  const { attemptsByLogical, completedRowKeys } = validateAttemptHistory(preflight, rows);
+  const retries = plannedRows(preflight).flatMap((planned) => {
+    const attempts = attemptsByLogical.get(planned.logicalRowKey) ?? [];
+    if (attempts.length === 0 || completedRowKeys.has(planned.logicalRowKey)) return [];
+    const latest = attempts[attempts.length - 1];
+    const nextAttempt = attempts.length + 1;
+    return [{
+      logicalRowKey: planned.logicalRowKey,
+      lastAttemptKey: latest.attemptKey,
+      lastStatus: latest.status,
+      nextAttempt,
+      nextAttemptKey: attemptKey(planned.logicalRowKey, nextAttempt),
+    }];
+  });
+  return {
+    schemaVersion: A2_RETRY_MANIFEST_SCHEMA_VERSION,
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256,
+    ledgerSha256: spendLedger.sha256(),
+    committedMicrousd: spendLedger.committedMicrousd(),
+    remainingMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd)
+      - spendLedger.committedMicrousd(),
+    retries,
+  };
+}
+
+function persistRetryManifest(
+  preflight: A2Preflight,
+  manifestSha256: string,
+  spendLedger: A2SpendLedger,
+  rows: Array<Record<string, unknown>>,
+) {
+  const manifest = buildRetryManifest(preflight, manifestSha256, spendLedger, rows);
+  const requiredApproval = a2RetryApproval(manifest);
+  writeJson(join(preflight.runDirectory, "retry-manifest.json"), {
+    ...manifest,
+    requiredApproval,
+  });
+  return { manifest, requiredApproval };
+}
+
+function initializeOrOpenRun(preflight: A2Preflight) {
+  const currentManifest = buildRunManifest(preflight);
+  const manifestPath = join(preflight.runDirectory, "run-manifest.json");
+  if (preflight.resumed) {
+    if (!existsSync(manifestPath)) throw new Error("A2 run manifest is missing");
+    const savedManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (JSON.stringify(savedManifest) !== JSON.stringify(currentManifest)) {
+      throw new Error("A2 run manifest differs from the current code, corpus, labels, runtime, or approvals");
+    }
+  } else {
+    writeJson(manifestPath, currentManifest, true);
+  }
+  const ledgerPath = join(preflight.runDirectory, "spend-ledger.jsonl");
+  const ledgerInput = {
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256: currentManifest.manifestSha256,
+    maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
+  };
+  const spendLedger = preflight.resumed
+    ? A2SpendLedger.open(ledgerPath, ledgerInput)
+    : A2SpendLedger.create(ledgerPath, ledgerInput);
+  const checkpointPath = join(preflight.runDirectory, "comparison-report.json");
+  let rows: Array<Record<string, unknown>> = [];
+  if (preflight.resumed) {
+    if (!existsSync(checkpointPath)
+      && preflight.mode === "RECOVER"
+      && spendLedger.rowKeys().length === 0) {
+      writeJson(
+        checkpointPath,
+        checkpointDocument(preflight, currentManifest.manifestSha256, spendLedger, rows),
+        true,
+      );
+    }
+    rows = loadCheckpoint(preflight, currentManifest.manifestSha256);
+  }
+  if (!preflight.resumed) {
+    writeJson(
+      checkpointPath,
+      checkpointDocument(preflight, currentManifest.manifestSha256, spendLedger, rows),
+      true,
+    );
+  }
+  return { currentManifest, spendLedger, checkpointPath, rows };
+}
+
+export function completeInterruptedInitialization(
+  preflight: A2Preflight,
+  currentManifest: ReturnType<typeof buildRunManifest>,
+): void {
+  const ledgerPath = join(preflight.runDirectory, "spend-ledger.jsonl");
+  if (existsSync(ledgerPath)) return;
+  const poolsDirectory = join(preflight.runDirectory, "pools");
+  const checkpointPath = join(preflight.runDirectory, "comparison-report.json");
+  const retryPath = join(preflight.runDirectory, "retry-manifest.json");
+  if (!existsSync(poolsDirectory)
+    || readdirSync(poolsDirectory).length > 0
+    || existsSync(checkpointPath)
+    || existsSync(retryPath)) {
+    throw new Error("A2 initialization recovery found paid-state artifacts without a ledger; manual audit required");
+  }
+  const intentPath = join(preflight.runDirectory, "initialization-recovery-intent.json");
+  const intent = {
+    schemaVersion: "a2-initialization-recovery-v1",
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256: currentManifest.manifestSha256,
+    reason: "stale lock existed before the spend ledger; provider construction occurs only after ledger initialization",
+    externalCallsMade: 0,
+  };
+  if (existsSync(intentPath)) {
+    const savedIntent = JSON.parse(readFileSync(intentPath, "utf8"));
+    if (JSON.stringify(savedIntent) !== JSON.stringify(intent)) {
+      throw new Error("A2 initialization recovery intent differs from this approved run");
+    }
+  } else {
+    writeJson(intentPath, intent, true);
+  }
+  const manifestPath = join(preflight.runDirectory, "run-manifest.json");
+  if (existsSync(manifestPath)) {
+    const savedManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (JSON.stringify(savedManifest) !== JSON.stringify(currentManifest)) {
+      throw new Error("A2 interrupted initialization manifest differs from this approved run");
+    }
+  } else {
+    writeJson(manifestPath, currentManifest, true);
+  }
+  const spendLedger = A2SpendLedger.create(ledgerPath, {
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256: currentManifest.manifestSha256,
+    maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
+  });
+  writeJson(
+    checkpointPath,
+    checkpointDocument(preflight, currentManifest.manifestSha256, spendLedger, []),
+    true,
+  );
+}
+
+export function recoverInterruptedRun(
+  preflight: A2Preflight,
+  manifestSha256: string,
+  spendLedger: A2SpendLedger,
+  checkpointPath: string,
+  rows: Array<Record<string, unknown>>,
+  recoveredArchivePath: string,
+): void {
+  validateAttemptHistory(preflight, rows);
+  assertLedgerBijection(preflight, rows, spendLedger, true);
+  const recoveryDirectory = join(preflight.runDirectory, "recovery");
+  mkdirSync(recoveryDirectory, { recursive: true });
+  const journalNames = readdirSync(recoveryDirectory);
+  const intentNumbers = journalNames.flatMap((name) => {
+    const match = /^(\d{4})-intent\.json$/u.exec(name);
+    return match ? [Number(match[1])] : [];
+  });
+  const completeNumbers = new Set(journalNames.flatMap((name) => {
+    const match = /^(\d{4})-complete\.json$/u.exec(name);
+    return match ? [Number(match[1])] : [];
+  }));
+  if ([...completeNumbers].some((number) => !intentNumbers.includes(number))) {
+    throw new Error("A2 recovery journal has a completion without an intent; manual audit required");
+  }
+  const incompleteNumbers = intentNumbers.filter((number) => !completeNumbers.has(number));
+  if (incompleteNumbers.length > 1) {
+    throw new Error("A2 recovery journal has multiple incomplete intents; manual audit required");
+  }
+  const generation = incompleteNumbers[0]
+    ?? (intentNumbers.length > 0 ? Math.max(...intentNumbers) + 1 : 1);
+  const generationText = String(generation).padStart(4, "0");
+  const intentPath = join(recoveryDirectory, `${generationText}-intent.json`);
+  const completePath = join(recoveryDirectory, `${generationText}-complete.json`);
+  const currentlyOpenAttempts = spendLedger.openRowKeys();
+  if (currentlyOpenAttempts.length > 1) {
+    throw new Error("A2 recovery found multiple open attempts; manual audit is required");
+  }
+  let intent: Record<string, unknown>;
+  if (incompleteNumbers.length === 1) {
+    intent = JSON.parse(readFileSync(intentPath, "utf8")) as Record<string, unknown>;
+    if (intent.schemaVersion !== "a2-recovery-intent-v1"
+      || intent.generation !== generation
+      || intent.runId !== preflight.runId
+      || intent.definitionSha256 !== preflight.definitionSha256
+      || intent.manifestSha256 !== manifestSha256
+      || !Array.isArray(intent.openAttempts)
+      || typeof intent.recoveredLockArchive !== "string") {
+      throw new Error("A2 recovery intent differs from this approved run; manual audit required");
+    }
+  } else {
+    intent = {
+      schemaVersion: "a2-recovery-intent-v1",
+      generation,
+      runId: preflight.runId,
+      definitionSha256: preflight.definitionSha256,
+      manifestSha256,
+      ledgerSha256Before: spendLedger.sha256(),
+      committedMicrousdBefore: spendLedger.committedMicrousd(),
+      openAttempts: currentlyOpenAttempts,
+      recoveredLockArchive: recoveredArchivePath,
+      startedAt: new Date().toISOString(),
+    };
+    writeJson(intentPath, intent, true);
+  }
+  const intendedAttempts = (intent.openAttempts as unknown[]).map(String);
+  if (new Set(intendedAttempts).size !== intendedAttempts.length
+    || currentlyOpenAttempts.some((key) => !intendedAttempts.includes(key))) {
+    throw new Error("A2 recovery ledger has drifted beyond its durable intent; manual audit required");
+  }
+  const settledThisInvocation: string[] = [];
+  for (const openAttemptKey of intendedAttempts) {
+    const ledgerStateBefore = spendLedger.rowState(openAttemptKey);
+    if (!ledgerStateBefore) {
+      throw new Error(`A2 recovery intent references a missing ledger attempt: ${openAttemptKey}`);
+    }
+    if (ledgerStateBefore.chargedMicrousd !== null) {
+      if (!rows.some((candidate) => candidate.attemptKey === openAttemptKey)) {
+        throw new Error(`A2 recovered settlement has no durable outcome: ${openAttemptKey}`);
+      }
+      continue;
+    }
+    let row = rows.find((candidate) => candidate.attemptKey === openAttemptKey);
+    if (!row) {
+      const match = /^(.*)@(\d+)$/u.exec(openAttemptKey);
+      if (!match) throw new Error("A2 open ledger attempt key is malformed; manual audit required");
+      const logicalKey = match[1];
+      const attempt = Number(match[2]);
+      const planned = plannedRows(preflight).find((candidate) => candidate.logicalRowKey === logicalKey);
+      const priorAttempts = rows.filter((candidate) => candidate.logicalRowKey === logicalKey);
+      if (!planned || attempt !== priorAttempts.length + 1
+        || priorAttempts.some((candidate) => candidate.status === "complete")) {
+        throw new Error(`A2 open ledger attempt cannot be reconciled; manual audit required: ${openAttemptKey}`);
+      }
+      const reservation = reserveA2Row(
+        planned.question.question,
+        preflight.usdPerThousandSearchUnits,
+      );
+      const ledgerState = spendLedger.rowState(openAttemptKey)!;
+      if (ledgerState.reservedMicrousd !== reservation.totalMicrousd) {
+        throw new Error(`A2 open ledger reservation differs from its approved row: ${openAttemptKey}`);
+      }
+      row = {
+        status: "interrupted",
+        logicalRowKey: logicalKey,
+        attempt,
+        attemptKey: openAttemptKey,
+        questionId: planned.question.id,
+        category: planned.question.category,
+        question: planned.question.question,
+        supplemental: planned.question.id.startsWith("supplemental-"),
+        repeat: planned.repeat,
+        armExecutionOrder: planned.armExecutionOrder,
+        models: runtimeModels(),
+        kind: "process_interrupted_before_durable_outcome",
+        budgetReservationUsd: microusdToUsd(reservation.totalMicrousd),
+      };
+      rows.push(row);
+      validateAttemptHistory(preflight, rows);
+      writeJson(
+        checkpointPath,
+        checkpointDocument(preflight, manifestSha256, spendLedger, rows),
+      );
+    }
+    const question = runQuestions.find((candidate) => candidate.id === row!.questionId);
+    if (!question) throw new Error(`A2 recovery cannot identify ${openAttemptKey}`);
+    const reservation = reserveA2Row(question.question, preflight.usdPerThousandSearchUnits);
+    spendLedger.settle(
+      openAttemptKey,
+      chargeA2Row(reservation, knownUsageForBudget(row)),
+    );
+    settledThisInvocation.push(openAttemptKey);
+    writeJson(
+      checkpointPath,
+      checkpointDocument(preflight, manifestSha256, spendLedger, rows),
+    );
+  }
+  writeJson(
+    checkpointPath,
+    checkpointDocument(preflight, manifestSha256, spendLedger, rows),
+  );
+  validateAttemptHistory(preflight, rows);
+  assertLedgerBijection(preflight, rows, spendLedger, false);
+  const retry = persistRetryManifest(preflight, manifestSha256, spendLedger, rows);
+  writeJson(completePath, {
+    schemaVersion: "a2-recovery-complete-v1",
+    generation,
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256,
+    recoveredAt: new Date().toISOString(),
+    recoveredLockArchives: [...new Set([
+      String(intent.recoveredLockArchive),
+      recoveredArchivePath,
+    ])],
+    recoveredAttempts: intendedAttempts,
+    settledThisInvocation,
+    committedUsd: microusdToUsd(spendLedger.committedMicrousd()),
+    retryCount: retry.manifest.retries.length,
+    requiredRetryApproval: retry.manifest.retries.length > 0
+      ? retry.requiredApproval
+      : null,
+    externalCallsMade: 0,
+  }, true);
+}
+
+// Local state-machine unit tests import the recovery helpers with this flag.
+// The ordinary paid runner never sets it, so this cannot authorize a live call.
+if (process.env.A2_STATE_UNIT_TEST_ONLY !== "1") {
 describe("paid A2 rerank comparison", () => {
   it("runs the complete key with repeated shared-pool comparisons", async () => {
     const preflight = assertPreflight();
-    const runLock = A2RunLock.acquire(join(preflight.runDirectory, "paid-run.lock"));
-    try {
-    const db = getSupabaseAdmin() as unknown as RpcCapableClient;
-    const rows: Array<Record<string, unknown>> = [...preflight.initialRows];
-    const failures: Array<Record<string, unknown>> = [...preflight.initialFailures];
-    const plannedRowKeys = new Set(runQuestions.flatMap((question) =>
-      Array.from({ length: preflight.repeats }, (_, index) => `${question.id}:${index + 1}`)));
-    for (const row of rows) {
-      const key = `${String(row.questionId)}:${String(row.repeat)}`;
-      if (!plannedRowKeys.has(key)) throw new Error(`A2 resume row is outside this run: ${key}`);
-      if (row.status === "complete") assertCompleteRow(row, key);
-      else if (row.status !== "invalid" && row.status !== "failed") {
-        throw new Error(`A2 resume row has an unknown status: ${key}`);
-      }
-    }
-    const completeRows = rows.filter((row) => row.status === "complete");
-    const completedRowKeys = new Set(completeRows.map(
-      (row) => `${String(row.questionId)}:${String(row.repeat)}`,
-    ));
-    if (completedRowKeys.size !== completeRows.length) {
-      throw new Error("A2 resume checkpoint contains duplicate completed row keys");
-    }
-    const checkpointPath = join(preflight.runDirectory, "comparison-report.json");
-    if (!existsSync(checkpointPath)) {
-      writeJson(checkpointPath, {
-        schemaVersion: A2_SCHEMA_VERSION,
+    const sanitizedManifest = buildRunManifest(preflight);
+    if (preflight.mode === "PRECHECK") {
+      process.stderr.write(`${JSON.stringify({
+        mode: preflight.mode,
         runId: preflight.runId,
         definitionSha256: preflight.definitionSha256,
-        resumed: false,
-        repeatsPlanned: preflight.repeats,
-        questionsPlanned: runQuestions.length,
+        manifestSha256: sanitizedManifest.manifestSha256,
+        questions: runQuestions.length,
+        repeats: preflight.repeats,
+        rows: runQuestions.length * preflight.repeats,
         maxTotalUsd: preflight.maxTotalUsd,
-        completedRows: 0,
-        attempts: 0,
-        failures: [],
-        rows: [],
-      }, true);
+        externalCallsMade: 0,
+        artifactsWritten: 0,
+      })}\n`);
+      expect(runQuestions).toHaveLength(66);
+      return;
     }
-    const ledgerPath = join(preflight.runDirectory, "spend-ledger.jsonl");
-    const ledgerInput = {
+    if (!preflight.resumed) {
+      mkdirSync(join(preflight.runDirectory, "pools"), { recursive: true });
+    }
+    const runLock = A2RunLock.acquire(join(preflight.runDirectory, "paid-run.lock"), {
       runId: preflight.runId,
       definitionSha256: preflight.definitionSha256,
-      maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
-    };
-    const spendLedger = preflight.resumed
-      ? A2SpendLedger.open(ledgerPath, ledgerInput)
-      : A2SpendLedger.create(ledgerPath, ledgerInput);
-    const checkpointRowsByKey = new Map(rows.map((row) => [
-      `${String(row.questionId)}:${String(row.repeat)}`,
-      row,
-    ]));
-    for (const ledgerRowKey of spendLedger.rowKeys()) {
-      if (!checkpointRowsByKey.has(ledgerRowKey)) {
-        throw new Error(
-          `A2 spend ledger contains an unfinished paid row without a checkpoint; retry needs fresh owner approval: ${ledgerRowKey}`,
-        );
-      }
+      mode: preflight.mode === "RECOVER" ? "recover" : "run",
+      staleLockApproval: process.env.A2_STALE_LOCK_APPROVAL,
+    });
+    let activeSpendLedger: A2SpendLedger | null = null;
+    let lockDisposed = false;
+    try {
+    if (preflight.mode === "RECOVER" && (!runLock.recovered || !runLock.recoveredArchivePath)) {
+      throw new Error("A2 RECOVER is allowed only for an exact approved stale-lock recovery");
     }
-    for (const [rowKey, row] of checkpointRowsByKey) {
-      const ledgerRow = spendLedger.rowState(rowKey);
-      if (!ledgerRow) throw new Error(`A2 checkpoint row has no durable spend entry: ${rowKey}`);
-      if (ledgerRow.chargedMicrousd === null) {
-        const question = runQuestions.find((candidate) => candidate.id === row.questionId);
-        if (!question) throw new Error(`A2 checkpoint row has no matching question: ${rowKey}`);
-        const reservation = reserveA2Row(
-          question.question,
-          preflight.usdPerThousandSearchUnits,
-        );
-        spendLedger.settle(rowKey, chargeA2Row(reservation, knownUsageForBudget(row)));
-      }
-      if (row.status !== "complete") {
-        throw new Error(
-          `A2 paid retry is blocked without a new owner decision; preserved row: ${rowKey}`,
-        );
-      }
+    if (preflight.mode === "RECOVER") {
+      completeInterruptedInitialization(preflight, sanitizedManifest);
     }
+    const {
+      currentManifest,
+      spendLedger,
+      checkpointPath,
+      rows,
+    } = initializeOrOpenRun(preflight);
+    activeSpendLedger = spendLedger;
+    if (preflight.mode === "RECOVER") {
+      recoverInterruptedRun(
+        preflight,
+        currentManifest.manifestSha256,
+        spendLedger,
+        checkpointPath,
+        rows,
+        runLock.recoveredArchivePath!,
+      );
+      expect(spendLedger.openRowKeys()).toEqual([]);
+      return;
+    }
+    const history = validateAttemptHistory(preflight, rows);
+    const completedRowKeys = history.completedRowKeys;
+    assertLedgerBijection(preflight, rows, spendLedger, false);
+    const retryState = persistRetryManifest(
+      preflight,
+      currentManifest.manifestSha256,
+      spendLedger,
+      rows,
+    );
+    if (retryState.manifest.retries.length > 0
+      && process.env.A2_RETRY_APPROVAL !== retryState.requiredApproval) {
+      throw new Error(`A2 paid retries require the exact current marker ${retryState.requiredApproval}`);
+    }
+    const approvedRetryAttempts = new Set(
+      retryState.manifest.retries.map((retry) => retry.nextAttemptKey),
+    );
+    const db = getSupabaseAdmin() as unknown as RpcCapableClient;
     let consecutiveSystemFailures = 0;
     for (let index = rows.length - 1; index >= 0; index -= 1) {
       if (rows[index].status === "complete") break;
       consecutiveSystemFailures += 1;
     }
     if (consecutiveSystemFailures >= 3) {
-      if (process.env.A2_RETRY_AFTER_FAILURES !== "I_APPROVE_PAID_RETRY_AFTER_FAILURES") {
-        throw new Error("A2 resume is blocked after three failures without the paid-retry approval marker");
-      }
       consecutiveSystemFailures = 0;
     }
 
     for (let repeat = 1; repeat <= preflight.repeats; repeat += 1) {
       for (const [questionIndex, question] of runQuestions.entries()) {
-        const rowKey = `${question.id}:${repeat}`;
+        const rowKey = logicalRowKey(question.id, repeat);
         if (completedRowKeys.has(rowKey)) continue;
+        const priorAttempts = rows.filter((row) => row.logicalRowKey === rowKey);
+        const attempt = priorAttempts.length + 1;
+        const paidAttemptKey = attemptKey(rowKey, attempt);
+        if (priorAttempts.length > 0 && !approvedRetryAttempts.has(paidAttemptKey)) {
+          throw new Error(`A2 paid attempt is not covered by the current retry approval: ${paidAttemptKey}`);
+        }
         const budgetReservation = reserveA2Row(
           question.question,
           preflight.usdPerThousandSearchUnits,
         );
-        spendLedger.reserve(rowKey, budgetReservation.totalMicrousd);
         const labels = activeLabels(question);
         // Every question sees both positions by its second repeat. With the
         // even 66-question key this is also exactly balanced in aggregate.
-        const armOrder = (questionIndex + repeat - 1) % 2 === 0
-          ? [RERANK_ARMS.current, RERANK_ARMS.global] as const
-          : [RERANK_ARMS.global, RERANK_ARMS.current] as const;
-        const requestId = `a2-${question.id}-r${repeat}-${randomUUID()}`;
+        const armOrder = armOrderFor(questionIndex, repeat);
+        const requestId = `a2-${question.id}-r${repeat}-a${attempt}-${randomUUID()}`;
         const started = globalThis.performance.now();
         let sharedPreparationMs: number | null = null;
         let comparison: RerankComparisonOutcome | null = null;
         let plannerUsage: PlannerUsage | null = null;
         let embeddingProviderCalls: number | null = null;
-        const poolPath = join(
-          preflight.runDirectory,
-          "pools",
-          `${question.id}-r${String(repeat).padStart(2, "0")}.json`,
-        );
+        const poolRelativePath = poolArtifactPath(question.id, repeat, attempt);
+        const poolPath = join(preflight.runDirectory, ...poolRelativePath.split("/"));
 
+        spendLedger.reserve(paidAttemptKey, budgetReservation.totalMicrousd);
         try {
           const output = await runSearchV2({
             db,
@@ -738,15 +1561,12 @@ describe("paid A2 rerank comparison", () => {
               comparison = await compareRerankArms(rerankInput, {
                 armOrder,
                 onPoolPrepared: (pool) => {
+                  assertBudgetedCoherePool(pool);
                   const artifact = buildPrivateRerankPoolArtifact(pool);
                   if (existsSync(poolPath)) {
-                    const saved = JSON.parse(readFileSync(poolPath, "utf8")) as { poolSha256?: string };
-                    if (saved.poolSha256 !== artifact.poolSha256) {
-                      throw new Error("A2 resume pool differs from the checkpointed private pool");
-                    }
-                  } else {
-                    writeJson(poolPath, artifact, true);
+                    throw new Error("A2 attempt pool already exists without a durable outcome; recovery is required");
                   }
+                  writeJson(poolPath, artifact, true);
                 },
               });
               return comparison.productionOutcome;
@@ -791,8 +1611,11 @@ describe("paid A2 rerank comparison", () => {
               .some((request) => request.responseSucceeded !== true);
           const rowValid = !invalidArm && !output.telemetry.degraded;
 
-          const row = {
-            status: rowValid ? "complete" : "invalid",
+          const row: Record<string, unknown> = {
+            status: "complete",
+            logicalRowKey: rowKey,
+            attempt,
+            attemptKey: paidAttemptKey,
             questionId: question.id,
             category: question.category,
             question: question.question,
@@ -800,10 +1623,12 @@ describe("paid A2 rerank comparison", () => {
             repeat,
             requestId,
             armExecutionOrder: armOrder,
+            models: runtimeModels(),
             labelStatus: labels.status,
             evaluationKind: labels.evaluationKind,
             reviewNotes: labels.notes,
             poolSha256: observed.pool.poolSha256,
+            poolArtifact: poolRelativePath,
             candidateCount: observed.pool.candidates.length,
             sharedPreparationMs,
             searchToTop20Ms: {
@@ -842,14 +1667,22 @@ describe("paid A2 rerank comparison", () => {
             invalidArm,
             budgetReservationUsd: microusdToUsd(budgetReservation.totalMicrousd),
           };
+          const reconciledCharge = chargeA2Row(
+            budgetReservation,
+            knownUsageForBudget(row),
+          );
+          const providerUsageComplete = reconciledCharge.completeUsage;
+          const complete = rowValid && providerUsageComplete;
+          row.status = complete ? "complete" : "invalid";
+          row.providerUsageComplete = providerUsageComplete;
+          if (!complete) {
+            row.kind = !rowValid
+              ? invalidArm ? "rerank_degraded" : "pipeline_degraded"
+              : "provider_usage_incomplete";
+          }
           rows.push(row);
-          if (!rowValid) {
+          if (!complete) {
             consecutiveSystemFailures += 1;
-            failures.push({
-              questionId: question.id,
-              repeat,
-              kind: invalidArm ? "rerank_degraded" : "pipeline_degraded",
-            });
           } else {
             completedRowKeys.add(rowKey);
             consecutiveSystemFailures = 0;
@@ -861,17 +1694,25 @@ describe("paid A2 rerank comparison", () => {
             kind: "search_failed",
             failure: safeFailure(error),
           };
-          failures.push(failure);
           const observed = comparison as RerankComparisonOutcome | null;
           rows.push({
             status: "failed",
+            logicalRowKey: rowKey,
+            attempt,
+            attemptKey: paidAttemptKey,
             ...failure,
+            category: question.category,
+            question: question.question,
+            supplemental: question.id.startsWith("supplemental-"),
             armExecutionOrder: armOrder,
+            models: runtimeModels(),
             plannerUsage,
             embeddingProviderCalls,
+            providerUsageComplete: false,
             budgetReservationUsd: microusdToUsd(budgetReservation.totalMicrousd),
             ...(observed ? {
               poolSha256: observed.pool.poolSha256,
+              poolArtifact: poolRelativePath,
               candidateCount: observed.pool.candidates.length,
               arms: {
                 current: { ...observed.current, top: observed.current.top.map(privateTop) },
@@ -883,33 +1724,38 @@ describe("paid A2 rerank comparison", () => {
           consecutiveSystemFailures += 1;
         }
 
-        const checkpoint = {
-          schemaVersion: A2_SCHEMA_VERSION,
-          runId: preflight.runId,
-          definitionSha256: preflight.definitionSha256,
-          resumed: preflight.resumed,
-          repeatsPlanned: preflight.repeats,
-          questionsPlanned: runQuestions.length,
-          maxTotalUsd: preflight.maxTotalUsd,
-          budgetCommittedUsd: microusdToUsd(spendLedger.committedMicrousd()),
-          budgetOpenRows: spendLedger.openRowKeys(),
-          completedRows: completedRowKeys.size,
-          attempts: rows.length,
-          failures,
-          rows,
-        };
-        writeJson(checkpointPath, checkpoint);
+        writeJson(
+          checkpointPath,
+          checkpointDocument(
+            preflight,
+            currentManifest.manifestSha256,
+            spendLedger,
+            rows,
+          ),
+        );
         const savedRow = rows[rows.length - 1];
-        if (!savedRow) throw new Error(`A2 paid row was not checkpointed: ${rowKey}`);
+        if (!savedRow || savedRow.attemptKey !== paidAttemptKey) {
+          throw new Error(`A2 paid attempt was not checkpointed: ${paidAttemptKey}`);
+        }
         spendLedger.settle(
-          rowKey,
+          paidAttemptKey,
           chargeA2Row(budgetReservation, knownUsageForBudget(savedRow)),
         );
-        writeJson(checkpointPath, {
-          ...checkpoint,
-          budgetCommittedUsd: microusdToUsd(spendLedger.committedMicrousd()),
-          budgetOpenRows: spendLedger.openRowKeys(),
-        });
+        writeJson(
+          checkpointPath,
+          checkpointDocument(
+            preflight,
+            currentManifest.manifestSha256,
+            spendLedger,
+            rows,
+          ),
+        );
+        persistRetryManifest(
+          preflight,
+          currentManifest.manifestSha256,
+          spendLedger,
+          rows,
+        );
         process.stderr.write(
           `A2 ${completedRowKeys.size}/${preflight.repeats * runQuestions.length}\r`,
         );
@@ -921,11 +1767,15 @@ describe("paid A2 rerank comparison", () => {
     process.stderr.write("\n");
 
     const completedRows = rows.filter((row) => row.status === "complete");
-    const currentTotals = armTotals(rows, "current");
-    const globalTotals = armTotals(rows, "global");
-    const knownUnits = currentTotals.billedSearchUnits !== null
-      && globalTotals.billedSearchUnits !== null
-      ? currentTotals.billedSearchUnits + globalTotals.billedSearchUnits
+    validateAttemptHistory(preflight, rows);
+    assertLedgerBijection(preflight, rows, spendLedger, false);
+    const currentTotals = armTotals(completedRows, "current");
+    const globalTotals = armTotals(completedRows, "global");
+    const allAttemptCurrentTotals = armTotals(rows, "current");
+    const allAttemptGlobalTotals = armTotals(rows, "global");
+    const knownUnits = allAttemptCurrentTotals.billedSearchUnits !== null
+      && allAttemptGlobalTotals.billedSearchUnits !== null
+      ? allAttemptCurrentTotals.billedSearchUnits + allAttemptGlobalTotals.billedSearchUnits
       : null;
     const stability = runQuestions.flatMap((question) => {
       const questionRows = completedRows.filter((row) => row.questionId === question.id && row.arms);
@@ -965,10 +1815,14 @@ describe("paid A2 rerank comparison", () => {
       schemaVersion: A2_SCHEMA_VERSION,
       runId: preflight.runId,
       definitionSha256: preflight.definitionSha256,
+      manifestSha256: currentManifest.manifestSha256,
       resumed: preflight.resumed,
       repeats: preflight.repeats,
       repeatsPlanned: preflight.repeats,
       questionsPlanned: runQuestions.length,
+      maxTotalUsd: preflight.maxTotalUsd,
+      budgetCommittedUsd: microusdToUsd(spendLedger.committedMicrousd()),
+      budgetOpenAttempts: spendLedger.openRowKeys(),
       runtime: {
         supabaseProjectRef: A2_SUPABASE_PROJECT_REF,
         pipelineVersion: searchPipelineVersion(),
@@ -985,6 +1839,7 @@ describe("paid A2 rerank comparison", () => {
       },
       rowsExpected: preflight.repeats * runQuestions.length,
       rowsCompleted: completedRowKeys.size,
+      completedRows: completedRowKeys.size,
       attempts: rows.length,
       labelState: {
         ownerApproved: goldSet.questions.filter((question) => !question.needs_human_review).length,
@@ -1001,6 +1856,7 @@ describe("paid A2 rerank comparison", () => {
         policy: "reserve before every paid row; retain the full provider reservation whenever usage is missing; refuse any request that would exceed the cap",
       },
       totals: { current: currentTotals, global: globalTotals },
+      allAttemptTotals: { current: allAttemptCurrentTotals, global: allAttemptGlobalTotals },
       cost: {
         usdPerThousandSearchUnits: preflight.usdPerThousandSearchUnits,
         cohereProviderReportedSearchUnits: knownUnits,
@@ -1039,8 +1895,8 @@ describe("paid A2 rerank comparison", () => {
       rerankerInstability: stability.filter((row) =>
         row.assessment === "reranker_unstable_on_identical_pool"),
       upstreamPoolChanges: stability.filter((row) => !row.upstreamPoolStableAcrossRepeats),
-      failures,
-      rows,
+      failures: failureSummaries(rows),
+      attemptHistory: rows,
     };
     writeJson(checkpointPath, finalReport);
 
@@ -1049,8 +1905,23 @@ describe("paid A2 rerank comparison", () => {
       usdToMicrousdCeiling(preflight.maxTotalUsd),
     );
     expect(completedRowKeys.size).toBe(preflight.repeats * runQuestions.length);
+    } catch (error) {
+      if (preflight.mode === "RECOVER" && runLock.recovered) {
+        runLock.restoreRecoveredLock();
+        lockDisposed = true;
+      } else if (preflight.mode === "RUN"
+        && activeSpendLedger !== null
+        && activeSpendLedger.openRowKeys().length > 0) {
+        // Preserve the JSON lock if an unexpected local failure leaves money
+        // reserved without a settled outcome. A later RECOVER invocation must
+        // reconcile that attempt before any more providers can run.
+        runLock.retainForRecovery();
+        lockDisposed = true;
+      }
+      throw error;
     } finally {
-      runLock.release();
+      if (!lockDisposed) runLock.release();
     }
   });
 });
+}
