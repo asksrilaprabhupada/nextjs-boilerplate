@@ -1,13 +1,16 @@
 Planner gate runs — bump this file to start one.
 
-run 11 — Part A1, PR #137. Owner's decision: a question that IS a
-pointer — a bare scripture reference or a bare quotation — gets a NAMED
-outcome rather than being counted as a failure. Exactly five angles
-stays required for every real question, and the duplicate rule is not
-loosened.
+run 12 — Part A1, PR #137. The pointer classifier is tightened to the
+owner's two narrow mechanical escapes:
 
-The test reads the QUESTION, never the plan, so a real question whose
-angles come back repetitive is still a recorded failure. It classifies
-exactly q001-q012 of the gold set and nothing else.
+  1. the input IS ONLY a citation. "BG 18.66" is a lookup; "what does
+     BG 18.66 mean about surrender" is a real question that merely
+     cites one, and gets five angles — the verse still arrives, pinned.
+  2. a quotation must be marked as one AND at least 8 words. "surrender
+     to Krishna" appears verbatim across the corpus and is a question.
 
-Expecting: 65 of 65, reported as N planned + M pointer.
+No question mark and no question word is consulted anywhere. Question is
+the default; everything else falls through to five angles.
+
+Over the gold set this now selects q001-q005 and q007-q012 — eleven, not
+twelve. "What does BG 3.27 mean?" is a real question again.

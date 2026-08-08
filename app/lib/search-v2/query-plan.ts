@@ -29,7 +29,13 @@
  */
 import { z } from "zod";
 import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
-import { extractReference, extractSiglum, siglumOf } from "@/app/lib/search-v2/reference";
+import {
+  extractReference,
+  extractSiglum,
+  isBareReference,
+  siglumOf,
+  siglumOfSpelledOutBook,
+} from "@/app/lib/search-v2/reference";
 import { isPrabhupada } from "@/app/lib/15-transcript-speakers";
 
 /**
@@ -414,76 +420,47 @@ function jaccard(a: string, b: string): number {
 }
 
 /**
- * Books written out in full, mapped to the siglum they are.
+ * Is this question a POINTER?
  *
- * Used ONLY to judge whether a scripture constraint was invented. A devotee who
- * writes "Bhagavad-gita 6.6" has named the book as plainly as one who writes
- * "BG 6.6", and a plan constraining to BG has read the question correctly — but
- * "bhagavad-gita 6.6" contains no literal "bg", so the check called it an
- * invention and threw the plan away.
+ * QUESTION IS THE DEFAULT. There are exactly two mechanical escapes, both read
+ * off the shape of the input before the planner runs, and neither decided by a
+ * model:
  *
- * Deliberately not wired into `extractSiglum`: that feeds the retrieval filter
- * and the pinned lookup, and widening what those match is a change to search
- * behaviour, not to this validator. Worth doing separately, on its own evidence.
+ *   1. the input is NOTHING BUT a citation — "BG 18.66", "CC Adi 1.1";
+ *   2. the input is a quotation marked as one AND long enough to be a real
+ *      quotation rather than a phrase.
+ *
+ * Everything else falls through to five angles. "control of the mind",
+ * "chanting", "love", "krsna consciousness" and "what does BG 18.66 mean about
+ * surrender" are all real questions.
+ *
+ * Nothing here looks for a question mark or a question word. A devotee who
+ * omits the punctuation has not thereby stopped asking, and a plain statement
+ * is still a question.
  */
-const SPELLED_OUT_BOOKS: [RegExp, string][] = [
-  [/bhagavad\s*-?\s*gita/, "BG"],
-  [/srimad\s*-?\s*bhagavatam|bhagavata\s*purana/, "SB"],
-  [/caitanya\s*-?\s*caritamrta|chaitanya\s*-?\s*charitamrta/, "CC"],
-  [/nectar\s+of\s+instruction/, "NOI"],
-  [/isopanisad|ishopanishad/, "ISO"],
-  [/brahma\s*-?\s*samhita/, "BS"],
-];
-
-function siglumOfSpelledOutBook(query: string): string | null {
-  const folded = query
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase();
-  for (const [pattern, siglum] of SPELLED_OUT_BOOKS) {
-    if (pattern.test(folded)) return siglum;
-  }
-  return null;
-}
 
 /**
- * Is this question a POINTER — a bare reference or a bare quotation?
- *
- * Judged from the question alone, before any plan exists, so that it can never
- * become an escape hatch for a plan that came back lazy. "How do I control my
- * mind" is not a pointer however repetitive its angles are, and still owes five
- * distinct ones.
- *
- * The test is: strip the reference or the quotation, and see whether the
- * devotee wrote anything else. "SB 1.2.6" leaves nothing. "What does BG 3.27
- * mean?" leaves one word. "Why is the mind so restless?" is not a pointer at
- * all — there is no reference and no quotation to strip.
+ * Roughly eight words. Below this a quoted span is a phrase, not a quotation:
+ * "surrender to Krishna" almost certainly appears verbatim somewhere in 244,000
+ * passages, and a devotee typing it is asking a question, not citing a line.
  */
+export const MIN_QUOTATION_WORDS = 8;
+
 export function isPointerQuestion(query: string): boolean {
   const trimmed = (query || "").trim();
   if (!trimmed) return false;
 
-  // A question that is one quoted span and nothing else.
-  const quoted = trimmed.match(/^["“”'']\s*[\s\S]+?\s*["“”'']\s*[?.!]?$/);
-  if (quoted) return true;
+  // Escape 1 — the whole input is a citation, and nothing else.
+  if (isBareReference(trimmed)) return true;
 
-  const hasReference = Boolean(extractReference(trimmed))
-    || (siglumOfSpelledOutBook(trimmed) !== null && /\d/.test(trimmed));
-  if (!hasReference) return false;
+  // Escape 2 — a quotation, marked as one and long enough to be one.
+  const quoted = trimmed.match(/^["\u201C\u201D'\u2018\u2019]\s*([\s\S]+?)\s*["\u201C\u201D'\u2018\u2019][\s.,!?]*$/);
+  if (quoted) {
+    const words = quoted[1].trim().split(/\s+/).filter(Boolean);
+    return words.length >= MIN_QUOTATION_WORDS;
+  }
 
-  // What remains once the reference itself is taken out of the sentence.
-  const withoutReference = normalise(trimmed)
-    .split(" ")
-    .filter((token) => token && !token.startsWith("ref") && !/^\d+$/.test(token))
-    .filter((token) => !FUNCTION_WORDS.has(token));
-  const bookWords = new Set([
-    "bhagavad", "gita", "srimad", "bhagavatam", "caitanya", "caritamrta",
-    "chaitanya", "charitamrta", "isopanisad", "ishopanishad", "samhita",
-    "brahma", "nectar", "instruction", "adi", "madhya", "antya", "canto",
-    "chapter", "verse", "text", "mantra", "sloka", "shloka",
-  ]);
-  const remaining = withoutReference.filter((token) => !bookWords.has(token));
-  return remaining.length < 3;
+  return false;
 }
 
 /** How many content words a text carries, after stemming and stop-words. */
