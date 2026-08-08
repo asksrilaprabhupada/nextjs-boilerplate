@@ -17,6 +17,8 @@ import {
   REQUIRED_SUBQUERIES,
   QUERY_PLANNER_THINKING_BUDGET,
   QUERY_PLANNER_MAX_OUTPUT_TOKENS,
+  isPointerQuestion,
+  isPlanDegradation,
 } from "@/app/lib/search-v2/query-plan";
 import {
   ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
@@ -97,7 +99,7 @@ describe("query planner loop", () => {
     expect(client.calls).toHaveLength(1);
   });
 
-  it("runs with thinking OFF — the cause of every 3 s planner timeout", async () => {
+  it("runs with thinking OFF — the cause of every planner timeout in production", async () => {
     const client = scriptedClient([goodPlan()]);
     await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(client.configs[0].thinkingConfig).toEqual({
@@ -165,8 +167,13 @@ describe("query planner loop", () => {
   });
 
   it("retries at most once, then falls back and says the angles were duplicates", async () => {
+    // Five angles that really are one angle: same words, five times over.
     const duplicated = goodPlan({
-      subqueries: FIVE_ANGLES.map((angle) => ({ ...angle, role: "cause" })),
+      subqueries: FIVE_ANGLES.map((angle, i) => ({
+        ...angle,
+        id: `s${i}`,
+        text: "controlling the restless mind by practice",
+      })),
     });
     const client = scriptedClient([duplicated, duplicated, goodPlan()]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
@@ -403,5 +410,109 @@ describe("article planner loop", () => {
     expect(out.plan).toBeNull();
     expect(out.source).toBe("deterministic_fallback");
     expect(out.rejections.join(" ")).toMatch(/capacity/);
+  });
+});
+
+// ─── pointer questions: a named outcome, never an escape hatch ───
+
+describe("pointer questions", () => {
+  /** Five angles that all say the same thing — what a bare reference produces. */
+  const repetitive = (subject: string) =>
+    JSON.stringify({
+      schema_version: "query-plan-v1",
+      intent: "exact_reference",
+      canonical_query: subject,
+      preserve_terms: [subject],
+      lexical_phrases: [],
+      vocabulary_candidates: [],
+      subqueries: [
+        { id: "s1", text: `meaning of ${subject}`, role: "definition", priority: "primary" },
+        { id: "s2", text: `meaning of ${subject}`, role: "context", priority: "primary" },
+        { id: "s3", text: `meaning of ${subject}`, role: "reformulation", priority: "supporting" },
+        { id: "s4", text: `meaning of ${subject}`, role: "example", priority: "supporting" },
+        { id: "s5", text: `meaning of ${subject}`, role: "practice", priority: "exploratory" },
+      ],
+      constraints: {
+        scripture_references: [], source_types: [], speaker: null,
+        recipient: null, location: null, date_from: null, date_to: null,
+      },
+      possible_false_assumption: false,
+    });
+
+  it("treats the whole input being a citation as a pointer", () => {
+    expect(isPointerQuestion("SB 1.2.6")).toBe(true);
+    expect(isPointerQuestion("BG 18.66")).toBe(true);
+    expect(isPointerQuestion("bg 9.26")).toBe(true);
+    expect(isPointerQuestion("CC Adi 1.1")).toBe(true);
+    expect(isPointerQuestion("Bhagavad-gita 6.6")).toBe(true);
+    expect(isPointerQuestion("Śrīmad-Bhāgavatam 1.2.6")).toBe(true);
+  });
+
+  it("HOLE 1: a question that merely CITES a verse is a real question", () => {
+    // "Contains a citation" is not "is a citation". The devotee still gets the
+    // verse — direct_verse_lookup pins it — and also gets the five angles.
+    expect(isPointerQuestion("what does BG 18.66 mean about surrender")).toBe(false);
+    expect(isPointerQuestion("What does BG 3.27 mean?")).toBe(false);
+    expect(isPointerQuestion("explain SB 1.2.6")).toBe(false);
+    expect(isPointerQuestion("why is BG 2.20 important for a beginner")).toBe(false);
+    expect(isPointerQuestion("compare BG 18.66 with CC Adi 1.1")).toBe(false);
+  });
+
+  it("HOLE 2: a short quoted phrase is a question, not a quotation", () => {
+    // "surrender to Krishna" appears verbatim across the corpus; a devotee
+    // typing it is asking, not citing. A quotation must be long AND exact.
+    expect(isPointerQuestion('"surrender to Krishna"')).toBe(false);
+    expect(isPointerQuestion('"devotional service"')).toBe(false);
+    expect(isPointerQuestion('"the mind is restless"')).toBe(false);
+    // Long, marked as a quotation, word for word: a real quotation.
+    expect(isPointerQuestion('"Abandon all varieties of religion and just surrender unto Me"')).toBe(true);
+    expect(isPointerQuestion('"For him who has conquered the mind, the mind is the best of friends"')).toBe(true);
+    expect(isPointerQuestion('"The mind is restless, turbulent, obstinate and very strong"')).toBe(true);
+  });
+
+  it("never reads a question mark or a question word — a statement is still a question", () => {
+    // The owner often omits the question mark, and a bare noun phrase is a
+    // question. None of these may be mistaken for a pointer.
+    expect(isPointerQuestion("control of the mind")).toBe(false);
+    expect(isPointerQuestion("chanting")).toBe(false);
+    expect(isPointerQuestion("love")).toBe(false);
+    expect(isPointerQuestion("krsna consciousness")).toBe(false);
+    expect(isPointerQuestion("the process")).toBe(false);
+    expect(isPointerQuestion("how")).toBe(false);
+    expect(isPointerQuestion("how do I control my restless mind")).toBe(false);
+    expect(isPointerQuestion("Compare karma-yoga and bhakti-yoga")).toBe(false);
+    expect(isPointerQuestion("What did Srila Prabhupada say about the moon landing?")).toBe(false);
+    // Adding or removing punctuation must change nothing.
+    expect(isPointerQuestion("what does BG 18.66 mean about surrender?"))
+      .toBe(isPointerQuestion("what does BG 18.66 mean about surrender"));
+  });
+
+  it("records a pointer question as its own outcome, not as a failure", async () => {
+    const body = repetitive("SB 1.2.6");
+    const client = scriptedClient([body, body]);
+    const out = await planQuery("SB 1.2.6", MAX_SUBQUERIES, { client });
+    expect(out.failureKind).toBe("pointer_question");
+    // It still TRIED twice before accepting that the question has one angle.
+    expect(client.calls).toHaveLength(2);
+    // And it is not a degradation: nothing went wrong.
+    expect(isPlanDegradation(out.failureKind)).toBe(false);
+  });
+
+  it("does NOT excuse a real question whose angles came back repetitive", async () => {
+    const body = repetitive("the restless mind");
+    const client = scriptedClient([body, body]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(out.failureKind).toBe("near_duplicate_angles");
+    expect(isPlanDegradation(out.failureKind)).toBe(true);
+  });
+
+  it("still prefers five real angles for a pointer question when they exist", async () => {
+    // The pointer outcome is a last resort, never a shortcut: a bare reference
+    // that CAN be planned five ways is planned five ways.
+    const client = scriptedClient([goodPlan({ canonical_query: "SB 1.2.6" })]);
+    const out = await planQuery("SB 1.2.6", MAX_SUBQUERIES, { client });
+    expect(out.source).toBe("model");
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
+    expect(out.failureKind).toBeNull();
   });
 });

@@ -19,9 +19,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   GATE_QUESTIONS,
-  PLANNER_RATE_USD_PER_MTOK,
+  renderPlannerGateText,
   runPlannerGate,
-  type PlannerGateReport,
 } from "@/app/lib/search-v2/planner-gate";
 
 /** 195 planner calls at ~2.3 s, four at a time, is ~2 minutes. */
@@ -35,96 +34,6 @@ const notFound = () => NextResponse.json({ error: "Not found." }, { status: 404 
 function positiveInt(value: string | null, fallback: number): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-/**
- * A report a human can read in a browser tab.
- *
- * `?format=text` exists because the person who has to run this gate is not
- * reading raw JSON, and because a preview URL opened in a logged-in browser is
- * the one way to reach a protected deployment without handing anyone a token.
- * Failing questions are printed in full; passing ones get a single line.
- */
-function renderText(report: PlannerGateReport & { wallClockMs: number }): string {
-  const lines: string[] = [];
-  const pct = (n: number, of: number) => (of === 0 ? "0%" : `${Math.round((n / of) * 100)}%`);
-
-  lines.push("QUERY PLANNER GATE");
-  lines.push("==================");
-  lines.push("");
-  lines.push(`Questions:        ${report.questionCount}`);
-  lines.push(`Runs per question:${String(report.runsPerQuestion).padStart(2)}`);
-  lines.push(`Angles required:  ${report.requiredAngles}`);
-  lines.push("");
-  lines.push(
-    `PASSED ${report.passedQuestions} of ${report.questionCount} questions `
-    + `(${pct(report.passedQuestions, report.questionCount)})`,
-  );
-  lines.push(
-    `Plans accepted: ${report.acceptedRuns} of ${report.totalRuns} runs `
-    + `(${pct(report.acceptedRuns, report.totalRuns)})`,
-  );
-  lines.push("");
-  lines.push("PLANNING TIME (milliseconds, one planner call each)");
-  lines.push(
-    `  fastest ${report.durationMs.min}   median ${report.durationMs.median}`
-    + `   p95 ${report.durationMs.p95}   slowest ${report.durationMs.max}`,
-  );
-  lines.push("  the cap is 3000 ms per attempt — p95 is the number that matters");
-  lines.push("");
-  lines.push("TOKENS AND COST");
-  lines.push(`  prompt tokens   ${report.tokens.promptTotal.toLocaleString("en-US")}`);
-  lines.push(`  output tokens   ${report.tokens.outputTotal.toLocaleString("en-US")}`);
-  lines.push(`  thinking tokens ${report.tokens.thoughtsTotal} (must be 0)`);
-  lines.push(
-    `  cost per search $${report.costUsd.perSearch.toFixed(6)}`
-    + `   this whole run $${report.costUsd.total.toFixed(4)}`,
-  );
-  lines.push(
-    `  at $${PLANNER_RATE_USD_PER_MTOK.input}/M input and `
-    + `$${PLANNER_RATE_USD_PER_MTOK.output}/M output — check these against Google's pricing page`,
-  );
-  lines.push("");
-  const kinds = Object.entries(report.failureKindCounts);
-  lines.push(`FAILURES BY KIND: ${kinds.length === 0 ? "none" : ""}`);
-  for (const [kind, count] of kinds.sort((a, b) => b[1] - a[1])) {
-    lines.push(`  ${kind.padEnd(24)} ${count}`);
-  }
-  lines.push("");
-  lines.push(`Wall clock for this run: ${(report.wallClockMs / 1000).toFixed(1)} s`);
-  lines.push("");
-
-  const failed = report.results.filter((r) => !r.passed);
-  if (failed.length > 0) {
-    lines.push("QUESTIONS THAT DID NOT PASS");
-    lines.push("---------------------------");
-    for (const result of failed) {
-      lines.push(`${result.id} [${result.category}] ${result.question}`);
-      for (const run of result.runs) {
-        lines.push(
-          `  run ${run.runIndex + 1}: ${run.accepted ? "accepted" : "FELL BACK"} `
-          + `· ${run.angleCount} angles · ${run.attempts} attempt(s) · ${run.durationMs} ms`
-          + (run.failureKind ? ` · ${run.failureKind}` : ""),
-        );
-        for (const reason of run.rejections.slice(0, 4)) lines.push(`      ${reason}`);
-      }
-      lines.push("");
-    }
-  }
-
-  lines.push("EVERY QUESTION, AND THE ANGLES ITS FIRST RUN PRODUCED");
-  lines.push("----------------------------------------------------");
-  for (const result of report.results) {
-    const first = result.runs[0];
-    const times = result.runs.map((r) => `${r.durationMs}ms`).join(" / ");
-    lines.push(`${result.passed ? "PASS" : "FAIL"} ${result.id}  ${result.question}`);
-    lines.push(`     ${times}`);
-    for (const angle of first?.angles ?? []) {
-      lines.push(`     · [${angle.role}] ${angle.text}`);
-    }
-    lines.push("");
-  }
-  return lines.join("\n");
 }
 
 export async function GET(request: NextRequest) {
@@ -158,7 +67,7 @@ export async function GET(request: NextRequest) {
   const withWallClock = { ...report, wallClockMs: Date.now() - startedAt };
 
   if (params.get("format") === "text") {
-    return new Response(renderText(withWallClock), {
+    return new Response(renderPlannerGateText(withWallClock), {
       headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" },
     });
   }

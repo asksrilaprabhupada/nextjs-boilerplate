@@ -1,0 +1,130 @@
+# Planner gate — the A1 merge condition, measured rather than asserted.
+#
+# The gate needs a live Gemini call, which neither CI nor a sandbox has by
+# default. There are exactly two ways to get one, and this workflow tries both
+# and reports which worked:
+#
+#   1. A GEMINI_API_KEY repository secret. Then the gate runs here, in the
+#      runner, and needs no deployment at all.
+#   2. The Preview deployment for this branch, which already has the key in its
+#      environment. Then the runner calls /api/search/plan-probe on it.
+#
+# If neither is available the job says so plainly and fails. A gate that cannot
+# measure must never report green.
+#
+# Triggered by touching .github/gate/run.txt (put the run's purpose in that
+# file), or from the Actions tab once this workflow reaches the default branch.
+name: Planner gate
+
+on:
+  push:
+    paths:
+      - ".github/gate/**"
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "Planner runs per question"
+        default: "3"
+      limit:
+        description: "How many gold questions (blank = all)"
+        default: ""
+
+permissions:
+  contents: read
+  deployments: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Which measurement paths are open?
+        id: paths
+        env:
+          HAS_KEY: ${{ secrets.GEMINI_API_KEY != '' }}
+        run: |
+          echo "has_key=$HAS_KEY" >> "$GITHUB_OUTPUT"
+          echo "GEMINI_API_KEY secret present in this repository: $HAS_KEY"
+
+      # ── Path 1: run the gate right here. No deployment involved. ──
+      - name: Run the planner gate in the runner
+        if: steps.paths.outputs.has_key == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PLANNER_GATE_LIVE: "1"
+          PLANNER_GATE_RUNS: ${{ github.event.inputs.runs || '3' }}
+          PLANNER_GATE_LIMIT: ${{ github.event.inputs.limit }}
+        # No --reporter flag: vitest 4 removed "basic", and the default reporter
+        # already prints the report the test writes to stdout.
+        run: npx vitest run tests/planner-gate.live.test.ts
+
+      # ── Path 2: ask the Preview deployment, which has the key already. ──
+      # Also the one way to learn whether that deployment is reachable at all:
+      # a protected preview answers 401 with an HTML login page, and knowing
+      # that is worth more than another blind retry.
+      - name: Find the Preview deployment for this branch
+        id: preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # By SHA, not by branch: Vercel records a deployment's `ref` as the
+          # commit SHA, so ?ref=<branch> matches nothing and waits out the clock.
+          url=""
+          for attempt in $(seq 1 20); do
+            for dep in $(gh api "repos/$GITHUB_REPOSITORY/deployments?sha=$GITHUB_SHA&per_page=5" --jq '.[].id'); do
+              found=$(gh api "repos/$GITHUB_REPOSITORY/deployments/$dep/statuses" \
+                --jq '[.[] | select(.state=="success") | .environment_url] | first // empty')
+              if [ -n "$found" ]; then url="$found"; break; fi
+            done
+            [ -n "$url" ] && break
+            echo "no successful Preview deployment yet (attempt $attempt); waiting"
+            sleep 15
+          done
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: ${url:-<none found>}"
+
+      - name: Probe the Preview deployment
+        if: steps.paths.outputs.has_key != 'true' && steps.preview.outputs.url != ''
+        env:
+          # Vercel's "Protection Bypass for Automation" secret, when one exists.
+          # It lets CI through while the preview stays closed to everyone else.
+          BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          set -uo pipefail
+          URL="${{ steps.preview.outputs.url }}/api/search/plan-probe?runs=${{ github.event.inputs.runs || '3' }}&format=text"
+          code=$(curl -sS -L --max-time 290 \
+            ${BYPASS:+-H "x-vercel-protection-bypass: $BYPASS"} \
+            -o probe.txt -w '%{http_code}' "$URL" || echo "000")
+          echo "HTTP $code"
+
+          if grep -qi "Log in to Vercel" probe.txt 2>/dev/null; then
+            echo
+            echo "BLOCKED: Vercel Deployment Protection redirected this request to a Vercel login."
+            echo "The gate cannot be measured this way. Either:"
+            echo "  (a) add GEMINI_API_KEY as a repository secret — the gate then runs here, or"
+            echo "  (b) add VERCEL_AUTOMATION_BYPASS_SECRET from Vercel's"
+            echo "      Settings > Deployment Protection > Protection Bypass for Automation."
+            exit 1
+          fi
+
+          # Never dump the whole body: a protection page is ~700 KB of HTML and
+          # buries the one line that matters.
+          head -c 40000 probe.txt
+          [ "$code" = "200" ] || { echo; echo "The deployment did not serve the gate."; exit 1; }
+
+      - name: Fail when nothing could be measured
+        if: steps.paths.outputs.has_key != 'true' && steps.preview.outputs.url == ''
+        run: |
+          echo "No GEMINI_API_KEY secret and no reachable Preview deployment."
+          echo "The gate could not be measured, so it is not reported as passed."
+          exit 1

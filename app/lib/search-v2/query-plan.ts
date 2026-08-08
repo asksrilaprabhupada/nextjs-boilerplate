@@ -29,7 +29,14 @@
  */
 import { z } from "zod";
 import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
-import { extractReference, extractSiglum, siglumOf } from "@/app/lib/search-v2/reference";
+import {
+  extractReference,
+  extractSiglum,
+  isBareReference,
+  siglumOf,
+  siglumOfSpelledOutBook,
+} from "@/app/lib/search-v2/reference";
+import { isPrabhupada } from "@/app/lib/15-transcript-speakers";
 
 /**
  * What the planner may say a question IS. This is a DESCRIPTION, recorded for
@@ -97,7 +104,11 @@ export const QueryPlanSchema = z
       .array(
         z
           .object({
-            id: z.string().min(1).max(30),
+            // Generous on purpose. This is an internal correlation id for
+            // fusion weighting, never shown and never stored; a model that
+            // emits a descriptive id was failing the WHOLE plan on a limit
+            // that protects nothing (3 of 3 runs for one gold question).
+            id: z.string().min(1).max(120),
             text: z.string().min(3).max(160),
             role: z.enum(SUBQUERY_ROLES),
             priority: z.enum(["primary", "supporting", "exploratory"]),
@@ -165,7 +176,34 @@ export type PlanFailureKind =
   /** Right count, but the angles repeat each other or the question. */
   | "near_duplicate_angles"
   /** A constraint or name the question never contained: a misreading. */
-  | "semantic_rejected";
+  | "semantic_rejected"
+  /**
+   * NOT A FAILURE. The question IS a pointer — a bare scripture reference or a
+   * bare quotation — and such a question does not have five distinct retrieval
+   * angles to find. "SB 1.2.6" yields "meaning of SB 1.2.6", "purport to
+   * SB 1.2.6", "commentary on SB 1.2.6": one search written three ways.
+   *
+   * Recorded so it can be counted and seen, never as a degradation, because
+   * nothing went wrong. The search runs on the question alone — which for a
+   * written reference is the best search there is, since `direct_verse_lookup`
+   * pins that verse first in the main tier, immune to every cut.
+   *
+   * Reachable ONLY from `isPointerQuestion`, which reads the question and not
+   * the plan. A real question that produces repetitive angles is still a
+   * recorded failure: this is a name for a case, not a way out of the rule.
+   */
+  | "pointer_question";
+
+/**
+ * Did the plan fall back because something went WRONG?
+ *
+ * `pointer_question` is the one outcome that lands on the fallback plan without
+ * anything having failed, so it must not raise a degradation, must not warn a
+ * devotee, and must not stop a perfectly good answer from being cached.
+ */
+export function isPlanDegradation(kind: PlanFailureKind | null): boolean {
+  return kind !== null && kind !== "pointer_question";
+}
 
 /** Provider cost of the planning stage. Recorded so a search has a price. */
 export interface PlannerUsage {
@@ -178,6 +216,12 @@ export interface PlannerUsage {
   totalTokens: number;
   /** Wall-clock across every attempt, including the rejected one. */
   durationMs: number;
+  /**
+   * One entry per planner call. The 3 s cap applies to a SINGLE call, so a
+   * total that happens to span a retry must never be mistaken for the latency
+   * the cap is judged against.
+   */
+  attemptDurationsMs: number[];
 }
 
 export interface PlannedQuery {
@@ -298,8 +342,24 @@ export function fallbackPlan(query: string): QueryPlan {
   };
 }
 
+/**
+ * A scripture reference is ONE thing, not four words.
+ *
+ * "SB 1.2.6" tokenises as {sb, 1, 2, 6}, which wrecks every similarity
+ * judgement built on top: it clears the four-content-word floor on numerals
+ * alone, and two angles that merely both cite the verse share four tokens and
+ * read as identical. Collapsing each reference to a single token restores the
+ * meaning — "purport to SB 1.2.6" and "lectures on SB 1.2.6" are then two
+ * words apart, which is what they are.
+ */
+const REFERENCE_RE = /\b(?:BG|SB|CC|NOI|ISO|BS|NBS|MMS)\.?\s*\d+(?:[.\s]\d+)*/gi;
+
+function collapseReferences(text: string): string {
+  return text.replace(REFERENCE_RE, (match) => ` ref${match.toLowerCase().replace(/[^a-z0-9]/g, "")} `);
+}
+
 function normalise(s: string): string {
-  return s
+  return collapseReferences(s)
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
@@ -357,6 +417,56 @@ function jaccard(a: string, b: string): number {
   let inter = 0;
   for (const t of sa) if (sb.has(t)) inter += 1;
   return inter / (sa.size + sb.size - inter);
+}
+
+/**
+ * Is this question a POINTER?
+ *
+ * QUESTION IS THE DEFAULT. There are exactly two mechanical escapes, both read
+ * off the shape of the input before the planner runs, and neither decided by a
+ * model:
+ *
+ *   1. the input is NOTHING BUT a citation — "BG 18.66", "CC Adi 1.1";
+ *   2. the input is a quotation marked as one AND long enough to be a real
+ *      quotation rather than a phrase.
+ *
+ * Everything else falls through to five angles. "control of the mind",
+ * "chanting", "love", "krsna consciousness" and "what does BG 18.66 mean about
+ * surrender" are all real questions.
+ *
+ * Nothing here looks for a question mark or a question word. A devotee who
+ * omits the punctuation has not thereby stopped asking, and a plain statement
+ * is still a question.
+ */
+
+/**
+ * Roughly eight words. Below this a quoted span is a phrase, not a quotation:
+ * "surrender to Krishna" almost certainly appears verbatim somewhere in 244,000
+ * passages, and a devotee typing it is asking a question, not citing a line.
+ */
+export const MIN_QUOTATION_WORDS = 8;
+
+export function isPointerQuestion(query: string): boolean {
+  const trimmed = (query || "").trim();
+  if (!trimmed) return false;
+
+  // Escape 1 — the whole input is a citation, and nothing else.
+  if (isBareReference(trimmed)) return true;
+
+  // Escape 2 — a quotation, marked as one and long enough to be one.
+  const quoted = trimmed.match(/^["\u201C\u201D'\u2018\u2019]\s*([\s\S]+?)\s*["\u201C\u201D'\u2018\u2019][\s.,!?]*$/);
+  if (quoted) {
+    const words = quoted[1].trim().split(/\s+/).filter(Boolean);
+    return words.length >= MIN_QUOTATION_WORDS;
+  }
+
+  return false;
+}
+
+/** How many content words a text carries, after stemming and stop-words. */
+function contentTokenCount(text: string): number {
+  const all = normalise(text).split(" ").filter(Boolean).map(stem);
+  return new Set(all.filter((t) => !FUNCTION_WORDS.has(t))).size;
 }
 
 /** Proper names and scripture sigla that must survive into the plan. */
@@ -425,6 +535,15 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     );
   }
 
+  /**
+   * "Is this angle just the question again?" only means something when the
+   * question has enough content words to overlap on. "SB 1.2.6" has three
+   * tokens, so "purport to SB 1.2.6" scores 0.75 against it and reads as a
+   * duplicate — while actually reaching a different table. Below this floor,
+   * distinctness is judged between the angles alone.
+   */
+  const queryIsSubstantial = contentTokenCount(query) >= 4;
+
   const ids = new Set<string>();
   for (const sq of subs) {
     if (ids.has(sq.id)) push("semantic_rejected", `duplicate subquery id "${sq.id}"`, false);
@@ -434,7 +553,7 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     if (sq.id === "__lexical__" || sq.id === "__tags__" || sq.id === "q_original") {
       push("semantic_rejected", `subquery id "${sq.id}" is reserved`, false);
     }
-    if (jaccard(sq.text, query) >= NEAR_DUPLICATE_OF_ORIGINAL) {
+    if (queryIsSubstantial && jaccard(sq.text, query) >= NEAR_DUPLICATE_OF_ORIGINAL) {
       push(
         "near_duplicate_angles",
         `subquery "${sq.id}" is equivalent to the original question`,
@@ -443,22 +562,13 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     }
   }
 
-  // Five angles serving one purpose are one angle billed five times. A repeated
-  // role is the cheapest reliable signal of that, and the model is told so.
-  const seenRoles = new Map<string, string>();
-  for (const sq of subs) {
-    const owner = seenRoles.get(sq.role);
-    if (owner) {
-      push(
-        "near_duplicate_angles",
-        `subqueries "${owner}" and "${sq.id}" both serve the "${sq.role}" purpose`,
-        true,
-      );
-    } else {
-      seenRoles.set(sq.role, sq.id);
-    }
-  }
-
+  // A REPEATED ROLE IS NOT A REPEATED ANGLE. This was rejected here until the
+  // gate showed what it was throwing away: "Compare karma-yoga and bhakti-yoga"
+  // wants two `definition` angles, one per thing being compared, and they
+  // retrieve entirely different passages. Twenty-two of the gate's rejections
+  // were plans exactly like that. Role diversity stays in the prompt as
+  // guidance; distinctness is judged on the TEXT below, which is the thing that
+  // actually decides whether two angles reach the same rows.
   for (let i = 0; i < subs.length; i++) {
     for (let j = i + 1; j < subs.length; j++) {
       if (jaccard(subs[i].text, subs[j].text) >= NEAR_DUPLICATE_PAIR) {
@@ -493,12 +603,25 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
   if (c.location && !q.includes(c.location.toLowerCase().split(/\s+/)[0])) {
     push("semantic_rejected", `invented location constraint "${c.location}"`, false);
   }
-  if (c.speaker && !q.includes(c.speaker.toLowerCase().split(/\s+/)[0])) {
+  // Naming Śrīla Prabhupāda is not an invention and narrows nothing — the whole
+  // library is his. "In a morning walk, what did HE say about scientists?"
+  // resolves to him correctly, and rejecting that cost fifteen good plans in the
+  // gate. A guest the question never mentioned is still a misreading.
+  if (
+    c.speaker
+    && !isPrabhupada(c.speaker)
+    && !q.includes(c.speaker.toLowerCase().split(/\s+/)[0])
+  ) {
     push("semantic_rejected", `invented speaker constraint "${c.speaker}"`, false);
   }
+  // Compare SIGLA, not raw text. "Bhagavad-gita 6.6" contains no "bg", so the
+  // correct constraint "Bg 6.6" read as invented and threw the plan away.
+  const querySiglum = extractSiglum(query) ?? siglumOfSpelledOutBook(query);
   for (const ref of c.scripture_references) {
-    const siglum = ref.trim().split(/[\s.]/)[0]?.toLowerCase();
-    if (siglum && siglum.length >= 2 && !q.includes(siglum)) {
+    const planSiglum = siglumOf(ref);
+    if (!planSiglum) continue;
+    if (querySiglum && planSiglum === querySiglum) continue;
+    if (!q.includes(planSiglum.toLowerCase())) {
       push("semantic_rejected", `invented scripture constraint "${ref}"`, false);
       break;
     }
@@ -542,10 +665,11 @@ function buildPrompt(query: string, maxSubqueries: number, repairNotes: string[]
     `by itself. The library is searched with the original question PLUS your ${maxSubqueries}`,
     `angles, so ${maxSubqueries + 1} searches run and their results are merged.`,
     "",
-    "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE — a different `role`",
-    "value, reaching passages the others would miss. Never use a role twice.",
-    "Rephrasing the same sentence is worthless: it retrieves the same rows twice",
-    "and wastes one of your five angles.",
+    "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE, reaching passages",
+    "the others would miss. Prefer a different `role` for each, but two angles",
+    "may share a role when they genuinely differ — comparing two things means",
+    "defining both. Rephrasing the same sentence is worthless: it retrieves the",
+    "same rows twice and wastes one of your five angles.",
     "",
     "Worked example — 'how do I control my mind' (the original question is",
     "searched too, so do not restate it):",
@@ -610,15 +734,25 @@ export interface PlannerDeps {
 }
 
 /**
- * 3 s PER ATTEMPT.
+ * 4 s PER ATTEMPT — measured, not guessed.
  *
- * The cap itself was never the whole bug — default Gemini thinking was. With
- * `thinkingBudget: 0` the call returns in roughly 2.2–2.5 s, inside this cap
- * with room to spare, so the cap stays where it is rather than being raised on
- * a guess. If Preview measurement ever shows it too tight, the replacement
- * comes from the measured p95 plus a second, not from a round number.
+ * It stayed at 3 s until measurement said otherwise, which is the only reason
+ * it moved. Over 206 single planner calls against the gold set, run serially
+ * so the number means what it says:
+ *
+ *   fastest 537 ms · median 2,273 ms · p95 2,999.96 ms · slowest 3,003 ms
+ *
+ * That p95 sitting a fraction under 3,000 ms is not a comfortable fit — it is
+ * the distribution being CLIPPED by the old cap. Everything slower was
+ * truncated into a timeout, 16 of them in that run, so the true p95 is at
+ * least 3 s and unknowable from behind the cap. Measured p95 plus one second
+ * gives 4,000 ms.
+ *
+ * Thinking is still off; this is the residual tail of a loaded provider, not
+ * deliberation. Planning may now take up to 8 s when a repairable plan earns
+ * its retry, against a 300 s request budget and ~25 s of cold retrieval.
  */
-const PLANNER_TIMEOUT_MS = 3000;
+const PLANNER_TIMEOUT_MS = 4000;
 
 /** Distinguishes "took too long" from "came back wrong" at the call boundary. */
 class PlannerCallError extends Error {
@@ -719,6 +853,7 @@ export async function planQuery(
     thoughtsTokens: 0,
     totalTokens: 0,
     durationMs: 0,
+    attemptDurationsMs: [],
   };
   const finish = (
     plan: QueryPlan,
@@ -768,8 +903,15 @@ export async function planQuery(
   // protecting against, and the fallback plan is still an honest search.
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     usage.attempts = attempt;
+    const attemptStartedAt = now();
+    const recordAttempt = (): void => {
+      usage.attemptDurationsMs.push(
+        Math.round(Math.max(0, now() - attemptStartedAt) * 1000) / 1000,
+      );
+    };
     try {
       const called = await callPlanner(client, query, maxSubqueries, timeoutMs, repairNotes);
+      recordAttempt();
       usage.promptTokens += called.usage.promptTokenCount ?? 0;
       usage.outputTokens += called.usage.candidatesTokenCount ?? 0;
       usage.thoughtsTokens += called.usage.thoughtsTokenCount ?? 0;
@@ -790,12 +932,25 @@ export async function planQuery(
       }
       rejections.push(...problems.map((p) => `model: ${p.message}`));
       // The kind reported is the FIRST problem's, so "too few angles" is not
-      // buried under the duplicate-role reports it inevitably drags with it.
+      // buried under the duplicate reports it inevitably drags with it.
       failureKind = problems[0].kind;
       const repairable = problems.every((p) => p.repairable);
-      if (!repairable || attempt === 2) break;
+      if (!repairable || attempt === 2) {
+        // A POINTER question that could not be given five distinct angles is
+        // not a failure — it is a question with only one angle in it. The test
+        // reads the QUESTION, never the plan, so a real question cannot reach
+        // this even when its angles come back repetitive: it still owes five.
+        if (
+          problems.every((p) => p.kind === "near_duplicate_angles")
+          && isPointerQuestion(query)
+        ) {
+          failureKind = "pointer_question";
+        }
+        break;
+      }
       repairNotes = problems.map((p) => p.message);
     } catch (err) {
+      recordAttempt();
       failureKind = err instanceof PlannerCallError ? err.kind : "provider_error";
       rejections.push(`model: ${err instanceof Error ? err.message : "planner call failed"}`);
       break;
