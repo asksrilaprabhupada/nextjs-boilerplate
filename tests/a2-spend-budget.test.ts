@@ -66,6 +66,66 @@ function loadStateModule() {
   return stateModulePromise;
 }
 
+function completeComparisonRow(
+  candidateCount = 400,
+  currentFinalCount = 200,
+): Record<string, unknown> {
+  const topN = Math.min(20, candidateCount);
+  const top = Array.from({ length: topN }, (_, index) => ({ passageId: `p${index}` }));
+  const currentDocumentCounts: number[] = [];
+  for (let offset = 0; offset < candidateCount; offset += 200) {
+    const count = Math.min(200, candidateCount - offset);
+    if (count > 1) currentDocumentCounts.push(count);
+  }
+  if (candidateCount > 200) currentDocumentCounts.push(currentFinalCount);
+  const currentRequests = currentDocumentCounts.map((documentCount) => ({
+    documentCount,
+    topN: documentCount,
+    responseSucceeded: true,
+    billedSearchUnits: 3,
+  }));
+  return {
+    poolSha256: "d".repeat(64),
+    candidateCount,
+    armExecutionOrder: ["current", "global"],
+    searchToTop20Ms: { current: 1, global: 1 },
+    sharedPreparationMs: 1,
+    comparisonPipelineTotalMs: 2,
+    arms: {
+      current: {
+        arm: "current",
+        topN: 20,
+        top,
+        reranked: true,
+        degradedReason: null,
+        documentCount: currentDocumentCounts.reduce((total, count) => total + count, 0),
+        providerCallCount: currentRequests.length,
+        providerRequests: currentRequests,
+        model: "rerank-v4.0-pro",
+        durationMs: 1,
+      },
+      global: {
+        arm: "global",
+        topN: 20,
+        top,
+        reranked: true,
+        degradedReason: null,
+        documentCount: candidateCount,
+        providerCallCount: 1,
+        providerRequests: [
+          { documentCount: candidateCount, topN, responseSucceeded: true, billedSearchUnits: 5 },
+        ],
+        model: "rerank-v4.0-pro",
+        durationMs: 1,
+      },
+    },
+    pipelineDegraded: false,
+    providerUsageComplete: true,
+    plannerUsage: { attempts: 1, durationMs: 1, attemptDurationsMs: [1] },
+    embeddingProviderCalls: 1,
+  };
+}
+
 function createLedger(path: string, maxUsd = 25): A2SpendLedger {
   return A2SpendLedger.create(path, {
     runId: "a2-budget-test-run",
@@ -82,6 +142,61 @@ afterEach(() => {
 });
 
 describe("A2 hard spend budget", () => {
+  it("binds paid approval to the exact run, definition, manifest, and cap", async () => {
+    const { paidRunApproval } = await loadStateModule();
+    const preflight = recoveryPreflight("C:/private/a2-run");
+    const manifestSha256 = "b".repeat(64);
+    const approval = paidRunApproval(preflight, manifestSha256);
+
+    expect(approval).toMatch(/^I_APPROVE_PAID_A2:[0-9a-f]{64}$/u);
+    expect(paidRunApproval({ ...preflight, runId: "another-run" }, manifestSha256))
+      .not.toBe(approval);
+    expect(paidRunApproval({ ...preflight, definitionSha256: "c".repeat(64) }, manifestSha256))
+      .not.toBe(approval);
+    expect(paidRunApproval(preflight, "d".repeat(64))).not.toBe(approval);
+    expect(paidRunApproval({ ...preflight, maxTotalUsd: 24 }, manifestSha256))
+      .not.toBe(approval);
+  });
+
+  it("allows recovery from the prior-lock-only crash window", async () => {
+    const { recoveryStateAvailable } = await loadStateModule();
+    const directory = mkdtempSync(join(tmpdir(), "a2-prior-lock-only-"));
+    temporaryDirectories.push(directory);
+    const priorLockPath = join(directory, "paid-run.lock");
+    const priorInput = {
+      runId: "prior-a2-run",
+      definitionSha256: "a".repeat(64),
+    };
+    const stalePrior = `${JSON.stringify({
+      schemaVersion: "a2-run-lock-v2",
+      ...priorInput,
+      lockId: "33333333-3333-4333-8333-333333333333",
+      pid: 999_999,
+      hostname: hostname(),
+      startedAt: "2026-08-08T00:00:00.000Z",
+    })}\n`;
+
+    expect(recoveryStateAvailable(false, priorLockPath)).toBe(false);
+    writeFileSync(priorLockPath, stalePrior);
+    expect(recoveryStateAvailable(false, priorLockPath)).toBe(true);
+    expect(recoveryStateAvailable(true, join(directory, "missing.lock"))).toBe(true);
+
+    const priorLock = A2RunLock.acquire(priorLockPath, {
+      ...priorInput,
+      mode: "recover",
+      staleLockApproval: staleLockApproval(stalePrior),
+    });
+    const restartLock = A2RunLock.acquire(join(directory, "restart.lock"), {
+      runId: "restart-a2-run",
+      definitionSha256: "b".repeat(64),
+      mode: "recover",
+    });
+    expect(priorLock.recoveredArchivePath).not.toBeNull();
+    expect(restartLock.recoveredArchivePath).toBeNull();
+    restartLock.release();
+    priorLock.release();
+  });
+
   it("reserves a strict upper bound for every paid provider in one row", () => {
     const reservation = reserveA2Row("x".repeat(257), 2.50);
 
@@ -401,6 +516,58 @@ describe("A2 hard spend budget", () => {
     expect(source.slice(precheck, externalClient).match(/return;/gu)?.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("validates cumulative current-arm submissions separately from the unique shared pool", async () => {
+    const state = await loadStateModule();
+
+    expect(() => state.assertCompleteRow(completeComparisonRow(), "q001:1@1")).not.toThrow();
+    expect(() => state.assertCompleteRow(completeComparisonRow(400, 201), "q001:1@1")).not.toThrow();
+
+    for (let candidateCount = 2; candidateCount <= 400; candidateCount += 1) {
+      state.assertCompleteRow(completeComparisonRow(candidateCount), `q-all:${candidateCount}`);
+      if (candidateCount > 200) {
+        state.assertCompleteRow(
+          completeComparisonRow(candidateCount, 201),
+          `q-pinned:${candidateCount}`,
+        );
+      }
+    }
+
+    const inconsistentCurrent = completeComparisonRow();
+    (inconsistentCurrent.arms as Record<string, Record<string, unknown>>).current.documentCount = 400;
+    expect(() => state.assertCompleteRow(inconsistentCurrent, "q001:1@1"))
+      .toThrow(/inconsistent current document accounting/u);
+
+    const incompleteFirstPass = completeComparisonRow();
+    const current = (incompleteFirstPass.arms as Record<string, Record<string, unknown>>).current;
+    const currentRequests = current.providerRequests as Array<Record<string, unknown>>;
+    currentRequests[1].documentCount = 199;
+    currentRequests[1].topN = 199;
+    current.documentCount = 599;
+    expect(() => state.assertCompleteRow(incompleteFirstPass, "q001:1@1"))
+      .toThrow(/invalid current Cohere request shape/u);
+
+    const incompleteGlobal = completeComparisonRow();
+    const global = (incompleteGlobal.arms as Record<string, Record<string, unknown>>).global;
+    const globalRequest = (global.providerRequests as Array<Record<string, unknown>>)[0];
+    globalRequest.documentCount = 399;
+    global.documentCount = 399;
+    expect(() => state.assertCompleteRow(incompleteGlobal, "q001:1@1"))
+      .toThrow(/invalid global Cohere request shape/u);
+
+    const truncatedTop = completeComparisonRow();
+    const truncatedCurrent = (truncatedTop.arms as Record<string, Record<string, unknown>>).current;
+    (truncatedCurrent.top as unknown[]).pop();
+    expect(() => state.assertCompleteRow(truncatedTop, "q001:1@1"))
+      .toThrow(/invalid current outcome/u);
+
+    const wrongGlobalTopN = completeComparisonRow();
+    const wrongGlobal = (wrongGlobalTopN.arms as Record<string, Record<string, unknown>>).global;
+    const wrongGlobalRequest = (wrongGlobal.providerRequests as Array<Record<string, unknown>>)[0];
+    wrongGlobalRequest.topN = 19;
+    expect(() => state.assertCompleteRow(wrongGlobalTopN, "q001:1@1"))
+      .toThrow(/invalid global Cohere request shape/u);
+  }, 10_000);
+
   it("recovers an open attempt without an outcome and replays its journal idempotently", async () => {
     const state = await loadStateModule();
     const preflight = recoveryPreflight(temporaryRunDirectory());
@@ -428,7 +595,10 @@ describe("A2 hard spend budget", () => {
       ledger,
       checkpointPath,
       rows,
-      "paid-run.lock.recovered-first",
+      [
+        "prior-paid-run.lock.recovered-first",
+        "restart-paid-run.lock.recovered-first",
+      ],
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe("interrupted");
@@ -436,6 +606,10 @@ describe("A2 hard spend budget", () => {
     const completePath = join(preflight.runDirectory, "recovery", "0001-complete.json");
     const firstComplete = JSON.parse(readFileSync(completePath, "utf8"));
     expect(firstComplete.recoveredAttempts).toEqual([key]);
+    expect(firstComplete.recoveredLockArchives).toEqual([
+      "prior-paid-run.lock.recovered-first",
+      "restart-paid-run.lock.recovered-first",
+    ]);
 
     rmSync(completePath);
     state.recoverInterruptedRun(
