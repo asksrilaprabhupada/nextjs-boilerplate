@@ -1,4 +1,5 @@
--- Phase 6 timeout-headroom fix, PREPARED BUT NOT APPLIED.
+-- Phase 6 timeout-headroom fix. Its live effect was verified on 2026-08-08;
+-- the migration-history row remains pending separate A3 approval.
 --
 -- Observed before this migration:
 --   * service_role has no explicit statement_timeout and therefore inherits
