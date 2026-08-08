@@ -36,6 +36,7 @@
  * counts that let a bad result be diagnosed without re-running it.
  */
 import {
+  isPlanDegradation,
   planQuery,
   REQUIRED_SUBQUERIES,
   type PlannedQuery,
@@ -412,7 +413,13 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // ── plan ──
   onStage?.("planning");
   const planned = await time("planning", () => planQuery(query, PLANNED_SUBQUERIES));
-  if (planned.source === "fallback_original_only" && planned.rejections.length > 0) {
+  if (
+    planned.source === "fallback_original_only"
+    && planned.rejections.length > 0
+    // A pointer question searched on its own words is a correct outcome, not a
+    // softened one: it must not warn the devotee and must not block caching.
+    && isPlanDegradation(planned.failureKind)
+  ) {
     // The CODE carries the reason. `plan_rejected` was the only value the
     // database ever held, so a timeout, a truncated body and a misread question
     // were indistinguishable once the Vercel logs expired.

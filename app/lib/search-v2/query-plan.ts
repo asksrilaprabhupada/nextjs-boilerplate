@@ -170,7 +170,34 @@ export type PlanFailureKind =
   /** Right count, but the angles repeat each other or the question. */
   | "near_duplicate_angles"
   /** A constraint or name the question never contained: a misreading. */
-  | "semantic_rejected";
+  | "semantic_rejected"
+  /**
+   * NOT A FAILURE. The question IS a pointer — a bare scripture reference or a
+   * bare quotation — and such a question does not have five distinct retrieval
+   * angles to find. "SB 1.2.6" yields "meaning of SB 1.2.6", "purport to
+   * SB 1.2.6", "commentary on SB 1.2.6": one search written three ways.
+   *
+   * Recorded so it can be counted and seen, never as a degradation, because
+   * nothing went wrong. The search runs on the question alone — which for a
+   * written reference is the best search there is, since `direct_verse_lookup`
+   * pins that verse first in the main tier, immune to every cut.
+   *
+   * Reachable ONLY from `isPointerQuestion`, which reads the question and not
+   * the plan. A real question that produces repetitive angles is still a
+   * recorded failure: this is a name for a case, not a way out of the rule.
+   */
+  | "pointer_question";
+
+/**
+ * Did the plan fall back because something went WRONG?
+ *
+ * `pointer_question` is the one outcome that lands on the fallback plan without
+ * anything having failed, so it must not raise a degradation, must not warn a
+ * devotee, and must not stop a perfectly good answer from being cached.
+ */
+export function isPlanDegradation(kind: PlanFailureKind | null): boolean {
+  return kind !== null && kind !== "pointer_question";
+}
 
 /** Provider cost of the planning stage. Recorded so a search has a price. */
 export interface PlannerUsage {
@@ -417,6 +444,46 @@ function siglumOfSpelledOutBook(query: string): string | null {
     if (pattern.test(folded)) return siglum;
   }
   return null;
+}
+
+/**
+ * Is this question a POINTER — a bare reference or a bare quotation?
+ *
+ * Judged from the question alone, before any plan exists, so that it can never
+ * become an escape hatch for a plan that came back lazy. "How do I control my
+ * mind" is not a pointer however repetitive its angles are, and still owes five
+ * distinct ones.
+ *
+ * The test is: strip the reference or the quotation, and see whether the
+ * devotee wrote anything else. "SB 1.2.6" leaves nothing. "What does BG 3.27
+ * mean?" leaves one word. "Why is the mind so restless?" is not a pointer at
+ * all — there is no reference and no quotation to strip.
+ */
+export function isPointerQuestion(query: string): boolean {
+  const trimmed = (query || "").trim();
+  if (!trimmed) return false;
+
+  // A question that is one quoted span and nothing else.
+  const quoted = trimmed.match(/^["“”'']\s*[\s\S]+?\s*["“”'']\s*[?.!]?$/);
+  if (quoted) return true;
+
+  const hasReference = Boolean(extractReference(trimmed))
+    || (siglumOfSpelledOutBook(trimmed) !== null && /\d/.test(trimmed));
+  if (!hasReference) return false;
+
+  // What remains once the reference itself is taken out of the sentence.
+  const withoutReference = normalise(trimmed)
+    .split(" ")
+    .filter((token) => token && !token.startsWith("ref") && !/^\d+$/.test(token))
+    .filter((token) => !FUNCTION_WORDS.has(token));
+  const bookWords = new Set([
+    "bhagavad", "gita", "srimad", "bhagavatam", "caitanya", "caritamrta",
+    "chaitanya", "charitamrta", "isopanisad", "ishopanishad", "samhita",
+    "brahma", "nectar", "instruction", "adi", "madhya", "antya", "canto",
+    "chapter", "verse", "text", "mantra", "sloka", "shloka",
+  ]);
+  const remaining = withoutReference.filter((token) => !bookWords.has(token));
+  return remaining.length < 3;
 }
 
 /** How many content words a text carries, after stemming and stop-words. */
@@ -888,10 +955,22 @@ export async function planQuery(
       }
       rejections.push(...problems.map((p) => `model: ${p.message}`));
       // The kind reported is the FIRST problem's, so "too few angles" is not
-      // buried under the duplicate-role reports it inevitably drags with it.
+      // buried under the duplicate reports it inevitably drags with it.
       failureKind = problems[0].kind;
       const repairable = problems.every((p) => p.repairable);
-      if (!repairable || attempt === 2) break;
+      if (!repairable || attempt === 2) {
+        // A POINTER question that could not be given five distinct angles is
+        // not a failure — it is a question with only one angle in it. The test
+        // reads the QUESTION, never the plan, so a real question cannot reach
+        // this even when its angles come back repetitive: it still owes five.
+        if (
+          problems.every((p) => p.kind === "near_duplicate_angles")
+          && isPointerQuestion(query)
+        ) {
+          failureKind = "pointer_question";
+        }
+        break;
+      }
       repairNotes = problems.map((p) => p.message);
     } catch (err) {
       recordAttempt();

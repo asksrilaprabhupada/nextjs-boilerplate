@@ -58,10 +58,14 @@ describe.skipIf(!enabled)("live planner gate", () => {
       expect(report.runsPerQuestion).toBe(runs);
       expect(report.totalRuns).toBe(limit * runs);
 
-      // The gate is "every one of them", not "most of them".
+      // The gate is "every one of them", not "most of them". A question passes
+      // by planning five distinct angles, or by being an honest pointer
+      // question — a bare reference or a bare quotation, which does not contain
+      // five angles to find. The two are counted apart, never merged.
       expect(report.failedQuestionIds).toEqual([]);
       expect(report.passedQuestions).toBe(report.questionCount);
-      expect(report.acceptedRuns).toBe(report.totalRuns);
+      expect(report.plannedQuestions + report.pointerQuestions).toBe(report.questionCount);
+      expect(report.plannedRuns + report.pointerRuns).toBe(report.totalRuns);
       // Thinking must stay off — it is what broke the planner in the first place.
       expect(report.tokens.thoughtsTotal).toBe(0);
     },

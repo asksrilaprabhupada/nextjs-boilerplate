@@ -17,6 +17,8 @@ import {
   REQUIRED_SUBQUERIES,
   QUERY_PLANNER_THINKING_BUDGET,
   QUERY_PLANNER_MAX_OUTPUT_TOKENS,
+  isPointerQuestion,
+  isPlanDegradation,
 } from "@/app/lib/search-v2/query-plan";
 import {
   ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
@@ -408,5 +410,73 @@ describe("article planner loop", () => {
     expect(out.plan).toBeNull();
     expect(out.source).toBe("deterministic_fallback");
     expect(out.rejections.join(" ")).toMatch(/capacity/);
+  });
+});
+
+// ─── pointer questions: a named outcome, never an escape hatch ───
+
+describe("pointer questions", () => {
+  /** Five angles that all say the same thing — what a bare reference produces. */
+  const repetitive = (subject: string) =>
+    JSON.stringify({
+      schema_version: "query-plan-v1",
+      intent: "exact_reference",
+      canonical_query: subject,
+      preserve_terms: [subject],
+      lexical_phrases: [],
+      vocabulary_candidates: [],
+      subqueries: [
+        { id: "s1", text: `meaning of ${subject}`, role: "definition", priority: "primary" },
+        { id: "s2", text: `meaning of ${subject}`, role: "context", priority: "primary" },
+        { id: "s3", text: `meaning of ${subject}`, role: "reformulation", priority: "supporting" },
+        { id: "s4", text: `meaning of ${subject}`, role: "example", priority: "supporting" },
+        { id: "s5", text: `meaning of ${subject}`, role: "practice", priority: "exploratory" },
+      ],
+      constraints: {
+        scripture_references: [], source_types: [], speaker: null,
+        recipient: null, location: null, date_from: null, date_to: null,
+      },
+      possible_false_assumption: false,
+    });
+
+  it("recognises a bare reference and a bare quotation, and nothing else", () => {
+    expect(isPointerQuestion("SB 1.2.6")).toBe(true);
+    expect(isPointerQuestion("BG 18.66")).toBe(true);
+    expect(isPointerQuestion("Bhagavad-gita 6.6")).toBe(true);
+    expect(isPointerQuestion('"For the soul there is neither birth nor death"')).toBe(true);
+    // Real questions, however vague, are not pointers and still owe five angles.
+    expect(isPointerQuestion("how do I control my restless mind")).toBe(false);
+    expect(isPointerQuestion("What did Srila Prabhupada say about the moon landing?")).toBe(false);
+    expect(isPointerQuestion("love")).toBe(false);
+    expect(isPointerQuestion("Compare karma-yoga and bhakti-yoga")).toBe(false);
+  });
+
+  it("records a pointer question as its own outcome, not as a failure", async () => {
+    const body = repetitive("SB 1.2.6");
+    const client = scriptedClient([body, body]);
+    const out = await planQuery("SB 1.2.6", MAX_SUBQUERIES, { client });
+    expect(out.failureKind).toBe("pointer_question");
+    // It still TRIED twice before accepting that the question has one angle.
+    expect(client.calls).toHaveLength(2);
+    // And it is not a degradation: nothing went wrong.
+    expect(isPlanDegradation(out.failureKind)).toBe(false);
+  });
+
+  it("does NOT excuse a real question whose angles came back repetitive", async () => {
+    const body = repetitive("the restless mind");
+    const client = scriptedClient([body, body]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+    expect(out.failureKind).toBe("near_duplicate_angles");
+    expect(isPlanDegradation(out.failureKind)).toBe(true);
+  });
+
+  it("still prefers five real angles for a pointer question when they exist", async () => {
+    // The pointer outcome is a last resort, never a shortcut: a bare reference
+    // that CAN be planned five ways is planned five ways.
+    const client = scriptedClient([goodPlan({ canonical_query: "SB 1.2.6" })]);
+    const out = await planQuery("SB 1.2.6", MAX_SUBQUERIES, { client });
+    expect(out.source).toBe("model");
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
+    expect(out.failureKind).toBeNull();
   });
 });

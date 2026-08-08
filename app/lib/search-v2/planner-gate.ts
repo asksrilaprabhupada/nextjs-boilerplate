@@ -42,8 +42,19 @@ export const GATE_QUESTIONS: GoldQuestion[] = (goldSet.questions as GoldQuestion
  */
 export const PLANNER_RATE_USD_PER_MTOK = { input: 0.3, output: 2.5 };
 
+/**
+ * What a single planner run actually produced.
+ *
+ * `pointer` is a legitimate outcome, not a softened failure: the question was a
+ * bare reference or a bare quotation, which does not contain five distinct
+ * angles to find. It is counted apart from `planned` so the report can never
+ * hide either behind the other.
+ */
+export type PlannerGateOutcome = "planned" | "pointer" | "failed";
+
 export interface PlannerGateRun {
   runIndex: number;
+  outcome: PlannerGateOutcome;
   accepted: boolean;
   failureKind: PlanFailureKind | null;
   angleCount: number;
@@ -64,8 +75,10 @@ export interface PlannerGateQuestionResult {
   category: string;
   question: string;
   runs: PlannerGateRun[];
-  /** Passes only when EVERY run produced the required number of valid angles. */
+  /** Every run either planned its five angles or was an honest pointer outcome. */
   passed: boolean;
+  /** True when every run of this question was a pointer outcome. */
+  pointer: boolean;
 }
 
 export interface PlannerGateReport {
@@ -74,7 +87,15 @@ export interface PlannerGateReport {
   runsPerQuestion: number;
   totalRuns: number;
   acceptedRuns: number;
+  /** Runs that produced five valid angles. */
+  plannedRuns: number;
+  /** Runs recorded as pointer questions — counted, never hidden. */
+  pointerRuns: number;
   passedQuestions: number;
+  /** Questions that planned five angles on every run. */
+  plannedQuestions: number;
+  /** Questions that were pointer outcomes on every run. */
+  pointerQuestions: number;
   failedQuestionIds: string[];
   failureKindCounts: Record<string, number>;
   /**
@@ -143,9 +164,15 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
 
   const measured = await mapPooled(units, concurrency, async ({ question, runIndex }) => {
     const planned = await planQuery(question.question, REQUIRED_SUBQUERIES);
+    const accepted = planned.source === "model";
     const run: PlannerGateRun = {
       runIndex,
-      accepted: planned.source === "model",
+      outcome: accepted
+        ? "planned"
+        : planned.failureKind === "pointer_question"
+          ? "pointer"
+          : "failed",
+      accepted,
       failureKind: planned.failureKind,
       angleCount: planned.plan.subqueries.length,
       attempts: planned.usage.attempts,
@@ -180,7 +207,10 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
       runs,
       passed:
         runs.length === runsPerQuestion
-        && runs.every((r) => r.accepted && r.angleCount === REQUIRED_SUBQUERIES),
+        && runs.every((r) =>
+          r.outcome === "pointer"
+          || (r.accepted && r.angleCount === REQUIRED_SUBQUERIES)),
+      pointer: runs.length > 0 && runs.every((r) => r.outcome === "pointer"),
     };
   });
 
@@ -206,7 +236,11 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
     runsPerQuestion,
     totalRuns: allRuns.length,
     acceptedRuns: allRuns.filter((r) => r.accepted).length,
+    plannedRuns: allRuns.filter((r) => r.outcome === "planned").length,
+    pointerRuns: allRuns.filter((r) => r.outcome === "pointer").length,
     passedQuestions: results.filter((r) => r.passed).length,
+    plannedQuestions: results.filter((r) => r.passed && !r.pointer).length,
+    pointerQuestions: results.filter((r) => r.pointer).length,
     failedQuestionIds: results.filter((r) => !r.passed).map((r) => r.id),
     failureKindCounts,
     attemptDurationMs: {
@@ -261,8 +295,19 @@ export function renderPlannerGateText(
     + `(${pct(report.passedQuestions, report.questionCount)})`,
   );
   lines.push(
-    `Plans accepted: ${report.acceptedRuns} of ${report.totalRuns} runs `
-    + `(${pct(report.acceptedRuns, report.totalRuns)})`,
+    `  ${report.plannedQuestions} planned five angles`
+    + `  ·  ${report.pointerQuestions} pointer questions`,
+  );
+  lines.push(
+    `Runs: ${report.plannedRuns} planned  ·  ${report.pointerRuns} pointer  `
+    + `·  ${report.totalRuns - report.plannedRuns - report.pointerRuns} failed`
+    + `  (of ${report.totalRuns})`,
+  );
+  lines.push(
+    "  a pointer question is a bare reference or a bare quotation — it does not",
+  );
+  lines.push(
+    "  contain five distinct angles, and is counted apart rather than excused",
   );
   lines.push("");
   lines.push(`ONE PLANNER CALL, milliseconds (${report.attemptDurationMs.count} calls)`);
@@ -316,7 +361,7 @@ export function renderPlannerGateText(
       lines.push(`${result.id} [${result.category}] ${result.question}`);
       for (const run of result.runs) {
         lines.push(
-          `  run ${run.runIndex + 1}: ${run.accepted ? "accepted" : "FELL BACK"} `
+          `  run ${run.runIndex + 1}: ${run.outcome === "planned" ? "accepted" : run.outcome === "pointer" ? "pointer" : "FELL BACK"} `
           + `· ${run.angleCount} angles · ${run.attempts} attempt(s) · ${run.durationMs} ms`
           + (run.failureKind ? ` · ${run.failureKind}` : ""),
         );
@@ -331,7 +376,8 @@ export function renderPlannerGateText(
   for (const result of report.results) {
     const first = result.runs[0];
     const times = result.runs.map((r) => `${r.durationMs}ms`).join(" / ");
-    lines.push(`${result.passed ? "PASS" : "FAIL"} ${result.id}  ${result.question}`);
+    const mark = result.pointer ? "PTR " : result.passed ? "PASS" : "FAIL";
+    lines.push(`${mark} ${result.id}  ${result.question}`);
     lines.push(`     ${times}`);
     for (const angle of first?.angles ?? []) {
       lines.push(`     · [${angle.role}] ${angle.text}`);

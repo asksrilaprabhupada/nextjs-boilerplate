@@ -1,7 +1,13 @@
 Planner gate runs — bump this file to start one.
 
-run 10 — Part A1, PR #137. Run 9 exposed one more false rejection:
-"Bhagavad-gita 6.6" spelled out contains no literal "bg", so the correct
-constraint "Bg 6.6" still read as invented. Book names written in full
-now map to their siglum for that check only — not for retrieval, which
-is a separate change on separate evidence.
+run 11 — Part A1, PR #137. Owner's decision: a question that IS a
+pointer — a bare scripture reference or a bare quotation — gets a NAMED
+outcome rather than being counted as a failure. Exactly five angles
+stays required for every real question, and the duplicate rule is not
+loosened.
+
+The test reads the QUESTION, never the plan, so a real question whose
+angles come back repetitive is still a recorded failure. It classifies
+exactly q001-q012 of the gold set and nothing else.
+
+Expecting: 65 of 65, reported as N planned + M pointer.
