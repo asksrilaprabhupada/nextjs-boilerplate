@@ -45,6 +45,17 @@ import {
 import type { RpcCapableClient } from "@/app/lib/search-v2/rpc";
 import goldSetJson from "@/tests/gold/gold-set-v1.json";
 import suggestionSetJson from "@/tests/gold/gold-set-v1-suggestions.json";
+import {
+  A2_BUDGET_DEFINITION,
+  A2_SPEND_LEDGER_SCHEMA_VERSION,
+  A2RunLock,
+  A2SpendLedger,
+  chargeA2Row,
+  microusdToUsd,
+  reserveA2Row,
+  usdToMicrousdCeiling,
+  type A2KnownRowUsage,
+} from "@/tests/a2-spend-budget";
 
 interface GradedPassage {
   passage_id: string;
@@ -139,7 +150,9 @@ const supplementalQuestions: GoldQuestion[] = suggestionSet.supplemental_cases.m
   needs_human_review: true,
 }));
 const runQuestions = [...goldSet.questions, ...supplementalQuestions];
-const A2_SCHEMA_VERSION = "a2-rerank-comparison-v2";
+const A2_SCHEMA_VERSION = "a2-rerank-comparison-v3";
+const A2_APPROVED_RUN_ID = "a2-20260808-owner-approved-25usd";
+const A2_SUPABASE_PROJECT_REF = "wzktlpjtqmjxvragwhqg";
 
 function activeLabels(question: GoldQuestion): ActiveLabels {
   if (!question.needs_human_review) {
@@ -287,21 +300,31 @@ function sourceFilesBelow(directory: string): string[] {
   });
 }
 
-function runDefinitionSha256(repeats: number, usdPerThousandSearchUnits: number): string {
+function runDefinitionSha256(
+  repeats: number,
+  usdPerThousandSearchUnits: number,
+  maxTotalUsd: number,
+): string {
   const root = resolve(".");
   const files = [
     ...sourceFilesBelow(resolve("app/lib")),
+    resolve("tests/a2-spend-budget.ts"),
     resolve("tests/a2-rerank-comparison.live.ts"),
     resolve("tests/gold/gold-set-v1.json"),
     resolve("tests/gold/gold-set-v1-suggestions.json"),
     resolve("package.json"),
     resolve("package-lock.json"),
+    resolve("vitest.a2.config.ts"),
   ].sort((left, right) => left.localeCompare(right));
   const hash = createHash("sha256");
   hash.update(JSON.stringify({
     schemaVersion: A2_SCHEMA_VERSION,
     repeats,
     usdPerThousandSearchUnits,
+    maxTotalUsd,
+    budgetDefinition: A2_BUDGET_DEFINITION,
+    approvedRunId: A2_APPROVED_RUN_ID,
+    supabaseProjectRef: A2_SUPABASE_PROJECT_REF,
     runtime: {
       pipelineVersion: searchPipelineVersion(),
       corpusVersion: searchCorpusVersion(),
@@ -330,6 +353,7 @@ function writeJson(path: string, value: unknown, exclusive = false): void {
 function assertPreflight(): {
   repeats: number;
   usdPerThousandSearchUnits: number;
+  maxTotalUsd: number;
   runId: string;
   runDirectory: string;
   definitionSha256: string;
@@ -344,6 +368,16 @@ function assertPreflight(): {
   const missing = required.filter((name) => !process.env[name]);
   if (!(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL)) missing.push("SUPABASE_URL");
   if (missing.length > 0) throw new Error(`A2 paid run is missing ${missing.join(", ")}`);
+  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  let supabaseHostname: string;
+  try {
+    supabaseHostname = new URL(supabaseUrl).hostname;
+  } catch {
+    throw new Error("A2 Supabase URL is malformed");
+  }
+  if (supabaseHostname !== `${A2_SUPABASE_PROJECT_REF}.supabase.co`) {
+    throw new Error("A2 Supabase project differs from the owner-approved corpus project");
+  }
 
   if (goldSet.questions.length !== 65) {
     throw new Error(`A2 expected exactly 65 questions, found ${goldSet.questions.length}`);
@@ -365,19 +399,34 @@ function assertPreflight(): {
   }
 
   const repeats = Number(process.env.A2_REPEATS ?? "4");
-  if (!Number.isSafeInteger(repeats) || repeats < 3 || repeats > 5) {
-    throw new Error("A2_REPEATS must be an integer from 3 through 5");
+  if (repeats !== 4) {
+    throw new Error("A2_REPEATS must equal the owner-approved value of 4");
   }
   const priceText = process.env.A2_COHERE_USD_PER_1000_SEARCH_UNITS;
   const usdPerThousandSearchUnits = Number(priceText);
-  if (priceText === undefined || !Number.isFinite(usdPerThousandSearchUnits) || usdPerThousandSearchUnits < 0) {
-    throw new Error("A2_COHERE_USD_PER_1000_SEARCH_UNITS must be the current account rate");
+  if (priceText === undefined || usdPerThousandSearchUnits !== 2.50) {
+    throw new Error("A2_COHERE_USD_PER_1000_SEARCH_UNITS must equal the owner-approved rate of 2.50");
   }
-  const definitionSha256 = runDefinitionSha256(repeats, usdPerThousandSearchUnits);
+  const maxTotalText = process.env.A2_MAX_TOTAL_USD;
+  const maxTotalUsd = Number(maxTotalText);
+  if (maxTotalText === undefined || !Number.isFinite(maxTotalUsd) || maxTotalUsd !== 25) {
+    throw new Error("A2_MAX_TOTAL_USD must equal the owner-approved hard limit of 25");
+  }
+  if (geminiQueryPlannerModel() !== A2_BUDGET_DEFINITION.geminiModel
+    || VOYAGE_CONTEXT_MODEL !== A2_BUDGET_DEFINITION.voyageModel
+    || COHERE_RERANK_MODEL !== A2_BUDGET_DEFINITION.cohereModel) {
+    throw new Error("A2 provider model differs from the owner-approved budget definition");
+  }
+  const definitionSha256 = runDefinitionSha256(
+    repeats,
+    usdPerThousandSearchUnits,
+    maxTotalUsd,
+  );
 
-  const runId = process.env.A2_RUN_ID
-    ?? new Date().toISOString().replace(/[:.]/g, "-");
-  if (!/^[A-Za-z0-9_-]{8,80}$/.test(runId)) throw new Error("A2_RUN_ID is malformed");
+  const runId = process.env.A2_RUN_ID;
+  if (runId !== A2_APPROVED_RUN_ID) {
+    throw new Error(`A2_RUN_ID must equal the single owner-approved id ${A2_APPROVED_RUN_ID}`);
+  }
   // Private corpus text is allowed only in this gitignored, repository-local directory.
   const outputRoot = resolve("work/a2-rerank-comparison");
   const runDirectory = join(outputRoot, runId);
@@ -401,6 +450,9 @@ function assertPreflight(): {
     if (checkpoint.questionsPlanned !== undefined && checkpoint.questionsPlanned !== runQuestions.length) {
       throw new Error("A2 resume question count differs from the checkpoint");
     }
+    if (checkpoint.maxTotalUsd !== maxTotalUsd) {
+      throw new Error("A2 resume maximum spend differs from the checkpoint");
+    }
     const initialRows = Array.isArray(checkpoint.rows)
       ? checkpoint.rows as Array<Record<string, unknown>>
       : [];
@@ -410,6 +462,7 @@ function assertPreflight(): {
     return {
       repeats,
       usdPerThousandSearchUnits,
+      maxTotalUsd,
       runId,
       runDirectory,
       definitionSha256,
@@ -422,6 +475,7 @@ function assertPreflight(): {
   return {
     repeats,
     usdPerThousandSearchUnits,
+    maxTotalUsd,
     runId,
     runDirectory,
     definitionSha256,
@@ -510,9 +564,39 @@ function assertCompleteRow(row: Record<string, unknown>, key: string): void {
   }
 }
 
+function finiteCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+function knownUsageForBudget(row: Record<string, unknown>): A2KnownRowUsage | null {
+  if (row.status !== "complete") return null;
+  const arms = row.arms as Record<string, RerankComparisonArmOutcome> | undefined;
+  const requests = arms
+    ? [...arms.current.providerRequests, ...arms.global.providerRequests]
+    : [];
+  const cohereSearchUnits = requests.length > 0 && requests.every((request) =>
+    request.responseSucceeded === true
+      && finiteCount(request.billedSearchUnits) !== null)
+    ? sum(requests.map((request) => request.billedSearchUnits!))
+    : null;
+  const planner = row.plannerUsage as Record<string, unknown> | undefined;
+  return {
+    cohereSearchUnits,
+    geminiAttempts: finiteCount(planner?.attempts),
+    geminiPromptTokens: finiteCount(planner?.promptTokens),
+    geminiOutputTokens: finiteCount(planner?.outputTokens),
+    geminiThoughtsTokens: finiteCount(planner?.thoughtsTokens),
+    voyageProviderCalls: finiteCount(row.embeddingProviderCalls),
+  };
+}
+
 describe("paid A2 rerank comparison", () => {
   it("runs the complete key with repeated shared-pool comparisons", async () => {
     const preflight = assertPreflight();
+    const runLock = A2RunLock.acquire(join(preflight.runDirectory, "paid-run.lock"));
+    try {
     const db = getSupabaseAdmin() as unknown as RpcCapableClient;
     const rows: Array<Record<string, unknown>> = [...preflight.initialRows];
     const failures: Array<Record<string, unknown>> = [...preflight.initialFailures];
@@ -542,11 +626,50 @@ describe("paid A2 rerank comparison", () => {
         resumed: false,
         repeatsPlanned: preflight.repeats,
         questionsPlanned: runQuestions.length,
+        maxTotalUsd: preflight.maxTotalUsd,
         completedRows: 0,
         attempts: 0,
         failures: [],
         rows: [],
       }, true);
+    }
+    const ledgerPath = join(preflight.runDirectory, "spend-ledger.jsonl");
+    const ledgerInput = {
+      runId: preflight.runId,
+      definitionSha256: preflight.definitionSha256,
+      maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
+    };
+    const spendLedger = preflight.resumed
+      ? A2SpendLedger.open(ledgerPath, ledgerInput)
+      : A2SpendLedger.create(ledgerPath, ledgerInput);
+    const checkpointRowsByKey = new Map(rows.map((row) => [
+      `${String(row.questionId)}:${String(row.repeat)}`,
+      row,
+    ]));
+    for (const ledgerRowKey of spendLedger.rowKeys()) {
+      if (!checkpointRowsByKey.has(ledgerRowKey)) {
+        throw new Error(
+          `A2 spend ledger contains an unfinished paid row without a checkpoint; retry needs fresh owner approval: ${ledgerRowKey}`,
+        );
+      }
+    }
+    for (const [rowKey, row] of checkpointRowsByKey) {
+      const ledgerRow = spendLedger.rowState(rowKey);
+      if (!ledgerRow) throw new Error(`A2 checkpoint row has no durable spend entry: ${rowKey}`);
+      if (ledgerRow.chargedMicrousd === null) {
+        const question = runQuestions.find((candidate) => candidate.id === row.questionId);
+        if (!question) throw new Error(`A2 checkpoint row has no matching question: ${rowKey}`);
+        const reservation = reserveA2Row(
+          question.question,
+          preflight.usdPerThousandSearchUnits,
+        );
+        spendLedger.settle(rowKey, chargeA2Row(reservation, knownUsageForBudget(row)));
+      }
+      if (row.status !== "complete") {
+        throw new Error(
+          `A2 paid retry is blocked without a new owner decision; preserved row: ${rowKey}`,
+        );
+      }
     }
     let consecutiveSystemFailures = 0;
     for (let index = rows.length - 1; index >= 0; index -= 1) {
@@ -564,6 +687,11 @@ describe("paid A2 rerank comparison", () => {
       for (const [questionIndex, question] of runQuestions.entries()) {
         const rowKey = `${question.id}:${repeat}`;
         if (completedRowKeys.has(rowKey)) continue;
+        const budgetReservation = reserveA2Row(
+          question.question,
+          preflight.usdPerThousandSearchUnits,
+        );
+        spendLedger.reserve(rowKey, budgetReservation.totalMicrousd);
         const labels = activeLabels(question);
         // Every question sees both positions by its second repeat. With the
         // even 66-question key this is also exactly balanced in aggregate.
@@ -712,6 +840,7 @@ describe("paid A2 rerank comparison", () => {
               globalQualityRegression,
             },
             invalidArm,
+            budgetReservationUsd: microusdToUsd(budgetReservation.totalMicrousd),
           };
           rows.push(row);
           if (!rowValid) {
@@ -740,6 +869,7 @@ describe("paid A2 rerank comparison", () => {
             armExecutionOrder: armOrder,
             plannerUsage,
             embeddingProviderCalls,
+            budgetReservationUsd: microusdToUsd(budgetReservation.totalMicrousd),
             ...(observed ? {
               poolSha256: observed.pool.poolSha256,
               candidateCount: observed.pool.candidates.length,
@@ -760,12 +890,26 @@ describe("paid A2 rerank comparison", () => {
           resumed: preflight.resumed,
           repeatsPlanned: preflight.repeats,
           questionsPlanned: runQuestions.length,
+          maxTotalUsd: preflight.maxTotalUsd,
+          budgetCommittedUsd: microusdToUsd(spendLedger.committedMicrousd()),
+          budgetOpenRows: spendLedger.openRowKeys(),
           completedRows: completedRowKeys.size,
           attempts: rows.length,
           failures,
           rows,
         };
         writeJson(checkpointPath, checkpoint);
+        const savedRow = rows[rows.length - 1];
+        if (!savedRow) throw new Error(`A2 paid row was not checkpointed: ${rowKey}`);
+        spendLedger.settle(
+          rowKey,
+          chargeA2Row(budgetReservation, knownUsageForBudget(savedRow)),
+        );
+        writeJson(checkpointPath, {
+          ...checkpoint,
+          budgetCommittedUsd: microusdToUsd(spendLedger.committedMicrousd()),
+          budgetOpenRows: spendLedger.openRowKeys(),
+        });
         process.stderr.write(
           `A2 ${completedRowKeys.size}/${preflight.repeats * runQuestions.length}\r`,
         );
@@ -826,6 +970,7 @@ describe("paid A2 rerank comparison", () => {
       repeatsPlanned: preflight.repeats,
       questionsPlanned: runQuestions.length,
       runtime: {
+        supabaseProjectRef: A2_SUPABASE_PROJECT_REF,
         pipelineVersion: searchPipelineVersion(),
         corpusVersion: searchCorpusVersion(),
         configVersion: searchConfigVersion(),
@@ -847,6 +992,14 @@ describe("paid A2 rerank comparison", () => {
         supplementalSuggestedPendingOwnerReview: supplementalQuestions.length,
       },
       timingDefinition: "shared planning/retrieval/fusion plus that arm's rerank; downstream rendering is not compared",
+      budget: {
+        maxTotalUsd: preflight.maxTotalUsd,
+        committedUsd: microusdToUsd(spendLedger.committedMicrousd()),
+        openRows: spendLedger.openRowKeys(),
+        ledgerSchemaVersion: A2_SPEND_LEDGER_SCHEMA_VERSION,
+        definition: A2_BUDGET_DEFINITION,
+        policy: "reserve before every paid row; retain the full provider reservation whenever usage is missing; refuse any request that would exceed the cap",
+      },
       totals: { current: currentTotals, global: globalTotals },
       cost: {
         usdPerThousandSearchUnits: preflight.usdPerThousandSearchUnits,
@@ -891,6 +1044,13 @@ describe("paid A2 rerank comparison", () => {
     };
     writeJson(checkpointPath, finalReport);
 
+    expect(spendLedger.openRowKeys()).toEqual([]);
+    expect(spendLedger.committedMicrousd()).toBeLessThanOrEqual(
+      usdToMicrousdCeiling(preflight.maxTotalUsd),
+    );
     expect(completedRowKeys.size).toBe(preflight.repeats * runQuestions.length);
+    } finally {
+      runLock.release();
+    }
   });
 });
