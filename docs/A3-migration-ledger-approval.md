@@ -62,65 +62,79 @@ select array_to_string(rolconfig, ' | ') from pg_roles where rolname = 'service_
 
 **Live state matches the file.** Safe to record as applied.
 
-### ⚠️ `20260708120000_tags_fts_rebuild_columns_and_fts_core` — **DOES NOT MATCH**
+### ⚠️ `20260708120000_tags_fts_rebuild_columns_and_fts_core` — **DID NOT MATCH; FILE NOW CORRECTED**
 
-This is the one that needs a decision rather than a rubber stamp.
+This is the one that needed work rather than a rubber stamp. Compared against
+the live database, the committed file declared substantially more than was ever
+run — and it was worse than the columns alone.
 
-The file adds **seven** columns to each of the five content tables. Only **four**
-of them exist:
+| the file declared | live |
+|---|---|
+| columns `tags_core`, `fts_core`, `fts_expansion`, `fts_expansion_src` | **present** on all five tables |
+| columns `tags_ai`, `questions`, `questions_fts` | **absent** on all five tables |
+| table `vocab_terms` | **present**, with exactly the declared columns |
+| table `tag_batch_jobs` + `idx_tag_batch_jobs_status` | **absent** |
+| 5 partial indexes `idx_*_null_tags_core` | **absent** |
+| the 5 `trg_*_search_vectors` triggers | **present** |
+| trigger lines setting `NEW.questions_fts` | **absent** from both live trigger bodies |
 
-| column | in the file | live |
-|---|---|---|
-| `tags_core` | yes | **yes** |
-| `fts_core` | yes | **yes** |
-| `fts_expansion` | yes | **yes** |
-| `fts_expansion_src` | yes | **yes** |
-| `tags_ai` | yes | **no** |
-| `questions` | yes | **no** |
-| `questions_fts` | yes | **no** |
+So a trimmed version was applied on 2026-07-08 and a fuller version was
+committed. The file described a database that does not exist.
 
-Identical on all five tables — `verses`, `verse_chunks`, `prose_paragraphs`,
-`transcript_paragraphs`, `letter_paragraphs`. So a trimmed version of this
-migration was applied, and the fuller version was committed.
-
-**The database is not broken by this.** The live trigger function does not
-mention the missing columns either:
+**The database is not harmed by this**, and the reason is worth stating. The live
+trigger bodies stop after `fts_core` and `fts_expansion`:
 
 ```
-new.fts_core := setweight(to_tsvector('english_unaccent', coalesce(new.translation,'')), 'A') || …
+new.fts_core := setweight(to_tsvector('english_unaccent', coalesce(new.body_text,'')), 'A');
 new.fts_expansion := to_tsvector('english_unaccent', coalesce(new.fts_expansion_src,''));
 return new;
 ```
 
-The file's version of that trigger sets `NEW.questions_fts` from `NEW.questions`.
-Had *that* been applied without the columns, every insert and update on those
-five tables would fail. It was not. The live database is internally consistent —
-it is the committed file that overstates what happened.
+Had the file's version been applied *without* its columns, every insert and
+update on all five content tables would fail. It was not. The database is
+internally consistent; the file was wrong.
 
-**Nothing uses the three missing columns.** Checked in both directions:
+**Nothing reads the missing columns.** Checked in both directions: none of the 30
+live `search_*`/trigger functions references `tags_ai` or `questions_fts`, and
+neither does anything in `app/` or `scripts/`.
 
-- all 30 live `search_*` and trigger functions: none reference `tags_ai` or
-  `questions_fts`;
-- the application source: no reference in `app/` or `scripts/`.
+**One thing the file was right about, in the end.** Its closing note said the GIN
+indexes would be built out-of-band by the backfill scripts. All fifteen exist —
+`idx_<table>_{fts_core,fts_expansion,tags_core}_gin` on each of the five tables.
 
----
+#### The correction, already made
+
+`supabase/migrations/20260708120000_tags_fts_rebuild_columns_and_fts_core.sql`
+now declares only what was applied. **No database change was made to produce it.**
+`tags_ai`, `questions` and `questions_fts` are deliberately NOT created.
+
+```
+SHA-256  276ab4fbd938d0e354727122e88503afe63353271bccc3e74cf98c08c929e64e
+```
+
+Removed: the three columns, the `tag_batch_jobs` table and its index, the five
+partial `null_tags_core` indexes, and the two trigger lines setting
+`NEW.questions_fts`. Kept: the four live columns, `vocab_terms`, both trigger
+functions as they actually are, and all five triggers. A header records what was
+found, when, and why — so the next person to read it is not puzzled by the gap.
+
+`tests/tags-fts-migration-record.test.ts` pins this. It fails if a `questions_fts`
+line ever returns to a trigger body, which is the one edit here that could break
+production writes.
 
 ## 3. What I propose
 
-**Step 1 — correct the record, no database change.**
+**Step 1 — correct the record. DONE, and it touched no database.**
 
-Amend `supabase/migrations/20260708120000_…sql` so it declares what was actually
-applied: drop `tags_ai`, `questions` and `questions_fts` from the `ADD COLUMN`
-list, and drop the two trigger lines that set `questions_fts`. Add a header note
-saying what was found and when. This is a **file edit only** — it touches no
-database and can be reviewed in a pull request like any other change.
+The file above now says what actually happened. Hash
+`276ab4fbd938d0e354727122e88503afe63353271bccc3e74cf98c08c929e64e`.
 
-The alternative is to add the three columns to the database so it matches the
-file. I do not recommend it: nothing reads them, and adding unused columns to
-five tables totalling 244,148 rows — one of which carries a 1.1 GB index — is
-real work for no benefit.
+The alternative would have been to add the three columns to the database so it
+matched the file. It was not taken and is not recommended: nothing reads them,
+and adding unused columns to five tables totalling 244,148 rows — one carrying a
+1.1 GB index — is real work for no reader.
 
-**Step 2 — record all four as applied.** One statement, four rows, no schema
+**Step 2 — record all four as applied. NOT DONE. This is what needs your yes.** One statement, four rows, no schema
 change:
 
 ```sql
