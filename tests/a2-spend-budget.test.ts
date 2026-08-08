@@ -13,16 +13,26 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { A2Preflight } from "@/tests/a2-rerank-comparison.live";
 import {
+  A2_BUDGET_DEFINITION,
   A2SpendLedger,
   A2RunLock,
+  A2AccountingDefinitionViolation,
   a2RetryApproval,
+  assertA2AutomaticRecoveryAllowed,
+  bindA2CheckpointRowAccounting,
   chargeA2Row,
+  classifyA2RowAccounting,
   microusdToUsd,
+  readVerifiedA2CheckpointRowAccounting,
   reserveA2Row,
+  sha256CanonicalA2Json,
   staleLockApproval,
   usdToMicrousdCeiling,
+  verifyA2CheckpointRowAccounting,
+  writeAndVerifyA2CheckpointBeforeSettlement,
   writeJsonDurably,
-  type A2RowCharge,
+  type A2KnownRowUsage,
+  type A2RowBudgetReservation,
 } from "@/tests/a2-spend-budget";
 
 const temporaryDirectories: string[] = [];
@@ -84,7 +94,14 @@ function completeComparisonRow(
     responseSucceeded: true,
     billedSearchUnits: 3,
   }));
-  return {
+  const cohereSearchUnits = currentRequests.length * 3 + 5;
+  const usage = oneCallUsage({
+    cohereSearchUnits,
+    cohereSearchUnitsLowerBound: cohereSearchUnits,
+  });
+  const row: Record<string, unknown> = {
+    attemptKey: "q001:1@1",
+    question: "approved question",
     poolSha256: "d".repeat(64),
     candidateCount,
     armExecutionOrder: ["current", "global"],
@@ -121,18 +138,166 @@ function completeComparisonRow(
     },
     pipelineDegraded: false,
     providerUsageComplete: true,
-    plannerUsage: { attempts: 1, durationMs: 1, attemptDurationsMs: [1] },
+    plannerUsage: {
+      attempts: 1,
+      promptTokens: usage.geminiPromptTokens,
+      outputTokens: usage.geminiOutputTokens,
+      thoughtsTokens: usage.geminiThoughtsTokens,
+      totalTokens: usage.geminiTotalTokens,
+      durationMs: 1,
+      attemptDurationsMs: [1],
+    },
     embeddingProviderCalls: 1,
   };
+  return bindA2CheckpointRowAccounting(
+    row,
+    reserveA2Row(String(row.question), 2.50),
+    usage,
+  ).row;
 }
 
 function createLedger(path: string, maxUsd = 25): A2SpendLedger {
+  const maxMicrousd = usdToMicrousdCeiling(maxUsd);
   return A2SpendLedger.create(path, {
     runId: "a2-budget-test-run",
     definitionSha256: "a".repeat(64),
     manifestSha256: "b".repeat(64),
-    maxMicrousd: usdToMicrousdCeiling(maxUsd),
+    carryManifestSha256: "c".repeat(64),
+    maxMicrousd,
+    priorCommittedMicrousd: 0,
+    lifetimeMaxMicrousd: maxMicrousd,
   });
+}
+
+function ledgerIdentity(maxUsd = 25) {
+  const maxMicrousd = usdToMicrousdCeiling(maxUsd);
+  return {
+    runId: "a2-budget-test-run",
+    definitionSha256: "a".repeat(64),
+    manifestSha256: "b".repeat(64),
+    carryManifestSha256: "c".repeat(64),
+    maxMicrousd,
+    priorCommittedMicrousd: 0,
+    lifetimeMaxMicrousd: maxMicrousd,
+  };
+}
+
+function recoveryLedgerIdentity(preflight: A2Preflight, manifestSha256: string) {
+  const maxMicrousd = usdToMicrousdCeiling(preflight.maxTotalUsd);
+  return {
+    runId: preflight.runId,
+    definitionSha256: preflight.definitionSha256,
+    manifestSha256,
+    carryManifestSha256: preflight.carryManifestSha256 ?? "0".repeat(64),
+    maxMicrousd,
+    priorCommittedMicrousd: 0,
+    lifetimeMaxMicrousd: maxMicrousd,
+  };
+}
+
+function oneCallUsage(overrides: Partial<A2KnownRowUsage> = {}): A2KnownRowUsage {
+  return {
+    cohereSearchUnits: 11,
+    cohereSearchUnitsLowerBound: 11,
+    cohereUsageComplete: true,
+    geminiAttempts: 1,
+    geminiPromptTokens: 1_000,
+    geminiOutputTokens: 500,
+    geminiThoughtsTokens: 0,
+    geminiTotalTokens: 1_500,
+    geminiAttemptDurationsMs: [10],
+    geminiCalls: [{
+      attempt: 1,
+      responseReceived: true,
+      promptTokens: 1_000,
+      candidateTokens: 500,
+      thoughtsTokens: 0,
+      toolUsePromptTokens: null,
+      totalTokens: 1_500,
+    }],
+    voyageProviderCalls: 1,
+    ...overrides,
+  };
+}
+
+function twoCallUsage(overrides: Partial<A2KnownRowUsage> = {}): A2KnownRowUsage {
+  return {
+    cohereSearchUnits: 11,
+    cohereSearchUnitsLowerBound: 11,
+    cohereUsageComplete: true,
+    geminiAttempts: 2,
+    geminiPromptTokens: 1_800,
+    geminiOutputTokens: 700,
+    geminiThoughtsTokens: 0,
+    geminiTotalTokens: 2_500,
+    geminiAttemptDurationsMs: [10, 12],
+    geminiCalls: [
+      {
+        attempt: 1,
+        responseReceived: true,
+        promptTokens: 1_000,
+        candidateTokens: 400,
+        thoughtsTokens: 0,
+        toolUsePromptTokens: null,
+        totalTokens: 1_400,
+      },
+      {
+        attempt: 2,
+        responseReceived: true,
+        promptTokens: 800,
+        candidateTokens: 300,
+        thoughtsTokens: 0,
+        toolUsePromptTokens: 0,
+        totalTokens: 1_100,
+      },
+    ],
+    voyageProviderCalls: 1,
+    ...overrides,
+  };
+}
+
+function syntheticReservation(
+  totalMicrousd: number,
+  components = { cohere: totalMicrousd, gemini: 0, voyage: 0 },
+): A2RowBudgetReservation {
+  if (components.cohere + components.gemini + components.voyage !== totalMicrousd) {
+    throw new Error("synthetic reservation components must sum");
+  }
+  return {
+    totalMicrousd,
+    cohereMicrousd: components.cohere,
+    geminiMicrousd: components.gemini,
+    voyageMicrousd: components.voyage,
+    cohereSearchUnitsCeiling: 1_000_000,
+    cohereUsdPerThousandSearchUnits: 0,
+    questionUtf8Bytes: 1,
+  };
+}
+
+function settleLedgerFromUsage(
+  ledger: A2SpendLedger,
+  rowKey: string,
+  reservation: A2RowBudgetReservation,
+  usage: A2KnownRowUsage | null,
+) {
+  const checkpointPath = join(
+    ledger.path,
+    "..",
+    `checkpoint-${rowKey.replace(/[^a-z0-9]+/giu, "-")}.json`,
+  );
+  const bound = bindA2CheckpointRowAccounting({
+    attemptKey: rowKey,
+    status: usage === null ? "interrupted" : "complete",
+  }, reservation, usage);
+  const verified = writeAndVerifyA2CheckpointBeforeSettlement(
+    checkpointPath,
+    { attemptHistory: [bound.row] },
+    rowKey,
+    reservation,
+    true,
+  );
+  ledger.settleVerified(rowKey, verified);
+  return verified;
 }
 
 afterEach(() => {
@@ -219,51 +384,42 @@ describe("A2 hard spend budget", () => {
 
   it("reconciles only complete provider usage and keeps Voyage at its request ceiling", () => {
     const reservation = reserveA2Row("approved question", 2.50);
-    const charge = chargeA2Row(reservation, {
-      cohereSearchUnits: 11,
-      geminiAttempts: 1,
-      geminiPromptTokens: 1_000,
-      geminiOutputTokens: 500,
-      geminiThoughtsTokens: 0,
-      voyageProviderCalls: 1,
-    });
+    const charge = chargeA2Row(reservation, oneCallUsage());
 
     expect(charge.completeUsage).toBe(true);
+    expect(charge.settlementKind).toBe("usage_proved");
     expect(charge.cohereMicrousd).toBe(27_500);
     expect(charge.geminiMicrousd).toBe(1_550);
     expect(charge.voyageMicrousd).toBe(reservation.voyageMicrousd);
     expect(charge.totalMicrousd).toBeLessThan(reservation.totalMicrousd);
   });
 
-  it("retains each provider reservation whose usage is missing", () => {
+  it("retains the entire row reservation when any ordinary usage is incomplete", () => {
     const reservation = reserveA2Row("approved question", 2.50);
-    const charge = chargeA2Row(reservation, {
+    const charge = chargeA2Row(reservation, oneCallUsage({
       cohereSearchUnits: null,
-      geminiAttempts: 1,
-      geminiPromptTokens: 1_000,
-      geminiOutputTokens: 500,
-      geminiThoughtsTokens: 0,
       voyageProviderCalls: null,
-    });
+    }));
 
     expect(charge.completeUsage).toBe(false);
-    expect(charge.cohereMicrousd).toBe(reservation.cohereMicrousd);
-    expect(charge.voyageMicrousd).toBe(reservation.voyageMicrousd);
+    expect(charge.settlementKind).toBe("entire_row_reservation");
+    expect(charge).toEqual({
+      totalMicrousd: reservation.totalMicrousd,
+      cohereMicrousd: reservation.cohereMicrousd,
+      geminiMicrousd: reservation.geminiMicrousd,
+      voyageMicrousd: reservation.voyageMicrousd,
+      completeUsage: false,
+      settlementKind: "entire_row_reservation",
+    });
   });
 
-  it("retains the full Gemini reservation whenever two attempts ran", () => {
+  it("proves exact Gemini usage across two ordered calls", () => {
     const reservation = reserveA2Row("approved question", 2.50);
-    const charge = chargeA2Row(reservation, {
-      cohereSearchUnits: 11,
-      geminiAttempts: 2,
-      geminiPromptTokens: 1_000,
-      geminiOutputTokens: 500,
-      geminiThoughtsTokens: 0,
-      voyageProviderCalls: 1,
-    });
+    const charge = chargeA2Row(reservation, twoCallUsage());
 
-    expect(charge.completeUsage).toBe(false);
-    expect(charge.geminiMicrousd).toBe(reservation.geminiMicrousd);
+    expect(charge.completeUsage).toBe(true);
+    expect(charge.settlementKind).toBe("usage_proved");
+    expect(charge.geminiMicrousd).toBeLessThan(reservation.geminiMicrousd);
   });
 
   it("charges the full reservation for a failed or interrupted row", () => {
@@ -274,22 +430,25 @@ describe("A2 hard spend budget", () => {
       geminiMicrousd: reservation.geminiMicrousd,
       voyageMicrousd: reservation.voyageMicrousd,
       completeUsage: false,
+      settlementKind: "entire_row_reservation",
     });
   });
 
   it("refuses the next row before its reservation could cross the cap", () => {
     const ledger = createLedger(temporaryLedgerPath(), 1.5);
-    ledger.reserve("q1:1@1", 1_000_000);
-
-    expect(() => ledger.reserve("q2:1@1", 500_001)).toThrow(/approved maximum/u);
-    ledger.settle("q1:1@1", {
-      totalMicrousd: 100_000,
-      cohereMicrousd: 0,
-      geminiMicrousd: 0,
-      voyageMicrousd: 0,
-      completeUsage: true,
+    const firstReservation = syntheticReservation(1_000_000, {
+      cohere: 500_000,
+      gemini: 400_000,
+      voyage: 100_000,
     });
-    expect(() => ledger.reserve("q2:1@1", 500_001)).not.toThrow();
+    ledger.reserve("q1:1@1", firstReservation);
+
+    expect(() => ledger.reserve("q2:1@1", syntheticReservation(500_001)))
+      .toThrow(/approved maximum/u);
+    settleLedgerFromUsage(ledger, "q1:1@1", firstReservation, oneCallUsage({
+      voyageProviderCalls: 0,
+    }));
+    expect(() => ledger.reserve("q2:1@1", syntheticReservation(500_001))).not.toThrow();
   });
 
   it("allows all 264 rows when complete usage stays below the approved cap", () => {
@@ -297,58 +456,50 @@ describe("A2 hard spend budget", () => {
     for (let index = 0; index < 264; index += 1) {
       const rowKey = `q${String(index + 1).padStart(3, "0")}:1@1`;
       const reservation = reserveA2Row("x".repeat(257), 2.50);
-      ledger.reserve(rowKey, reservation.totalMicrousd);
-      ledger.settle(rowKey, chargeA2Row(reservation, {
-        cohereSearchUnits: 11,
-        geminiAttempts: 1,
+      ledger.reserve(rowKey, reservation);
+      settleLedgerFromUsage(ledger, rowKey, reservation, oneCallUsage({
         geminiPromptTokens: 7_300,
         geminiOutputTokens: 1_600,
-        geminiThoughtsTokens: 0,
-        voyageProviderCalls: 1,
+        geminiTotalTokens: 8_900,
+        geminiCalls: [{
+          attempt: 1,
+          responseReceived: true,
+          promptTokens: 7_300,
+          candidateTokens: 1_600,
+          thoughtsTokens: 0,
+          toolUsePromptTokens: null,
+          totalTokens: 8_900,
+        }],
       }));
     }
 
     expect(ledger.openRowKeys()).toEqual([]);
     expect(microusdToUsd(ledger.committedMicrousd())).toBeLessThan(25);
-  });
+  }, 15_000);
 
   it("keeps an open reservation charged after a crash and blocks duplicate spend", () => {
     const path = temporaryLedgerPath();
     const ledger = createLedger(path);
-    ledger.reserve("q1:1@1", 865_269);
+    ledger.reserve("q1:1@1", syntheticReservation(865_269));
 
-    const reopened = A2SpendLedger.open(path, {
-      runId: "a2-budget-test-run",
-      definitionSha256: "a".repeat(64),
-      manifestSha256: "b".repeat(64),
-      maxMicrousd: 25_000_000,
-    });
+    const reopened = A2SpendLedger.open(path, ledgerIdentity());
     expect(reopened.committedMicrousd()).toBe(865_269);
     expect(reopened.openRowKeys()).toEqual(["q1:1@1"]);
-    expect(() => reopened.reserve("q1:1@1", 865_269)).toThrow(/already has/u);
+    expect(() => reopened.reserve("q1:1@1", syntheticReservation(865_269))).toThrow(/already has/u);
   });
 
   it("retains every historical attempt charge for the same logical row", () => {
     const ledger = createLedger(temporaryLedgerPath());
-    ledger.reserve("q1:1@1", 100);
-    ledger.settle("q1:1@1", {
-      totalMicrousd: 100,
-      cohereMicrousd: 100,
-      geminiMicrousd: 0,
-      voyageMicrousd: 0,
-      completeUsage: false,
-    });
-    ledger.reserve("q1:1@2", 100);
-    ledger.settle("q1:1@2", {
-      totalMicrousd: 40,
-      cohereMicrousd: 40,
-      geminiMicrousd: 0,
-      voyageMicrousd: 0,
-      completeUsage: true,
-    });
+    const firstReservation = syntheticReservation(100);
+    ledger.reserve("q1:1@1", firstReservation);
+    settleLedgerFromUsage(ledger, "q1:1@1", firstReservation, null);
+    const secondReservation = reserveA2Row("approved question", 2.50);
+    const secondCharge = chargeA2Row(secondReservation, oneCallUsage());
+    ledger.reserve("q1:1@2", secondReservation);
+    settleLedgerFromUsage(ledger, "q1:1@2", secondReservation, oneCallUsage());
 
     expect(ledger.rowKeys()).toEqual(["q1:1@1", "q1:1@2"]);
-    expect(ledger.committedMicrousd()).toBe(140);
+    expect(ledger.committedMicrousd()).toBe(100 + secondCharge.totalMicrousd);
   });
 
   it("holds one exclusive run lock for the whole evaluator process", () => {
@@ -484,12 +635,7 @@ describe("A2 hard spend budget", () => {
     createLedger(path);
     appendFileSync(path, "{\"type\":\"reserve\"", "utf8");
 
-    expect(() => A2SpendLedger.open(path, {
-      runId: "a2-budget-test-run",
-      definitionSha256: "a".repeat(64),
-      manifestSha256: "b".repeat(64),
-      maxMicrousd: 25_000_000,
-    })).toThrow(/partial final entry/u);
+    expect(() => A2SpendLedger.open(path, ledgerIdentity())).toThrow(/partial final entry/u);
   });
 
   it("rejects a ledger opened under a different run-manifest digest", () => {
@@ -497,11 +643,554 @@ describe("A2 hard spend budget", () => {
     createLedger(path);
 
     expect(() => A2SpendLedger.open(path, {
-      runId: "a2-budget-test-run",
-      definitionSha256: "a".repeat(64),
-      manifestSha256: "c".repeat(64),
-      maxMicrousd: 25_000_000,
+      ...ledgerIdentity(),
+      manifestSha256: "d".repeat(64),
     })).toThrow(/header differs/u);
+  });
+
+  it("classifies known provider ceiling breaches before ordinary incompleteness", () => {
+    const reservation = reserveA2Row("approved question", 2.50);
+    const cases: Array<[string, A2KnownRowUsage]> = [
+      ["tool use", oneCallUsage({
+        geminiTotalTokens: 1_501,
+        geminiCalls: [{
+          ...oneCallUsage().geminiCalls[0],
+          toolUsePromptTokens: 1,
+          totalTokens: 1_501,
+        }],
+      })],
+      ["too many calls", twoCallUsage({
+        geminiAttempts: 3,
+        geminiPromptTokens: 2_000,
+        geminiOutputTokens: 800,
+        geminiTotalTokens: 2_800,
+        geminiAttemptDurationsMs: [1, 1, 1],
+        geminiCalls: [
+          ...twoCallUsage().geminiCalls,
+          {
+            attempt: 3,
+            responseReceived: true,
+            promptTokens: 200,
+            candidateTokens: 100,
+            thoughtsTokens: 0,
+            toolUsePromptTokens: 0,
+            totalTokens: 300,
+          },
+        ],
+      })],
+      ["prompt ceiling", oneCallUsage({
+        geminiPromptTokens: 1_048_577,
+        geminiTotalTokens: 1_049_077,
+        geminiCalls: [{
+          ...oneCallUsage().geminiCalls[0],
+          promptTokens: 1_048_577,
+          totalTokens: 1_049_077,
+        }],
+      })],
+      ["output ceiling", oneCallUsage({
+        geminiOutputTokens: 1_601,
+        geminiTotalTokens: 2_601,
+        geminiCalls: [{
+          ...oneCallUsage().geminiCalls[0],
+          candidateTokens: 1_601,
+          totalTokens: 2_601,
+        }],
+      })],
+      ["known output lower bound with missing candidate metadata", oneCallUsage({
+        geminiOutputTokens: null,
+        geminiThoughtsTokens: 2_000,
+        geminiTotalTokens: null,
+        geminiCalls: [{
+          attempt: 1,
+          responseReceived: true,
+          promptTokens: 1_000,
+          candidateTokens: null,
+          thoughtsTokens: 2_000,
+          toolUsePromptTokens: null,
+          totalTokens: null,
+        }],
+      })],
+      ["aggregate prompt ceiling with missing call proof", oneCallUsage({
+        geminiPromptTokens: A2_BUDGET_DEFINITION.geminiMaxInputTokensPerAttempt + 1,
+        geminiOutputTokens: null,
+        geminiThoughtsTokens: null,
+        geminiTotalTokens: null,
+        geminiCalls: [],
+      })],
+      ["aggregate two-call output ceiling with missing call proof", twoCallUsage({
+        geminiPromptTokens: null,
+        geminiOutputTokens: 2 * A2_BUDGET_DEFINITION.geminiMaxOutputTokensPerAttempt + 1,
+        geminiThoughtsTokens: 0,
+        geminiTotalTokens: null,
+        geminiCalls: [],
+      })],
+      ["aggregate total ceiling with missing components", twoCallUsage({
+        geminiPromptTokens: null,
+        geminiOutputTokens: null,
+        geminiThoughtsTokens: null,
+        geminiTotalTokens: 2 * (
+          A2_BUDGET_DEFINITION.geminiMaxInputTokensPerAttempt
+            + A2_BUDGET_DEFINITION.geminiMaxOutputTokensPerAttempt
+        ) + 1,
+        geminiCalls: [],
+      })],
+      ["per-call total ceiling with missing components", oneCallUsage({
+        geminiPromptTokens: null,
+        geminiOutputTokens: null,
+        geminiThoughtsTokens: null,
+        geminiTotalTokens: null,
+        geminiCalls: [{
+          attempt: 1,
+          responseReceived: true,
+          promptTokens: null,
+          candidateTokens: null,
+          thoughtsTokens: null,
+          toolUsePromptTokens: null,
+          totalTokens: A2_BUDGET_DEFINITION.geminiMaxInputTokensPerAttempt
+            + A2_BUDGET_DEFINITION.geminiMaxOutputTokensPerAttempt + 1,
+        }],
+      })],
+      ["derived per-call output ceiling with missing output components", oneCallUsage({
+        geminiOutputTokens: null,
+        geminiThoughtsTokens: null,
+        geminiTotalTokens: 2_601,
+        geminiCalls: [{
+          attempt: 1,
+          responseReceived: true,
+          promptTokens: 1_000,
+          candidateTokens: null,
+          thoughtsTokens: null,
+          toolUsePromptTokens: null,
+          totalTokens: 2_601,
+        }],
+      })],
+      ["Cohere ceiling", oneCallUsage({
+        cohereSearchUnits: reservation.cohereSearchUnitsCeiling + 1,
+        geminiCalls: [],
+      })],
+      ["Voyage call ceiling", oneCallUsage({
+        voyageProviderCalls: 2,
+        geminiCalls: [],
+      })],
+    ];
+    for (const [label, usage] of cases) {
+      const decision = classifyA2RowAccounting(reservation, usage);
+      expect(decision.kind, label).toBe("definition_violation");
+      expect(() => chargeA2Row(reservation, usage), label)
+        .toThrow(A2AccountingDefinitionViolation);
+    }
+  });
+
+  it("treats a known aggregate Gemini price above its provider reservation as a violation", () => {
+    const reservation = reserveA2Row("approved question", 2.50);
+    const reducedGeminiReservation = {
+      ...reservation,
+      cohereMicrousd: reservation.cohereMicrousd + reservation.geminiMicrousd - 1_549,
+      geminiMicrousd: 1_549,
+    };
+    const decision = classifyA2RowAccounting(reducedGeminiReservation, oneCallUsage({
+      geminiCalls: [],
+    }));
+    expect(decision.kind).toBe("definition_violation");
+    if (decision.kind === "definition_violation") {
+      expect(decision.violationCodes).toContain("gemini_provider_charge_ceiling_exceeded");
+    }
+  });
+
+  it("uses partial Cohere units as a lower bound before completeness", () => {
+    const reservation = reserveA2Row("approved question", 2.50);
+    const overage = classifyA2RowAccounting(reservation, oneCallUsage({
+      cohereSearchUnits: null,
+      cohereSearchUnitsLowerBound: reservation.cohereSearchUnitsCeiling + 1,
+      cohereUsageComplete: false,
+    }));
+    expect(overage.kind).toBe("definition_violation");
+    if (overage.kind === "definition_violation") {
+      expect(overage.violationCodes).toContain("cohere_search_units_ceiling_exceeded");
+    }
+
+    const incomplete = classifyA2RowAccounting(reservation, oneCallUsage({
+      cohereSearchUnits: null,
+      cohereSearchUnitsLowerBound: reservation.cohereSearchUnitsCeiling - 1,
+      cohereUsageComplete: false,
+    }));
+    expect(incomplete.kind).toBe("ordinary_incomplete");
+    if (incomplete.kind === "ordinary_incomplete") {
+      expect(incomplete.charge).toMatchObject({
+        totalMicrousd: reservation.totalMicrousd,
+        settlementKind: "entire_row_reservation",
+      });
+    }
+  });
+
+  it("never offsets one provider's known overage with another provider's unused reservation", () => {
+    const reservation = reserveA2Row("approved question", 2.50);
+    const decision = classifyA2RowAccounting(reservation, oneCallUsage({
+      cohereSearchUnits: reservation.cohereSearchUnitsCeiling + 1,
+      voyageProviderCalls: 0,
+    }));
+    expect(decision.kind).toBe("definition_violation");
+    if (decision.kind === "definition_violation") {
+      expect(decision.violationCodes).toContain("cohere_search_units_ceiling_exceeded");
+    }
+  });
+
+  it("charges the entire row for every ordinary two-call proof defect", () => {
+    const reservation = reserveA2Row("approved question", 2.50);
+    const cases: Array<[string, A2KnownRowUsage]> = [
+      ["missing second call", twoCallUsage({ geminiCalls: [twoCallUsage().geminiCalls[0]] })],
+      ["wrong order", twoCallUsage({
+        geminiCalls: [...twoCallUsage().geminiCalls].reverse(),
+      })],
+      ["missing response", twoCallUsage({
+        geminiCalls: [
+          twoCallUsage().geminiCalls[0],
+          { ...twoCallUsage().geminiCalls[1], responseReceived: false },
+        ],
+      })],
+      ["duration mismatch", twoCallUsage({ geminiAttemptDurationsMs: [1] })],
+      ["per-call arithmetic", twoCallUsage({
+        geminiCalls: [
+          { ...twoCallUsage().geminiCalls[0], totalTokens: 1_401 },
+          twoCallUsage().geminiCalls[1],
+        ],
+      })],
+      ["aggregate mismatch", twoCallUsage({ geminiTotalTokens: 2_501 })],
+      ["negative optional metadata", oneCallUsage({
+        geminiCalls: [{ ...oneCallUsage().geminiCalls[0], thoughtsTokens: -1 }],
+      })],
+    ];
+    for (const [label, usage] of cases) {
+      const charge = chargeA2Row(reservation, usage);
+      expect(charge, label).toEqual({
+        totalMicrousd: reservation.totalMicrousd,
+        cohereMicrousd: reservation.cohereMicrousd,
+        geminiMicrousd: reservation.geminiMicrousd,
+        voyageMicrousd: reservation.voyageMicrousd,
+        completeUsage: false,
+        settlementKind: "entire_row_reservation",
+      });
+    }
+  });
+
+  it("canonically binds proof and the exact checkpoint row", () => {
+    expect(sha256CanonicalA2Json({ b: 2, a: { d: 4, c: 3 } }))
+      .toBe(sha256CanonicalA2Json({ a: { c: 3, d: 4 }, b: 2 }));
+    const reservation = reserveA2Row("approved question", 2.50);
+    const bound = bindA2CheckpointRowAccounting({
+      attemptKey: "q1:1@1",
+      status: "complete",
+      nested: { b: 2, a: 1 },
+    }, reservation, twoCallUsage());
+    const verified = verifyA2CheckpointRowAccounting(bound.row, reservation);
+    expect(verified.decision.kind).toBe("usage_proved");
+    expect(verified.proofSha256).toMatch(/^[0-9a-f]{64}$/u);
+    expect(verified.checkpointRowSha256).toMatch(/^[0-9a-f]{64}$/u);
+
+    const changedRow = JSON.parse(JSON.stringify(bound.row)) as Record<string, unknown>;
+    changedRow.status = "invalid";
+    expect(() => verifyA2CheckpointRowAccounting(changedRow, reservation)).toThrow(/digest differs/u);
+
+    const changedProof = JSON.parse(JSON.stringify(bound.row)) as Record<string, unknown>;
+    const accounting = changedProof.accounting as Record<string, unknown>;
+    const proof = accounting.proof as Record<string, unknown>;
+    proof.cohereSearchUnits = 12;
+    expect(() => verifyA2CheckpointRowAccounting(changedProof, reservation)).toThrow(/digest differs/u);
+  });
+
+  it("cross-binds every reservation field into the checkpoint accounting", () => {
+    const reservation = reserveA2Row("approved question", 2.50);
+    const sameTotalDifferentProviders = {
+      ...reservation,
+      cohereMicrousd: reservation.cohereMicrousd - 1,
+      geminiMicrousd: reservation.geminiMicrousd + 1,
+    };
+    const bound = bindA2CheckpointRowAccounting({
+      attemptKey: "q1:1@1",
+      status: "complete",
+    }, reservation, oneCallUsage());
+    const accounting = bound.row.accounting as Record<string, unknown>;
+    expect(accounting.reservation).toEqual(reservation);
+    expect(() => verifyA2CheckpointRowAccounting(bound.row, sameTotalDifferentProviders))
+      .toThrow(/reservation differs/u);
+  });
+
+  it("freezes durable reservation proof and rejects a same-total ledger component swap", () => {
+    const path = temporaryLedgerPath();
+    const checkpointPath = join(path, "..", "comparison-report.json");
+    const ledger = createLedger(path);
+    const reservation = reserveA2Row("approved question", 2.50);
+    const ledgerReservation = {
+      ...reservation,
+      cohereMicrousd: reservation.cohereMicrousd - 1,
+      geminiMicrousd: reservation.geminiMicrousd + 1,
+    };
+    const key = "q1:1@1";
+    ledger.reserve(key, ledgerReservation);
+    const bound = bindA2CheckpointRowAccounting({ attemptKey: key, status: "complete" },
+      reservation, oneCallUsage());
+    const verified = writeAndVerifyA2CheckpointBeforeSettlement(
+      checkpointPath,
+      { attemptHistory: [bound.row] },
+      key,
+      reservation,
+      true,
+    );
+
+    expect(Object.isFrozen(verified)).toBe(true);
+    expect(Object.isFrozen(verified.reservation)).toBe(true);
+    expect(Reflect.set(verified.reservation, "cohereMicrousd", 0)).toBe(false);
+    expect(Reflect.set(verified, "reservation", ledgerReservation)).toBe(false);
+    expect(() => ledger.settleVerified(key, verified)).toThrow(/ledger reservation/u);
+    expect(ledger.openRowKeys()).toEqual([key]);
+  });
+
+  it("rejects a same-component ledger reservation with a changed Cohere rate", () => {
+    const path = temporaryLedgerPath();
+    const checkpointPath = join(path, "..", "comparison-report.json");
+    const ledger = createLedger(path);
+    const reservation = reserveA2Row("approved question", 2.50);
+    const changedRateReservation = {
+      ...reservation,
+      cohereUsdPerThousandSearchUnits: 0,
+    };
+    const key = "q1:1@1";
+    ledger.reserve(key, changedRateReservation);
+    const bound = bindA2CheckpointRowAccounting({ attemptKey: key, status: "complete" },
+      reservation, oneCallUsage());
+    const verified = writeAndVerifyA2CheckpointBeforeSettlement(
+      checkpointPath,
+      { attemptHistory: [bound.row] },
+      key,
+      reservation,
+      true,
+    );
+
+    const reopened = A2SpendLedger.open(path, ledgerIdentity());
+    expect(reopened.rowState(key)).toMatchObject({
+      cohereSearchUnitsCeiling: changedRateReservation.cohereSearchUnitsCeiling,
+      cohereUsdPerThousandSearchUnits: 0,
+      questionUtf8Bytes: changedRateReservation.questionUtf8Bytes,
+    });
+    expect(() => reopened.settleVerified(key, verified)).toThrow(/ledger reservation/u);
+    expect(reopened.openRowKeys()).toEqual([key]);
+  });
+
+  it("returns an immutable row-state snapshot instead of its live accounting map value", () => {
+    const path = temporaryLedgerPath();
+    const ledger = createLedger(path);
+    const reservation = reserveA2Row("approved question", 2.50);
+    const key = "q1:1@1";
+    ledger.reserve(key, reservation);
+    const snapshot = ledger.rowState(key)!;
+
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Reflect.set(snapshot, "chargedMicrousd", 0)).toBe(false);
+    expect(ledger.rowState(key)?.chargedMicrousd).toBeNull();
+    expect(ledger.committedMicrousd()).toBe(reservation.totalMicrousd);
+  });
+
+  it("settles a reserve-only crash at the entire row reservation after a durable bound checkpoint", () => {
+    const path = temporaryLedgerPath();
+    const checkpointPath = join(path, "..", "comparison-report.json");
+    const ledger = createLedger(path);
+    const reservation = reserveA2Row("approved question", 2.50);
+    const key = "q1:1@1";
+    ledger.reserve(key, reservation);
+    const bound = bindA2CheckpointRowAccounting({
+      attemptKey: key,
+      status: "interrupted",
+      kind: "process_interrupted_before_durable_outcome",
+    }, reservation, null);
+    const verified = writeAndVerifyA2CheckpointBeforeSettlement(
+      checkpointPath,
+      { attemptHistory: [bound.row], budgetOpenAttempts: [key] },
+      key,
+      reservation,
+      true,
+    );
+    expect(verified.decision.kind).toBe("ordinary_incomplete");
+    ledger.settleVerified(key, verified);
+    expect(ledger.rowState(key)).toMatchObject({
+      chargedMicrousd: reservation.totalMicrousd,
+      settlementKind: "entire_row_reservation",
+      proofSha256: verified.proofSha256,
+      checkpointRowSha256: verified.checkpointRowSha256,
+    });
+  });
+
+  it("recovers after proof write and before settlement without losing exact two-call usage", () => {
+    const path = temporaryLedgerPath();
+    const checkpointPath = join(path, "..", "comparison-report.json");
+    const reservation = reserveA2Row("approved question", 2.50);
+    const key = "q1:1@1";
+    const ledger = createLedger(path);
+    ledger.reserve(key, reservation);
+    const bound = bindA2CheckpointRowAccounting({ attemptKey: key, status: "complete" },
+      reservation, twoCallUsage());
+    writeJsonDurably(checkpointPath, { attemptHistory: [bound.row], budgetOpenAttempts: [key] });
+
+    const reopened = A2SpendLedger.open(path, ledgerIdentity());
+    const verified = readVerifiedA2CheckpointRowAccounting(checkpointPath, key, reservation);
+    expect(verified.decision.kind).toBe("usage_proved");
+    reopened.settleVerified(key, verified);
+    expect(reopened.rowState(key)?.chargedMicrousd).toBe(verified.decision.charge!.totalMicrousd);
+    expect(reopened.rowState(key)?.chargedMicrousd).toBeLessThan(reservation.totalMicrousd);
+  });
+
+  it("rereads the durable checkpoint inside settleVerified and refuses a stale verification", () => {
+    const path = temporaryLedgerPath();
+    const checkpointPath = join(path, "..", "comparison-report.json");
+    const reservation = reserveA2Row("approved question", 2.50);
+    const key = "q1:1@1";
+    const ledger = createLedger(path);
+    ledger.reserve(key, reservation);
+    const bound = bindA2CheckpointRowAccounting({ attemptKey: key, status: "complete" },
+      reservation, oneCallUsage());
+    const verified = writeAndVerifyA2CheckpointBeforeSettlement(
+      checkpointPath,
+      { attemptHistory: [bound.row] },
+      key,
+      reservation,
+      true,
+    );
+    const changed = JSON.parse(readFileSync(checkpointPath, "utf8")) as Record<string, unknown>;
+    const history = changed.attemptHistory as Array<Record<string, unknown>>;
+    history[0].status = "altered-after-verification";
+    writeJsonDurably(checkpointPath, changed);
+
+    expect(() => ledger.settleVerified(key, verified)).toThrow(/digest differs/u);
+    expect(ledger.openRowKeys()).toEqual([key]);
+  });
+
+  it("replays a settlement that became durable before the final report rewrite", () => {
+    const path = temporaryLedgerPath();
+    const checkpointPath = join(path, "..", "comparison-report.json");
+    const reservation = reserveA2Row("approved question", 2.50);
+    const key = "q1:1@1";
+    const ledger = createLedger(path);
+    ledger.reserve(key, reservation);
+    const bound = bindA2CheckpointRowAccounting({ attemptKey: key, status: "complete" },
+      reservation, oneCallUsage());
+    const verified = writeAndVerifyA2CheckpointBeforeSettlement(
+      checkpointPath,
+      { attemptHistory: [bound.row], budgetOpenAttempts: [key] },
+      key,
+      reservation,
+      true,
+    );
+    ledger.settleVerified(key, verified);
+    const settledSha = ledger.sha256();
+
+    const reopened = A2SpendLedger.open(path, ledgerIdentity());
+    const durable = readVerifiedA2CheckpointRowAccounting(checkpointPath, key, reservation);
+    expect(reopened.openRowKeys()).toEqual([]);
+    expect(reopened.rowState(key)?.proofSha256).toBe(durable.proofSha256);
+    expect(() => reopened.settleVerified(key, durable)).toThrow(/cannot be settled/u);
+    expect(reopened.sha256()).toBe(settledSha);
+  });
+
+  it("rejects a replayed same-total settlement whose provider components do not match its proof", async () => {
+    const { assertLedgerBijection } = await loadStateModule();
+    const gold = JSON.parse(readFileSync(join(process.cwd(), "tests/gold/gold-set-v1.json"), "utf8")) as {
+      questions: Array<{ id: string; question: string }>;
+    };
+    const question = gold.questions.find((candidate) => candidate.id === "q001")!;
+    const path = temporaryLedgerPath();
+    const ledger = createLedger(path);
+    const reservation = reserveA2Row(question.question, 2.50);
+    const key = "q001:1@1";
+    ledger.reserve(key, reservation);
+    const bound = bindA2CheckpointRowAccounting({
+      attemptKey: key,
+      logicalRowKey: "q001:1",
+      questionId: question.id,
+      status: "complete",
+    }, reservation, oneCallUsage());
+    const verification = verifyA2CheckpointRowAccounting(bound.row, reservation);
+    expect(verification.decision.kind).toBe("usage_proved");
+    if (verification.decision.kind !== "usage_proved") throw new Error("expected exact usage");
+    const charge = verification.decision.charge;
+    appendFileSync(path, `${JSON.stringify({
+      type: "settle",
+      rowKey: key,
+      chargedMicrousd: charge.totalMicrousd,
+      cohereMicrousd: charge.cohereMicrousd + 1,
+      geminiMicrousd: charge.geminiMicrousd - 1,
+      voyageMicrousd: charge.voyageMicrousd,
+      completeUsage: true,
+      settlementKind: "usage_proved",
+      proofSha256: verification.proofSha256,
+      checkpointRowSha256: verification.checkpointRowSha256,
+    })}\n`, "utf8");
+    const reopened = A2SpendLedger.open(path, ledgerIdentity());
+
+    expect(() => assertLedgerBijection(
+      recoveryPreflight(join(path, "..")),
+      [bound.row],
+      reopened,
+      false,
+    )).toThrow(/wrong spend settlement/u);
+  });
+
+  it("persists a definition violation in the bound row and refuses automatic recovery", () => {
+    const path = temporaryLedgerPath();
+    const checkpointPath = join(path, "..", "comparison-report.json");
+    const reservation = reserveA2Row("approved question", 2.50);
+    const key = "q1:1@1";
+    const ledger = createLedger(path);
+    ledger.reserve(key, reservation);
+    const usage = oneCallUsage({
+      geminiTotalTokens: 1_501,
+      geminiCalls: [{
+        ...oneCallUsage().geminiCalls[0],
+        toolUsePromptTokens: 1,
+        totalTokens: 1_501,
+      }],
+    });
+    const bound = bindA2CheckpointRowAccounting({
+      attemptKey: key,
+      status: "accounting_definition_violation",
+    }, reservation, usage);
+    writeJsonDurably(checkpointPath, { attemptHistory: [bound.row] }, true);
+    const verified = readVerifiedA2CheckpointRowAccounting(checkpointPath, key, reservation);
+    expect(verified.decision.kind).toBe("definition_violation");
+    expect(() => assertA2AutomaticRecoveryAllowed(verified))
+      .toThrow(A2AccountingDefinitionViolation);
+    expect(ledger.openRowKeys()).toEqual([key]);
+  });
+
+  it("opens v3 evidence strictly read-only without changing a byte", () => {
+    const path = temporaryLedgerPath();
+    const body = [
+      JSON.stringify({
+        type: "header",
+        schemaVersion: "a2-spend-ledger-v3",
+        runId: "legacy-run",
+        definitionSha256: "1".repeat(64),
+        manifestSha256: "2".repeat(64),
+        maxMicrousd: 1_000,
+      }),
+      JSON.stringify({ type: "reserve", rowKey: "q1:1@1", reservedMicrousd: 100 }),
+      JSON.stringify({
+        type: "settle",
+        rowKey: "q1:1@1",
+        chargedMicrousd: 70,
+        completeUsage: true,
+      }),
+      "",
+    ].join("\n");
+    writeFileSync(path, body, "utf8");
+    const before = readFileSync(path);
+    const legacy = A2SpendLedger.openLegacyReadOnly(path, {
+      runId: "legacy-run",
+      definitionSha256: "1".repeat(64),
+      manifestSha256: "2".repeat(64),
+      maxMicrousd: 1_000,
+    });
+    expect(legacy.rowState("q1:1@1")?.chargedMicrousd).toBe(70);
+    expect(() => legacy.reserve("q2:1@1", syntheticReservation(10))).toThrow(/read-only/u);
+    expect(readFileSync(path)).toEqual(before);
   });
 
   it("keeps PRECHECK and RECOVER returns ahead of external client construction", () => {
@@ -514,6 +1203,47 @@ describe("A2 hard spend budget", () => {
     expect(recover).toBeGreaterThan(precheck);
     expect(externalClient).toBeGreaterThan(recover);
     expect(source.slice(precheck, externalClient).match(/return;/gu)?.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the full reservation when the live planner duration array is malformed", async () => {
+    const state = await loadStateModule();
+    const exact = oneCallUsage();
+    const usage = state.knownUsageForBudget({
+      status: "complete",
+      arms: {
+        current: {
+          providerRequests: [{ responseSucceeded: true, billedSearchUnits: 5 }],
+        },
+        global: {
+          providerRequests: [{ responseSucceeded: true, billedSearchUnits: 6 }],
+        },
+      },
+      plannerUsage: {
+        attempts: exact.geminiAttempts,
+        promptTokens: exact.geminiPromptTokens,
+        outputTokens: exact.geminiOutputTokens,
+        thoughtsTokens: exact.geminiThoughtsTokens,
+        totalTokens: exact.geminiTotalTokens,
+        attemptDurationsMs: [Number.NaN, 5],
+      },
+      plannerCallUsage: exact.geminiCalls,
+      embeddingProviderCalls: exact.voyageProviderCalls,
+    });
+    expect(usage?.geminiAttemptDurationsMs).toBeNull();
+
+    const reservation = reserveA2Row("approved question", 2.50);
+    const decision = classifyA2RowAccounting(reservation, usage);
+    expect(decision.kind).toBe("ordinary_incomplete");
+    if (decision.kind !== "ordinary_incomplete") throw new Error("expected conservative usage");
+    expect(decision.incompleteReasons).toContain("gemini_attempt_duration_mismatch");
+    expect(decision.charge).toMatchObject({
+      totalMicrousd: reservation.totalMicrousd,
+      cohereMicrousd: reservation.cohereMicrousd,
+      geminiMicrousd: reservation.geminiMicrousd,
+      voyageMicrousd: reservation.voyageMicrousd,
+      completeUsage: false,
+      settlementKind: "entire_row_reservation",
+    });
   });
 
   it("validates cumulative current-arm submissions separately from the unique shared pool", async () => {
@@ -573,19 +1303,17 @@ describe("A2 hard spend budget", () => {
     const preflight = recoveryPreflight(temporaryRunDirectory());
     const manifest = state.buildRunManifest(preflight);
     state.completeInterruptedInitialization(preflight, manifest);
-    const ledger = A2SpendLedger.open(join(preflight.runDirectory, "spend-ledger.jsonl"), {
-      runId: preflight.runId,
-      definitionSha256: preflight.definitionSha256,
-      manifestSha256: manifest.manifestSha256,
-      maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
-    });
+    const ledger = A2SpendLedger.open(
+      join(preflight.runDirectory, "spend-ledger.jsonl"),
+      recoveryLedgerIdentity(preflight, manifest.manifestSha256),
+    );
     const planned = state.plannedRows(preflight)[0];
     const key = `${planned.logicalRowKey}@1`;
     const reservation = reserveA2Row(
       planned.question.question,
       preflight.usdPerThousandSearchUnits,
     );
-    ledger.reserve(key, reservation.totalMicrousd);
+    ledger.reserve(key, reservation);
     const rows: Array<Record<string, unknown>> = [];
     const checkpointPath = join(preflight.runDirectory, "comparison-report.json");
 
@@ -641,20 +1369,18 @@ describe("A2 hard spend budget", () => {
     const preflight = recoveryPreflight(temporaryRunDirectory());
     const manifest = state.buildRunManifest(preflight);
     state.completeInterruptedInitialization(preflight, manifest);
-    const ledger = A2SpendLedger.open(join(preflight.runDirectory, "spend-ledger.jsonl"), {
-      runId: preflight.runId,
-      definitionSha256: preflight.definitionSha256,
-      manifestSha256: manifest.manifestSha256,
-      maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
-    });
+    const ledger = A2SpendLedger.open(
+      join(preflight.runDirectory, "spend-ledger.jsonl"),
+      recoveryLedgerIdentity(preflight, manifest.manifestSha256),
+    );
     const planned = state.plannedRows(preflight)[0];
     const key = `${planned.logicalRowKey}@1`;
     const reservation = reserveA2Row(
       planned.question.question,
       preflight.usdPerThousandSearchUnits,
     );
-    ledger.reserve(key, reservation.totalMicrousd);
-    const rows: Array<Record<string, unknown>> = [{
+    ledger.reserve(key, reservation);
+    const failedRow: Record<string, unknown> = {
       status: "failed",
       logicalRowKey: planned.logicalRowKey,
       attempt: 1,
@@ -670,7 +1396,10 @@ describe("A2 hard spend budget", () => {
       failure: { name: "SyntheticFailure" },
       providerUsageComplete: false,
       budgetReservationUsd: microusdToUsd(reservation.totalMicrousd),
-    }];
+    };
+    const rows: Array<Record<string, unknown>> = [
+      bindA2CheckpointRowAccounting(failedRow, reservation, null).row,
+    ];
     const checkpointPath = join(preflight.runDirectory, "comparison-report.json");
     writeJsonDurably(
       checkpointPath,
@@ -688,25 +1417,87 @@ describe("A2 hard spend budget", () => {
     expect(ledger.rowState(key)?.chargedMicrousd).toBe(reservation.totalMicrousd);
   }, 15_000);
 
-  it("rejects a settled ledger attempt that has no durable outcome", async () => {
+  it("refuses a durable definition violation before creating a recovery journal", async () => {
     const state = await loadStateModule();
     const preflight = recoveryPreflight(temporaryRunDirectory());
     const manifest = state.buildRunManifest(preflight);
     state.completeInterruptedInitialization(preflight, manifest);
-    const ledger = A2SpendLedger.open(join(preflight.runDirectory, "spend-ledger.jsonl"), {
-      runId: preflight.runId,
-      definitionSha256: preflight.definitionSha256,
-      manifestSha256: manifest.manifestSha256,
-      maxMicrousd: usdToMicrousdCeiling(preflight.maxTotalUsd),
-    });
+    const ledger = A2SpendLedger.open(
+      join(preflight.runDirectory, "spend-ledger.jsonl"),
+      recoveryLedgerIdentity(preflight, manifest.manifestSha256),
+    );
     const planned = state.plannedRows(preflight)[0];
     const key = `${planned.logicalRowKey}@1`;
     const reservation = reserveA2Row(
       planned.question.question,
       preflight.usdPerThousandSearchUnits,
     );
-    ledger.reserve(key, reservation.totalMicrousd);
-    ledger.settle(key, chargeA2Row(reservation, null));
+    ledger.reserve(key, reservation);
+    const violationUsage = oneCallUsage({
+      geminiTotalTokens: 1_501,
+      geminiCalls: [{
+        ...oneCallUsage().geminiCalls[0],
+        toolUsePromptTokens: 1,
+        totalTokens: 1_501,
+      }],
+    });
+    const violationRow: Record<string, unknown> = {
+      status: "failed",
+      logicalRowKey: planned.logicalRowKey,
+      attempt: 1,
+      attemptKey: key,
+      questionId: planned.question.id,
+      category: planned.question.category,
+      question: planned.question.question,
+      supplemental: planned.question.id.startsWith("supplemental-"),
+      repeat: planned.repeat,
+      armExecutionOrder: planned.armExecutionOrder,
+      models: manifest.models,
+      kind: "accounting_definition_violation",
+      providerUsageComplete: false,
+      budgetReservationUsd: microusdToUsd(reservation.totalMicrousd),
+    };
+    const rows = [
+      bindA2CheckpointRowAccounting(violationRow, reservation, violationUsage).row,
+    ];
+    const checkpointPath = join(preflight.runDirectory, "comparison-report.json");
+    writeJsonDurably(
+      checkpointPath,
+      state.checkpointDocument(preflight, manifest.manifestSha256, ledger, rows),
+    );
+    const recoveryDirectory = join(preflight.runDirectory, "recovery");
+
+    expect(() => state.assertLedgerBijection(preflight, rows, ledger, true))
+      .toThrow(A2AccountingDefinitionViolation);
+    expect(() => state.recoverInterruptedRun(
+      preflight,
+      manifest.manifestSha256,
+      ledger,
+      checkpointPath,
+      rows,
+      "paid-run.lock.recovered-violation",
+    )).toThrow(A2AccountingDefinitionViolation);
+    expect(ledger.openRowKeys()).toEqual([key]);
+    expect(existsSync(recoveryDirectory)).toBe(false);
+  }, 15_000);
+
+  it("rejects a settled ledger attempt that has no durable outcome", async () => {
+    const state = await loadStateModule();
+    const preflight = recoveryPreflight(temporaryRunDirectory());
+    const manifest = state.buildRunManifest(preflight);
+    state.completeInterruptedInitialization(preflight, manifest);
+    const ledger = A2SpendLedger.open(
+      join(preflight.runDirectory, "spend-ledger.jsonl"),
+      recoveryLedgerIdentity(preflight, manifest.manifestSha256),
+    );
+    const planned = state.plannedRows(preflight)[0];
+    const key = `${planned.logicalRowKey}@1`;
+    const reservation = reserveA2Row(
+      planned.question.question,
+      preflight.usdPerThousandSearchUnits,
+    );
+    ledger.reserve(key, reservation);
+    settleLedgerFromUsage(ledger, key, reservation, null);
 
     expect(() => state.recoverInterruptedRun(
       preflight,
@@ -719,16 +1510,23 @@ describe("A2 hard spend budget", () => {
   }, 15_000);
 
   it("rejects a settlement larger than the money reserved before the call", () => {
-    const ledger = createLedger(temporaryLedgerPath());
-    ledger.reserve("q1:1@1", 10);
-    const tooLarge: A2RowCharge = {
-      totalMicrousd: 11,
+    const path = temporaryLedgerPath();
+    const ledger = createLedger(path);
+    ledger.reserve("q1:1@1", syntheticReservation(10));
+    appendFileSync(path, `${JSON.stringify({
+      type: "settle",
+      rowKey: "q1:1@1",
+      chargedMicrousd: 11,
       cohereMicrousd: 11,
       geminiMicrousd: 0,
       voyageMicrousd: 0,
       completeUsage: true,
-    };
+      settlementKind: "usage_proved",
+      proofSha256: "d".repeat(64),
+      checkpointRowSha256: "e".repeat(64),
+    })}\n`, "utf8");
 
-    expect(() => ledger.settle("q1:1@1", tooLarge)).toThrow(/exceeds its reservation/u);
+    expect(() => A2SpendLedger.open(path, ledgerIdentity()))
+      .toThrow(/settlement is invalid/u);
   });
 });

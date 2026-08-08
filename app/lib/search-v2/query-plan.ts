@@ -714,6 +714,7 @@ interface GenAiUsage {
   promptTokenCount?: number | null;
   candidatesTokenCount?: number | null;
   thoughtsTokenCount?: number | null;
+  toolUsePromptTokenCount?: number | null;
   totalTokenCount?: number | null;
 }
 
@@ -725,12 +726,35 @@ interface GenAiLike {
   };
 }
 
+/**
+ * Evaluator-private accounting at the provider-call boundary.
+ *
+ * This deliberately carries only numeric usage metadata. It is never attached
+ * to `PlannerUsage` or `PlannedQuery`, so normal telemetry and public output
+ * retain their existing shape.
+ */
+export interface PrivatePlannerCallUsage {
+  readonly attempt: number;
+  readonly responseReceived: boolean;
+  readonly promptTokenCount: number | null;
+  readonly candidatesTokenCount: number | null;
+  readonly thoughtsTokenCount: number | null;
+  readonly toolUsePromptTokenCount: number | null;
+  readonly totalTokenCount: number | null;
+}
+
+export type PrivatePlannerCallUsageObserver = (
+  event: PrivatePlannerCallUsage,
+) => void | Promise<void>;
+
 /** Injected in tests; the real client is constructed lazily in `planQuery`. */
 export interface PlannerDeps {
   client?: GenAiLike;
   timeoutMs?: number;
   /** Test seam for deterministic durations. */
   now?: () => number;
+  /** Evaluator-only call accounting; observer failures never affect search. */
+  privateCallUsageObserver?: PrivatePlannerCallUsageObserver;
 }
 
 /**
@@ -763,7 +787,7 @@ class PlannerCallError extends Error {
 }
 
 interface PlannerCallResult {
-  raw: unknown;
+  text: string;
   usage: GenAiUsage;
 }
 
@@ -773,10 +797,14 @@ async function callPlanner(
   maxSubqueries: number,
   timeoutMs: number,
   repairNotes: string[],
+  attempt: number,
+  privateCallUsageObserver?: PrivatePlannerCallUsageObserver,
 ): Promise<PlannerCallResult> {
-  let response: Awaited<ReturnType<GenAiLike["models"]["generateContent"]>>;
+  let responseReceived = false;
+  let usage: GenAiUsage = {};
+  let text = "";
   try {
-    response = await withTimeout(
+    const response = await withTimeout(
       client.models.generateContent({
         model: geminiQueryPlannerModel(),
         contents: buildPrompt(query, maxSubqueries, repairNotes),
@@ -795,21 +823,50 @@ async function callPlanner(
       }),
       timeoutMs,
     );
+    responseReceived = true;
+    // Capture accounting before body validation. Empty or malformed bodies are
+    // still paid responses, even though the normal planner will reject them.
+    usage = response?.usageMetadata ?? {};
+    text = response?.text ?? "";
   } catch (err) {
     if (err instanceof PlannerCallError) throw err;
     throw new PlannerCallError(
       "provider_error",
       err instanceof Error ? err.message : "planner call failed",
     );
+  } finally {
+    if (privateCallUsageObserver) {
+      try {
+        const observed = privateCallUsageObserver({
+          attempt,
+          responseReceived,
+          promptTokenCount: usage.promptTokenCount ?? null,
+          candidatesTokenCount: usage.candidatesTokenCount ?? null,
+          thoughtsTokenCount: usage.thoughtsTokenCount ?? null,
+          toolUsePromptTokenCount: usage.toolUsePromptTokenCount ?? null,
+          totalTokenCount: usage.totalTokenCount ?? null,
+        });
+        if (observed) {
+          // Evaluator persistence may be asynchronous, but search must neither
+          // wait for it nor surface a later rejected bookkeeping promise.
+          void Promise.resolve(observed).catch(() => undefined);
+        }
+      } catch {
+        // Evaluator bookkeeping is fail-closed in the evaluator itself; it must
+        // never change a devotee's search result or the planner's fallback.
+      }
+    }
   }
 
-  const usage = response?.usageMetadata ?? {};
-  const text = response?.text ?? "";
+  return { text, usage };
+}
+
+function parsePlannerBody(text: string): unknown {
   if (!text.trim()) throw new PlannerCallError("empty_body", "planner returned an empty body");
   try {
     // Structured output means this is JSON, but the parse is still guarded:
     // an unparseable body must degrade, never throw into the request path.
-    return { raw: JSON.parse(text) as unknown, usage };
+    return JSON.parse(text) as unknown;
   } catch {
     throw new PlannerCallError("invalid_json", "planner body was not parseable JSON");
   }
@@ -910,14 +967,23 @@ export async function planQuery(
       );
     };
     try {
-      const called = await callPlanner(client, query, maxSubqueries, timeoutMs, repairNotes);
+      const called = await callPlanner(
+        client,
+        query,
+        maxSubqueries,
+        timeoutMs,
+        repairNotes,
+        attempt,
+        deps.privateCallUsageObserver,
+      );
+      const raw = parsePlannerBody(called.text);
       recordAttempt();
       usage.promptTokens += called.usage.promptTokenCount ?? 0;
       usage.outputTokens += called.usage.candidatesTokenCount ?? 0;
       usage.thoughtsTokens += called.usage.thoughtsTokenCount ?? 0;
       usage.totalTokens += called.usage.totalTokenCount ?? 0;
 
-      const parsed = QueryPlanSchema.safeParse(called.raw);
+      const parsed = QueryPlanSchema.safeParse(raw);
       if (!parsed.success) {
         failureKind = "schema_rejected";
         rejections.push(

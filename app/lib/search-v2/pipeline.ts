@@ -40,6 +40,7 @@ import {
   planQuery,
   REQUIRED_SUBQUERIES,
   type PlannedQuery,
+  type PrivatePlannerCallUsageObserver,
   type PlannerUsage,
 } from "@/app/lib/search-v2/query-plan";
 import {
@@ -316,6 +317,8 @@ export interface PipelineInput {
   privateRerankExecutor?: (input: RerankInput) => Promise<RerankOutcome>;
   /** Private evaluator seam used to avoid an unrelated paid article-planner call. */
   privateArticlePlanner?: typeof planArticle;
+  /** Private evaluator-only per-call Gemini usage proof. */
+  privatePlannerCallUsageObserver?: PrivatePlannerCallUsageObserver;
   /**
    * Private evaluator-only usage checkpoint. It fires as soon as each paid
    * upstream stage finishes so a later verification/rendering failure cannot
@@ -434,7 +437,9 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
 
   // ── plan ──
   onStage?.("planning");
-  const planned = await time("planning", () => planQuery(query, PLANNED_SUBQUERIES));
+  const planned = await time("planning", () => planQuery(query, PLANNED_SUBQUERIES, {
+    privateCallUsageObserver: input.privatePlannerCallUsageObserver,
+  }));
   try {
     input.privatePaidUsageObserver?.({ stage: "query_planner", usage: planned.usage });
   } catch {

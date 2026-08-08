@@ -19,6 +19,7 @@ import {
   QUERY_PLANNER_MAX_OUTPUT_TOKENS,
   isPointerQuestion,
   isPlanDegradation,
+  type PrivatePlannerCallUsage,
 } from "@/app/lib/search-v2/query-plan";
 import {
   ARTICLE_PLANNER_MAX_OUTPUT_TOKENS,
@@ -28,8 +29,28 @@ import {
 } from "@/app/lib/search-v2/article-plan";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 
-/** A client that returns a scripted body per call, or throws. */
-function scriptedClient(bodies: (string | Error)[]) {
+interface ScriptedUsage {
+  promptTokenCount?: number | null;
+  candidatesTokenCount?: number | null;
+  thoughtsTokenCount?: number | null;
+  toolUsePromptTokenCount?: number | null;
+  totalTokenCount?: number | null;
+}
+
+type ScriptedResponse = string | Error | {
+  text?: string | null;
+  usageMetadata?: ScriptedUsage | null;
+};
+
+const DEFAULT_SCRIPTED_USAGE = Object.freeze({
+  promptTokenCount: 500,
+  candidatesTokenCount: 300,
+  thoughtsTokenCount: 0,
+  totalTokenCount: 800,
+});
+
+/** A client that returns a scripted body/response per call, or throws. */
+function scriptedClient(bodies: ScriptedResponse[]) {
   const calls: string[] = [];
   const prompts: string[] = [];
   const configs: Record<string, unknown>[] = [];
@@ -44,14 +65,10 @@ function scriptedClient(bodies: (string | Error)[]) {
         configs.push((args.config ?? {}) as Record<string, unknown>);
         const next = bodies.shift();
         if (next instanceof Error) throw next;
+        if (typeof next === "object" && next !== null) return next;
         return {
           text: next ?? "",
-          usageMetadata: {
-            promptTokenCount: 500,
-            candidatesTokenCount: 300,
-            thoughtsTokenCount: 0,
-            totalTokenCount: 800,
-          },
+          usageMetadata: DEFAULT_SCRIPTED_USAGE,
         };
       },
     },
@@ -131,6 +148,34 @@ describe("query planner loop", () => {
     expect(out.usage.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("emits one evaluator-private usage record without changing public usage", async () => {
+    const client = scriptedClient([goodPlan()]);
+    const calls: PrivatePlannerCallUsage[] = [];
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client,
+      privateCallUsageObserver: (event) => { calls.push({ ...event }); },
+    });
+
+    expect(calls).toEqual([{
+      attempt: 1,
+      responseReceived: true,
+      promptTokenCount: 500,
+      candidatesTokenCount: 300,
+      thoughtsTokenCount: 0,
+      toolUsePromptTokenCount: null,
+      totalTokenCount: 800,
+    }]);
+    expect(out.usage).toMatchObject({
+      attempts: 1,
+      promptTokens: 500,
+      outputTokens: 300,
+      thoughtsTokens: 0,
+      totalTokens: 800,
+    });
+    expect(JSON.stringify(out)).not.toContain("responseReceived");
+    expect(JSON.stringify(out)).not.toContain("toolUsePromptTokenCount");
+  });
+
   it("REJECTS a plan carrying no angles — the exact response production accepted twice", async () => {
     // An empty list is repairable, so it earns the one retry; a second empty
     // list is a recorded failure, never a quiet success as it was before.
@@ -147,6 +192,49 @@ describe("query planner loop", () => {
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("model");
     expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
+  });
+
+  it("emits two ordered records for the single allowed repair call", async () => {
+    const firstUsage = {
+      promptTokenCount: 110,
+      candidatesTokenCount: 50,
+      thoughtsTokenCount: 0,
+      toolUsePromptTokenCount: 0,
+      totalTokenCount: 160,
+    };
+    const secondUsage = {
+      promptTokenCount: 120,
+      candidatesTokenCount: 60,
+      thoughtsTokenCount: 0,
+      totalTokenCount: 180,
+    };
+    const client = scriptedClient([
+      { text: goodPlan({ subqueries: FIVE_ANGLES.slice(0, 2) }), usageMetadata: firstUsage },
+      { text: goodPlan(), usageMetadata: secondUsage },
+    ]);
+    const calls: PrivatePlannerCallUsage[] = [];
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client,
+      privateCallUsageObserver: (event) => { calls.push({ ...event }); },
+    });
+
+    expect(calls).toEqual([
+      { attempt: 1, responseReceived: true, ...firstUsage },
+      {
+        attempt: 2,
+        responseReceived: true,
+        ...secondUsage,
+        toolUsePromptTokenCount: null,
+      },
+    ]);
+    expect(out.usage).toMatchObject({
+      attempts: 2,
+      promptTokens: 230,
+      outputTokens: 110,
+      thoughtsTokens: 0,
+      totalTokens: 340,
+    });
+    expect(out.usage.attemptDurationsMs).toHaveLength(2);
   });
 
   it("retries ONCE when the angles repeat one another, and takes the repaired plan", async () => {
@@ -223,6 +311,113 @@ describe("query planner loop", () => {
       client: scriptedClient([new Error("503")]),
     });
     expect(outage.failureKind).toBe("provider_error");
+  });
+
+  it("captures returned usage before rejecting an empty or unparseable body", async () => {
+    for (const [text, failureKind] of [
+      ["", "empty_body"],
+      ['{"schema_version":"query-pl', "invalid_json"],
+    ] as const) {
+      const calls: PrivatePlannerCallUsage[] = [];
+      const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+        client: scriptedClient([{ text, usageMetadata: DEFAULT_SCRIPTED_USAGE }]),
+        privateCallUsageObserver: (event) => { calls.push({ ...event }); },
+      });
+
+      expect(out.failureKind).toBe(failureKind);
+      expect(calls).toEqual([{
+        attempt: 1,
+        responseReceived: true,
+        promptTokenCount: 500,
+        candidatesTokenCount: 300,
+        thoughtsTokenCount: 0,
+        toolUsePromptTokenCount: null,
+        totalTokenCount: 800,
+      }]);
+      // Preserve the existing public behavior: rejected bodies never entered
+      // the aggregate usage object, even though private accounting saw them.
+      expect(out.usage).toMatchObject({
+        attempts: 1,
+        promptTokens: 0,
+        outputTokens: 0,
+        thoughtsTokens: 0,
+        totalTokens: 0,
+      });
+    }
+  });
+
+  it("emits one fail-closed record for timeout and provider-error attempts", async () => {
+    const timeoutCalls: PrivatePlannerCallUsage[] = [];
+    const timeout = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: {
+        models: {
+          generateContent: () => new Promise(() => {}) as Promise<{ text?: string }>,
+        },
+      },
+      timeoutMs: 10,
+      privateCallUsageObserver: (event) => { timeoutCalls.push({ ...event }); },
+    });
+    expect(timeout.failureKind).toBe("timeout");
+
+    const providerCalls: PrivatePlannerCallUsage[] = [];
+    const outage = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: scriptedClient([new Error("503")]),
+      privateCallUsageObserver: (event) => { providerCalls.push({ ...event }); },
+    });
+    expect(outage.failureKind).toBe("provider_error");
+
+    const expected = {
+      attempt: 1,
+      responseReceived: false,
+      promptTokenCount: null,
+      candidatesTokenCount: null,
+      thoughtsTokenCount: null,
+      toolUsePromptTokenCount: null,
+      totalTokenCount: null,
+    };
+    expect(timeoutCalls).toEqual([expected]);
+    expect(providerCalls).toEqual([expected]);
+  });
+
+  it("swallows evaluator observer errors without changing the accepted plan", async () => {
+    const client = scriptedClient([goodPlan()]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client,
+      privateCallUsageObserver: () => {
+        throw new Error("private checkpoint failed");
+      },
+    });
+
+    expect(out.source).toBe("model");
+    expect(out.failureKind).toBeNull();
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
+    expect(out.usage).toMatchObject({
+      attempts: 1,
+      promptTokens: 500,
+      outputTokens: 300,
+      totalTokens: 800,
+    });
+    expect(client.calls).toHaveLength(1);
+  });
+
+  it("swallows a rejected async observer without waiting for it or changing the plan", async () => {
+    const client = scriptedClient([goodPlan()]);
+    let rejectObserver: ((reason: Error) => void) | undefined;
+    const observerFinished = new Promise<void>((_resolve, reject) => {
+      rejectObserver = reject;
+    });
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client,
+      privateCallUsageObserver: () => observerFinished,
+    });
+
+    expect(out.source).toBe("model");
+    expect(out.failureKind).toBeNull();
+    expect(client.calls).toHaveLength(1);
+    rejectObserver?.(new Error("private async checkpoint failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
   });
 
   it("does NOT retry a truncated body — one attempt, then the honest fallback", async () => {
