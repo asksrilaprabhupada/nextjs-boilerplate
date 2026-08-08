@@ -1,4 +1,4 @@
--- Tags & FTS Rebuild · Phase 2 (columns + support tables) and Phase 3 (fts_core
+-- Tags & FTS Rebuild · Phase 2 (columns + support table) and Phase 3 (fts_core
 -- trigger + diacritic-bug fix). Applied to project wzktlpjtqmjxvragwhqg on
 -- 2026-07-08 via Supabase MCP execute_sql (this project's apply_migration fails
 -- silently — execute_sql is the required path). Committed here for record.
@@ -13,9 +13,10 @@
 -- exist. Recording it as "applied" while it still said that would have written
 -- the discrepancy into the ledger instead of resolving it.
 --
--- REMOVED, because they are absent from the live database on all five content
--- tables and nothing anywhere reads them — checked against all 30 live
--- `search_*`/trigger functions and the whole application source:
+-- REMOVED from this historical file because they are absent from the live
+-- database on all five content tables. Current maintenance files still refer to
+-- some of them; those references need a separate repository correction and are
+-- not evidence that these objects were applied:
 --
 --   · columns  tags_ai, questions, questions_fts
 --   · table    tag_batch_jobs, and its index idx_tag_batch_jobs_status
@@ -28,11 +29,12 @@
 -- stop there, so the database is internally consistent. It was this file that
 -- was wrong, not the database.
 --
--- Nothing here was applied to the database to make this correction, and nothing
--- needs to be. The three columns and the tag_batch_jobs table are deliberately
--- NOT created: the tagging batch run they were designed for never happened, and
--- adding unused columns to five tables of 244,148 rows would be real work for no
--- reader. If that work is revived, it gets its own migration and its own record.
+-- Nothing here was applied to the database to make this correction. The three
+-- columns and the tag_batch_jobs table are NOT created by this history repair.
+-- Maintenance workflows that still require them are not runnable against the
+-- verified live schema and need a separate owner-approved decision: update or
+-- retire those workflows, or create the objects in a new forward migration if
+-- that work is revived. This migration-history repair makes no such decision.
 -- ─────────────────────────────────────────────────────────────────────────────
 --
 -- STRICTLY ADDITIVE and REVERSIBLE. The old `tags` / `fts` columns and every
