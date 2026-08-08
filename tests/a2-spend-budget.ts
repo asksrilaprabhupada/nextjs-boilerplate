@@ -1,17 +1,21 @@
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
   fsyncSync,
   openSync,
   readFileSync,
+  renameSync,
   unlinkSync,
   writeSync,
 } from "node:fs";
+import { hostname } from "node:os";
+import { dirname } from "node:path";
 
-export const A2_SPEND_LEDGER_SCHEMA_VERSION = "a2-spend-ledger-v1";
+export const A2_SPEND_LEDGER_SCHEMA_VERSION = "a2-spend-ledger-v3";
 
 const MICRO_USD_PER_USD = 1_000_000;
-const TOKENS_PER_COHERE_CHUNK = 500;
+const TOKENS_PER_COHERE_BILLING_CHUNK = 500;
 
 /**
  * These ceilings make the comparison fail closed before a paid row starts.
@@ -28,13 +32,19 @@ export const A2_BUDGET_DEFINITION = Object.freeze({
   geminiMaxOutputTokensPerAttempt: 1_600,
   voyageModel: "voyage-context-4",
   voyageUsdPerMillionTokensCeiling: 0.18,
-  voyageSubqueriesPerRow: 5,
-  voyageSubqueryUtf8BytesCeiling: 640,
+  // The contextual-embeddings endpoint permits at most 120K tokens in one
+  // request. Reserve that full provider limit: `input_type: "query"` adds a
+  // server-side instruction to every input, so raw client bytes alone are not
+  // a complete billing ceiling.
+  voyageRequestTokenCeiling: 120_000,
   cohereModel: "rerank-v4.0-pro",
   cohereMaxTokensPerDocument: 4_096,
   cohereSearchUnitDocumentLimit: 100,
   cohereRequestDocumentCeilings: [200, 200, 201, 400] as const,
-  cohereTokensPerLongDocumentChunk: TOKENS_PER_COHERE_CHUNK,
+  cohereTokensPerBillingChunk: TOKENS_PER_COHERE_BILLING_CHUNK,
+  // Rerank v4 documents use four reserved tokens. Keeping them out of each
+  // 500-token billing chunk is conservative even if billing excludes them.
+  cohereReservedTokensPerBillingChunk: 4,
 });
 
 export interface A2RowBudgetReservation {
@@ -64,11 +74,22 @@ export interface A2RowCharge {
   completeUsage: boolean;
 }
 
+export interface A2RunLockMetadata {
+  schemaVersion: "a2-run-lock-v2";
+  runId: string;
+  definitionSha256: string;
+  lockId: string;
+  pid: number;
+  hostname: string;
+  startedAt: string;
+}
+
 interface LedgerHeader {
   type: "header";
   schemaVersion: typeof A2_SPEND_LEDGER_SCHEMA_VERSION;
   runId: string;
   definitionSha256: string;
+  manifestSha256: string;
   maxMicrousd: number;
 }
 
@@ -124,9 +145,19 @@ export function reserveA2Row(
     throw new Error("Cohere search-unit rate is invalid");
   }
   const questionUtf8Bytes = Buffer.byteLength(question, "utf8");
+  // Cohere bills each query plus up-to-100 documents as one search unit while
+  // query-document pairs above 500 tokens are split into additional billable
+  // chunks. The query is repeated in every chunk. UTF-8 bytes are a safe token
+  // ceiling, so reserve document capacity after subtracting the whole query
+  // and v4's four reserved tokens from every 500-token chunk.
+  const documentTokensPerBillingChunk = TOKENS_PER_COHERE_BILLING_CHUNK
+    - questionUtf8Bytes
+    - A2_BUDGET_DEFINITION.cohereReservedTokensPerBillingChunk;
+  if (documentTokensPerBillingChunk <= 0) {
+    throw new Error("A2 question is too long for the conservative Cohere billing ceiling");
+  }
   const chunksPerDocument = Math.ceil(
-    (A2_BUDGET_DEFINITION.cohereMaxTokensPerDocument + questionUtf8Bytes)
-      / TOKENS_PER_COHERE_CHUNK,
+    A2_BUDGET_DEFINITION.cohereMaxTokensPerDocument / documentTokensPerBillingChunk,
   );
   const cohereSearchUnitsCeiling = A2_BUDGET_DEFINITION.cohereRequestDocumentCeilings
     .reduce((total, documentCount) => total + Math.ceil(
@@ -145,11 +176,8 @@ export function reserveA2Row(
       * A2_BUDGET_DEFINITION.geminiMaxOutputTokensPerAttempt,
     A2_BUDGET_DEFINITION.geminiOutputUsdPerMillionTokens,
   );
-  const voyageInputBytesCeiling = questionUtf8Bytes
-    + A2_BUDGET_DEFINITION.voyageSubqueriesPerRow
-      * A2_BUDGET_DEFINITION.voyageSubqueryUtf8BytesCeiling;
   const voyageMicrousd = pricedMicrousd(
-    voyageInputBytesCeiling,
+    A2_BUDGET_DEFINITION.voyageRequestTokenCeiling,
     A2_BUDGET_DEFINITION.voyageUsdPerMillionTokensCeiling,
   );
   return {
@@ -225,25 +253,92 @@ export class A2RunLock {
   private constructor(
     readonly path: string,
     private readonly descriptor: number,
+    readonly recovered: boolean,
+    readonly recoveredArchivePath: string | null,
   ) {}
 
-  static acquire(path: string): A2RunLock {
+  static acquire(
+    path: string,
+    input: {
+      runId: string;
+      definitionSha256: string;
+      mode: "run" | "recover";
+      staleLockApproval?: string;
+    },
+  ): A2RunLock {
+    let recovered = false;
+    let recoveredArchivePath: string | null = null;
     let descriptor: number;
     try {
       descriptor = openSync(path, "wx");
-    } catch {
-      throw new Error(
-        "A2 run lock already exists; concurrent or crash recovery needs a fresh owner decision",
-      );
+    } catch (error) {
+      if (!existsSync(path)) throw error;
+      const raw = readFileSync(path, "utf8");
+      const requiredApproval = staleLockApproval(raw);
+      let prior: A2RunLockMetadata;
+      try {
+        prior = JSON.parse(raw) as A2RunLockMetadata;
+      } catch {
+        throw new Error("A2 run lock is malformed; manual audit is required");
+      }
+      if (prior.schemaVersion !== "a2-run-lock-v2"
+        || prior.runId !== input.runId
+        || prior.definitionSha256 !== input.definitionSha256
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(prior.lockId)
+        || !Number.isSafeInteger(prior.pid)
+        || prior.pid <= 0
+        || typeof prior.hostname !== "string"
+        || typeof prior.startedAt !== "string"
+        || !Number.isFinite(Date.parse(prior.startedAt))) {
+        throw new Error("A2 run lock does not match this run; manual audit is required");
+      }
+      if (input.mode !== "recover" || input.staleLockApproval !== requiredApproval) {
+        throw new Error(
+          `A2 run lock already exists; use recovery-only mode with ${requiredApproval}`,
+        );
+      }
+      if (prior.hostname !== hostname()) {
+        throw new Error("A2 run lock belongs to another host; automatic recovery is refused");
+      }
+      if (processIsAlive(prior.pid)) {
+        throw new Error("A2 run lock owner is still alive; recovery is refused");
+      }
+      recoveredArchivePath = `${path}.recovered-${prior.lockId}`;
+      if (existsSync(recoveredArchivePath)) {
+        throw new Error("A2 recovered-lock archive already exists; manual audit is required");
+      }
+      renameSync(path, recoveredArchivePath);
+      recovered = true;
+      try {
+        descriptor = openSync(path, "wx");
+      } catch (recoveryError) {
+        try { renameSync(recoveredArchivePath, path); } catch { /* preserve both clues */ }
+        throw recoveryError;
+      }
     }
     try {
-      const body = Buffer.from("A2 paid evaluator lock\n", "utf8");
-      writeSync(descriptor, body, 0, body.length);
+      const metadata: A2RunLockMetadata = {
+        schemaVersion: "a2-run-lock-v2",
+        runId: input.runId,
+        definitionSha256: input.definitionSha256,
+        lockId: randomUUID(),
+        pid: process.pid,
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+      };
+      const body = Buffer.from(`${JSON.stringify(metadata)}\n`, "utf8");
+      let written = 0;
+      while (written < body.length) {
+        written += writeSync(descriptor, body, written, body.length - written);
+      }
       fsyncSync(descriptor);
-      return new A2RunLock(path, descriptor);
+      return new A2RunLock(path, descriptor, recovered, recoveredArchivePath);
     } catch (error) {
       closeSync(descriptor);
       try { unlinkSync(path); } catch { /* fail closed on the original error */ }
+      if (recoveredArchivePath) {
+        try { renameSync(recoveredArchivePath, path); } catch { /* manual audit remains fail closed */ }
+      }
       throw error;
     }
   }
@@ -253,6 +348,77 @@ export class A2RunLock {
     this.released = true;
     closeSync(this.descriptor);
     unlinkSync(this.path);
+  }
+
+  retainForRecovery(): void {
+    if (this.released) return;
+    this.released = true;
+    closeSync(this.descriptor);
+  }
+
+  restoreRecoveredLock(): void {
+    if (this.released) return;
+    if (!this.recovered || !this.recoveredArchivePath) {
+      throw new Error("A2 cannot restore a lock that was not recovered");
+    }
+    this.released = true;
+    closeSync(this.descriptor);
+    unlinkSync(this.path);
+    renameSync(this.recoveredArchivePath, this.path);
+  }
+}
+
+function processIsAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return !(error instanceof Error && "code" in error && error.code === "ESRCH");
+  }
+}
+
+export function staleLockApproval(rawLock: string): string {
+  const digest = createHash("sha256").update(rawLock).digest("hex");
+  return `I_APPROVE_STALE_LOCK_RECOVERY:${digest}`;
+}
+
+export function a2RetryApproval(retryManifest: unknown): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify(retryManifest))
+    .digest("hex");
+  return `I_APPROVE_PAID_A2_RETRY:${digest}`;
+}
+
+export function writeJsonDurably(path: string, value: unknown, exclusive = false): void {
+  if (exclusive && existsSync(path)) throw new Error(`Refusing to overwrite ${path}`);
+  const temporaryPath = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  const body = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  let descriptor: number | null = null;
+  try {
+    descriptor = openSync(temporaryPath, "wx");
+    let written = 0;
+    while (written < body.length) {
+      written += writeSync(descriptor, body, written, body.length - written);
+    }
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = null;
+    if (exclusive && existsSync(path)) throw new Error(`Refusing to overwrite ${path}`);
+    renameSync(temporaryPath, path);
+    // Reopen and parse the target so a successful return proves a complete JSON
+    // generation is now visible at the final path.
+    JSON.parse(readFileSync(path, "utf8"));
+    try {
+      const directory = openSync(dirname(path), "r");
+      try { fsyncSync(directory); } finally { closeSync(directory); }
+    } catch {
+      // Windows can reject directory handles. The file itself is already fsynced.
+    }
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+    if (existsSync(temporaryPath)) {
+      try { unlinkSync(temporaryPath); } catch { /* retain the original failure */ }
+    }
   }
 }
 
@@ -289,12 +455,18 @@ export class A2SpendLedger {
     readonly path: string,
     readonly runId: string,
     readonly definitionSha256: string,
+    readonly manifestSha256: string,
     readonly maxMicrousd: number,
   ) {}
 
   static create(
     path: string,
-    input: { runId: string; definitionSha256: string; maxMicrousd: number },
+    input: {
+      runId: string;
+      definitionSha256: string;
+      manifestSha256: string;
+      maxMicrousd: number;
+    },
   ): A2SpendLedger {
     if (existsSync(path)) throw new Error("A2 spend ledger already exists");
     assertSafeMicrousd(input.maxMicrousd, "A2 maximum spend");
@@ -304,15 +476,27 @@ export class A2SpendLedger {
       schemaVersion: A2_SPEND_LEDGER_SCHEMA_VERSION,
       runId: input.runId,
       definitionSha256: input.definitionSha256,
+      manifestSha256: input.manifestSha256,
       maxMicrousd: input.maxMicrousd,
     };
     appendDurably(path, header, true);
-    return new A2SpendLedger(path, input.runId, input.definitionSha256, input.maxMicrousd);
+    return new A2SpendLedger(
+      path,
+      input.runId,
+      input.definitionSha256,
+      input.manifestSha256,
+      input.maxMicrousd,
+    );
   }
 
   static open(
     path: string,
-    expected: { runId: string; definitionSha256: string; maxMicrousd: number },
+    expected: {
+      runId: string;
+      definitionSha256: string;
+      manifestSha256: string;
+      maxMicrousd: number;
+    },
   ): A2SpendLedger {
     const entries = parseLedger(path);
     const header = entries[0];
@@ -320,6 +504,7 @@ export class A2SpendLedger {
       || header.schemaVersion !== A2_SPEND_LEDGER_SCHEMA_VERSION
       || header.runId !== expected.runId
       || header.definitionSha256 !== expected.definitionSha256
+      || header.manifestSha256 !== expected.manifestSha256
       || header.maxMicrousd !== expected.maxMicrousd) {
       throw new Error("A2 spend ledger header differs from this approved run");
     }
@@ -327,6 +512,7 @@ export class A2SpendLedger {
       path,
       header.runId,
       header.definitionSha256,
+      header.manifestSha256,
       header.maxMicrousd,
     );
     for (const entry of entries.slice(1)) ledger.replay(entry);
@@ -335,8 +521,8 @@ export class A2SpendLedger {
 
   private replay(entry: LedgerEntry): void {
     if (entry.type === "header") throw new Error("A2 spend ledger has more than one header");
-    if (typeof entry.rowKey !== "string" || entry.rowKey.length === 0) {
-      throw new Error("A2 spend ledger row key is invalid");
+    if (typeof entry.rowKey !== "string" || !/^.+:[1-9]\d*@[1-9]\d*$/u.test(entry.rowKey)) {
+      throw new Error("A2 spend ledger attempt key is invalid");
     }
     if (entry.type === "reserve") {
       assertSafeMicrousd(entry.reservedMicrousd, "A2 row reservation");
@@ -367,6 +553,9 @@ export class A2SpendLedger {
   reserve(rowKey: string, reservedMicrousd: number): void {
     assertSafeMicrousd(reservedMicrousd, "A2 row reservation");
     if (reservedMicrousd === 0) throw new Error("A2 row reservation must be positive");
+    if (!/^.+:[1-9]\d*@[1-9]\d*$/u.test(rowKey)) {
+      throw new Error("A2 spend ledger attempt key is invalid");
+    }
     if (this.rows.has(rowKey)) throw new Error(`A2 paid row already has a ledger entry: ${rowKey}`);
     if (this.committedMicrousd() + reservedMicrousd > this.maxMicrousd) {
       throw new Error("A2 stopped before the next paid row because its reservation would exceed the approved maximum");
@@ -418,5 +607,9 @@ export class A2SpendLedger {
 
   rowState(rowKey: string): Readonly<LedgerRowState> | null {
     return this.rows.get(rowKey) ?? null;
+  }
+
+  sha256(): string {
+    return createHash("sha256").update(readFileSync(this.path)).digest("hex");
   }
 }
