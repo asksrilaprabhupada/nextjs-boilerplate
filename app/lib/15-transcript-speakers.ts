@@ -25,14 +25,54 @@ export interface TranscriptSegment {
 
 export const CANONICAL_PRABHUPADA_SPEAKER = "Śrīla Prabhupāda";
 
+export const UNKNOWN_TRANSCRIPT_SPEAKER = "Speaker not identified";
+
 export interface TranscriptSpeakerAttribution {
-  /** Unique explicit names, in first-spoken order. */
+  /** Unique proved names or the unknown sentinel, in first-appearance order. */
   speakers: string[];
   /** Compact value for the existing single speaker wire field. */
   displaySpeaker: string | null;
   /** True when any displayed bytes have no explicit line-level speaker. */
   unidentified: boolean;
   confidence: "labelled" | "unknown";
+}
+
+/**
+ * Convert the authoritative database array into the existing string-valued
+ * speaker field. NULL (not processed), an empty array (processed but unproved),
+ * or malformed data all fail closed as unidentified. First-appearance order is
+ * preserved exactly as stored and body text is never consulted.
+ */
+export function storedTranscriptSpeakerAttribution(
+  value: unknown,
+): TranscriptSpeakerAttribution {
+  const unidentifiedResult: TranscriptSpeakerAttribution = {
+    speakers: [],
+    displaySpeaker: null,
+    unidentified: true,
+    confidence: "unknown",
+  };
+  if (!Array.isArray(value)) return unidentifiedResult;
+
+  const speakers: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== "string" || !item.trim()) return unidentifiedResult;
+    const name = item.trim().normalize("NFC");
+    const key = name.toLocaleLowerCase("en");
+    if (seen.has(key)) return unidentifiedResult;
+    seen.add(key);
+    speakers.push(name);
+  }
+
+  const unidentified =
+    speakers.length === 0 || speakers.includes(UNKNOWN_TRANSCRIPT_SPEAKER);
+  return {
+    speakers,
+    displaySpeaker: speakers.length > 0 ? speakers.join(" · ") : null,
+    unidentified,
+    confidence: unidentified ? "unknown" : "labelled",
+  };
 }
 
 /**
@@ -229,7 +269,7 @@ export function transcriptSpeakerAttribution(text: string): TranscriptSpeakerAtt
 
   return {
     speakers,
-    displaySpeaker: speakers.length > 0 ? speakers.join(", ") : null,
+    displaySpeaker: speakers.length > 0 ? speakers.join(" · ") : null,
     unidentified,
     confidence: unidentified ? "unknown" : "labelled",
   };

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CANONICAL_PRABHUPADA_SPEAKER,
   segmentTranscriptParagraph,
+  storedTranscriptSpeakerAttribution,
   transcriptSpeakerAttribution,
 } from "@/app/lib/15-transcript-speakers";
 import { buildFoldPreviewHtml } from "@/app/lib/10-passage-fold";
@@ -77,10 +78,26 @@ describe("transcript speaker attribution", () => {
   it("reports every identified speaker in first-appearance order", () => {
     expect(transcriptSpeakerAttribution(mixed)).toEqual({
       speakers: ["Dr. Patel", CANONICAL_PRABHUPADA_SPEAKER, "Guest"],
-      displaySpeaker: `Dr. Patel, ${CANONICAL_PRABHUPADA_SPEAKER}, Guest`,
+      displaySpeaker: `Dr. Patel · ${CANONICAL_PRABHUPADA_SPEAKER} · Guest`,
       unidentified: false,
       confidence: "labelled",
     });
+  });
+
+  it("joins the stored ordered array without adding a public response field", () => {
+    expect(
+      storedTranscriptSpeakerAttribution([
+        CANONICAL_PRABHUPADA_SPEAKER,
+        "Devotees",
+      ]),
+    ).toEqual({
+      speakers: [CANONICAL_PRABHUPADA_SPEAKER, "Devotees"],
+      displaySpeaker: `${CANONICAL_PRABHUPADA_SPEAKER} · Devotees`,
+      unidentified: false,
+      confidence: "labelled",
+    });
+    expect(storedTranscriptSpeakerAttribution([]).displaySpeaker).toBeNull();
+    expect(storedTranscriptSpeakerAttribution(null).confidence).toBe("unknown");
   });
 
   it("keeps a leading continuation unidentified alongside proved names", () => {
@@ -114,9 +131,30 @@ describe("transcript speaker attribution", () => {
 
 describe("complete transcript verification", () => {
   const rows = [
-    { id: "mixed", title: "Room Conversation", body_text: mixed, date: "1974-01-01", location: "Bombay" },
-    { id: "guest", title: "Room Conversation", body_text: "Dr. Patel: Guest-only evidence.", date: "1974-01-01", location: "Bombay" },
-    { id: "unknown", title: "Room Conversation", body_text: "Wholly unlabelled continuation.", date: "1974-01-01", location: "Bombay" },
+    {
+      id: "mixed",
+      title: "Room Conversation",
+      body_text: mixed,
+      date: "1974-01-01",
+      location: "Bombay",
+      speaker_names: ["Dr. Patel", CANONICAL_PRABHUPADA_SPEAKER, "Guest"],
+    },
+    {
+      id: "guest",
+      title: "Room Conversation",
+      body_text: "Dr. Patel: Guest-only evidence.",
+      date: "1974-01-01",
+      location: "Bombay",
+      speaker_names: ["Dr. Patel"],
+    },
+    {
+      id: "unknown",
+      title: "Room Conversation",
+      body_text: "Wholly unlabelled continuation.",
+      date: "1974-01-01",
+      location: "Bombay",
+      speaker_names: [],
+    },
   ];
 
   it("keeps mixed, guest-only, and unlabelled body text byte-for-byte", async () => {
@@ -131,7 +169,7 @@ describe("complete transcript verification", () => {
     expect(out.dropped).toEqual([]);
     expect(out.verified.map((passage) => passage.text)).toEqual(rows.map((row) => row.body_text));
     expect(out.verified.map((passage) => passage.speaker)).toEqual([
-      `Dr. Patel, ${CANONICAL_PRABHUPADA_SPEAKER}, Guest`,
+      `Dr. Patel · ${CANONICAL_PRABHUPADA_SPEAKER} · Guest`,
       "Dr. Patel",
       null,
     ]);
@@ -140,7 +178,7 @@ describe("complete transcript verification", () => {
       "labelled",
       "unknown",
     ]);
-    expect(columnsSeen[0]).not.toContain("speaker");
+    expect(columnsSeen[0]).toContain("speaker_names");
   });
 
   it("still fails closed when the authoritative row changed", async () => {
@@ -152,6 +190,29 @@ describe("complete transcript verification", () => {
     );
     expect(out.verified).toEqual([]);
     expect(out.dropped).toEqual([{ passageKey: "lecture:mixed", reason: "text_mismatch" }]);
+  });
+
+  it("uses proved stored inheritance for an unlabelled continuation", async () => {
+    const body = "This continuation has no line-level speaker prefix.";
+    const selection = selected(candidate("inherited", body));
+    const out = await refetchAndVerify(
+      fakeDb([
+        {
+          id: "inherited",
+          title: "Room Conversation",
+          body_text: body,
+          date: "1975-01-01",
+          location: "Vṛndāvana",
+          speaker_names: [CANONICAL_PRABHUPADA_SPEAKER],
+        },
+      ]) as never,
+      [selection],
+      { requestId: "req-inherited-transcript" },
+    );
+
+    expect(out.dropped).toEqual([]);
+    expect(out.verified[0]?.speaker).toBe(CANONICAL_PRABHUPADA_SPEAKER);
+    expect(out.verified[0]?.speakerConfidence).toBe("labelled");
   });
 
   it("lets a relevant guest sentence lead a long folded preview", () => {

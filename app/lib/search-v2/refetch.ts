@@ -24,7 +24,7 @@ import { unwrapOrThrow, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
 import { normalizeVerbatim } from "@/app/lib/17-verbatim-validator";
 import { formatVerseReference } from "@/app/lib/search-v2/citation";
 import type { SelectedPassage } from "@/app/lib/search-v2/select";
-import { transcriptSpeakerAttribution } from "@/app/lib/15-transcript-speakers";
+import { storedTranscriptSpeakerAttribution } from "@/app/lib/15-transcript-speakers";
 
 /** Namespace → the table and columns that namespace is allowed to resolve to. */
 const SOURCE_TABLES = {
@@ -52,9 +52,10 @@ export interface VerifiedPassage {
   speaker: string | null;
   /**
    * How the speaker value was established (transcripts only):
-   * 'labelled' — an explicit "Name:" prefix in the source text;
-   * 'unknown'  — no label; NOT assumed to be Śrīla Prabhupāda's words.
-   * ('inherited' is reserved for a future continuation-paragraph pass.)
+   * 'labelled' — proved by the reviewed whole-transcript mapping, either from
+   *              an explicit boundary or safe continuation inheritance;
+   * 'unknown'  — no speaker was proved, or some portion remains unidentified.
+   * ('inherited' remains accepted for older cached internal values.)
    */
   speakerConfidence: "labelled" | "inherited" | "unknown" | null;
   recipient: string | null;
@@ -110,7 +111,7 @@ const COLUMNS: Record<SourceNamespace, string> = {
     "id, scripture, chapter_number, verse_number, chunk_number, body_text, verse_id, verses(vedabase_url, chapters(chapter_number, canto_or_division))",
   book: "id, book_slug, paragraph_number, body_text, vedabase_url, vedabase_url_precise, chapter_id",
   lecture:
-    "id, title, content_type, date, location, occasion, scripture_ref, body_text, vedabase_url, transcript_id",
+    "id, title, content_type, date, location, occasion, scripture_ref, body_text, vedabase_url, transcript_id, speaker_names",
   letter: "id, title, date, location, recipient, body_text, vedabase_url, letter_id",
 };
 
@@ -177,8 +178,8 @@ export async function refetchAndVerify(
       });
     } catch {
       // A failed verification read removes the items. It never falls back to
-      // the retrieval copy or retries a schema variant — body_text itself is
-      // the attribution authority and needs no speaker columns.
+      // the retrieval copy or retries a schema variant: body_text and the one
+      // reviewed speaker_names array must come from the same fresh source row.
       for (const g of group) {
         dropped.push({ passageKey: g.candidate.passage_key, reason: "fetch_failed" });
       }
@@ -317,7 +318,7 @@ function buildVerified(
         vedabaseUrl: str(row.vedabase_url_precise) ?? str(row.vedabase_url),
       };
     case "lecture": {
-      const attribution = transcriptSpeakerAttribution(text);
+      const attribution = storedTranscriptSpeakerAttribution(row.speaker_names);
       return {
         ...base,
         reference: str(row.title) ?? str(row.content_type),

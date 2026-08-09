@@ -7,19 +7,22 @@
  * context framing, and copied passages so those surfaces cannot drift.
  */
 
+import { UNKNOWN_TRANSCRIPT_SPEAKER } from "@/app/lib/15-transcript-speakers";
+
 export const UNIDENTIFIED_SPEAKER_NOTICE =
   "Speaker not identified — part of a recorded conversation";
 
 /**
  * `Dr. Patel` and `Dr. Patel:` both display as exactly `Dr. Patel:`. The
- * server's compact multi-speaker value is comma-separated, so each evidenced
- * name receives its own colon instead of looking like one compound name.
+ * The server's compact multi-speaker value uses a middle-dot separator. Legacy
+ * comma-separated values remain readable during rollout. The unknown sentinel
+ * is rendered by the dedicated notice rather than as a person's name.
  */
 export function transcriptSpeakerDisplays(name: string | null | undefined): string[] {
   return (name || "")
-    .split(/,\s*/u)
+    .split(/\s+·\s+|,\s*/u)
     .map((part) => part.trim().replace(/[\s:：]+$/u, ""))
-    .filter(Boolean)
+    .filter((part) => Boolean(part) && part !== UNKNOWN_TRANSCRIPT_SPEAKER)
     .map((part) => `${part}:`);
 }
 
