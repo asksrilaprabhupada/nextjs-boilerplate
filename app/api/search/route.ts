@@ -181,7 +181,7 @@ function toWireStage(onStage: OnStage): (stage: PipelineStage, info?: PipelineSt
  * and carries its own correlation id.
  */
 interface CachedSearchResponse {
-  schema: "search-response-v6";
+  schema: "search-response-v7";
   result: Record<string, unknown>;
   resultFields: SearchRunResultFields;
 }
@@ -192,7 +192,7 @@ async function readCache(key: string): Promise<CachedSearchResponse | null> {
     const cached = await store.get<unknown>(key);
     if (!cached || typeof cached !== "object") return null;
     const envelope = cached as Partial<CachedSearchResponse>;
-    if (envelope.schema !== "search-response-v6"
+    if (envelope.schema !== "search-response-v7"
         || !envelope.result || typeof envelope.result !== "object"
         || !envelope.resultFields || typeof envelope.resultFields !== "object") {
       return null;
@@ -217,7 +217,7 @@ async function writeCache(
     void _rid;
     void _rawQuestion;
     const envelope: CachedSearchResponse = {
-      schema: "search-response-v6",
+      schema: "search-response-v7",
       result: cacheable,
       resultFields,
     };
@@ -271,7 +271,6 @@ async function getOrComputeResult(
   query: string,
   requestId: string,
   onStage?: OnStage,
-  speakerOnly = false,
   verificationMode: PreviewVerificationMode | null = null,
   snapshotSession: SnapshotSession | null = null,
 ): Promise<{
@@ -290,12 +289,11 @@ async function getOrComputeResult(
   const partialStageDurationsMs: Record<string, number> = {};
 
   try {
-    // Keyed on the EXACT normalised question plus corpus version (and the
-    // speaker filter, which changes what retrieval may return). A semantically
+    // Keyed on the EXACT normalised question plus corpus version. A semantically
     // close but different question is a different question and never reuses this
     // entry — answering one devotee's question with another's evidence is how
     // words get put in Śrīla Prabhupāda's mouth by accident.
-    const key = cacheKeys.response(query, speakerOnly ? "sp-only" : undefined);
+    const key = cacheKeys.response(query);
     const cacheStartedAt = now();
     // Controlled preview verification must exercise the pipeline, never replay
     // or populate an ordinary response-cache entry.
@@ -313,10 +311,7 @@ async function getOrComputeResult(
         stageDurationsMs: { cache: cacheDurationMs },
         sourceDurationsMs: {},
         telemetry: markPreviewVerification(
-          cacheHitTechnicalTelemetry(
-            questionHash,
-            speakerOnly ? "prabhupada_segments" : "all",
-          ),
+          cacheHitTechnicalTelemetry(questionHash),
           verificationMode,
         ),
       });
@@ -336,7 +331,6 @@ async function getOrComputeResult(
       onStageDuration: (stage, durationMs) => {
         partialStageDurationsMs[stage] = durationMs;
       },
-      speakerOnly,
       captureDiagnostics: snapshotSession !== null,
     });
     const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
@@ -374,11 +368,7 @@ async function getOrComputeResult(
       searchLogId: searchRun?.rowId ?? null,
     };
   } catch (err) {
-    const failure = failureTechnicalTelemetry(
-      questionHash,
-      err,
-      speakerOnly ? "prabhupada_segments" : "all",
-    );
+    const failure = failureTechnicalTelemetry(questionHash, err);
     const stageDurationsMs = { ...partialStageDurationsMs };
     if (!(failure.failedStage in stageDurationsMs)) {
       const observedFailureMs = isSearchError(err) && err.totalDurationMs !== null
@@ -481,6 +471,23 @@ export async function prepareSuccessfulResponse(
 // =====================================================
 // HANDLERS — plain JSON (default) and SSE (?stream=1)
 // =====================================================
+
+/**
+ * The request identity has exactly one content-bearing input: `q`. Unknown
+ * query parameters are deliberately ignored so old bookmarks cannot select a
+ * different evidence policy or cache partition.
+ */
+export function parseSearchRequestUrl(requestUrl: string): {
+  rawQuery: string | null;
+  wantStream: boolean;
+} {
+  const searchParams = new URL(requestUrl).searchParams;
+  return {
+    rawQuery: searchParams.get("q"),
+    wantStream: searchParams.get("stream") === "1",
+  };
+}
+
 /**
  * Maps a thrown pipeline failure to its wire form.
  *
@@ -524,13 +531,7 @@ export function failureResponseBody(err: unknown, requestId: string): {
 }
 
 export async function GET(request: NextRequest) {
-  const url = new URL(request.url);
-  const rawQuery = url.searchParams.get("q");
-  const wantStream = url.searchParams.get("stream") === "1";
-  // "Śrīla Prabhupāda's words only" — retains only explicit Prabhupāda
-  // speaker segments from recorded talks. The application enforces this even
-  // when an older transcripts RPC ignores the coarse constraint key.
-  const speakerOnly = url.searchParams.get("only_his") === "1";
+  const { rawQuery, wantStream } = parseSearchRequestUrl(request.url);
   let verificationMode: PreviewVerificationMode | null;
   try {
     verificationMode = readPreviewVerificationMode(request);
@@ -562,7 +563,7 @@ export async function GET(request: NextRequest) {
   let snapshotSession: SnapshotSession | null = null;
   if (!inputError) {
     try {
-      snapshotSession = readSnapshotSession(request, { query, speakerOnly });
+      snapshotSession = readSnapshotSession(request, { query });
     } catch {
       console.warn(JSON.stringify({ level: "warn", event: "search.snapshot_session_rejected" }));
       return new Response(JSON.stringify({ error: "Not found." }), {
@@ -582,7 +583,6 @@ export async function GET(request: NextRequest) {
         query,
         requestId,
         undefined,
-        speakerOnly,
         verificationMode,
         snapshotSession,
       );
@@ -647,7 +647,6 @@ export async function GET(request: NextRequest) {
           query,
           requestId,
           onStage,
-          speakerOnly,
           verificationMode,
           snapshotSession,
         );

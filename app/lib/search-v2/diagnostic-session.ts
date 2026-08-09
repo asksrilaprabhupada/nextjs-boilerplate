@@ -2,8 +2,8 @@
  * diagnostic-session.ts - Preview-only owner authorization for exact snapshots.
  *
  * A browser EventSource cannot attach custom headers. The owner therefore signs
- * one POST that mints a short-lived HttpOnly cookie, bound to the exact question
- * and speaker-filter mode. The cookie carries no question or visitor identity.
+ * one POST that mints a short-lived HttpOnly cookie, bound to the exact question.
+ * The cookie carries no question or visitor identity.
  * Ordinary requests have no cookie and cannot enable capture with a query flag.
  */
 import {
@@ -34,19 +34,17 @@ export interface SnapshotRequestLike {
 
 export interface SnapshotTarget {
   query: string;
-  speakerOnly: boolean;
 }
 
 export interface SnapshotSession {
   captureId: string;
   captureIdHash: string;
   questionHash: string;
-  speakerFilter: "all" | "prabhupada_segments";
   expiresAt: number;
 }
 
 interface SnapshotSessionToken extends SnapshotSession {
-  version: "snapshot-session-v1";
+  version: "snapshot-session-v2";
 }
 
 export interface SnapshotAuthOptions {
@@ -82,13 +80,9 @@ function safeHexEqual(actual: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function targetIdentity(target: SnapshotTarget): {
-  questionHash: string;
-  speakerFilter: SnapshotSession["speakerFilter"];
-} {
+function targetIdentity(target: SnapshotTarget): { questionHash: string } {
   return {
     questionHash: fullSha256(normalizeQuestion(target.query)),
-    speakerFilter: target.speakerOnly ? "prabhupada_segments" : "all",
   };
 }
 
@@ -101,13 +95,12 @@ function authorizationPayload(input: {
   const url = new URL(input.request.url);
   const identity = targetIdentity(input.target);
   return [
-    "snapshot-authorization-v1",
+    "snapshot-authorization-v2",
     input.timestamp,
     input.nonce,
     input.request.method.toUpperCase(),
     `${url.origin}${url.pathname}`,
     identity.questionHash,
-    identity.speakerFilter,
   ].join("\n");
 }
 
@@ -160,7 +153,7 @@ export function authorizeSnapshotSession(
 
 function signToken(encoded: string, secret: string): string {
   return createHmac("sha256", secret)
-    .update(`snapshot-session-cookie-v1\n${encoded}`)
+    .update(`snapshot-session-cookie-v2\n${encoded}`)
     .digest("hex");
 }
 
@@ -179,11 +172,10 @@ export function mintSnapshotSession(
   // most one snapshot, without a durable nonce/session table.
   const captureHex = createHmac("sha256", secret)
     .update([
-      "snapshot-capture-id-v1",
+      "snapshot-capture-id-v2",
       authorization.timestamp,
       authorization.nonce,
       identity.questionHash,
-      identity.speakerFilter,
     ].join("\n"))
     .digest("hex")
     .slice(0, 32);
@@ -195,11 +187,10 @@ export function mintSnapshotSession(
     captureHex.slice(20),
   ].join("-");
   const session: SnapshotSessionToken = {
-    version: "snapshot-session-v1",
+    version: "snapshot-session-v2",
     captureId,
     captureIdHash: createHash("sha256").update(captureId).digest("hex"),
     questionHash: identity.questionHash,
-    speakerFilter: identity.speakerFilter,
     expiresAt: nowSeconds + SESSION_TTL_SECONDS,
   };
   const encoded = Buffer.from(JSON.stringify(session), "utf8").toString("base64url");
@@ -245,12 +236,11 @@ export function readSnapshotSession(
   }
   const identity = targetIdentity(target);
   if (
-    parsed.version !== "snapshot-session-v1"
+    parsed.version !== "snapshot-session-v2"
     || !/^[0-9a-f-]{36}$/.test(parsed.captureId)
     || !/^[0-9a-f]{64}$/.test(parsed.captureIdHash)
     || parsed.captureIdHash !== createHash("sha256").update(parsed.captureId).digest("hex")
     || parsed.questionHash !== identity.questionHash
-    || parsed.speakerFilter !== identity.speakerFilter
     || !Number.isSafeInteger(parsed.expiresAt)
     || parsed.expiresAt < nowSeconds
     || parsed.expiresAt > nowSeconds + SESSION_TTL_SECONDS

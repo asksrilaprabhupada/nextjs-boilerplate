@@ -1,6 +1,6 @@
 /**
  * Phase 4 presentation tests — names are attribution, unknown is explicit,
- * copied lectures keep that attribution, and filtered follow-ups stay filtered.
+ * copied lectures keep that attribution, and follow-ups use canonical URLs.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -160,14 +160,8 @@ describe("copied lecture attribution", () => {
 });
 
 describe("search navigation", () => {
-  it("preserves the speaker-only filter for follow-up searches", () => {
-    expect(buildSearchHref("  what is the soul?  ", true)).toBe(
-      "/search?q=what%20is%20the%20soul%3F&only_his=1",
-    );
-  });
-
-  it("omits the filter only when it is explicitly off", () => {
-    expect(buildSearchHref("what is the soul?", false)).toBe(
+  it("builds a canonical question-only follow-up URL", () => {
+    expect(buildSearchHref("  what is the soul?  ")).toBe(
       "/search?q=what%20is%20the%20soul%3F",
     );
   });

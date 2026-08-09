@@ -60,7 +60,7 @@ describe("response key discipline", () => {
     expect(key).toBe(
       cacheKeys.response("  how do i control my MIND  "),
     );
-    expect(key).toMatch(/^response:v6:/);
+    expect(key).toMatch(/^response:v7:/);
   });
 
   it("separates different questions", () => {
@@ -93,6 +93,16 @@ describe("response key discipline", () => {
     const key = cacheKeys.response("what is bhakti");
     expect(key).not.toMatch(/:guided:|:quick:/);
     expect(key.split(":")).toHaveLength(4);
+  });
+
+  it("has one key even if retired callers pass an obsolete variant argument", () => {
+    const legacyCall = cacheKeys.response as unknown as (
+      question: string,
+      obsoleteVariant?: string,
+    ) => string;
+    expect(legacyCall("what is bhakti", "sp-only")).toBe(
+      cacheKeys.response("what is bhakti"),
+    );
   });
 });
 

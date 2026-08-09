@@ -2,8 +2,8 @@
  * Preview-only owner endpoint that mints one exact-search snapshot session.
  *
  * The HMAC is supplied by an owner-side tool, never page JavaScript. The
- * resulting cookie is HttpOnly and bound to the normalized question plus the
- * speaker-filter mode so EventSource can carry it without exposing a secret.
+ * resulting cookie is HttpOnly and bound to the normalized question so
+ * EventSource can carry it without exposing a secret.
  */
 import { NextRequest } from "next/server";
 import {
@@ -29,10 +29,10 @@ export async function POST(request: NextRequest): Promise<Response> {
   }
   const record = body as Record<string, unknown>;
   const query = typeof record.q === "string" ? record.q.trim() : "";
-  if (!query || query.length > MAX_QUERY_CHARS || typeof record.onlyHis !== "boolean") {
+  if (!query || query.length > MAX_QUERY_CHARS) {
     return Response.json({ error: "Invalid request." }, { status: 400 });
   }
-  const target: SnapshotTarget = { query, speakerOnly: record.onlyHis };
+  const target: SnapshotTarget = { query };
 
   try {
     const authorization = authorizeSnapshotSession(request, target);

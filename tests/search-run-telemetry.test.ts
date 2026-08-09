@@ -86,17 +86,6 @@ function telemetryFixture(): SearchTelemetry {
     cutGap: 0.2,
     pinnedExactReference: false,
     droppedOnRefetch: 0,
-    speakerFilter: {
-      mode: "all",
-      rawTranscriptRows: 150,
-      retainedTranscriptRows: 150,
-      droppedTranscriptRows: 0,
-      keptSegments: 0,
-      guestSegmentsRemoved: 0,
-      unknownSegmentsRemoved: 0,
-      additionalTranscriptRowsVerified: 0,
-      additionalTranscriptRowsDropped: 0,
-    },
     degraded: false,
     degradedStages: [],
     sourceRetrieval: [{
@@ -272,8 +261,23 @@ describe("technical telemetry minimization", () => {
     });
   });
 
-  it("records speaker-filter mode and counts without names or transcript text", () => {
-    const telemetry = telemetryFixture();
+  it("does not persist retired speaker-filter state or nested private fields", () => {
+    const telemetry = telemetryFixture() as SearchTelemetry & {
+      speakerFilter: {
+        mode: string;
+        rawTranscriptRows: number;
+        retainedTranscriptRows: number;
+        droppedTranscriptRows: number;
+        keptSegments: number;
+        guestSegmentsRemoved: number;
+        unknownSegmentsRemoved: number;
+        additionalTranscriptRowsVerified: number;
+        additionalTranscriptRowsDropped: number;
+        rawTranscriptText: string;
+        speakerName: string;
+        providerPayload: { secret: string };
+      };
+    };
     telemetry.speakerFilter = {
       mode: "prabhupada_segments",
       rawTranscriptRows: 12,
@@ -284,48 +288,23 @@ describe("technical telemetry minimization", () => {
       unknownSegmentsRemoved: 2,
       additionalTranscriptRowsVerified: 3,
       additionalTranscriptRowsDropped: 0,
+      rawTranscriptText: "private transcript sentinel",
+      speakerName: "private speaker sentinel",
+      providerPayload: { secret: "provider secret sentinel" },
     };
 
     const miss = allowlistedTechnicalTelemetry(telemetry, "miss", startInput.questionHash);
-    const hit = cacheHitTechnicalTelemetry(startInput.questionHash, "prabhupada_segments");
-    const failure = failureTechnicalTelemetry(
-      startInput.questionHash,
-      new Error("private text"),
-      "prabhupada_segments",
-    );
+    const hit = cacheHitTechnicalTelemetry(startInput.questionHash);
+    const failure = failureTechnicalTelemetry(startInput.questionHash, new Error("private text"));
+    const serialized = JSON.stringify({ miss, hit, failure });
 
-    expect(miss).toMatchObject({ speakerFilter: telemetry.speakerFilter });
-    expect(hit).toMatchObject({ speakerFilter: { mode: "prabhupada_segments" } });
-    expect(failure.telemetry).toMatchObject({ speakerFilter: { mode: "prabhupada_segments" } });
-    expect(JSON.stringify({ miss, hit, failure })).not.toContain("Śrīla Prabhupāda");
-  });
-
-  it("strictly allowlists nested speaker-filter fields", () => {
-    const telemetry = telemetryFixture();
-    const runtimeValue = telemetry.speakerFilter as typeof telemetry.speakerFilter & {
-      rawTranscriptText: string;
-      speakerName: string;
-      providerPayload: { secret: string };
-    };
-    runtimeValue.rawTranscriptText = "private transcript sentinel";
-    runtimeValue.speakerName = "private speaker sentinel";
-    runtimeValue.providerPayload = { secret: "provider secret sentinel" };
-
-    const out = allowlistedTechnicalTelemetry(telemetry, "miss", startInput.questionHash);
-    expect(out.speakerFilter).toEqual({
-      mode: "all",
-      rawTranscriptRows: 150,
-      retainedTranscriptRows: 150,
-      droppedTranscriptRows: 0,
-      keptSegments: 0,
-      guestSegmentsRemoved: 0,
-      unknownSegmentsRemoved: 0,
-      additionalTranscriptRowsVerified: 0,
-      additionalTranscriptRowsDropped: 0,
-    });
-    expect(JSON.stringify(out)).not.toContain("private transcript sentinel");
-    expect(JSON.stringify(out)).not.toContain("private speaker sentinel");
-    expect(JSON.stringify(out)).not.toContain("provider secret sentinel");
+    expect(miss).not.toHaveProperty("speakerFilter");
+    expect(hit).not.toHaveProperty("speakerFilter");
+    expect(failure.telemetry).not.toHaveProperty("speakerFilter");
+    expect(serialized).not.toContain("prabhupada_segments");
+    expect(serialized).not.toContain("private transcript sentinel");
+    expect(serialized).not.toContain("private speaker sentinel");
+    expect(serialized).not.toContain("provider secret sentinel");
   });
 
   it("keeps every duration when one source has a fail-open second invocation", () => {

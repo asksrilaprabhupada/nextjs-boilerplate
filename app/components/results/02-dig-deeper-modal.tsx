@@ -5,8 +5,7 @@
  * as a right-side drawer on desktop and a full-height sheet on mobile
  * (sacred-minimalism: warm neutrals, one soft-violet accent, no per-source
  * colors). Features: count-chip content-type filters, Relevance|Date sort,
- * search-within-results, a "His words only" toggle (default ON — NOT-HIS
- * passages show their amber provenance badge when revealed), group mode toggle
+ * search-within-results, group mode toggle
  * (Ranked / By Topic / By Book), multi-select book dropdown, per-type cards
  * with purport/context expanders, copy-with-reference, "Ask about this
  * passage", an honest "Showing X of Y" line, URL-hash state (#deeper=<type>),
@@ -93,11 +92,6 @@ function groupByBook(verses: VerseHit[]): Map<string, VerseHit[]> {
     groups.get(name)!.push(v);
   }
   return groups;
-}
-
-/** True unless the passage is explicitly stamped as not his own words. */
-function isHisWords(h: { authorship?: string }): boolean {
-  return !h.authorship || h.authorship === "HIS";
 }
 
 /** Case-insensitive search-within-results match over a card's visible text. */
@@ -702,7 +696,6 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
   const [groupMode, setGroupMode] = useState<GroupMode>("flat");
   const [sortMode, setSortMode] = useState<SortMode>("relevance");
   const [searchWithin, setSearchWithin] = useState("");
-  const [hisWordsOnly, setHisWordsOnly] = useState(true); // default ON per spec
 
   const panelRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
@@ -787,44 +780,40 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
     [bookCounts]
   );
 
-  /* Apply filters: type · book · His-words-only · search-within */
+  /* Apply filters: type · book · search-within */
   const filteredVerses = useMemo(() => overflowVerses.filter(v => {
     if (typeFilter !== "all" && typeFilter !== "verses") return false;
-    if (hisWordsOnly && !isHisWords(v)) return false;
     if (!matchesSearch(searchWithin, v.translation, v.purport, v.chapter_title, v.scripture, v.verse_number)) return false;
     if (selectedBooks.size === 0) return true;
     return selectedBooks.has(getBookName(v.book_slug || v.scripture?.toLowerCase() || ""));
-  }), [overflowVerses, typeFilter, selectedBooks, hisWordsOnly, searchWithin]);
+  }), [overflowVerses, typeFilter, selectedBooks, searchWithin]);
 
   const filteredProse = useMemo(() => overflowProse.filter(p => {
     if (typeFilter !== "all" && typeFilter !== "prose") return false;
-    if (hisWordsOnly && !isHisWords(p)) return false;
     if (!matchesSearch(searchWithin, p.body_text, p.chapter_title, getBookName(p.book_slug))) return false;
     if (selectedBooks.size === 0) return true;
     return selectedBooks.has(getBookName(p.book_slug || ""));
-  }), [overflowProse, typeFilter, selectedBooks, hisWordsOnly, searchWithin]);
+  }), [overflowProse, typeFilter, selectedBooks, searchWithin]);
 
   const filteredTranscripts = useMemo(() => {
     const base = overflowTranscripts.filter(t => {
       if (typeFilter !== "all" && typeFilter !== "lectures") return false;
-      if (hisWordsOnly && !isHisWords(t)) return false;
       if (!matchesSearch(searchWithin, t.body_text, t.title, t.location)) return false;
       if (selectedBooks.size === 0) return true;
       return selectedBooks.has("Lectures");
     });
     return sortMode === "date" ? sortByDate(base) : base;
-  }, [overflowTranscripts, typeFilter, selectedBooks, hisWordsOnly, searchWithin, sortMode]);
+  }, [overflowTranscripts, typeFilter, selectedBooks, searchWithin, sortMode]);
 
   const filteredLetters = useMemo(() => {
     const base = overflowLetters.filter(l => {
       if (typeFilter !== "all" && typeFilter !== "letters") return false;
-      if (hisWordsOnly && !isHisWords(l)) return false;
       if (!matchesSearch(searchWithin, l.body_text, l.recipient)) return false;
       if (selectedBooks.size === 0) return true;
       return selectedBooks.has("Letters");
     });
     return sortMode === "date" ? sortByDate(base) : base;
-  }, [overflowLetters, typeFilter, selectedBooks, hisWordsOnly, searchWithin, sortMode]);
+  }, [overflowLetters, typeFilter, selectedBooks, searchWithin, sortMode]);
 
   /* Grouped data */
   const topicGroups = useMemo(() => groupByTopic(filteredVerses), [filteredVerses]);
@@ -974,7 +963,7 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
               )}
             </div>
 
-            {/* ─── Second row: search-within + His-words-only ─── */}
+            {/* ─── Second row: search within the complete evidence ─── */}
             <div style={{ padding: "10px 0", borderBottom: "1px solid var(--border-hair)", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <input
                 type="search"
@@ -989,15 +978,6 @@ export default function DigDeeperModal({ overflowVerses, overflowProse, overflow
                   border: "1px solid var(--border-hair)", borderRadius: "var(--radius-sm)", outline: "none",
                 }}
               />
-              <label className="font-body" style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: "var(--ink-muted)", cursor: "pointer", userSelect: "none" }}>
-                <input
-                  type="checkbox"
-                  checked={hisWordsOnly}
-                  onChange={e => setHisWordsOnly(e.target.checked)}
-                  style={{ accentColor: "var(--accent)", width: 15, height: 15, cursor: "pointer" }}
-                />
-                His words only
-              </label>
             </div>
           </div>
 

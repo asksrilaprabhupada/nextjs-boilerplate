@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { gunzipSync } from "node:zlib";
+import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
+import { POST as createDiagnosticSession } from "@/app/api/search/diagnostic-session/route";
 import {
   SNAPSHOT_NONCE_HEADER,
   SNAPSHOT_SESSION_COOKIE,
@@ -18,6 +21,7 @@ import {
   persistSearchSnapshot,
   type SnapshotPersistence,
 } from "@/app/lib/search-v2/search-snapshot";
+import { PREVIEW_VERIFICATION_SECRET_ENV } from "@/app/lib/search-v2/preview-verification";
 import type { PipelineDiagnostics, SearchTelemetry } from "@/app/lib/search-v2/pipeline";
 import { prepareSuccessfulResponse } from "@/app/api/search/route";
 
@@ -26,7 +30,7 @@ const nowSeconds = 1785686400;
 const timestamp = String(nowSeconds);
 const nonce = "snapshot-session-nonce-0001";
 const url = "https://preview.example/api/search/diagnostic-session";
-const target = { query: "a private spiritual question", speakerOnly: true };
+const target = { query: "a private spiritual question" };
 const authorization = { timestamp, nonce };
 
 function signedAuthorization() {
@@ -69,15 +73,65 @@ describe("snapshot diagnostic session", () => {
     expect(cookie).toContain("Secure");
     expect(cookie).toContain("SameSite=Strict");
     expect(cookie).toContain("Path=/api/search");
-    expect(Buffer.from(token.split(".")[0], "base64url").toString("utf8"))
-      .not.toContain(target.query);
+    const decodedToken = Buffer.from(token.split(".")[0], "base64url").toString("utf8");
+    expect(decodedToken).toContain("snapshot-session-v2");
+    expect(decodedToken).not.toContain(target.query);
+    expect(decodedToken).not.toContain("speakerFilter");
 
     const read = readSnapshotSession({
       method: "GET",
-      url: "https://preview.example/api/search?q=a%20private%20spiritual%20question&only_his=1",
+      url: "https://preview.example/api/search?q=a%20private%20spiritual%20question",
       headers: new Headers({ cookie }),
     }, target, { environment: "preview", secret, nowSeconds: nowSeconds + 1 });
     expect(read).toMatchObject(session);
+  });
+
+  it("ignores legacy and unrelated JSON fields when minting a query-only session", async () => {
+    const previousEnvironment = process.env.VERCEL_ENV;
+    const previousSecret = process.env[PREVIEW_VERIFICATION_SECRET_ENV];
+    const routeTimestamp = String(Math.floor(Date.now() / 1000));
+    const routeNonce = "snapshot-route-nonce-0001";
+    const routeRequest = { method: "POST", url };
+    const signature = snapshotAuthorizationSignature({
+      request: routeRequest,
+      target,
+      timestamp: routeTimestamp,
+      nonce: routeNonce,
+      secret,
+    });
+
+    process.env.VERCEL_ENV = "preview";
+    process.env[PREVIEW_VERIFICATION_SECRET_ENV] = secret;
+    try {
+      const response = await createDiagnosticSession(new NextRequest(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [SNAPSHOT_TIMESTAMP_HEADER]: routeTimestamp,
+          [SNAPSHOT_NONCE_HEADER]: routeNonce,
+          [SNAPSHOT_SIGNATURE_HEADER]: signature,
+        },
+        body: JSON.stringify({
+          q: target.query,
+          onlyHis: true,
+          speakerFilter: { mode: "legacy-mode" },
+          unrelated: "ignored",
+        }),
+      }));
+
+      expect(response.status).toBe(204);
+      const cookie = response.headers.get("set-cookie") ?? "";
+      expect(cookie).toContain(`${SNAPSHOT_SESSION_COOKIE}=`);
+      const encodedToken = decodeURIComponent(cookie.split(";")[0].split("=").slice(1).join("="));
+      const decodedToken = Buffer.from(encodedToken.split(".")[0], "base64url").toString("utf8");
+      expect(decodedToken).not.toContain("speakerFilter");
+      expect(decodedToken).not.toContain("legacy-mode");
+    } finally {
+      if (previousEnvironment === undefined) delete process.env.VERCEL_ENV;
+      else process.env.VERCEL_ENV = previousEnvironment;
+      if (previousSecret === undefined) delete process.env[PREVIEW_VERIFICATION_SECRET_ENV];
+      else process.env[PREVIEW_VERIFICATION_SECRET_ENV] = previousSecret;
+    }
   });
 
   it("does nothing without a cookie and rejects production, tampering, or a changed target", () => {
@@ -150,17 +204,6 @@ function telemetry(questionHash: string): SearchTelemetry {
     cutGap: 0,
     pinnedExactReference: false,
     droppedOnRefetch: 0,
-    speakerFilter: {
-      mode: "prabhupada_segments",
-      rawTranscriptRows: 1,
-      retainedTranscriptRows: 1,
-      droppedTranscriptRows: 0,
-      keptSegments: 1,
-      guestSegmentsRemoved: 0,
-      unknownSegmentsRemoved: 0,
-      additionalTranscriptRowsVerified: 0,
-      additionalTranscriptRowsDropped: 0,
-    },
     degraded: false,
     degradedStages: [],
     sourceRetrieval: [],
@@ -231,7 +274,7 @@ const diagnostics: PipelineDiagnostics = {
     selected: [],
     additionalPassageKeys: [],
   },
-  verification: { verifiedPassageKeys: [], mainDrops: [], additionalTranscriptDrops: [] },
+  verification: { verifiedPassageKeys: [], mainDrops: [] },
   articlePlan: { plan: null, source: "deterministic_fallback", rejections: [] },
 };
 
@@ -255,6 +298,21 @@ function snapshotInput() {
 }
 
 describe("private snapshot artifact", () => {
+  it("keeps the object path compatible with the applied metadata constraint", () => {
+    const artifact = buildSearchSnapshotArtifact(snapshotInput());
+    const migration = readFileSync(
+      new URL(
+        "../supabase/migrations/20260803190000_search_answer_snapshots_metadata.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const pattern = migration.match(/CHECK \(object_path ~ '([^']+)'\)/)?.[1];
+
+    expect(pattern).toBeTruthy();
+    expect(artifact.metadata.object_path).toMatch(new RegExp(pattern!));
+  });
+
   it("hashes exact compressed bytes and reproduces the delivered guarded JSON", () => {
     const artifact = buildSearchSnapshotArtifact(snapshotInput());
     expect(createHash("sha256").update(artifact.compressed).digest("hex"))
@@ -265,6 +323,10 @@ describe("private snapshot artifact", () => {
 
     const envelope = JSON.parse(gunzipSync(artifact.compressed).toString("utf8"));
     const payloadJson = JSON.stringify(envelope.payload);
+    expect(envelope.envelopeVersion).toBe("search-answer-snapshot-envelope-v2");
+    expect(envelope.payload.schemaVersion).toBe("search-answer-snapshot-v2");
+    expect(envelope.payload.identifiers).not.toHaveProperty("speakerFilter");
+    expect(payloadJson).not.toContain("speakerFilter");
     expect(envelope.payload.question).toBe(target.query);
     expect(envelope.payload.responses.guardedJson).toBe(JSON.stringify(envelope.payload.responses.guarded));
     expect(envelope.payloadIntegrity.bytes).toBe(Buffer.byteLength(payloadJson, "utf8"));
@@ -320,7 +382,9 @@ describe("private snapshot artifact", () => {
     };
     const writer = vi.fn(async (
       _snapshot: Parameters<typeof persistSearchSnapshot>[0],
-    ) => ({ objectBytes: 1, objectSha256: "abc" }) as never);
+    ) => (
+      { objectBytes: 1, objectSha256: "abc" }
+    ) as never);
     const result = await prepareSuccessfulResponse({
       result: internalResponse,
       fromCache: false,

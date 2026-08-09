@@ -1,56 +1,44 @@
+/** Regression coverage for complete transcript evidence and conservative labels. */
 import { describe, expect, it } from "vitest";
 import {
   CANONICAL_PRABHUPADA_SPEAKER,
-  projectPrabhupadaSegments,
+  segmentTranscriptParagraph,
   transcriptSpeakerAttribution,
 } from "@/app/lib/15-transcript-speakers";
-import {
-  refetchAndVerify,
-  refetchAndVerifyFilteredTranscripts,
-} from "@/app/lib/search-v2/refetch";
-import { fullSha256 } from "@/app/lib/search-v2/cache";
+import { buildFoldPreviewHtml } from "@/app/lib/10-passage-fold";
+import { refetchAndVerify } from "@/app/lib/search-v2/refetch";
 import type { SelectedPassage } from "@/app/lib/search-v2/select";
 import type { RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 
 const mixed = [
-  "Dr. Patel: guest sentinel one.",
+  "Dr. Patel: A guest asks about the mind.",
   "Prabhupāda: The mind can be controlled by practice.",
-  "Guest: guest sentinel two.",
+  "Guest: Another guest asks about detachment.",
   "Śrīla Prabhupāda: And by detachment.",
-].join("\r\n");
+].join("\n");
 
-function projectedCandidate(over: Partial<RetrievedCandidate> = {}): RetrievedCandidate {
-  const projection = projectPrabhupadaSegments(mixed);
+function candidate(id: string, text: string): RetrievedCandidate {
   return {
-    passage_key: "lecture:t1",
+    passage_key: `lecture:${id}`,
     source_type: "lecture",
-    row_id: "t1",
-    retrieval_text: projection.text,
-    reference: "Conversation",
-    speaker: CANONICAL_PRABHUPADA_SPEAKER,
+    row_id: id,
+    retrieval_text: text,
+    reference: "Room Conversation",
+    speaker: null,
     recipient: null,
-    occurred_on: null,
-    location: null,
+    occurred_on: "1974-01-01",
+    location: "Bombay",
     matched_query_ids: [],
     channel_ranks: [],
     channel_scores: {},
     tag_matches: 0,
-    speakerUnidentified: false,
-    speakerProjection: {
-      mode: "prabhupada_segments",
-      sourceVerificationHash: fullSha256(mixed),
-      keptSegments: projection.keptSegments,
-      guestSegmentsRemoved: projection.guestSegmentsRemoved,
-      unknownSegmentsRemoved: projection.unknownSegmentsRemoved,
-    },
-    ...over,
   };
 }
 
-function selected(candidate: RetrievedCandidate): SelectedPassage {
+function selected(item: RetrievedCandidate): SelectedPassage {
   return {
     candidate: {
-      ...candidate,
+      ...item,
       fusedScore: 1,
       contributions: [],
       queryCoverage: [],
@@ -85,203 +73,101 @@ function fakeDb(rows: Record<string, unknown>[], columnsSeen: string[] = []) {
   };
 }
 
-describe("transcript speaker projection", () => {
-  it("keeps exact canonical turns and removes guest turns without inserting bytes", () => {
-    const out = projectPrabhupadaSegments(mixed);
-    expect(out).toEqual({
-      text: "Prabhupāda: The mind can be controlled by practice.\r\nŚrīla Prabhupāda: And by detachment.",
-      keptSegments: 2,
-      guestSegmentsRemoved: 2,
-      unknownSegmentsRemoved: 0,
-    });
-    expect(projectPrabhupadaSegments(out.text).text).toBe(out.text);
-  });
-
-  it("drops leading unknown text and projects guest-only or unlabelled rows to empty", () => {
-    expect(projectPrabhupadaSegments(
-      "Unidentified continuation.\nPrabhupada: Keep this exact line.",
-    )).toEqual({
-      text: "Prabhupada: Keep this exact line.",
-      keptSegments: 1,
-      guestSegmentsRemoved: 0,
-      unknownSegmentsRemoved: 1,
-    });
-    expect(projectPrabhupadaSegments("Dr. Patel: guest only.").text).toBe("");
-    expect(projectPrabhupadaSegments("No prefix at all.").text).toBe("");
-    expect(projectPrabhupadaSegments("the process: this is prose, not a label.").text).toBe("");
-  });
-
-  it("treats lowercase-role, long, punctuated, and heading prefixes as safety boundaries", () => {
-    const adversarial = [
-      "Prabhupāda: Keep this first exact turn.",
-      "Indian man: lowercase-role guest sentinel.",
-      "A Very Long Visiting Indian Gentleman: long-label guest sentinel.",
-      "Guest #1: punctuated guest sentinel.",
-      "Translation: heading sentinel.",
-      "Śrīla Prabhupāda: Keep this second exact turn.",
-    ].join("\n");
-
-    expect(projectPrabhupadaSegments(adversarial)).toEqual({
-      text: [
-        "Prabhupāda: Keep this first exact turn.\n",
-        "Śrīla Prabhupāda: Keep this second exact turn.",
-      ].join(""),
-      keptSegments: 2,
-      guestSegmentsRemoved: 2,
-      unknownSegmentsRemoved: 2,
-    });
-    const attribution = transcriptSpeakerAttribution(adversarial);
-    expect(attribution.speakers).toEqual([
-      CANONICAL_PRABHUPADA_SPEAKER,
-      "Indian man",
-      "A Very Long Visiting Indian Gentleman",
-    ]);
-    expect(attribution.unidentified).toBe(true);
-    expect(JSON.stringify(projectPrabhupadaSegments(adversarial))).not.toContain("guest sentinel");
-    expect(JSON.stringify(projectPrabhupadaSegments(adversarial))).not.toContain("heading sentinel");
-  });
-
-  it("treats no-space turn labels as boundaries instead of leaking guest text", () => {
-    const noSpaceTurns = [
-      "Prabhupada: Keep this first exact turn.",
-      "Devotees:. [kirtana guest sentinel]",
-      "Prabhupada:? Keep this canonical no-space turn.",
-      "Guest (1):Guest sentinel without a space.",
-    ].join("\n");
-
-    const out = projectPrabhupadaSegments(noSpaceTurns);
-    expect(out.text).toBe([
-      "Prabhupada: Keep this first exact turn.\n",
-      "Prabhupada:? Keep this canonical no-space turn.\n",
-    ].join(""));
-    expect(out).toMatchObject({
-      keptSegments: 2,
-      guestSegmentsRemoved: 2,
-      unknownSegmentsRemoved: 0,
-    });
-    expect(out.text).not.toContain("guest sentinel");
-    expect(out.text).not.toContain("Guest sentinel");
-  });
-
-  it("does not present transcript headings as speaker names", () => {
-    expect(transcriptSpeakerAttribution("Translation: A heading, not a speaker.")).toEqual({
-      speakers: [],
-      displaySpeaker: null,
-      unidentified: true,
-      confidence: "unknown",
-    });
-  });
-
-  it("keeps canonical labels whose punctuation is removed by normalization", () => {
-    for (const punctuatedCanonical of [
-      "Prabhup\u0101da.: Keep this exact turn.",
-      "Prabhup\u00e6ada: Keep this ligature edge case.",
-      "Prabhu1p\u0101da: Keep this digit edge case.",
-      "Prabhupada:\r",
-    ]) {
-      expect(projectPrabhupadaSegments(punctuatedCanonical)).toEqual({
-        text: punctuatedCanonical,
-        keptSegments: 1,
-        guestSegmentsRemoved: 0,
-        unknownSegmentsRemoved: 0,
-      });
-    }
-  });
-
-  it("reports every identified speaker and marks only genuinely unknown bytes unknown", () => {
+describe("transcript speaker attribution", () => {
+  it("reports every identified speaker in first-appearance order", () => {
     expect(transcriptSpeakerAttribution(mixed)).toEqual({
       speakers: ["Dr. Patel", CANONICAL_PRABHUPADA_SPEAKER, "Guest"],
       displaySpeaker: `Dr. Patel, ${CANONICAL_PRABHUPADA_SPEAKER}, Guest`,
       unidentified: false,
       confidence: "labelled",
     });
-    expect(transcriptSpeakerAttribution("Leading continuation.\nDr. Patel: Answer.")).toMatchObject({
+  });
+
+  it("keeps a leading continuation unidentified alongside proved names", () => {
+    expect(transcriptSpeakerAttribution("Leading continuation.\nDr. Patel: Answer.")).toEqual({
+      speakers: ["Dr. Patel"],
       displaySpeaker: "Dr. Patel",
       unidentified: true,
       confidence: "unknown",
     });
-    expect(transcriptSpeakerAttribution("No prefix.")).toEqual({
+    expect(transcriptSpeakerAttribution("No prefix at all.")).toEqual({
       speakers: [],
       displaySpeaker: null,
       unidentified: true,
       confidence: "unknown",
     });
   });
+
+  it("recognizes standalone and no-space turn boundaries without merging speakers", () => {
+    const source = [
+      "Prabhupāda:\nKeep this exact turn.",
+      "Devotees:. [kīrtana]",
+      "Guest (1):A distinct turn without a space.",
+    ].join("\n");
+    expect(segmentTranscriptParagraph(source).map((part) => part.speaker)).toEqual([
+      "Prabhupāda",
+      "Devotees",
+      "Guest (1)",
+    ]);
+  });
 });
 
-describe("fresh-row speaker projection", () => {
-  const row = {
-    id: "t1",
-    title: "Room Conversation",
-    body_text: mixed,
-    date: "1974-01-01",
-    location: "Bombay",
-  };
+describe("complete transcript verification", () => {
+  const rows = [
+    { id: "mixed", title: "Room Conversation", body_text: mixed, date: "1974-01-01", location: "Bombay" },
+    { id: "guest", title: "Room Conversation", body_text: "Dr. Patel: Guest-only evidence.", date: "1974-01-01", location: "Bombay" },
+    { id: "unknown", title: "Room Conversation", body_text: "Wholly unlabelled continuation.", date: "1974-01-01", location: "Bombay" },
+  ];
 
-  it("reconstructs filtered main text from body_text without speaker columns", async () => {
+  it("keeps mixed, guest-only, and unlabelled body text byte-for-byte", async () => {
     const columnsSeen: string[] = [];
+    const selections = rows.map((row) => selected(candidate(String(row.id), String(row.body_text))));
     const out = await refetchAndVerify(
-      fakeDb([row], columnsSeen) as never,
-      [selected(projectedCandidate())],
-      { requestId: "req-filtered", speakerOnly: true },
+      fakeDb(rows, columnsSeen) as never,
+      selections,
+      { requestId: "req-complete-transcripts" },
     );
+
     expect(out.dropped).toEqual([]);
-    expect(out.verified[0]).toMatchObject({
-      text: projectPrabhupadaSegments(mixed).text,
-      speaker: CANONICAL_PRABHUPADA_SPEAKER,
-      speakerConfidence: "labelled",
-    });
+    expect(out.verified.map((passage) => passage.text)).toEqual(rows.map((row) => row.body_text));
+    expect(out.verified.map((passage) => passage.speaker)).toEqual([
+      `Dr. Patel, ${CANONICAL_PRABHUPADA_SPEAKER}, Guest`,
+      "Dr. Patel",
+      null,
+    ]);
+    expect(out.verified.map((passage) => passage.speakerConfidence)).toEqual([
+      "labelled",
+      "labelled",
+      "unknown",
+    ]);
     expect(columnsSeen[0]).not.toContain("speaker");
-    expect(JSON.stringify(out.verified)).not.toContain("guest sentinel");
   });
 
-  it("fails closed when the marker is missing or the full row changed", async () => {
-    const missing = projectedCandidate({ speakerProjection: undefined });
-    const missingOut = await refetchAndVerify(
-      fakeDb([row]) as never,
-      [selected(missing)],
-      { requestId: "req-missing", speakerOnly: true },
-    );
-    expect(missingOut.dropped[0].reason).toBe("speaker_projection_missing");
-
-    const stale = projectedCandidate({
-      speakerProjection: {
-        ...projectedCandidate().speakerProjection!,
-        sourceVerificationHash: fullSha256(`${mixed} changed`),
-      },
-    });
-    const staleOut = await refetchAndVerify(
-      fakeDb([row]) as never,
-      [selected(stale)],
-      { requestId: "req-stale", speakerOnly: true },
-    );
-    expect(staleOut.dropped[0].reason).toBe("speaker_projection_mismatch");
-  });
-
-  it("derives all names from the fresh unfiltered body", async () => {
-    const candidate = projectedCandidate({
-      retrieval_text: mixed,
-      speaker: "stale speaker",
-      speakerProjection: undefined,
-    });
+  it("still fails closed when the authoritative row changed", async () => {
+    const stale = selected(candidate("mixed", `${mixed} stale`));
     const out = await refetchAndVerify(
-      fakeDb([row]) as never,
-      [selected(candidate)],
-      { requestId: "req-all" },
+      fakeDb([rows[0]]) as never,
+      [stale],
+      { requestId: "req-stale-transcript" },
     );
-    expect(out.verified[0].speaker).toBe(`Dr. Patel, ${CANONICAL_PRABHUPADA_SPEAKER}, Guest`);
-    expect(out.verified[0].speakerConfidence).toBe("labelled");
+    expect(out.verified).toEqual([]);
+    expect(out.dropped).toEqual([{ passageKey: "lecture:mixed", reason: "text_mismatch" }]);
   });
 
-  it("freshly verifies filtered additional transcript previews", async () => {
-    const candidate = projectedCandidate();
-    const out = await refetchAndVerifyFilteredTranscripts(
-      fakeDb([row]) as never,
-      [candidate],
-      { requestId: "req-additional" },
-    );
-    expect(out.dropped).toEqual([]);
-    expect(out.textByPassageKey.get(candidate.passage_key)).toBe(projectPrabhupadaSegments(mixed).text);
-    expect(out.textByPassageKey.get(candidate.passage_key)).not.toContain("guest sentinel");
+  it("lets a relevant guest sentence lead a long folded preview", () => {
+    const source = [
+      "Prabhupāda: This opening sentence discusses another subject.",
+      ...Array.from({ length: 80 }, (_, index) => `Prabhupāda: Context sentence ${index} remains verbatim and deliberately long.`),
+      "Dr. Patel: The distinctive guestneedle answer is present in full.",
+    ].join("\n");
+    const preview = buildFoldPreviewHtml({
+      type: "lecture",
+      text: source,
+      queryTerms: ["guestneedle"],
+    });
+
+    expect(preview.truncated).toBe(true);
+    expect(preview.previewHtml).toContain("guestneedle");
+    expect(preview.previewHtml).toContain("Dr. Patel:");
   });
 });

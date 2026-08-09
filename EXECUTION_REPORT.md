@@ -209,6 +209,9 @@ on the Task 16 preview.
 
 ## §10 · Task 10 — Dig deeper v2 ✅
 
+> Superseded in Part B: the speaker/authorship-only control and its filtering
+> were retired. This section remains a historical record of the earlier UI.
+
 `02-dig-deeper-modal.tsx` extended (existing SegmentedToggle / Ranked·Topic·Book grouping /
 book multi-select preserved):
 
