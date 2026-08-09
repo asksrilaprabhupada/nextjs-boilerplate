@@ -167,7 +167,6 @@ export default function SearchExperience({ q }: { q: string }) {
   }, [q, retryNonce]);
 
   const answered = phase === "ready" && !!results;
-  const ans = answered ? { op: 1, ty: "0px", rule: "160px" } : { op: 0, ty: "26px", rule: "0px" };
 
   const passageCount = results?.passages?.length || 0;
   const additionalCount = results?.additionalCount ?? results?.additional?.length ?? 0;
@@ -179,27 +178,27 @@ export default function SearchExperience({ q }: { q: string }) {
   };
 
   return (
-    <div>
+    <div className="search-experience">
       <SiteHeader variant="solid" />
 
       {(phase === "loading" || phase === "completing") && (
         <SearchLoader q={q} stage={stage} done={phase === "completing"} />
       )}
 
-      <main style={{ maxWidth: 780, margin: "0 auto", padding: "110px clamp(20px,5vw,40px) 80px" }}>
+      <main className="search-experience__main">
         {/* ═══════ ERROR CARD — honest, never sample verses ═══════
              Three distinct failures, three distinct truths: a lost connection
              (retry may well succeed — the finished answer is often cached), a
              server-side failure (an identical retry will likely fail
              identically, and the card says so), and a timeout. */}
         {phase === "error" && (
-          <div style={{ maxWidth: 560, margin: "10vh auto 0", textAlign: "center", background: "#FEFCF8", border: "1px solid #E8E0D2", borderRadius: 18, padding: "clamp(32px,5vw,48px)", boxShadow: "0 2px 6px rgba(43,37,25,0.04), 0 16px 44px rgba(43,37,25,0.07)" }}>
-            <p className="font-display" style={{ fontSize: "clamp(22px,3vw,28px)", fontWeight: 600, color: "#201B12", margin: 0 }}>
+          <div className="search-error" role="alert" aria-live="assertive">
+            <p className="search-error__title font-display">
               {failureKind === "dropped" && "The connection was lost."}
               {failureKind === "server" && "The search failed."}
               {failureKind === "timeout" && "The library didn’t answer in time."}
             </p>
-            <p className="font-body" style={{ fontSize: 14.5, lineHeight: 1.7, color: "#6E6353", margin: "12px 0 24px" }}>
+            <p className="search-error__message font-body">
               {failureKind === "dropped" && (
                 <>Your question &ldquo;{q}&rdquo; was being answered when the connection dropped. The answer may already be waiting — trying again is usually quick.</>
               )}
@@ -210,15 +209,14 @@ export default function SearchExperience({ q }: { q: string }) {
                 <>Your question &ldquo;{q}&rdquo; reached the library, but no answer came back in time. Nothing is wrong with your question — please try again.</>
               )}
             </p>
-            <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+            <div className="search-error__actions">
               <button
                 onClick={() => setRetryNonce((n) => n + 1)}
-                className="font-body"
-                style={{ fontSize: 14, fontWeight: 600, color: "#FFFFFF", background: "linear-gradient(135deg, #6B57C9, #51409A)", border: "none", borderRadius: 100, padding: "11px 24px", cursor: "pointer" }}
+                className="search-error__action search-error__action--primary font-body"
               >
                 Try again
               </button>
-              <Link href="/?entrance=0" className="font-body" style={{ fontSize: 14, fontWeight: 600, color: "#6E6353", border: "1px solid #E8E0D2", borderRadius: 100, padding: "11px 24px", textDecoration: "none" }}>
+              <Link href="/?entrance=0" className="search-error__action search-error__action--secondary font-body">
                 New search
               </Link>
             </div>
@@ -226,24 +224,24 @@ export default function SearchExperience({ q }: { q: string }) {
         )}
 
         {answered && results && (
-          <>
+          <div className="search-answer">
             {/* Follow-up bar */}
-            <form onSubmit={submitFollowUp} style={{ position: "sticky", top: 68, zIndex: 60, marginBottom: "clamp(40px,7vh,64px)", opacity: ans.op, transition: "opacity 0.8s ease 0.1s" }}>
-              <div style={{ position: "relative", borderRadius: 16, padding: 1.5, background: "linear-gradient(135deg, rgba(107,87,201,0.42), rgba(201,162,75,0.28))", boxShadow: "0 8px 30px rgba(43,37,25,0.10)" }}>
-                <input value={followUp} onChange={(e) => setFollowUp(e.target.value)} aria-label="Ask a follow-up" placeholder="Ask a follow-up question…" className="font-body" style={{ width: "100%", display: "block", padding: "14px 108px 14px 20px", fontSize: 15, border: "none", borderRadius: 14, background: "#FEFCF8", color: "#2B2519", outline: "none" }} />
-                <Link href="/?entrance=0" aria-label="New search" title="New search" className="cine-newsearch" style={{ position: "absolute", right: 52, top: 8, width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", color: "#6E6353", textDecoration: "none", transition: "all 0.2s ease" }}>
+            <form onSubmit={submitFollowUp} className="search-followup">
+              <div className="search-followup__frame">
+                <input value={followUp} onChange={(e) => setFollowUp(e.target.value)} aria-label="Ask a follow-up" placeholder="Ask a follow-up question…" className="search-followup__input font-body" />
+                <Link href="/?entrance=0" aria-label="New search" title="New search" className="search-followup__control search-followup__new cine-newsearch">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
                 </Link>
-                <button type="submit" aria-label="Search" className="cine-submit-btn" style={{ position: "absolute", right: 8, top: 8, width: 36, height: 36, borderRadius: 10, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.3s ease" }}>
+                <button type="submit" aria-label="Search" className="search-followup__control search-followup__submit cine-submit-btn">
                   <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                 </button>
               </div>
             </form>
 
             {/* You asked */}
-            <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.32em", textTransform: "uppercase", color: "#6B57C9", marginBottom: 18, opacity: ans.op, transform: `translateY(${ans.ty})`, transition: "opacity 0.8s cubic-bezier(0.16,1,0.3,1) 0.05s, transform 0.8s cubic-bezier(0.16,1,0.3,1) 0.05s" }}>You asked</p>
-            <h1 className="font-display" style={{ fontSize: "clamp(30px,4.6vw,54px)", fontWeight: 600, lineHeight: 1.12, letterSpacing: "-0.02em", color: "#201B12", textWrap: "pretty", opacity: ans.op, transform: `translateY(${ans.ty})`, transition: "opacity 0.9s cubic-bezier(0.16,1,0.3,1) 0.15s, transform 0.9s cubic-bezier(0.16,1,0.3,1) 0.15s" }}>{results.query || q}</h1>
-            <div aria-hidden style={{ width: ans.rule, height: 1, background: "linear-gradient(90deg, #C9A24B, rgba(201,162,75,0))", margin: "26px 0", transition: "width 1.3s cubic-bezier(0.16,1,0.3,1) 0.5s" }} />
+            <p className="search-answer__eyebrow font-body">You asked</p>
+            <h1 className="search-answer__title font-display">{results.query || q}</h1>
+            <div className="search-answer__rule" aria-hidden />
 
             {/* A partial answer must announce itself before counts or teaching text. */}
             <IncompleteSearchWarning
@@ -253,8 +251,8 @@ export default function SearchExperience({ q }: { q: string }) {
 
             {/* Honest result counts, without filtering the recorded conversation. */}
             {passageCount > 0 ? (
-              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: "clamp(36px,6vh,54px)", opacity: 1, transition: "opacity 0.9s ease 0.4s" }}>
-                <span className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", color: "#6E6353", background: "rgba(107,87,201,0.07)", border: "1px solid #E8E0D2", borderRadius: 100, padding: "6px 14px" }}>
+              <div className="search-answer__counts">
+                <span className="search-answer__count font-body">
                   {passageCount} {passageCount === 1 ? "passage" : "passages"} in full
                   {additionalCount > 0 ? <> · {additionalCount.toLocaleString("en-US")} more as citations below</> : null}
                 </span>
@@ -262,26 +260,27 @@ export default function SearchExperience({ q }: { q: string }) {
             ) : null}
 
             {/* The woven answer — fully data-driven */}
-            <NarrativeResponse
-              results={results}
-              isLoading={false}
-              onSearch={onSearch}
-              searchLogId={results.searchLogId || null}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
-            />
+            <div className="search-answer__results">
+              <NarrativeResponse
+                results={results}
+                isLoading={false}
+                onSearch={onSearch}
+                searchLogId={results.searchLogId || null}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+              />
+            </div>
 
             {/* Ask next — variant questions from the multi-query expansion */}
             {variants.length > 0 && (
-              <section aria-label="Ask next" style={{ marginTop: "clamp(36px,6vh,52px)" }}>
-                <p className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.18em", textTransform: "uppercase", color: "#9A8F7D", marginBottom: 12 }}>Ask next</p>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              <section aria-label="Ask next" className="search-answer__next">
+                <p className="search-answer__next-label font-body">Ask next</p>
+                <div className="search-answer__next-list">
                   {variants.map((v) => (
                     <button
                       key={v}
                       onClick={() => onSearch(v)}
-                      className="cine-source-link font-body"
-                      style={{ fontSize: 13, fontWeight: 500, color: "#51409A", background: "rgba(107,87,201,0.06)", border: "1px solid #E8E0D2", borderRadius: 100, padding: "9px 16px", cursor: "pointer", transition: "all 0.3s ease", textAlign: "left" }}
+                      className="search-answer__next-button cine-source-link font-body"
                     >
                       {v}
                     </button>
@@ -289,11 +288,337 @@ export default function SearchExperience({ q }: { q: string }) {
                 </div>
               </section>
             )}
-          </>
+          </div>
         )}
       </main>
 
       <SiteFooter />
+
+      <style jsx global>{`
+        .search-experience {
+          min-width: 0;
+          min-height: 100dvh;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .search-experience__main {
+          box-sizing: border-box;
+          width: 100%;
+          max-width: 780px;
+          min-width: 0;
+          flex: 1;
+          margin: 0 auto;
+          padding-top: calc(110px + env(safe-area-inset-top));
+          padding-right: max(clamp(16px, 4vw, 40px), env(safe-area-inset-right));
+          padding-bottom: max(80px, env(safe-area-inset-bottom));
+          padding-left: max(clamp(16px, 4vw, 40px), env(safe-area-inset-left));
+        }
+
+        .search-error {
+          width: 100%;
+          max-width: 560px;
+          margin: min(10vh, 80px) auto 0;
+          padding: clamp(28px, 5vw, 48px);
+          overflow-wrap: anywhere;
+          text-align: center;
+          background: #fefcf8;
+          border: 1px solid #e8e0d2;
+          border-radius: 18px;
+          box-shadow: 0 2px 6px rgba(43, 37, 25, 0.04), 0 16px 44px rgba(43, 37, 25, 0.07);
+        }
+
+        .search-error__title {
+          margin: 0;
+          color: #201b12;
+          font-size: clamp(22px, 3vw, 28px);
+          font-weight: 600;
+        }
+
+        .search-error__message {
+          margin: 12px 0 24px;
+          color: #6e6353;
+          font-size: 14.5px;
+          line-height: 1.7;
+        }
+
+        .search-error__actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 10px;
+        }
+
+        .search-error__action {
+          min-width: 124px;
+          min-height: 44px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 10px 22px;
+          border-radius: 100px;
+          font-size: 14px;
+          font-weight: 600;
+          line-height: 1.2;
+          text-decoration: none;
+          cursor: pointer;
+        }
+
+        .search-error__action--primary {
+          color: #fff;
+          background: linear-gradient(135deg, #6b57c9, #51409a);
+          border: none;
+        }
+
+        .search-error__action--secondary {
+          color: #6e6353;
+          background: #fefcf8;
+          border: 1px solid #e8e0d2;
+        }
+
+        .search-answer,
+        .search-answer__results {
+          min-width: 0;
+        }
+
+        .search-followup {
+          position: sticky;
+          top: calc(68px + env(safe-area-inset-top));
+          z-index: 60;
+          width: 100%;
+          min-width: 0;
+          margin-bottom: clamp(40px, 7vh, 64px);
+          animation: search-answer-fade 0.8s ease 0.1s both;
+        }
+
+        .search-followup__frame {
+          position: relative;
+          min-width: 0;
+          padding: 1.5px;
+          border-radius: 16px;
+          background: linear-gradient(135deg, rgba(107, 87, 201, 0.42), rgba(201, 162, 75, 0.28));
+          box-shadow: 0 8px 30px rgba(43, 37, 25, 0.1);
+        }
+
+        .search-followup__input {
+          width: 100%;
+          min-width: 0;
+          min-height: 54px;
+          display: block;
+          padding: 14px 108px 14px 18px;
+          overflow-wrap: anywhere;
+          color: #2b2519;
+          background: #fefcf8;
+          border: none;
+          border-radius: 14px;
+          outline: none;
+          font-size: 16px;
+        }
+
+        .search-followup__control {
+          position: absolute;
+          top: 6px;
+          width: 44px;
+          height: 44px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 11px;
+          text-decoration: none;
+          cursor: pointer;
+          transition: background 0.2s ease, color 0.2s ease, transform 0.3s ease;
+        }
+
+        .search-followup__new {
+          right: 52px;
+          color: #6e6353;
+        }
+
+        .search-followup__submit {
+          right: 6px;
+          color: #fff;
+          background: linear-gradient(135deg, #6b57c9, #51409a);
+          border: none;
+        }
+
+        .search-answer__eyebrow {
+          margin: 0 0 18px;
+          color: #6b57c9;
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 0.32em;
+          text-transform: uppercase;
+          animation: search-answer-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+        }
+
+        .search-answer__title {
+          margin: 0;
+          overflow-wrap: anywhere;
+          color: #201b12;
+          font-size: clamp(30px, 4.6vw, 54px);
+          font-weight: 600;
+          line-height: 1.12;
+          letter-spacing: -0.02em;
+          text-wrap: pretty;
+          animation: search-answer-rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
+        }
+
+        .search-answer__rule {
+          width: min(160px, 44vw);
+          height: 1px;
+          margin: 26px 0;
+          background: linear-gradient(90deg, #c9a24b, rgba(201, 162, 75, 0));
+          transform-origin: left;
+          animation: search-answer-rule 1.3s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both;
+        }
+
+        .search-answer__counts {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: clamp(36px, 6vh, 54px);
+        }
+
+        .search-answer__count {
+          max-width: 100%;
+          min-height: 36px;
+          display: inline-flex;
+          align-items: center;
+          padding: 7px 14px;
+          overflow-wrap: anywhere;
+          color: #6e6353;
+          background: rgba(107, 87, 201, 0.07);
+          border: 1px solid #e8e0d2;
+          border-radius: 100px;
+          font-size: 12px;
+          font-weight: 600;
+          line-height: 1.45;
+          letter-spacing: 0.06em;
+        }
+
+        .search-answer__next {
+          min-width: 0;
+          margin-top: clamp(36px, 6vh, 52px);
+        }
+
+        .search-answer__next-label {
+          margin: 0 0 12px;
+          color: #9a8f7d;
+          font-size: 12px;
+          font-weight: 600;
+          letter-spacing: 0.18em;
+          text-transform: uppercase;
+        }
+
+        .search-answer__next-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 10px;
+          min-width: 0;
+        }
+
+        .search-answer__next-button {
+          max-width: 100%;
+          min-height: 44px;
+          display: inline-flex;
+          align-items: center;
+          padding: 10px 16px;
+          overflow-wrap: anywhere;
+          white-space: normal;
+          color: #51409a;
+          background: rgba(107, 87, 201, 0.06);
+          border: 1px solid #e8e0d2;
+          border-radius: 22px;
+          font-size: 13px;
+          font-weight: 500;
+          line-height: 1.4;
+          text-align: left;
+          cursor: pointer;
+          transition: border-color 0.3s ease, color 0.3s ease, background 0.3s ease;
+        }
+
+        .search-error__action:focus-visible,
+        .search-followup__input:focus-visible,
+        .search-followup__control:focus-visible,
+        .search-answer__next-button:focus-visible {
+          outline: 3px solid rgba(107, 87, 201, 0.5);
+          outline-offset: 3px;
+        }
+
+        @keyframes search-answer-fade {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+
+        @keyframes search-answer-rise {
+          from { opacity: 0; transform: translateY(26px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes search-answer-rule {
+          from { transform: scaleX(0); }
+          to { transform: scaleX(1); }
+        }
+
+        @media (max-width: 480px) {
+          .search-experience__main {
+            padding-top: calc(94px + env(safe-area-inset-top));
+          }
+
+          .search-error {
+            margin-top: 24px;
+            padding: 26px 18px;
+          }
+
+          .search-error__action {
+            flex: 1 1 140px;
+          }
+
+          .search-followup {
+            margin-bottom: 38px;
+          }
+
+          .search-answer__next-button {
+            flex: 1 1 100%;
+          }
+        }
+
+        @media (max-height: 500px) and (orientation: landscape) {
+          .search-experience__main {
+            padding-top: calc(76px + env(safe-area-inset-top));
+            padding-bottom: max(32px, env(safe-area-inset-bottom));
+          }
+
+          .search-error {
+            margin-top: 8px;
+            padding: 20px 24px;
+          }
+
+          .search-error__message {
+            margin-bottom: 16px;
+          }
+
+          .search-followup {
+            top: calc(62px + env(safe-area-inset-top));
+            margin-bottom: 28px;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .search-followup,
+          .search-answer__eyebrow,
+          .search-answer__title,
+          .search-answer__rule {
+            animation: none;
+          }
+
+          .search-followup__control,
+          .search-answer__next-button {
+            transition: none;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -15,13 +15,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const SOURCE = readFileSync(
-  join(process.cwd(), "app/components/results/01-narrative-response.tsx"),
+  join(process.cwd(), "app/components/results/03-cinematic-dig-deeper.tsx"),
   "utf8",
 );
 
 /** The rendered summary line, with the JSX comment block stripped out. */
 const SUMMARY_LINE = SOURCE.split("\n")
-  .filter((line) => line.includes("more {list.length === 1"))
+  .filter((line) => line.includes("retrieved in this search"))
   .join(" ");
 
 describe("the citation tier says what it actually is", () => {
