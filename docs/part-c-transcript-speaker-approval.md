@@ -54,7 +54,7 @@ The application keeps the existing public `speaker: string | null` field. Its au
 | Item | SHA-256 |
 | --- | --- |
 | Canonical corpus input, including `body_text` | `580c6cc9a69d1acaaa4581730ad4c8a1e2aa36d8e3d2585a4f4e4bc8dc049d07` |
-| `run-manifest.json` | `7b2a8d2870a014e84d7bdb727c22c08bffea25bc2e157a72182808c1a758f50e` |
+| `run-manifest.json` | `11ee0501916f6a124d6b603750fc1234391e668e2a9a90b65a147330c9b60e17` |
 | `proposed-mapping.ndjson` | `a5789b46da576f5115ff3ac86bdc9843c4fc0360b1bd7ecc7619aaa53772de0f` |
 | `suspicious.ndjson` | `d9a997c4fe8dd8eeb8d1c5d95ac0ecd219bca1383a60ac888f40d53c8c74f8fb` |
 | `verification.json` | `7d50bf316dcc86e22cd8c6ed73a267730341a8bb323e9946348ab24e5cc8b386` |
@@ -120,14 +120,14 @@ The manifest directly binds the five operator/schema files and pinned dependenci
 | File | SHA-256 |
 | --- | --- |
 | `scripts/transcript-speakers/mapper.py` | `8c40a3db1d1be0f6ede4f2fa911f72b024131530f937f58468710de048bfbdb3` |
-| `scripts/transcript-speakers/backfill.py` | `4cd5bec79d33c0b67f99afbc1b19e906da739198deba0aae22876b327a9bc96e` |
+| `scripts/transcript-speakers/backfill.py` | `dd709c9e03a121f00bb2c7832b33d488f74fb9faa8efc775c43fad98cdff32a1` |
 | `scripts/transcript-speakers/recompute.py` | `4aad405c2fb3f2a187e6b7bf397b169616e50a64d6c647a78223717a7e154482` |
 | `scripts/transcript-speakers/requirements.txt` | `4c1b637f006ca59d6e65c4e090df7166e20b0281ea576ed0baf9939801ce96f8` |
 | `supabase/migrations/20260809143133_add_transcript_speaker_names.sql` | `33ed570fdba2facbd8509cf8dcf9ab856e8b6750f4ff17c104636e762b68bb2c` |
 | `supabase/rollbacks/20260809143133_leave_transcript_speaker_names_inert.sql` | `a12d330e97c2abd0b532a7e7f813df111ed612c4cc1fa6ffd64d610576dcded5` |
 | `scripts/transcript-speakers/tests/screenshot_fixtures.py` | `f2e0d31967733586a42a7d675e05a3680de16aa9475bcee357b7e133dbac0628` |
 | `scripts/transcript-speakers/tests/test_mapper.py` | `8f8dbc629c0d51883298b9f0fe99a26b56d186403f50d0a5c7914fba0b451178` |
-| `scripts/transcript-speakers/tests/test_backfill.py` | `66ab7de9a80664897e11548cfe13caf127c31e583c55b06261669f4711e4e6ae` |
+| `scripts/transcript-speakers/tests/test_backfill.py` | `103ff3a98ea57fbc453992a904effaed5499aef35b714f1cbc33414248ec985f` |
 | `scripts/transcript-speakers/tests/test_recompute.py` | `5ee93d6e23b21f99b27034e28a25e334d77ebad9d9c4c33f686f9b54b3011a22` |
 | `tests/transcript-speaker-backfill-contract.test.ts` | `c6e6864f7df3dde38d1955304e6ca2c32aea4d56ee74be357a42fd8520da2c54` |
 | `app/lib/15-transcript-speakers.ts` | `da1c3198abe5bbd407fb1b515763ce2ed66483b07ba0148b084fcdbfa3befe2f` |
@@ -193,11 +193,20 @@ The initial backfill runner requires all of these before writing:
 
 At a 500-row maximum, the current corpus resolves to 309 transcript-complete transactions, averaging about 467 rows. No transcript is split. Every transaction uses bounded lock, statement, and idle timeouts, locks and verifies its complete transcripts, updates only differing `speaker_names`, verifies after writing, commits, and fsyncs a hash-bound ledger record. A rerun verifies and skips the committed ledger prefix.
 
+The first approved attempt stopped before batch 1 with SQLSTATE `57014`. Live
+verification immediately afterward found zero processed rows and no apply
+ledger, so no partial backfill occurred. The failure was isolated to the two
+read-only whole-corpus preflight scans: their cold-cache plan may touch about
+144,000 heap/index buffers. The repaired runner gives whole-corpus read-only
+preflight and final checks 120 seconds and restores the 30-second limit before
+any batch write. The 3-second lock limit, 30-second write limit, 500-row
+maximum, mappings, and conflict checks are unchanged.
+
 After all batches, a serializable whole-corpus pass rechecks every identity, body hash, and final array under `FOR SHARE` locks. Corpus writers must be paused or coordinated through the same advisory-lock protocol throughout the mutation window. The final pass is a point-in-time guarantee; non-cooperating writers after it remain an operational risk.
 
 Adding a nullable no-default column is expected to be metadata-only, but replacing the trigger needs a table lock and will fail after 3 seconds rather than wait. Narrowing the trigger prevents 144,438 speaker-only updates from recalculating indexed search vectors while preserving the active `fts_core = fts_core` repair workflow.
 
-Actual elapsed time, WAL, replica lag, contention, and vacuum demand remain unknown until an approved monitored window. Do not increase timeouts or batch size without review.
+Actual elapsed time, WAL, replica lag, contention, and vacuum demand remain unknown until an approved monitored window. Do not increase the reviewed 120-second read-only scan limit, the 30-second write limit, or the batch size without review.
 
 ## Verification queries
 
@@ -320,10 +329,17 @@ Retired pre-schema evidence marker, recorded only and **not actionable for backf
 PRE_SCHEMA_TRANSCRIPT_SPEAKER_MANIFEST:b2befe2c5d8224c399ccd482668d1ec039005a50ed9372349cafd2da61d88170
 ```
 
-The distinct post-schema backfill marker is:
+Retired first-attempt marker, recorded only and **not actionable after the
+runner timeout repair**:
 
 ```text
 I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:7b2a8d2870a014e84d7bdb727c22c08bffea25bc2e157a72182808c1a758f50e
+```
+
+The replacement post-schema backfill marker is:
+
+```text
+I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:11ee0501916f6a124d6b603750fc1234391e668e2a9a90b65a147330c9b60e17
 ```
 
 It authorizes only the frozen paragraph backfill. It does not authorize a merge, Vercel deployment, unrelated schema change, paid call, or production promotion.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 from hashlib import sha256
 from pathlib import Path
 import sys
@@ -43,6 +44,47 @@ class _Session:
 
 
 class BackfillRunnerTests(unittest.TestCase):
+    def test_only_full_corpus_read_checks_receive_the_extended_timeout(self) -> None:
+        source = inspect.getsource(backfill.run_apply)
+
+        initial_write_timeout = source.index(
+            "SET statement_timeout = '{WRITE_BATCH_TIMEOUT}'"
+        )
+        read_timeout = source.index(
+            "SET statement_timeout = '{READ_ONLY_CORPUS_TIMEOUT}'"
+        )
+        before_counts = source.index("before_counts = _database_counts(cursor)")
+        existing_values = source.index(
+            "checked_existing = _existing_speaker_values_preflight(cursor, records)"
+        )
+        restored_write_timeout = source.index(
+            "SET statement_timeout = '{WRITE_BATCH_TIMEOUT}'", initial_write_timeout + 1
+        )
+        batch_loop = source.index("for batch_index, batch in batches:")
+        final_read_timeout = source.index(
+            "SET statement_timeout = '{READ_ONLY_CORPUS_TIMEOUT}'", read_timeout + 1
+        )
+        after_counts = source.index("after_counts = _database_counts(cursor)")
+        final_write_timeout = source.index(
+            "SET statement_timeout = '{WRITE_BATCH_TIMEOUT}'",
+            restored_write_timeout + 1,
+        )
+
+        self.assertEqual(backfill.READ_ONLY_CORPUS_TIMEOUT, "120s")
+        self.assertEqual(backfill.WRITE_BATCH_TIMEOUT, "30s")
+        self.assertLess(initial_write_timeout, read_timeout)
+        self.assertLess(read_timeout, before_counts)
+        self.assertLess(before_counts, existing_values)
+        self.assertLess(existing_values, restored_write_timeout)
+        self.assertLess(restored_write_timeout, batch_loop)
+        self.assertLess(batch_loop, final_read_timeout)
+        self.assertLess(final_read_timeout, after_counts)
+        self.assertLess(after_counts, final_write_timeout)
+        for write_helper in (backfill._apply_batch, backfill._verify_completed_batch):
+            write_source = inspect.getsource(write_helper)
+            self.assertIn("SET LOCAL statement_timeout = '30s'", write_source)
+            self.assertNotIn("120s", write_source)
+
     def test_rest_scan_uses_uuid_keyset_and_never_offset(self) -> None:
         rows = [
             {
