@@ -11,7 +11,7 @@
  */
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import SiteHeader from "./11-site-header";
@@ -21,13 +21,18 @@ import NarrativeResponse from "../results/01-narrative-response";
 import IncompleteSearchWarning from "../results/02-incomplete-search-warning";
 import { buildSearchHref } from "@/app/lib/22-search-navigation";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
+import {
+  advanceSearchStage,
+  parseSearchStageEvent,
+} from "@/app/lib/25-search-stage-events";
 
 // With the cascade in place a search finishes in well under a minute; waiting
 // two and a half minutes to tell someone it failed is unkind. The server's
 // maxDuration stays 300 s for genuine cold-path headroom.
 const TIMEOUT_MS = 150_000;
+const COMPLETION_HOLD_MS = 400;
 
-type Phase = "loading" | "ready" | "error";
+type Phase = "loading" | "completing" | "ready" | "error";
 
 /** Why the error card is showing — each case earns different honest copy. */
 type FailureKind = "dropped" | "server" | "timeout";
@@ -41,7 +46,6 @@ export default function SearchExperience({ q }: { q: string }) {
   const [viewMode, setViewMode] = useState<"article" | "references">("article");
   const [followUp, setFollowUp] = useState("");
   const [retryNonce, setRetryNonce] = useState(0);
-  const doneRef = useRef(false);
 
   const onSearch = useCallback(
     (next: string) => {
@@ -53,7 +57,6 @@ export default function SearchExperience({ q }: { q: string }) {
   );
 
   useEffect(() => {
-    doneRef.current = false;
     setPhase("loading");
     setStage(null);
     setResults(null);
@@ -62,6 +65,7 @@ export default function SearchExperience({ q }: { q: string }) {
 
     let es: EventSource | null = null;
     let settled = false;
+    let completionTimer: ReturnType<typeof setTimeout> | null = null;
     // EventSource auto-reconnects on ANY drop, and a naive fallback turns one
     // expensive search into two. A terminal state — result delivered, or an
     // explicit failure frame — is final: close and stop. Only a connection that
@@ -79,9 +83,11 @@ export default function SearchExperience({ q }: { q: string }) {
       clearTimeout(timeout);
     };
     const finish = (r: SearchResults) => settle(() => {
-      doneRef.current = true;
       setResults(r);
-      setPhase("ready");
+      // Keep the completed loader mounted briefly so its one shared value can
+      // truthfully show 100 before the ready answer replaces it.
+      setPhase("completing");
+      completionTimer = setTimeout(() => setPhase("ready"), COMPLETION_HOLD_MS);
     });
     const fail = (kind: FailureKind) => settle(() => {
       setFailureKind(kind);
@@ -112,8 +118,13 @@ export default function SearchExperience({ q }: { q: string }) {
       es = new EventSource(`/api/search?${queryString}&stream=1`);
       let sawEvent = false;
       es.addEventListener("stage", (e) => {
-        sawEvent = true;
-        try { setStage(JSON.parse((e as MessageEvent).data)); } catch { /* malformed frame */ }
+        try {
+          const incoming = parseSearchStageEvent(JSON.parse((e as MessageEvent).data));
+          if (incoming) {
+            sawEvent = true;
+            setStage((current) => advanceSearchStage(current, incoming));
+          }
+        } catch { /* malformed frame */ }
       });
       es.addEventListener("result", (e) => {
         try {
@@ -151,6 +162,7 @@ export default function SearchExperience({ q }: { q: string }) {
       settled = true;
       es?.close();
       clearTimeout(timeout);
+      if (completionTimer) clearTimeout(completionTimer);
     };
   }, [q, retryNonce]);
 
@@ -170,7 +182,9 @@ export default function SearchExperience({ q }: { q: string }) {
     <div>
       <SiteHeader variant="solid" />
 
-      {phase === "loading" && <SearchLoader q={q} stage={stage} done={doneRef.current} />}
+      {(phase === "loading" || phase === "completing") && (
+        <SearchLoader q={q} stage={stage} done={phase === "completing"} />
+      )}
 
       <main style={{ maxWidth: 780, margin: "0 auto", padding: "110px clamp(20px,5vw,40px) 80px" }}>
         {/* ═══════ ERROR CARD — honest, never sample verses ═══════
