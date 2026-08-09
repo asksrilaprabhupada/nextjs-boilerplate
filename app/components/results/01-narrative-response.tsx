@@ -43,29 +43,12 @@ import { getBookName } from "@/app/lib/12-provenance";
 import { buildPassageCopyText } from "@/app/lib/23-passage-copy";
 
 /* ─────────────────────────── Data contract ───────────────────────────
-   The response types live in the shared server↔client contract
-   (app/lib/types/01-search.ts) and are re-exported here so existing
-   importers (e.g. 02-dig-deeper-modal) keep working unchanged. */
+   The response types live in the shared server↔client contract. */
 
 import type {
-  Citation,
   SearchPassage,
   SearchResults,
-  VerseHit,
-  ProseHit,
-  TranscriptHit,
-  LetterHit,
 } from "@/app/lib/types/01-search";
-
-export type {
-  Citation,
-  SearchPassage,
-  SearchResults,
-  VerseHit,
-  ProseHit,
-  TranscriptHit,
-  LetterHit,
-};
 
 /* ─────────────────────────── Citation display ─────────────────────────── */
 

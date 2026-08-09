@@ -8,6 +8,11 @@ reference in code.
 > `public/images/lockscreen/`. `Prabh14.jpg` and `CT03-044-620x350.avif` were
 > deleted at the owner's request. The dated findings below are retained as the
 > record of the earlier release.
+>
+> The final Task 8 cleanup also replaced the retired social card with the
+> owner-selected `ChatGPT Image Aug 9, 2026, 07_33_10 PM.png` in Open Graph,
+> Twitter, and structured metadata. Its real 1672×941 dimensions are declared;
+> no crop or image alteration is performed by the application.
 
 ## A. Present assets
 
@@ -16,7 +21,7 @@ reference in code.
 | `public/images/lockscreen/prabhupadaanddisciplessmiling.jpg` | 642 KB | `cinematic/01-cinematic-home.tsx` (IMG.disciples — entrance beat 2, gallery, CTA), `05-journey-page.tsx` ×2, `06/07-*` pages |
 | `public/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg` | 38 KB | `IMG.deities` — gallery ×2, journey interlude + storefront |
 | `public/images/lockscreen/Srila-Prabhupada-on-morning-walk-in-Vrindavan-620x350.avif` | 10 KB | `IMG.walk` — gallery, journey crossing. **Only 620×350 — must never render wider than ~620 px** (Task 8 policy: card-width slots only) |
-| `public/images/og-image.png` | 304 KB | `app/layout.tsx` OG/Twitter metadata |
+| `public/images/ChatGPT Image Aug 9, 2026, 07_33_10 PM.png` | 2.52 MB | `app/layout.tsx` Open Graph/Twitter/structured metadata |
 | `public/data/donate.json` | 153 B | orphaned `overlays/03-donate-overlay.tsx` only |
 | `public/videos/lockscreen/` | empty (`.gitkeep`) | optional admin video slot |
 

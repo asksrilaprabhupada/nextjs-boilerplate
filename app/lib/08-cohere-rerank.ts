@@ -13,8 +13,8 @@
 /**
  * The only fields reranking reads off a candidate. Deliberately NOT an index
  * signature: `[key: string]: unknown` would have forced every concrete hit type
- * (VerseHit, ProseHit, …) to declare one too, and widening them to satisfy it
- * is how a typo in a field name stops being a compile error.
+ * to declare one too, and widening those types to satisfy it is how a typo in a
+ * field name stops being a compile error.
  */
 export interface RerankCandidate {
   body_text?: string;

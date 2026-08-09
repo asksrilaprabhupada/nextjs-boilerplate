@@ -1065,11 +1065,6 @@ body {
 /* Search Results — follow-up bar controls */
 .cine-newsearch:hover { background: rgba(107,87,201,0.08) !important; color: #6B57C9 !important; }
 
-/* Search Results — Dig deeper trigger + drawer */
-.cine-deep-btn:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateY(-2px); box-shadow: 0 14px 40px rgba(107,87,201,0.12); }
-.cine-drawer-close:hover { background: rgba(107,87,201,0.08) !important; color: #2B2519 !important; }
-.cine-deep-item:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateX(3px); box-shadow: 0 8px 26px rgba(107,87,201,0.10); }
-.cine-results-vote:hover { border-color: #6B57C9 !important; }
 /* ═══════════ UNIFIED SITE HEADER (11-site-header) ═══════════ */
 /* Inline styles carry the desktop defaults (nav visible, burger hidden);
    these !important rules flip them below the tablet breakpoint. */
