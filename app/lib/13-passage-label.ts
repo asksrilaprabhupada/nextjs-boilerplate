@@ -14,9 +14,9 @@
  * "Śrīla Prabhupāda" is claimed for purports and book prose ONLY when the
  * passage's authorship is HIS (12-provenance).
  *
- * Pure module: no Supabase imports, safe for both server and client, so the
- * essay, references mode, dig-deeper cards, preview sheets, and the verse
- * page all compute identical labels from the same hit fields.
+ * Pure module: no Supabase imports. The search adapter computes both main and
+ * additional-passage labels here once; result cards, the evidence explorer,
+ * and preview sheets then print those same wire fields.
  */
 import { type Authorship, getBookName, authorshipFor, provenanceNoteFor } from "@/app/lib/12-provenance";
 import {
@@ -36,19 +36,6 @@ export function formatLabel(label: PassageLabel): string {
 }
 
 /* ── shared field shapes (subsets of the search hit interfaces) ── */
-
-interface VerseLike {
-  scripture?: string;
-  verse_number?: string;
-  chapter_number?: string | number;
-  canto_or_division?: string;
-  book_slug?: string;
-  vedabase_url?: string;
-  authorship?: Authorship;
-  provenanceNote?: string;
-  speaker?: string;
-  speakerTo?: string;
-}
 
 interface ProseLike {
   book_slug?: string;
@@ -86,37 +73,6 @@ function bookTitleFor(slug: string): string {
   return LABEL_TITLES[s] || getBookName(s);
 }
 
-/** "Bhagavad-gītā 6.34", "Śrīmad-Bhāgavatam 5.6.5", "Caitanya-caritāmṛta Madhya 15.11" */
-function verseSource(v: VerseLike): string {
-  const slug = (v.book_slug || v.scripture || "").toLowerCase();
-  const title = bookTitleFor(slug);
-  const num = (v.verse_number || "").replace(/^(Text|Verse)\s+/i, "").trim();
-  const bits = [v.canto_or_division, v.chapter_number, num].filter(x => x !== undefined && x !== null && String(x).trim() !== "");
-  // Numeric segments join with dots (6.34); a named division stays a word (Madhya 15.11).
-  const first = String(bits[0] ?? "");
-  const ref = /^\d/.test(first) || bits.length === 0
-    ? bits.join(".")
-    : `${first} ${bits.slice(1).join(".")}`;
-  return ref ? `${title} ${ref}` : title;
-}
-
-/** Fall back to client-side derivation when a cached response predates annotation. */
-function verseAuthorship(v: VerseLike): Authorship {
-  if (v.authorship) return v.authorship;
-  return authorshipFor({
-    kind: "verse",
-    bookSlug: (v.book_slug || v.scripture || "").toLowerCase(),
-    vedabaseUrl: v.vedabase_url,
-    canto: v.canto_or_division,
-    chapter: v.chapter_number,
-  });
-}
-
-function verseNote(v: VerseLike): string {
-  if (v.provenanceNote !== undefined) return v.provenanceNote;
-  return provenanceNoteFor((v.book_slug || v.scripture || "").toLowerCase(), verseAuthorship(v));
-}
-
 function yearOf(date?: string): string {
   const m = (date || "").match(/\b(1[89]\d\d|20\d\d)\b/);
   return m ? m[1] : "";
@@ -141,22 +97,6 @@ function transcriptKind(t: TranscriptLike): string {
 }
 
 /* ── label builders ── */
-
-export function labelForVerse(v: VerseLike): PassageLabel {
-  const speaker = v.speaker ? (v.speakerTo ? `${v.speaker} to ${v.speakerTo}` : v.speaker) : "";
-  return { parts: [verseSource(v), "Translation", speaker], provenanceNote: verseNote(v) };
-}
-
-export function labelForPurport(v: VerseLike): PassageLabel {
-  const speaker = verseAuthorship(v) === "HIS" ? "Śrīla Prabhupāda" : "";
-  return { parts: ["Purport", speaker], provenanceNote: verseNote(v) };
-}
-
-/** Purport label with the full source, for surfaces that show a purport alone. */
-export function labelForPurportFull(v: VerseLike): PassageLabel {
-  const speaker = verseAuthorship(v) === "HIS" ? "Śrīla Prabhupāda" : "";
-  return { parts: [verseSource(v), "Purport", speaker], provenanceNote: verseNote(v) };
-}
 
 export function labelForProse(p: ProseLike): PassageLabel {
   const authorship = p.authorship ?? authorshipFor({ kind: "prose", bookSlug: p.book_slug });

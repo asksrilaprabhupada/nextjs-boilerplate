@@ -105,7 +105,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   └── 14-photo-slot.tsx      (path-addressed photo slot: placeholder until the exact file exists; useImageAvailable for bg swaps)
 │   │   ├── results/
 │   │   │   ├── 01-narrative-response.tsx (prints results.passages first-to-last: label, words, citation, copy; Essay | By source views of the same list; collapsed "N more passages" citation tier below)
-│   │   │   └── 02-dig-deeper-modal.tsx (retained, unmounted — there is no overflow any more; every passage is in the main list)
+│   │   │   └── 03-cinematic-dig-deeper.tsx (live cinematic evidence explorer: search, source/book/Skandha/chapter filters, grouped cards)
 │   │   ├── verse/
 │   │   │   └── 01-verse-view.tsx      (interactive reader: toggleable layers, swipe, cross-ref preview)
 │   │   ├── layout/03-theme-toggle.tsx (light/warm-evening toggle, used by the site header)
@@ -168,7 +168,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── lockscreen/                (photos; auto-discovered by /api/lockscreen-images)
 │   │   ├── journey/                   (path-addressed /journey chapter photos; exact filenames in its README)
 │   │   ├── moments/                   (path-addressed landing Moments photos: moments-01.jpg … moments-04.jpg)
-│   │   └── og-image.png               (Open Graph social preview)
+│   │   └── ChatGPT Image Aug 9, 2026, 07_33_10 PM.png (Open Graph/Twitter social preview)
 │   └── videos/lockscreen/             (optional admin video upload)
 ├── scripts/verify-release.sh          (acceptance checks: run with SITE=<url>)
 ├── supabase/migrations/               (applied migrations, committed for record)

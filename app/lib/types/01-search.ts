@@ -16,8 +16,6 @@
  * and when the grouping arrived empty the page had names with no words — a
  * blank page. That shape is gone.
  */
-import type { Authorship } from "@/app/lib/12-provenance";
-
 export interface Citation {
   ref: string;
   book: string;
@@ -96,42 +94,6 @@ export interface AdditionalSearchPassage {
   date: string | null;
   location: string | null;
   rerankScore: number | null;
-}
-
-/* ── Legacy hit shapes ──
-   Still used by the retained Dig Deeper drawer and the shared label helpers
-   (13-passage-label). The live response no longer carries them. */
-
-export interface VerseHit {
-  id: string; scripture: string; verse_number: string; sanskrit_devanagari: string;
-  transliteration: string; translation: string; purport: string;
-  chapter_id?: string; chapter_number?: string; canto_or_division?: string; chapter_title?: string;
-  book_slug?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number; matchedChunkText?: string;
-  authorship?: Authorship; provenanceNote?: string; speaker?: string; speakerTo?: string;
-}
-
-export interface ProseHit {
-  id: string; book_slug: string; paragraph_number: number; body_text: string;
-  chapter_id?: string; chapter_title?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number; before?: string; after?: string;
-  authorship?: Authorship; provenanceNote?: string;
-}
-
-export interface TranscriptHit {
-  id: string; transcript_id?: string; paragraph_number: number; body_text: string;
-  content_type?: string; title?: string; date?: string; location?: string;
-  occasion?: string; scripture_ref?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
-  authorship?: Authorship; provenanceNote?: string; speaker?: string;
-}
-
-export interface LetterHit {
-  id: string; letter_id?: string; paragraph_number: number; body_text: string;
-  content_type?: string; title?: string; date?: string; location?: string;
-  recipient?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number; before?: string; after?: string;
-  authorship?: Authorship; provenanceNote?: string;
 }
 
 export interface SearchResults {
