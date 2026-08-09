@@ -54,6 +54,8 @@ APPROVAL_PREFIX = "I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:"
 DEFAULT_ARTIFACT_DIR = Path("work/transcript-speaker-backfill")
 EXPECTED_REQUESTS_VERSION = "2.34.2"
 EXPECTED_PSYCOPG_VERSION = "3.3.4"
+READ_ONLY_CORPUS_TIMEOUT = "120s"
+WRITE_BATCH_TIMEOUT = "30s"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = Path(__file__).resolve()
@@ -64,13 +66,13 @@ MIGRATION_PATH = (
     REPO_ROOT
     / "supabase"
     / "migrations"
-    / "20260809121226_add_transcript_speaker_names.sql"
+    / "20260809143133_add_transcript_speaker_names.sql"
 )
 ROLLBACK_PATH = (
     REPO_ROOT
     / "supabase"
     / "rollbacks"
-    / "20260809121226_leave_transcript_speaker_names_inert.sql"
+    / "20260809143133_leave_transcript_speaker_names_inert.sql"
 )
 
 MAPPING_FILE = "proposed-mapping.ndjson"
@@ -1656,13 +1658,18 @@ def run_apply(args: argparse.Namespace) -> int:
             raise BackfillError(f"database connection failed: {type(exc).__name__}") from exc
         with connection.cursor() as cursor:
             cursor.execute("SET lock_timeout = '3s'")
-            cursor.execute("SET statement_timeout = '30s'")
+            cursor.execute(f"SET statement_timeout = '{WRITE_BATCH_TIMEOUT}'")
             cursor.execute("SET idle_in_transaction_session_timeout = '30s'")
             cursor.execute("SELECT pg_catalog.pg_try_advisory_lock(%s)", (lock_key,))
             lock_acquired = bool(cursor.fetchone()[0])
             if not lock_acquired:
                 raise BackfillError("another transcript speaker backfill holds the advisory lock")
             _schema_preflight(cursor)
+            # These two read-only checks scan the complete corpus. Keep their
+            # timeout separate from the stricter per-batch write timeout so a
+            # cold cache cannot abort before the first bounded transaction.
+            cursor.execute(f"SET statement_timeout = '{READ_ONLY_CORPUS_TIMEOUT}'")
+            print("apply preflight: checking corpus counts", flush=True)
             before_counts = _database_counts(cursor)
         approved_paragraphs = int(manifest["corpusInput"]["paragraphs"])  # type: ignore[index]
         approved_transcripts = int(manifest["corpusInput"]["transcripts"])  # type: ignore[index]
@@ -1671,7 +1678,9 @@ def run_apply(args: argparse.Namespace) -> int:
         if before_counts[1] != approved_transcripts or before_counts[2] != 0:
             raise BackfillError("database transcript identity counts drifted from the dry-run")
         with connection.cursor() as cursor:
+            print("apply preflight: checking existing speaker values", flush=True)
             checked_existing = _existing_speaker_values_preflight(cursor, records)
+            cursor.execute(f"SET statement_timeout = '{WRITE_BATCH_TIMEOUT}'")
         if checked_existing != before_counts[3]:
             raise BackfillError("existing speaker_names count changed during apply preflight")
 
@@ -1716,7 +1725,9 @@ def run_apply(args: argparse.Namespace) -> int:
 
         _verify_entire_corpus(connection, records)
         with connection.cursor() as cursor:
+            cursor.execute(f"SET statement_timeout = '{READ_ONLY_CORPUS_TIMEOUT}'")
             after_counts = _database_counts(cursor)
+            cursor.execute(f"SET statement_timeout = '{WRITE_BATCH_TIMEOUT}'")
         if after_counts[0] != approved_paragraphs or after_counts[1] != approved_transcripts:
             raise BackfillError("database corpus counts changed during apply")
         if after_counts[2] != 0 or after_counts[3] != approved_paragraphs:

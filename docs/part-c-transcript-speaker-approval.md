@@ -1,17 +1,17 @@
 # Part C transcript-speaker approval packet
 
-## Status: schema approval ready; backfill approval requires a post-schema refreeze
+## Status: schema applied and verified; backfill approval ready
 
-This packet separates four decisions:
+This packet records four separate decisions:
 
-1. Applying the additive Supabase schema migration.
-2. Applying the paragraph backfill after a new post-schema dry run.
-3. Merging the application read-path change.
-4. Promoting that application to production.
+1. The additive Supabase schema migration was explicitly approved, applied, and verified.
+2. The paragraph backfill is frozen but still awaits its distinct approval marker.
+3. The application read-path change was merged by the owner in PR #148.
+4. Vercel reported the resulting `main` deployment complete.
 
-None is implied by approval of another. No Supabase schema or data write, paid call, merge, deployment, or production promotion was performed while preparing this packet.
+None is implied by approval of another. The additive schema change is the only Supabase write performed. No paragraph data write, backfill, index creation, paid call, or agent-initiated merge or production promotion was performed.
 
-The current pre-schema evidence is complete and reviewable, but its backfill marker is intentionally non-actionable. The schema operation will cause Supabase to record a generated live migration version; the pending local migration must then be aligned to that version once, the runner path must be updated, and a new full read-only scan must freeze the only packet that may later be approved for backfill.
+Supabase recorded the schema operation as live migration `20260809143133_add_transcript_speaker_names`. The local migration and rollback paths are aligned to that version, and a new complete post-schema read-only scan froze the only packet eligible for backfill approval.
 
 ## Observed live facts
 
@@ -19,11 +19,11 @@ The current pre-schema evidence is complete and reviewable, but its backfill mar
 - `public.transcript_paragraphs`: 144,438 rows across 3,703 transcripts.
 - Transcript IDs and paragraph numbers are non-null. Every transcript starts at paragraph 1 and is contiguous; the largest has 265 rows.
 - Row-level security is enabled and the table remains publicly readable through its current policy.
-- `speaker_names` is absent and no speaker index exists.
-- `trg_transcript_search_vectors` currently fires before every insert or update.
+- `speaker_names` exists as nullable `text[]` with no default. All 144,438 rows remain `NULL`, and no speaker index exists.
+- `trg_transcript_search_vectors` now fires before insert or updates of `body_text`, `fts_expansion_src`, or `fts_core` only.
 - The live `body_search_vectors_trigger()` raw `pg_proc.prosrc` MD5 is `2b79af99b4080b9c2c0b80ef8a642074`; its `proconfig` is exactly `search_path=public, pg_temp`.
 - `scripts/tags-rebuild/backfill_fts_core.py` still deliberately performs `SET fts_core = fts_core`. The narrowed trigger must therefore retain `fts_core` in its update-column list.
-- The final source scan counted 144,438 rows both before and after. It made no database write.
+- The final post-schema source scan counted 144,438 rows both before and after. It made no database write.
 
 ## Data contract
 
@@ -47,14 +47,14 @@ There is no transcript-wide contextual promotion. An ambiguous label cannot beco
 
 The application keeps the existing public `speaker: string | null` field. Its authoritative final refetch selects `speaker_names` from the same row as `body_text` and joins the array with ` · `. It adds no public response field. `NULL`, `{}`, malformed arrays, and arrays containing `Speaker not identified` fail closed to the existing unidentified-speaker presentation.
 
-## Final pre-schema read-only evidence
+## Final post-schema read-only evidence
 
 ### Identity and artifacts
 
 | Item | SHA-256 |
 | --- | --- |
 | Canonical corpus input, including `body_text` | `580c6cc9a69d1acaaa4581730ad4c8a1e2aa36d8e3d2585a4f4e4bc8dc049d07` |
-| `run-manifest.json` | `b2befe2c5d8224c399ccd482668d1ec039005a50ed9372349cafd2da61d88170` |
+| `run-manifest.json` | `11ee0501916f6a124d6b603750fc1234391e668e2a9a90b65a147330c9b60e17` |
 | `proposed-mapping.ndjson` | `a5789b46da576f5115ff3ac86bdc9843c4fc0360b1bd7ecc7619aaa53772de0f` |
 | `suspicious.ndjson` | `d9a997c4fe8dd8eeb8d1c5d95ac0ecd219bca1383a60ac888f40d53c8c74f8fb` |
 | `verification.json` | `7d50bf316dcc86e22cd8c6ed73a267730341a8bb323e9946348ab24e5cc8b386` |
@@ -120,25 +120,25 @@ The manifest directly binds the five operator/schema files and pinned dependenci
 | File | SHA-256 |
 | --- | --- |
 | `scripts/transcript-speakers/mapper.py` | `8c40a3db1d1be0f6ede4f2fa911f72b024131530f937f58468710de048bfbdb3` |
-| `scripts/transcript-speakers/backfill.py` | `6bae02d7f981ecfaebe64585fb149a9fe85f3fbe08392dac1756624c0de9ee3f` |
+| `scripts/transcript-speakers/backfill.py` | `dd709c9e03a121f00bb2c7832b33d488f74fb9faa8efc775c43fad98cdff32a1` |
 | `scripts/transcript-speakers/recompute.py` | `4aad405c2fb3f2a187e6b7bf397b169616e50a64d6c647a78223717a7e154482` |
 | `scripts/transcript-speakers/requirements.txt` | `4c1b637f006ca59d6e65c4e090df7166e20b0281ea576ed0baf9939801ce96f8` |
-| `supabase/migrations/20260809121226_add_transcript_speaker_names.sql` | `33ed570fdba2facbd8509cf8dcf9ab856e8b6750f4ff17c104636e762b68bb2c` |
-| `supabase/rollbacks/20260809121226_leave_transcript_speaker_names_inert.sql` | `a12d330e97c2abd0b532a7e7f813df111ed612c4cc1fa6ffd64d610576dcded5` |
+| `supabase/migrations/20260809143133_add_transcript_speaker_names.sql` | `33ed570fdba2facbd8509cf8dcf9ab856e8b6750f4ff17c104636e762b68bb2c` |
+| `supabase/rollbacks/20260809143133_leave_transcript_speaker_names_inert.sql` | `a12d330e97c2abd0b532a7e7f813df111ed612c4cc1fa6ffd64d610576dcded5` |
 | `scripts/transcript-speakers/tests/screenshot_fixtures.py` | `f2e0d31967733586a42a7d675e05a3680de16aa9475bcee357b7e133dbac0628` |
 | `scripts/transcript-speakers/tests/test_mapper.py` | `8f8dbc629c0d51883298b9f0fe99a26b56d186403f50d0a5c7914fba0b451178` |
-| `scripts/transcript-speakers/tests/test_backfill.py` | `66ab7de9a80664897e11548cfe13caf127c31e583c55b06261669f4711e4e6ae` |
+| `scripts/transcript-speakers/tests/test_backfill.py` | `103ff3a98ea57fbc453992a904effaed5499aef35b714f1cbc33414248ec985f` |
 | `scripts/transcript-speakers/tests/test_recompute.py` | `5ee93d6e23b21f99b27034e28a25e334d77ebad9d9c4c33f686f9b54b3011a22` |
-| `tests/transcript-speaker-backfill-contract.test.ts` | `fecee5a067e1d74b6f097ec1632b964a29bdd02bfeb7f7a31976b559e27e76fe` |
+| `tests/transcript-speaker-backfill-contract.test.ts` | `c6e6864f7df3dde38d1955304e6ca2c32aea4d56ee74be357a42fd8520da2c54` |
 | `app/lib/15-transcript-speakers.ts` | `da1c3198abe5bbd407fb1b515763ce2ed66483b07ba0148b084fcdbfa3befe2f` |
 | `app/lib/21-transcript-attribution.ts` | `e1a610de5eead4af3a98d8df3eeeccfad56c98ac1a6bfa55164739aac9c80ede` |
 | `app/lib/search-v2/refetch.ts` | `4aebc69f850c531dcd2566e465a4bd10d15d66e91bd1973672d6bda9ec4832e8` |
 | `tests/transcript-speaker-filter.test.ts` | `c37d1817838499c5d489212344ff327580ac1a96c07198e7f4234de9efb2d7ab` |
 | `tests/search-v2-integration.test.ts` | `8aee023cb190a0d574adbaa7b1f225c45c017ad42f01f976907d7650efde08c5` |
 
-Publication verification passes: 65 Python mapper/backfill/recompute tests, Python byte-compilation, 7 schema contract tests, 40 additional focused TypeScript speaker/search tests, the full Vitest suite (437 passed and 1 skipped), type-check, lint (0 errors; 27 pre-existing warnings), production build, changed-file secret scan, final scope review, and diff whitespace check. One first full-suite run hit a transient Windows `EPERM` in an unchanged A2 atomic-rename test; that test then passed 3/3 focused retries and the complete suite passed on rerun.
+Post-schema alignment verification passes: 65 Python mapper/backfill/recompute tests, the full Vitest suite (437 passed and 1 skipped), type-check, lint (0 errors; 27 pre-existing warnings), production build, changed-file secret scan, final scope review, and diff whitespace check.
 
-## Schema packet
+## Applied schema packet
 
 Migration SHA-256:
 
@@ -146,7 +146,7 @@ Migration SHA-256:
 33ed570fdba2facbd8509cf8dcf9ab856e8b6750f4ff17c104636e762b68bb2c
 ```
 
-The migration:
+Supabase applied this exact migration as version `20260809143133`. Post-apply verification found 144,438 total rows, 144,438 `NULL` speaker arrays, zero processed rows, and zero speaker indexes. The migration:
 
 - runs in one transaction with a 3-second lock timeout and 30-second statement timeout;
 - requires the exact table, RLS, live trigger function body, function-level `search_path`, and trigger catalog shape;
@@ -169,13 +169,13 @@ The live migration ledger has three historical timestamp mismatches:
 
 Therefore never use `supabase db push` for this operation.
 
-After explicit schema approval:
+Completed execution record:
 
-1. Recheck the live column, RLS, index, trigger, raw function hash/config, corpus counts, and migration ledger. Stop on drift.
-2. Apply only the SQL whose SHA-256 is `33ed570fdba2facbd8509cf8dcf9ab856e8b6750f4ff17c104636e762b68bb2c` through one Supabase `apply_migration` call named `add_transcript_speaker_names`.
-3. Read back the generated live migration version and complete schema verification.
-4. Align the pending local migration filename to that live version once before merge; update the runner path.
-5. Rerun tests and the complete read-only corpus scan. Review the new hashes and counts before requesting a separate backfill approval.
+1. The live column, RLS, index, trigger, raw function hash/config, corpus counts, and migration ledger were rechecked with no drift.
+2. The approved SQL SHA-256 was `33ed570fdba2facbd8509cf8dcf9ab856e8b6750f4ff17c104636e762b68bb2c`.
+3. One Supabase `apply_migration` call named `add_transcript_speaker_names` succeeded and produced live version `20260809143133`.
+4. Catalog verification proved the nullable array shape, RLS, unchanged function fingerprint/config, exact narrowed trigger, zero speaker indexes, and zero processed rows.
+5. The local migration/rollback paths and runner references were aligned, tests passed, and the complete post-schema read-only scan produced the final manifest below.
 
 ## Backfill controls and load
 
@@ -193,11 +193,20 @@ The initial backfill runner requires all of these before writing:
 
 At a 500-row maximum, the current corpus resolves to 309 transcript-complete transactions, averaging about 467 rows. No transcript is split. Every transaction uses bounded lock, statement, and idle timeouts, locks and verifies its complete transcripts, updates only differing `speaker_names`, verifies after writing, commits, and fsyncs a hash-bound ledger record. A rerun verifies and skips the committed ledger prefix.
 
+The first approved attempt stopped before batch 1 with SQLSTATE `57014`. Live
+verification immediately afterward found zero processed rows and no apply
+ledger, so no partial backfill occurred. The failure was isolated to the two
+read-only whole-corpus preflight scans: their cold-cache plan may touch about
+144,000 heap/index buffers. The repaired runner gives whole-corpus read-only
+preflight and final checks 120 seconds and restores the 30-second limit before
+any batch write. The 3-second lock limit, 30-second write limit, 500-row
+maximum, mappings, and conflict checks are unchanged.
+
 After all batches, a serializable whole-corpus pass rechecks every identity, body hash, and final array under `FOR SHARE` locks. Corpus writers must be paused or coordinated through the same advisory-lock protocol throughout the mutation window. The final pass is a point-in-time guarantee; non-cooperating writers after it remain an operational risk.
 
 Adding a nullable no-default column is expected to be metadata-only, but replacing the trigger needs a table lock and will fail after 3 seconds rather than wait. Narrowing the trigger prevents 144,438 speaker-only updates from recalculating indexed search vectors while preserving the active `fts_core = fts_core` repair workflow.
 
-Actual elapsed time, WAL, replica lag, contention, and vacuum demand remain unknown until an approved monitored window. Do not increase timeouts or batch size without review.
+Actual elapsed time, WAL, replica lag, contention, and vacuum demand remain unknown until an approved monitored window. Do not increase the reviewed 120-second read-only scan limit, the 30-second write limit, or the batch size without review.
 
 ## Verification queries
 
@@ -276,7 +285,7 @@ JOIN public.transcript_paragraphs AS p USING (id)
 ORDER BY p.id;
 ```
 
-The pre-schema evidence expects 144,438 total, zero unprocessed, 4,994 empty, 87,463 known-single-only, 36,909 known-multiple-only, 15,072 known-and-unknown, zero invalid-unknown-only, and both fixtures passing. A post-schema packet must reproduce or explicitly re-review any difference.
+The final post-schema packet expects 144,438 total, zero unprocessed, 4,994 empty, 87,463 known-single-only, 36,909 known-multiple-only, 15,072 known-and-unknown, zero invalid-unknown-only, and both fixtures passing after the separately approved backfill.
 
 ## Rollback and interruption
 
@@ -308,16 +317,29 @@ It accepts only the entire exact frozen-current state or the entire exact desire
 
 ## Approval markers
 
-Schema-only marker, bound to the reviewed migration hash:
+Consumed schema-only marker, bound to the applied migration hash:
 
 ```text
 I_APPROVE_TRANSCRIPT_SPEAKER_SCHEMA:33ed570fdba2facbd8509cf8dcf9ab856e8b6750f4ff17c104636e762b68bb2c
 ```
 
-Pre-schema evidence marker, recorded only and **not actionable for backfill**:
+Retired pre-schema evidence marker, recorded only and **not actionable for backfill**:
 
 ```text
 PRE_SCHEMA_TRANSCRIPT_SPEAKER_MANIFEST:b2befe2c5d8224c399ccd482668d1ec039005a50ed9372349cafd2da61d88170
 ```
 
-After schema verification and the required refreeze, request a distinct `I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:<post-schema-manifest-sha256>` marker. Neither marker authorizes merge, Vercel deployment, application cutover, or production promotion.
+Retired first-attempt marker, recorded only and **not actionable after the
+runner timeout repair**:
+
+```text
+I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:7b2a8d2870a014e84d7bdb727c22c08bffea25bc2e157a72182808c1a758f50e
+```
+
+The replacement post-schema backfill marker is:
+
+```text
+I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:11ee0501916f6a124d6b603750fc1234391e668e2a9a90b65a147330c9b60e17
+```
+
+It authorizes only the frozen paragraph backfill. It does not authorize a merge, Vercel deployment, unrelated schema change, paid call, or production promotion.
