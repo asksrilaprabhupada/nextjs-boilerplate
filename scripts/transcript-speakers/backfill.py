@@ -64,13 +64,13 @@ MIGRATION_PATH = (
     REPO_ROOT
     / "supabase"
     / "migrations"
-    / "20260809121226_add_transcript_speaker_names.sql"
+    / "20260809143133_add_transcript_speaker_names.sql"
 )
 ROLLBACK_PATH = (
     REPO_ROOT
     / "supabase"
     / "rollbacks"
-    / "20260809121226_leave_transcript_speaker_names_inert.sql"
+    / "20260809143133_leave_transcript_speaker_names_inert.sql"
 )
 
 MAPPING_FILE = "proposed-mapping.ndjson"

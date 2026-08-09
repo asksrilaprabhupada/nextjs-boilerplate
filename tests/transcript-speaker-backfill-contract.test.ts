@@ -7,7 +7,7 @@ const migration = readFileSync(
     process.cwd(),
     "supabase",
     "migrations",
-    "20260809121226_add_transcript_speaker_names.sql",
+    "20260809143133_add_transcript_speaker_names.sql",
   ),
   "utf8",
 );
@@ -17,7 +17,7 @@ const rollback = readFileSync(
     process.cwd(),
     "supabase",
     "rollbacks",
-    "20260809121226_leave_transcript_speaker_names_inert.sql",
+    "20260809143133_leave_transcript_speaker_names_inert.sql",
   ),
   "utf8",
 );
