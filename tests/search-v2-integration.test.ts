@@ -23,14 +23,58 @@
  * fallback is recorded separately because the deterministic renderer is a
  * complete designed path.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { runSearchV2 } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
 import { __setCacheAdapter } from "@/app/lib/search-v2/cache";
 import { SearchInfrastructureError } from "@/app/lib/search-v2/errors";
 import { retrieveCandidates } from "@/app/lib/search-v2/retrieval";
-import { fallbackPlan } from "@/app/lib/search-v2/query-plan";
+import {
+  fallbackPlan,
+  type PrivatePlannerCallUsage,
+} from "@/app/lib/search-v2/query-plan";
 import { DegradationLog } from "@/app/lib/search-v2/rpc";
+
+vi.mock("@google/genai", () => ({
+  GoogleGenAI: class {
+    readonly models = {
+      generateContent: async () => ({
+        text: JSON.stringify({
+          schema_version: "query-plan-v1",
+          intent: "practical_how",
+          canonical_query: "how to control the restless mind",
+          preserve_terms: ["mind"],
+          lexical_phrases: [],
+          vocabulary_candidates: ["the mind"],
+          subqueries: [
+            { id: "s1", text: "why the mind becomes restless", role: "cause", priority: "primary" },
+            { id: "s2", text: "scriptural nature of the mind", role: "scriptural_basis", priority: "primary" },
+            { id: "s3", text: "practice and detachment for steadiness", role: "method", priority: "supporting" },
+            { id: "s4", text: "obstacles in steadying the mind", role: "practice", priority: "supporting" },
+            { id: "s5", text: "analogies for the wandering senses", role: "example", priority: "exploratory" },
+          ],
+          constraints: {
+            scripture_references: [],
+            source_types: [],
+            speaker: null,
+            recipient: null,
+            location: null,
+            date_from: null,
+            date_to: null,
+          },
+          possible_false_assumption: false,
+        }),
+        usageMetadata: {
+          promptTokenCount: 777,
+          candidatesTokenCount: 333,
+          thoughtsTokenCount: 0,
+          toolUsePromptTokenCount: 0,
+          totalTokenCount: 1_110,
+        },
+      }),
+    };
+  },
+}));
 
 // ─── real corpus rows ────────────────────────────────────────
 
@@ -265,6 +309,59 @@ describe("V2 pipeline, end to end, with every provider down", () => {
 
     expect(out.article.disclosure).toMatch(/assisted by AI/);
     expect(out.evidenceInsufficient).toBe(false);
+  });
+
+  it("keeps evaluator-private planner calls out of telemetry and pipeline output", async () => {
+    const priorKey = process.env.GEMINI_API_KEY;
+    process.env.GEMINI_API_KEY = "offline-test-key";
+    try {
+      const privateCalls: PrivatePlannerCallUsage[] = [];
+      const out = await runSearchV2({
+        db: fakeDb() as never,
+        query: "how do I control my restless mind",
+        requestId: "req_private_planner_accounting",
+        captureDiagnostics: true,
+        privatePlannerCallUsageObserver: (event) => {
+          privateCalls.push({ ...event });
+        },
+        privateArticlePlanner: async () => ({
+          plan: null,
+          source: "deterministic_fallback",
+          rejections: ["offline privacy test"],
+        }),
+      });
+
+      expect(privateCalls).toEqual([{
+        attempt: 1,
+        responseReceived: true,
+        promptTokenCount: 777,
+        candidatesTokenCount: 333,
+        thoughtsTokenCount: 0,
+        toolUsePromptTokenCount: 0,
+        totalTokenCount: 1_110,
+      }]);
+      expect(out.telemetry.planUsage).toMatchObject({
+        attempts: 1,
+        promptTokens: 777,
+        outputTokens: 333,
+        thoughtsTokens: 0,
+        totalTokens: 1_110,
+      });
+      const serialized = JSON.stringify(out);
+      for (const privateField of [
+        "responseReceived",
+        "promptTokenCount",
+        "candidatesTokenCount",
+        "thoughtsTokenCount",
+        "toolUsePromptTokenCount",
+        "totalTokenCount",
+      ]) {
+        expect(serialized).not.toContain(`"${privateField}"`);
+      }
+    } finally {
+      if (priorKey === undefined) delete process.env.GEMINI_API_KEY;
+      else process.env.GEMINI_API_KEY = priorKey;
+    }
   });
 
   it("weights the original question fully and discounts an unrecognised subquery id", async () => {
