@@ -5,13 +5,24 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "verify:contract": "node scripts/verify-search-contract.mjs",
+    "verify:snapshot-storage": "node scripts/provision-search-snapshot-storage.mjs",
+    "provision:snapshot-storage": "node scripts/provision-search-snapshot-storage.mjs --apply",
+    "verify:snapshot": "node scripts/verify-search-snapshot.mjs",
+    "lint": "eslint .",
+    "eval:gold": "node scripts/evaluate-search.mjs",
+    "eval:a2": "vitest run --config vitest.a2.config.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.100.0",
+    "@google/genai": "^2.13.0",
+    "@supabase/supabase-js": "2.100.0",
     "@tailwindcss/postcss": "^4.2.2",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
+    "@vercel/functions": "^3.7.6",
     "framer-motion": "^12.38.0",
     "next": "^16.2.1",
     "postcss": "^8.5.8",
@@ -19,9 +30,14 @@
     "react-dom": "^19.2.4",
     "sharp": "^0.34.5",
     "tailwindcss": "^4.2.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/react-dom": "^19.2.3"
+    "@eslint/eslintrc": "^3.3.6",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.12",
+    "vitest": "^4.1.9"
   }
 }

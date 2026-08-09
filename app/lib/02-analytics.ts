@@ -1,43 +1,10 @@
 /**
  * 02-analytics.ts — Analytics Helpers
  *
- * Provides functions for logging search queries, feedback votes, and user behavior events.
- * Powers the analytics pipeline that tracks how users interact with search results.
+ * Provides feedback and bounded result-interaction helpers.
+ * Search questions are logged server-side as hashes; this module deliberately
+ * has no raw-query logger or persistent visitor-ID creator.
  */
-
-// ---------------------------------------------------------------------------
-// Anonymous IDs
-// ---------------------------------------------------------------------------
-
-function generateId(): string {
-  return crypto.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-/** Per-tab session ID (dies when tab closes) */
-export function getSessionId(): string {
-  if (typeof window === "undefined") return "";
-  let id = sessionStorage.getItem("asp_session_id");
-  if (!id) {
-    id = generateId();
-    sessionStorage.setItem("asp_session_id", id);
-  }
-  return id;
-}
-
-/** Persistent anonymous visitor ID (survives across visits via cookie) */
-export function getVisitorId(): string {
-  if (typeof window === "undefined") return "";
-
-  // Try reading from cookie
-  const match = document.cookie.match(/(?:^|; )asp_vid=([^;]+)/);
-  if (match) return match[1];
-
-  // Generate and store for 1 year
-  const id = generateId();
-  const expires = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toUTCString();
-  document.cookie = `asp_vid=${id}; expires=${expires}; path=/; SameSite=Lax`;
-  return id;
-}
 
 // ---------------------------------------------------------------------------
 // API helpers (fire-and-forget — never block the UI)
@@ -55,37 +22,6 @@ async function post(path: string, body: Record<string, unknown> | object): Promi
   } catch {
     return null;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Log a search (called from search handler after results arrive)
-// ---------------------------------------------------------------------------
-
-export interface SearchLogParams {
-  query: string;
-  totalResults: number;
-  verseIds: string[];
-  proseIds: string[];
-  booksReturned: string[];
-  searchMethod: string;
-  searchDurationMs?: number;
-  embeddingDurationMs?: number;
-  synthesisDurationMs?: number;
-  totalDurationMs?: number;
-  narrativeLength?: number;
-}
-
-/** Returns the search_log_id for later feedback/behavior calls */
-export async function logSearch(params: SearchLogParams): Promise<string | null> {
-  const result = await post("/api/analytics/log", {
-    ...params,
-    sessionId: getSessionId(),
-    visitorId: getVisitorId(),
-    source: /Mobi|Android/i.test(navigator.userAgent) ? "mobile" : "web",
-    userAgent: navigator.userAgent,
-    referrer: document.referrer || null,
-  });
-  return (result?.searchLogId as string) || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -115,9 +51,45 @@ export interface BehaviorParams {
   clickedWantMore?: string[];
   scrolledToBottom?: boolean;
   timeOnResultMs?: number;
-  followedUpQuery?: string;
 }
 
-export async function logBehavior(params: BehaviorParams): Promise<void> {
-  await post("/api/analytics/behavior", params);
+/**
+ * Beacon-first delivery so signals survive page unload (sendBeacon queues the
+ * POST even as the document tears down); falls back to keepalive fetch.
+ */
+function beacon(path: string, body: Record<string, unknown>): void {
+  const payload = JSON.stringify(body);
+  try {
+    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+      const ok = navigator.sendBeacon(path, new Blob([payload], { type: "application/json" }));
+      if (ok) return;
+    }
+  } catch { /* fall through to fetch */ }
+  void fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: payload,
+    keepalive: true,
+  }).catch(() => { /* fire-and-forget */ });
+}
+
+export function logBehavior(params: BehaviorParams): void {
+  beacon("/api/analytics/behavior", { ...params });
+}
+
+// ---------------------------------------------------------------------------
+// Record a Vedabase citation click (dedicated citation_clicks table)
+// ---------------------------------------------------------------------------
+
+export interface CitationClickParams {
+  searchLogId: string;
+  verseId?: string | null;
+  proseId?: string | null;
+  citationRef?: string | null;
+  bookSlug?: string | null;
+  clickPosition?: number | null;
+}
+
+export function logCitationClick(params: CitationClickParams): void {
+  beacon("/api/analytics/citation-click", { ...params });
 }

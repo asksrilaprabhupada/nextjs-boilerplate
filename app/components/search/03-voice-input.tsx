@@ -116,49 +116,22 @@ export default function VoiceInput({ onTranscript, onFinalTranscript, disabled }
       onClick={toggleRecording}
       disabled={disabled}
       aria-label={recording ? "Stop voice input" : "Start voice input"}
-      style={{
-        width: 38,
-        height: 38,
-        minWidth: 38,
-        minHeight: 38,
-        borderRadius: recording ? "50%" : 11,
-        border: recording ? "2px solid rgba(232,137,28,0.4)" : "1.5px solid rgba(139,92,246,0.5)",
-        background: recording
-          ? "linear-gradient(135deg, rgba(232,137,28,0.15), rgba(245,166,35,0.15))"
-          : "rgba(139,92,246,0.12)",
-        cursor: disabled ? "default" : "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        transition: "all 0.3s cubic-bezier(0.16,1,0.3,1)",
-        opacity: disabled ? 0.4 : 1,
-        position: "relative",
-        overflow: "visible",
-        animation: recording ? "voiceBtnPulse 1.8s ease-in-out infinite" : "none",
-      }}
-      onMouseEnter={e => {
-        if (!disabled && !recording) {
-          e.currentTarget.style.background = "rgba(139,92,246,0.2)";
-          e.currentTarget.style.borderColor = "#8B5CF6";
-        }
-      }}
-      onMouseLeave={e => {
-        if (!disabled && !recording) {
-          e.currentTarget.style.background = "rgba(139,92,246,0.12)";
-          e.currentTarget.style.borderColor = "rgba(139,92,246,0.5)";
-        }
-      }}
+      className="voice-btn"
+      data-recording={recording ? "1" : undefined}
+      style={{ opacity: disabled ? 0.4 : 1, cursor: disabled ? "default" : "pointer" }}
     >
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        style={{ color: recording ? "#E8891C" : "#7C3AED", transition: "color 0.3s" }}
-      >
+      {/* Calm concentric ripple while listening (not a jittery waveform). */}
+      {recording && (
+        <>
+          <span className="v-ripple" aria-hidden="true" />
+          <span className="v-ripple v-ripple-2" aria-hidden="true" />
+        </>
+      )}
+
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="v-ico">
         <path
           d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z"
-          fill={recording ? "rgba(232,137,28,0.2)" : "none"}
+          fill="none"
           stroke="currentColor"
           strokeWidth="2"
           strokeLinecap="round"
@@ -170,9 +143,40 @@ export default function VoiceInput({ onTranscript, onFinalTranscript, disabled }
       </svg>
 
       <style jsx>{`
-        @keyframes voiceBtnPulse {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(232, 137, 28, 0.3); }
-          50% { box-shadow: 0 0 0 6px rgba(232, 137, 28, 0); }
+        .voice-btn {
+          position: relative;
+          width: 38px; height: 38px; min-width: 38px; min-height: 38px;
+          border-radius: 11px;
+          border: 1.5px solid color-mix(in srgb, var(--accent) 50%, transparent);
+          background: color-mix(in srgb, var(--accent) 12%, transparent);
+          display: flex; align-items: center; justify-content: center; overflow: visible;
+          transition: background var(--dur-3) var(--ease-standard),
+            border-color var(--dur-3) var(--ease-standard),
+            border-radius var(--dur-3) var(--ease-standard);
+        }
+        .voice-btn:hover {
+          background: color-mix(in srgb, var(--accent) 20%, transparent);
+          border-color: var(--accent);
+        }
+        .voice-btn[data-recording] {
+          border-radius: 50%;
+          border-color: var(--accent);
+          background: var(--accent-tint);
+        }
+        .v-ico { color: var(--accent-strong); transition: color var(--dur-3) var(--ease-standard); }
+        .v-ripple {
+          position: absolute; inset: -2px; border-radius: 50%;
+          border: 1.5px solid color-mix(in srgb, var(--accent) 45%, transparent);
+          pointer-events: none; opacity: 0;
+          animation: vRipple 1.9s var(--ease-decelerate) infinite;
+        }
+        .v-ripple-2 { animation-delay: 0.95s; }
+        @keyframes vRipple {
+          0%   { transform: scale(0.85); opacity: 0.55; }
+          100% { transform: scale(2.3); opacity: 0; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .v-ripple { animation: none; display: none; }
         }
       `}</style>
     </button>

@@ -28,23 +28,23 @@ export default function CTASection() {
       <div className="scroll-reveal" style={{
         textAlign: "center", padding: "clamp(28px, 6vw, 48px) clamp(20px, 5vw, 40px)",
         borderRadius: 24,
-        background: "linear-gradient(135deg, rgba(245,240,255,0.6) 0%, rgba(251,207,232,0.15) 50%, rgba(253,230,138,0.08) 100%)",
-        border: "1px solid rgba(196,181,253,0.2)",
+        background: "linear-gradient(135deg, color-mix(in srgb, var(--accent) 60%, transparent) 0%, color-mix(in srgb, var(--accent-strong) 8%, transparent) 100%)",
+        border: "1px solid color-mix(in srgb, var(--accent-tint) 20%, transparent)",
         position: "relative", overflow: "hidden",
       }}>
         {/* Subtle glow */}
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 400, height: 250, borderRadius: "50%", background: "radial-gradient(circle, rgba(196,181,253,0.12) 0%, transparent 70%)", filter: "blur(40px)", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 400, height: 250, borderRadius: "50%", background: "radial-gradient(circle, color-mix(in srgb, var(--accent-tint) 12%, transparent) 0%, transparent 70%)", filter: "blur(40px)", pointerEvents: "none" }} />
 
         <div style={{ position: "relative", zIndex: 1 }}>
-          <h2 className="font-display" style={{ fontSize: "clamp(26px, 3.5vw, 40px)", fontWeight: 600, lineHeight: 1.2, letterSpacing: "-0.02em", color: "#1E1B4B", marginBottom: 12 }}>
+          <h2 className="font-display" style={{ fontSize: "clamp(26px, 3.5vw, 40px)", fontWeight: 600, lineHeight: 1.2, letterSpacing: "-0.02em", color: "var(--ink)", marginBottom: 12 }}>
             Ask your first question
           </h2>
-          <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "#374151", marginBottom: 28, maxWidth: 480, margin: "0 auto 28px" }}>
+          <p className="font-body" style={{ fontSize: 15, fontWeight: 400, lineHeight: 1.7, color: "var(--ink)", marginBottom: 28, maxWidth: 480, margin: "0 auto 28px" }}>
             36 books. 3,700 lectures. 6,500 letters. Every answer grounded in Śrīla Prabhupāda&apos;s actual words.
           </p>
           <button className="btn-primary" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
             <span>Search the books</span>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ position: "relative", zIndex: 1 }}><path d="M5 12h14M12 5l7 7-7 7" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ position: "relative", zIndex: 1 }}><path d="M5 12h14M12 5l7 7-7 7" stroke="var(--surface-raised)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </button>
         </div>
       </div>

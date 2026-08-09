@@ -55,7 +55,7 @@ export default function DonateOverlay() {
         style={{
           fontSize: "1.6rem",
           fontWeight: 600,
-          color: "#1E1B4B",
+          color: "var(--ink)",
           marginBottom: 8,
           letterSpacing: "-0.02em",
         }}
@@ -68,7 +68,7 @@ export default function DonateOverlay() {
           fontSize: 15,
           lineHeight: 1.7,
           fontWeight: 400,
-          color: "#6B7280",
+          color: "var(--ink-muted)",
           marginBottom: 24,
         }}
       >
@@ -77,9 +77,9 @@ export default function DonateOverlay() {
 
       <div
         style={{
-          background: "rgba(245, 240, 255, 0.5)",
+          background: "color-mix(in srgb, var(--accent-tint) 50%, transparent)",
           borderRadius: 20,
-          border: "1px solid rgba(196, 181, 253, 0.2)",
+          border: "1px solid color-mix(in srgb, var(--accent-tint) 20%, transparent)",
           overflow: "hidden",
         }}
       >
@@ -96,7 +96,7 @@ export default function DonateOverlay() {
                   justifyContent: "space-between",
                   padding: "14px 20px",
                   borderBottom:
-                    i < fields.length - 1 ? "1px solid rgba(196, 181, 253, 0.15)" : "none",
+                    i < fields.length - 1 ? "1px solid color-mix(in srgb, var(--accent-tint) 15%, transparent)" : "none",
                   gap: 12,
                 }}
               >
@@ -108,7 +108,7 @@ export default function DonateOverlay() {
                       fontWeight: 500,
                       textTransform: "uppercase",
                       letterSpacing: "0.1em",
-                      color: "#6B7280",
+                      color: "var(--ink-muted)",
                       marginBottom: 2,
                     }}
                   >
@@ -119,7 +119,7 @@ export default function DonateOverlay() {
                     style={{
                       fontSize: 15,
                       fontWeight: 500,
-                      color: "#1E1B4B",
+                      color: "var(--ink)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
@@ -135,9 +135,9 @@ export default function DonateOverlay() {
                     width: 34,
                     height: 34,
                     borderRadius: 8,
-                    border: "1px solid rgba(196, 181, 253, 0.25)",
-                    background: copiedField === field.key ? "#8B5CF6" : "rgba(255,255,255,0.6)",
-                    color: copiedField === field.key ? "#fff" : "#6B7280",
+                    border: "1px solid color-mix(in srgb, var(--accent-tint) 25%, transparent)",
+                    background: copiedField === field.key ? "var(--accent)" : "color-mix(in srgb, var(--surface-raised) 60%, transparent)",
+                    color: copiedField === field.key ? "var(--on-accent)" : "var(--ink-muted)",
                     cursor: "pointer",
                     display: "flex",
                     alignItems: "center",
@@ -147,14 +147,14 @@ export default function DonateOverlay() {
                   }}
                   onMouseEnter={(e) => {
                     if (copiedField !== field.key) {
-                      e.currentTarget.style.borderColor = "rgba(139, 92, 246, 0.3)";
-                      e.currentTarget.style.color = "#8B5CF6";
+                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 30%, transparent)";
+                      e.currentTarget.style.color = "var(--accent)";
                     }
                   }}
                   onMouseLeave={(e) => {
                     if (copiedField !== field.key) {
-                      e.currentTarget.style.borderColor = "rgba(196, 181, 253, 0.25)";
-                      e.currentTarget.style.color = "#6B7280";
+                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent-tint) 25%, transparent)";
+                      e.currentTarget.style.color = "var(--ink-muted)";
                     }
                   }}
                 >
@@ -179,7 +179,7 @@ export default function DonateOverlay() {
             style={{
               padding: "32px 20px",
               textAlign: "center",
-              color: "#6B7280",
+              color: "var(--ink-muted)",
               fontStyle: "italic",
               fontWeight: 400,
             }}

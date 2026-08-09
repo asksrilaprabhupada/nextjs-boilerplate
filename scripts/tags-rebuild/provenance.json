@@ -1,0 +1,61 @@
+{
+  "$comment": "Provenance manifest — the SINGLE source of truth for whose words a passage is and what the tagging harness may generate for it. The harness gates ONLY from this file (provenance.py interprets it); there are no ad-hoc authorship rules in code. Mirrors the reviewed rules behind app/lib/12-provenance.ts and app/lib/15-transcript-speakers.ts, with one harness-side addition: speaker carry-forward across continuation paragraphs, which the app cannot do per-paragraph but an offline pass over a whole transcript can.",
+  "version": "2026-07-12.1",
+  "authorship_values": ["HIS", "NOT_HIS", "MIXED_VERIFY"],
+  "mixed_verify_policy": "MIXED_VERIFY is treated exactly like NOT_HIS everywhere until verified from the book's own front matter.",
+
+  "books": {
+    "$comment": "Book-slug rules applied to verses (slug from chapters.book_slug, falling back to lower(verses.scripture)) and prose_paragraphs (book_slug column). his_slugs is the verified HIS registry (mirrors BOOK_REGISTRY in app/lib/12-provenance.ts); sb is HIS at book level with the per-passage completion rule below. Slugs not listed anywhere fall to 'unknown_book_slug' — never assume words are his without evidence.",
+    "not_his_slugs": ["rkd", "mbk", "spl"],
+    "mixed_verify_slugs": ["nbs", "mms", "bs"],
+    "his_slugs": [
+      "bg", "sb", "cc", "noi", "iso", "lob", "kb", "nod", "ssr", "tlc", "tlk",
+      "tqk", "sc", "bbd", "bhakti", "cat", "josd", "owk", "pop", "poy", "pqpa",
+      "rv", "cabh", "ejop", "ekc", "kcty", "lcfl", "mog", "rtw", "top"
+    ],
+    "unknown_book_slug": "MIXED_VERIFY"
+  },
+
+  "sb_completion_rule": {
+    "$comment": "Srimad-Bhagavatam was completed by disciples from Canto 10 Chapter 14 onward (and all of Cantos 11-12). Canto+chapter are parsed from the verse's own vedabase_url; the chapters-table fields are the fallback. When neither parses to numbers the rule does not fire (the book-level ruling stands).",
+    "book_slug": "sb",
+    "not_his_from": { "canto": 10, "chapter": 14 },
+    "parse": {
+      "source": "vedabase_url",
+      "url_pattern": "/library/sb/(\\d+)/(\\d+)/",
+      "fallback_fields": ["canto_or_division", "chapter_number"]
+    }
+  },
+
+  "tables": {
+    "verses": { "authorship": "by_book_slug_with_sb_rule" },
+    "verse_chunks": {
+      "authorship": "inherit_parent_verse",
+      "$comment": "Never sent to Gemini; tags_core is inherited from the parent verse by SQL."
+    },
+    "prose_paragraphs": { "authorship": "by_book_slug" },
+    "transcript_paragraphs": { "authorship": "by_speakers" },
+    "letter_paragraphs": { "authorship": "HIS" }
+  },
+
+  "transcripts": {
+    "$comment": "Lecture/conversation paragraphs are verbatim multi-speaker blocks with 'Name:' prefixes baked into body_text; many continuation paragraphs carry no prefix. The harness walks each transcript's paragraphs in paragraph_number order, segments on the prefix regex, and carries the LAST named speaker forward across prefix-less continuation paragraphs within that transcript. A paragraph counts as Prabhupada-speaking if he is among its speakers (his own prefix in the paragraph, or carried forward into an unprefixed continuation).",
+    "speaker_prefix_regex": "^(\\p{Lu}[\\p{L}\\p{M}.'’-]*(?:[ ][(\\p{Lu}\\p{N}][\\p{L}\\p{M}\\p{N}.'’)-]*){0,3})[ \\t]*[:：](?=[ \\t])",
+    "regex_flavor": "unicode (Python 'regex' module; \\p{..} classes as in app/lib/15-transcript-speakers.ts SPEAKER_LINE_RE)",
+    "order_by": "paragraph_number",
+    "group_by": "transcript_id",
+    "carry_forward_last_named_speaker": true,
+    "prabhupada_names_folded": ["prabhupada", "srila prabhupada"],
+    "name_folding": "NFD, strip combining marks, lowercase, keep [a-z ] only, trim",
+    "counts_as_his_if": "prabhupada_among_speakers",
+    "before_any_named_speaker": "NOT_HIS",
+    "before_any_named_speaker_comment": "Paragraphs before the first named prefix in a transcript have no evidenced speaker — ambiguous is not his."
+  },
+
+  "gating": {
+    "$comment": "What the combined tagging call may generate per authorship. Questions are the doc2query lane: ONLY passages that are verifiably Prabhupada-speaking / HIS may carry them. NOT_HIS and MIXED_VERIFY rows get topic tags only — the responseSchema for those rows omits the questions field entirely, and the code gate drops any that appear anyway.",
+    "HIS": { "tags_core": true, "questions": true },
+    "NOT_HIS": { "tags_core": true, "questions": false },
+    "MIXED_VERIFY": { "tags_core": true, "questions": false }
+  }
+}

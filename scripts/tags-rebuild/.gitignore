@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.env
+.env.local
+# Local Gemini decision cache (crash-resume; never committed)
+gemini-vocab-cache.jsonl
+# Built artifacts (reviewed locally at the ⛔ gate; never committed)
+vocabulary.json
+pilot-report.md
+hygiene-report.md
+shards/

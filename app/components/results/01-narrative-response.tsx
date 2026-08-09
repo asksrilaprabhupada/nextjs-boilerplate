@@ -1,593 +1,414 @@
 /**
- * 01-narrative-response.tsx — Narrative Response with Summary Sidebar
+ * 01-narrative-response.tsx — The answer, printed from one list.
  *
- * 2-column layout: 75% content + 25% sidebar (220px).
- * Sidebar shows numbered key answers (AI-generated) and sources-by-book counts.
- * Mobile: sidebar hidden, replaced by "View key answers" button + bottom-sheet popup.
+ * The server sends `results.passages`: every passage the reranker judged
+ * relevant, words included, in the reranker's order. This component walks that
+ * list from first to last and prints each passage — its label, its words, its
+ * citation link, its copy button. There is no look-up table, no id-joining, and
+ * no second list: if a field is needed to render a passage, it arrived on the
+ * passage.
+ *
+ * Two views of the SAME list: "Essay" prints it in order; "By source" groups it
+ * under book names. Same passages, same words, arranged differently — nothing
+ * is hidden and nothing is dropped in either view. Long passages FOLD (preview
+ * + expand in place); they are never truncated away.
+ *
+ * All verbatim bodies and the matched-sentence emphasis come SOLELY from the
+ * shared fold helpers (app/lib/10-passage-fold.ts) — no philosophy is ever
+ * computed or paraphrased here.
  */
 "use client";
 
-import { useState, useEffect, useMemo, useRef } from "react";
-import { motion } from "framer-motion";
-import WantMoreModal from "./02-want-more-modal";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import SearchFeedback from "../search/06-search-feedback";
-import DigDeeperModal from "./03-dig-deeper-modal";
+import {
+  buildFoldPreviewHtml,
+  highlightParagraphsHtml,
+  buildSectionText,
+  type PassageType,
+} from "@/app/lib/10-passage-fold";
+import { stripPurportBoilerplate } from "@/app/lib/09-purport-format";
+import { EASE, SPRING_SETTLE } from "@/app/lib/11-motion";
+import { getBookName } from "@/app/lib/12-provenance";
+import { buildPassageCopyText } from "@/app/lib/23-passage-copy";
 
-export interface Citation {
-  ref: string;
-  book: string;
-  url: string;
-  type: "verse" | "prose" | "transcript" | "letter";
-  title: string;
-}
+/* ─────────────────────────── Data contract ───────────────────────────
+   The response types live in the shared server↔client contract
+   (app/lib/types/01-search.ts) and are re-exported here so existing
+   importers (e.g. 02-dig-deeper-modal) keep working unchanged. */
 
-export interface VerseHit {
-  id: string; scripture: string; verse_number: string; sanskrit_devanagari: string;
-  transliteration: string; translation: string; purport: string;
-  chapter_number?: string; canto_or_division?: string; chapter_title?: string;
-  book_slug?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number;
-}
+import type {
+  AdditionalSearchPassage,
+  Citation,
+  SearchPassage,
+  SearchResults,
+  VerseHit,
+  ProseHit,
+  TranscriptHit,
+  LetterHit,
+} from "@/app/lib/types/01-search";
 
-export interface ProseHit {
-  id: string; book_slug: string; paragraph_number: number; body_text: string;
-  chapter_title?: string; vedabase_url?: string; tags?: string[];
-  score?: number; similarity?: number;
-}
-
-export interface TranscriptHit {
-  id: string; transcript_id?: string; paragraph_number: number; body_text: string;
-  content_type?: string; title?: string; date?: string; location?: string;
-  occasion?: string; scripture_ref?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number;
-}
-
-export interface LetterHit {
-  id: string; letter_id?: string; paragraph_number: number; body_text: string;
-  content_type?: string; title?: string; date?: string; location?: string;
-  recipient?: string; vedabase_url?: string;
-  tags?: string[]; score?: number; similarity?: number;
-}
-
-export interface BookGroup {
-  slug: string; name: string; verses: VerseHit[]; prose: ProseHit[];
-  transcripts?: TranscriptHit[]; letters?: LetterHit[];
-}
-
-export interface SearchResults {
-  query: string;
-  keywords: string[];
-  synonyms: string[];
-  relatedConcepts: string[];
-  narrative: string;
-  totalResults: number;
-  citations: Citation[];
-  books: BookGroup[];
-  overflowVerses?: VerseHit[];
-  overflowProse?: ProseHit[];
-  overflowTranscripts?: TranscriptHit[];
-  overflowLetters?: LetterHit[];
-  totalVerses?: number;
-  totalProse?: number;
-  totalTranscripts?: number;
-  totalLetters?: number;
-  articleVerseIds?: string[];
-  suggestion?: string | null;
-  suggestionDisplay?: string | null;
-}
-
-/* ─── Per-book color system (ONLY for tags and left borders) ─── */
-const BOOK_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  SB:       { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
-  CC:       { bg: "#FAECE7", text: "#993C1D", border: "#F0997B" },
-  NOI:      { bg: "#E1F5EE", text: "#0F6E56", border: "#9FE1CB" },
-  BG:       { bg: "#FAEEDA", text: "#854F0B", border: "#FAC775" },
-  SPL:      { bg: "#FBEAF0", text: "#993556", border: "#ED93B1" },
-  LECTURES: { bg: "#FFF7ED", text: "#C2410C", border: "#FB923C" },
-  LETTERS:  { bg: "#F0FDF4", text: "#15803D", border: "#4ADE80" },
-  default:  { bg: "#EEEDFE", text: "#534AB7", border: "#AFA9EC" },
+export type {
+  Citation,
+  SearchPassage,
+  SearchResults,
+  VerseHit,
+  ProseHit,
+  TranscriptHit,
+  LetterHit,
 };
 
-export function getBookColor(reference: string) {
-  const prefix = reference.split(" ")[0]?.toUpperCase() || "default";
-  return BOOK_COLORS[prefix] || BOOK_COLORS["default"];
+/* ─────────────────────────── Citation display ─────────────────────────── */
+
+// Community dot/space abbreviations for display (never the biblical colon form).
+const SCRIPTURE_DISPLAY: Record<string, string> = {
+  BG: "Bg.", SB: "SB", CC: "Cc.", NOI: "NoI", ISO: "ISO", BS: "Bs.",
+  NBS: "NBS", MMS: "MMS", LOB: "LoB", KB: "KB", NOD: "NoD",
+};
+
+function formatCiteRef(ref: string): string {
+  const m = ref.match(/^([A-Za-z]{2,4})\s+(.+)$/);
+  if (m) {
+    const key = m[1].toUpperCase();
+    if (SCRIPTURE_DISPLAY[key]) return `${SCRIPTURE_DISPLAY[key]} ${m[2]}`;
+  }
+  return ref;
 }
 
-/* ─── Scroll helper ─── */
-function scrollToSource(ref: string) {
-  document.getElementById(`source-${ref}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+/** Short citation text for a passage's chip. */
+function citeFor(p: SearchPassage): string {
+  if (p.type === "book") return getBookName(p.reference || "");
+  if (p.type === "lecture") {
+    return ["Lecture", p.date ? new Date(p.date).getFullYear().toString() : "", p.location]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  if (p.type === "letter") {
+    return ["Letter", p.recipient ? `to ${p.recipient}` : "", p.date ? new Date(p.date).getFullYear().toString() : ""]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  return formatCiteRef(p.reference || p.label);
 }
 
-/* ─── Summary item type ─── */
-interface SummaryItem {
-  summary: string;
-  reference: string;
+/** The book-shelf name a passage files under in the "By source" view. */
+function shelfFor(p: SearchPassage): string {
+  if (p.type === "lecture") return "Lectures & Conversations";
+  if (p.type === "letter") return "Letters";
+  if (p.type === "book") return getBookName(p.reference || "");
+  const m = (p.reference || "").match(/^([A-Za-z]{2,4})\b/);
+  return m ? getBookName(m[1].toLowerCase()) : "Other sources";
 }
 
-/* ─── Mobile Summary Bottom-Sheet Popup ─── */
-function SummaryPopup({
-  isOpen,
-  onClose,
-  summaries,
-  totalSources,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  summaries: SummaryItem[];
-  totalSources: number;
-}) {
-  if (!isOpen) return null;
+function scrollToSource(index: number) {
+  document.getElementById(`source-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+/** Cite-dot palette key. */
+function dotType(p: SearchPassage): string {
+  return p.type === "lecture" ? "lecture" : p.type === "letter" ? "letter" : p.type;
+}
+
+/* ─────────────────────────── Copy button (icon morphs to a check) ─────────────────────────── */
+
+function CopyButton({ onCopy, label = "Copy" }: { onCopy: () => void; label?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handle = () => {
+    onCopy();
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  };
   return (
-    <>
-      <div
-        onClick={onClose}
-        style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100,
-          animation: "summaryFadeIn 0.2s ease",
-        }}
-      />
-      <div style={{
-        position: "fixed", bottom: 0, left: 0, right: 0, background: "white",
-        borderRadius: "16px 16px 0 0", zIndex: 101, maxHeight: "80vh", overflowY: "auto",
-        animation: "summarySlideUp 0.3s ease",
-      }}>
-        <div style={{ width: 36, height: 4, background: "#D0D0D0", borderRadius: 2, margin: "10px auto 0" }} />
-        <div style={{ padding: "16px 20px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <svg width="16" height="16" viewBox="0 0 16 16">
-              <path d="M8 1.5l2 4 4.5.7-3.2 3.1.8 4.4L8 11.5l-4.1 2.2.8-4.4L1.5 6.2l4.5-.7z" fill="#7F77DD" stroke="none" />
-            </svg>
-            <span className="font-body" style={{ fontSize: 16, fontWeight: 500 }}>Key answers</span>
-          </div>
-          <button
-            onClick={onClose}
-            style={{
-              width: 28, height: 28, borderRadius: "50%", border: "1px solid rgba(0,0,0,0.1)",
-              background: "transparent", fontSize: 14, color: "#888", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >
-            &times;
-          </button>
-        </div>
-        <p className="font-body" style={{ fontSize: 12, color: "#888", margin: "0 20px 16px" }}>
-          Top {summaries.length} most relevant from {totalSources} sources
-        </p>
-        <div style={{ padding: "0 20px 24px" }}>
-          {summaries.map((item, i) => (
-            <div
-              key={i}
-              onClick={() => { onClose(); setTimeout(() => scrollToSource(item.reference), 300); }}
-              style={{
-                display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 0",
-                borderBottom: i < summaries.length - 1 ? "1px solid rgba(0,0,0,0.06)" : "none",
-                cursor: "pointer",
-              }}
-            >
-              <span style={{
-                fontSize: 12, fontWeight: 500, color: "white", background: "#7F77DD",
-                width: 22, height: 22, borderRadius: "50%",
-                display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              }}>{i + 1}</span>
-              <div>
-                <p className="font-body" style={{ fontSize: 14, fontWeight: 500, margin: "0 0 4px", lineHeight: 1.5 }}>{item.summary}</p>
-                <span className="font-body" style={{ fontSize: 11, color: "#534AB7", background: "#EEEDFE", padding: "1px 8px", borderRadius: 4 }}>
-                  {item.reference}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
+    <motion.button
+      type="button"
+      className="copy-chip"
+      onClick={handle}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.97 }}
+      aria-label="Copy passage with reference"
+    >
+      <span className="copy-ico" aria-hidden>
+        <AnimatePresence mode="wait" initial={false}>
+          {copied ? (
+            <motion.svg key="check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+              initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.4, opacity: 0 }} transition={SPRING_SETTLE}>
+              <path d="M20 6 9 17l-5-5" />
+            </motion.svg>
+          ) : (
+            <motion.svg key="copy" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.6, opacity: 0 }} transition={{ duration: 0.16 }}>
+              <rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" />
+            </motion.svg>
+          )}
+        </AnimatePresence>
+      </span>
+      {copied ? "Copied" : label}
+    </motion.button>
   );
 }
 
-/* ─── Expandable Reference Card ─── */
-function ExpandableReferenceCard({ children, preview, fullText }: {
-  children: React.ReactNode;
-  preview: string;
-  fullText: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
+/* ─────────────────────────── Label + notice lines ─────────────────────────── */
+
+function LabelLine({ p }: { p: SearchPassage }) {
+  if (!p.label && !p.provenanceNote) return null;
   return (
-    <div onClick={() => setExpanded(!expanded)} style={{ cursor: "pointer" }}>
-      {children}
-      <p className="reference-card__purport" style={{ marginTop: 8 }}>
-        {expanded ? fullText : preview}
-        {fullText.length > 200 && (
-          <span style={{ color: "#534AB7", fontWeight: 500, marginLeft: 4, fontSize: 12 }}>
-            {expanded ? " Show less" : " ...Read more"}
-          </span>
-        )}
-      </p>
+    <div className="passage-label">
+      {p.label && <span>{p.label}</span>}
+      {p.provenanceNote && <span className="passage-label-note">{p.provenanceNote}</span>}
     </div>
   );
 }
 
-/* ─── Quote Tooltip (JS-powered, left-border hover zone) ─── */
-function QuoteTooltip() {
-  const [tooltip, setTooltip] = useState<{
-    text: string;
-    subtext: string;
-    color: string;
-    bg: string;
-    border: string;
-    dotColor: string;
-    y: number;
-    cardLeft: number;
-    quoteTop: number;
-    quoteHeight: number;
-  } | null>(null);
-  const [visible, setVisible] = useState(false);
-  const tooltipRef = useRef<HTMLDivElement>(null);
-  const [lineWidth, setLineWidth] = useState(0);
+/* ─────────────────────────── One passage card ─────────────────────────── */
 
+function PassageCard({
+  p, index = 0, anchorIndex = index, queryTerms, onCopy, onOpenPreview,
+}: {
+  p: SearchPassage;
+  index?: number;
+  anchorIndex?: number;
+  queryTerms: string[];
+  onCopy: (p: SearchPassage) => void;
+  onOpenPreview: (p: SearchPassage) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // Compose-in: only the first ~10 passages stagger; the rest appear at once.
+  const entranceDelay = index < 10 ? index * 0.07 : 0;
+
+  const foot = (
+    <div className="passage-foot">
+      <motion.button className="cite-chip" onClick={() => onOpenPreview(p)} whileTap={{ scale: 0.97 }} aria-label={`Preview ${citeFor(p)}`}>
+        <span className="cite-dot" data-type={dotType(p)} aria-hidden />
+        {citeFor(p)}
+      </motion.button>
+      {p.url && (
+        <a
+          className="cite-chip cite-external"
+          href={p.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Open ${citeFor(p)} on Vedabase in a new tab`}
+        >
+          ↗
+        </a>
+      )}
+      <CopyButton onCopy={() => onCopy(p)} />
+    </div>
+  );
+
+  const full = (innerHtml: string) => (
+    <AnimatePresence initial={false}>
+      {open && (
+        <motion.div
+          key="full"
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: 0.36, ease: EASE.decelerate }}
+          style={{ overflow: "hidden" }}
+        >
+          <div className="passage-body" dangerouslySetInnerHTML={{ __html: innerHtml }} />
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+
+  let content: ReactNode;
+
+  if (p.type === "verse") {
+    const translationHtml = highlightParagraphsHtml(p.text || "", undefined, queryTerms);
+    const purport = (p.purport || "").trim();
+    const preview = purport ? buildFoldPreviewHtml({ type: "purport", text: purport, queryTerms }) : null;
+    const purportFull = purport ? highlightParagraphsHtml(purport, undefined, queryTerms) : "";
+    content = (
+      <>
+        <div className="verse-translation" dangerouslySetInnerHTML={{ __html: translationHtml }} />
+        {preview && preview.previewHtml && (
+          <div className="purport-block">
+            {p.purportLabel && (
+              <div className="passage-label">
+                <span>{p.purportLabel}</span>
+              </div>
+            )}
+            {!open && <div className="passage-body" dangerouslySetInnerHTML={{ __html: preview.previewHtml }} />}
+            {full(purportFull)}
+            {preview.truncated && (
+              <button className="fold-expand-btn" onClick={() => setOpen(o => !o)}>
+                {open ? "Show less ↑" : "Read the full purport ↓"}
+              </button>
+            )}
+          </div>
+        )}
+      </>
+    );
+  } else {
+    const body = p.text || "";
+    const foldType: PassageType = p.type === "book" ? "prose" : (p.type as PassageType);
+    const preview = buildFoldPreviewHtml({ type: foldType, text: body, queryTerms });
+    const fullHtml = highlightParagraphsHtml(buildSectionText(body), undefined, queryTerms, foldType);
+    content = (
+      <div className={p.type === "letter" ? "letter-body" : undefined}>
+        {!open && <div className="passage-body" dangerouslySetInnerHTML={{ __html: preview.previewHtml }} />}
+        {full(fullHtml)}
+        {preview.truncated && (
+          <button className="fold-expand-btn" onClick={() => setOpen(o => !o)}>
+            {open ? "Show less ↑" : "Read in full ↓"}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <motion.article
+      id={`source-${anchorIndex}`}
+      className="passage"
+      data-passage-type={p.type}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: EASE.decelerate, delay: entranceDelay }}
+    >
+      <LabelLine p={p} />
+      {p.contextNotice && <p className="context-notice font-body">{p.contextNotice}</p>}
+      {content}
+      {p.alsoAppearsIn > 0 && (
+        <p className="also-appears font-body">
+          This passage also appears in {p.alsoAppearsIn} other {p.alsoAppearsIn === 1 ? "place" : "places"}.
+        </p>
+      )}
+      {foot}
+    </motion.article>
+  );
+}
+
+/* ─────────────────────────── Citation preview sheet ─────────────────────────── */
+
+function PreviewSheet({
+  p, onClose, onCopy,
+}: {
+  p: SearchPassage;
+  onClose: () => void;
+  onCopy: (p: SearchPassage) => void;
+}) {
   useEffect(() => {
-    if (visible && tooltipRef.current && tooltip) {
-      const tooltipRect = tooltipRef.current.getBoundingClientRect();
-      const gap = tooltip.cardLeft - tooltipRect.right;
-      setLineWidth(Math.max(gap + 4, 0));
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  let html = "";
+  if (p.type === "verse") {
+    const parts: string[] = [];
+    if (p.text?.trim()) parts.push(highlightParagraphsHtml(p.text, undefined, []));
+    if ((p.purport || "").trim()) {
+      if (p.purportLabel) parts.push(`<div class="passage-label">${p.purportLabel}</div>`);
+      parts.push(highlightParagraphsHtml(p.purport || "", undefined, []));
     }
-  }, [visible, tooltip]);
-
-  useEffect(() => {
-    const HOVER_ZONE_WIDTH = 35;
-
-    const FULL_BOOK_NAMES: Record<string, string> = {
-      'BG': 'Bhagavad-gītā As It Is',
-      'SB': 'Śrīmad-Bhāgavatam',
-      'CC': 'Śrī Caitanya-caritāmṛta',
-      'NOI': 'Nectar of Instruction',
-      'ISO': 'Śrī Īśopaniṣad',
-      'BS': 'Śrī Brahma-saṁhitā',
-      'LOB': 'Light of the Bhāgavata',
-      'KB': 'Kṛṣṇa Book',
-      'NOD': 'The Nectar of Devotion',
-      'SSR': 'The Science of Self-Realization',
-      'TLC': 'Teachings of Lord Caitanya',
-      'TLK': 'Teachings of Lord Kapila',
-      'TQK': 'Teachings of Queen Kuntī',
-      'SC': 'A Second Chance',
-      'BBD': 'Beyond Birth and Death',
-      'BHAKTI': 'Bhakti: The Art of Eternal Love',
-      'CAT': 'Civilization and Transcendence',
-      'JOSD': 'The Journey of Self-Discovery',
-      'OWK': 'On the Way to Kṛṣṇa',
-      'POP': 'The Path of Perfection',
-      'POY': 'The Perfection of Yoga',
-      'PQPA': 'Perfect Questions, Perfect Answers',
-      'RV': 'Rāja-vidyā: The King of Knowledge',
-      'CABH': 'Chant and Be Happy',
-      'SPL': 'Śrīla Prabhupāda-līlāmṛta',
-      'RKD': 'Rāmāyaṇa',
-      'MBK': 'Mahābhārata',
-      'EJOP': 'Easy Journey to Other Planets',
-      'EKC': 'Elevation to Kṛṣṇa Consciousness',
-      'KCTY': 'Kṛṣṇa Consciousness: The Topmost Yoga System',
-      'LCFL': 'Life Comes From Life',
-      'MOG': 'Message of Godhead',
-      'RTW': 'Renunciation Through Wisdom',
-      'TOP': 'Transcendental Teachings of Prahlāda Mahārāja',
-      'NBS': 'Nārada Bhakti Sūtra',
-      'MMS': 'Mukunda-mālā-stotra',
-    };
-
-    const typeConfig: Record<string, { label: string; color: string; bg: string; border: string; dotColor: string }> = {
-      'verse-quote': { label: 'Verse Translation', color: '#7C3AED', bg: 'rgba(245, 243, 255, 0.75)', border: '#C4B5FD', dotColor: '#8B5CF6' },
-      'purport-quote': { label: 'Purport', color: '#6D28D9', bg: 'rgba(245, 243, 255, 0.75)', border: '#A78BFA', dotColor: '#7C3AED' },
-      'prose-quote': { label: 'Book Passage', color: '#4F46E5', bg: 'rgba(238, 242, 255, 0.75)', border: '#A5B4FC', dotColor: '#6366F1' },
-      'lecture-quote': { label: 'Lecture', color: '#C2410C', bg: 'rgba(255, 247, 237, 0.75)', border: '#FDBA74', dotColor: '#FB923C' },
-      'letter-quote': { label: 'Letter', color: '#15803D', bg: 'rgba(240, 253, 244, 0.75)', border: '#86EFAC', dotColor: '#4ADE80' },
-    };
-
-    function getQuoteType(el: HTMLElement): string | null {
-      for (const cls of Object.keys(typeConfig)) {
-        if (el.classList.contains(cls)) return cls;
-      }
-      return null;
-    }
-
-    function expandBookAbbreviation(ref: string): string {
-      const parts = ref.split(' ');
-      const abbr = parts[0]?.toUpperCase();
-      if (FULL_BOOK_NAMES[abbr]) {
-        return FULL_BOOK_NAMES[abbr] + ' ' + parts.slice(1).join(' ');
-      }
-      return ref;
-    }
-
-    function extractBookRef(quoteEl: HTMLElement): string | null {
-      // ONLY check the immediately preceding element — never go further
-      const prev = quoteEl.previousElementSibling;
-      if (!prev) return null;
-
-      const refEl = prev.querySelector('.verse-ref');
-      if (refEl && refEl.textContent) {
-        let ref = refEl.textContent.replace(/[\[\]]/g, '').trim();
-        // Clean up "Text" from verse numbers like "SB 5.14.Text 31"
-        ref = ref.replace(/\.?Text\s*/gi, '.').replace(/\.+/g, '.').replace(/\.$/, '');
-        return ref;
-      }
-
-      const linkEl = prev.querySelector('.verse-link');
-      if (linkEl && linkEl.textContent) {
-        let text = linkEl.textContent.replace(/[\[\]]/g, '').trim();
-        text = text.replace(/\.?Text\s*/gi, '.').replace(/\.+/g, '.').replace(/\.$/, '');
-        if (text.match(/^(BG|SB|CC|NOI|ISO|BS)\s/i)) return text;
-      }
-
-      return null;
-    }
-
-    function extractProseBookName(quoteEl: HTMLElement): string | null {
-      // For prose/lecture/letter quotes, extract the book or source name from the text above
-      const prev = quoteEl.previousElementSibling;
-      if (!prev) return null;
-
-      const text = prev.textContent || '';
-
-      // Match patterns like "In Book Name, Śrīla Prabhupāda writes:"
-      // or "In Book Name (Chapter), Śrīla Prabhupāda writes:"
-      const bookPatterns = [
-        /In\s+(.+?)(?:\s*\(|,\s*Śrīla|,\s*Prabhupāda|,\s*His\s+Divine)/i,
-        /In\s+(.+?),\s+(?:Śrīla|Prabhupāda|His\s+Divine)/i,
-        /From\s+(.+?)(?:,\s*Śrīla|,\s*Prabhupāda)/i,
-      ];
-
-      for (const pattern of bookPatterns) {
-        const match = text.match(pattern);
-        if (match && match[1]) {
-          let name = match[1].trim();
-          // Don't return if it's just "a lecture" or "a letter"
-          if (/^a\s+(lecture|letter)/i.test(name)) return null;
-          // Trim trailing punctuation
-          name = name.replace(/[,.:;]+$/, '').trim();
-          if (name.length > 3 && name.length < 80) return name;
-        }
-      }
-
-      return null;
-    }
-
-    function extractLectureInfo(quoteEl: HTMLElement): string | null {
-      let el: Element | null = quoteEl.previousElementSibling;
-      let attempts = 0;
-      while (el && attempts < 3) {
-        const text = el.textContent || '';
-        const dateMatch = text.match(/((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4})/i);
-        const placeMatch = text.match(/(?:at|in)\s+([A-Z][a-zA-Zāīūṛṝḷṃḥṣṭḍṅñśṁ\s]+?)(?:,|\s+on\s|:|\s+Śrīla)/);
-        const parts = [dateMatch?.[1], placeMatch?.[1]?.trim()].filter(Boolean);
-        if (parts.length > 0) return parts.join(' · ');
-        el = el.previousElementSibling;
-        attempts++;
-      }
-      return null;
-    }
-
-    function extractLetterInfo(quoteEl: HTMLElement): string | null {
-      let el: Element | null = quoteEl.previousElementSibling;
-      let attempts = 0;
-      while (el && attempts < 3) {
-        const text = el.textContent || '';
-        const recipientMatch = text.match(/letter\s+to\s+([^,]+?)(?:\s+on\s|,|\s*Śrīla|:)/i);
-        const dateMatch = text.match(/((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s*\d{4})/i);
-        const parts = [recipientMatch?.[1]?.trim(), dateMatch?.[1]].filter(Boolean);
-        if (parts.length > 0) return parts.join(' · ');
-        el = el.previousElementSibling;
-        attempts++;
-      }
-      return null;
-    }
-
-    let hideTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function handleMouseMove(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-      const quoteEl = target.closest('.verse-quote, .purport-quote, .prose-quote, .lecture-quote, .letter-quote') as HTMLElement | null;
-
-      if (!quoteEl) {
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => { setVisible(false); setTimeout(() => setTooltip(null), 300); }, 80);
-        return;
-      }
-
-      const rect = quoteEl.getBoundingClientRect();
-      const mouseXRelative = e.clientX - rect.left;
-
-      if (mouseXRelative > HOVER_ZONE_WIDTH) {
-        if (hideTimer) clearTimeout(hideTimer);
-        hideTimer = setTimeout(() => { setVisible(false); setTimeout(() => setTooltip(null), 300); }, 80);
-        return;
-      }
-
-      if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
-
-      const quoteType = getQuoteType(quoteEl);
-      if (!quoteType) return;
-
-      const config = typeConfig[quoteType];
-      let mainText = config.label;
-      let subtext = '';
-
-      if (quoteType === 'verse-quote' || quoteType === 'purport-quote') {
-        const bookRef = extractBookRef(quoteEl);
-        if (bookRef) {
-          mainText = expandBookAbbreviation(bookRef);
-          subtext = config.label;
-        }
-      } else if (quoteType === 'prose-quote') {
-        const bookName = extractProseBookName(quoteEl);
-        if (bookName) {
-          mainText = bookName;
-          subtext = config.label;
-        }
-      } else if (quoteType === 'lecture-quote') {
-        const info = extractLectureInfo(quoteEl);
-        if (info) subtext = info;
-      } else if (quoteType === 'letter-quote') {
-        const info = extractLetterInfo(quoteEl);
-        if (info) subtext = info;
-      }
-
-      const cardEl = quoteEl.closest('.aurora-card');
-      const cardLeft = cardEl ? cardEl.getBoundingClientRect().left : rect.left;
-
-      setTooltip({
-        text: mainText,
-        subtext,
-        color: config.color,
-        bg: config.bg,
-        border: config.border,
-        dotColor: config.dotColor,
-        y: rect.top + rect.height / 2,
-        cardLeft,
-        quoteTop: rect.top,
-        quoteHeight: rect.height,
-      });
-      setVisible(true);
-    }
-
-    const narrativeEl = document.querySelector('.narrative-content');
-    if (narrativeEl) {
-      narrativeEl.addEventListener('mousemove', handleMouseMove as EventListener);
-    }
-
-    return () => {
-      if (narrativeEl) {
-        narrativeEl.removeEventListener('mousemove', handleMouseMove as EventListener);
-      }
-      if (hideTimer) clearTimeout(hideTimer);
-    };
-  }, []);
-
-  if (!tooltip) return null;
+    html = parts.join("");
+  } else {
+    const foldType: PassageType = p.type === "book" ? "prose" : (p.type as PassageType);
+    html = highlightParagraphsHtml(buildSectionText(p.text || ""), undefined, [], foldType);
+  }
 
   return (
     <>
-      {/* Connecting line from tooltip to quote border */}
-      {visible && lineWidth > 0 && (
-        <div
-          style={{
-            position: 'fixed',
-            top: tooltip.y,
-            left: tooltip.cardLeft - lineWidth,
-            width: lineWidth + 4,
-            height: 2,
-            zIndex: 999,
-            pointerEvents: 'none',
-            transform: 'translateY(-50%)',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{
-              width: '100%',
-              height: '100%',
-              background: `linear-gradient(90deg, ${tooltip.dotColor}00, ${tooltip.dotColor}66, ${tooltip.dotColor})`,
-              borderRadius: 1,
-              animation: 'tooltipLineGrow 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-              transformOrigin: 'right center',
-            }}
-          />
-        </div>
-      )}
-
-      {/* Tooltip card */}
-      <div
-        ref={tooltipRef}
-        style={{
-          position: 'fixed',
-          top: tooltip.y,
-          left: tooltip.cardLeft - 12,
-          transform: visible
-            ? 'translateX(-100%) translateY(-50%) translateX(0) scale(1)'
-            : 'translateX(-100%) translateY(-50%) translateX(12px) scale(0.88)',
-          padding: '9px 16px 9px 12px',
-          borderRadius: 12,
-          fontFamily: "'DM Sans', sans-serif",
-          whiteSpace: 'normal',
-          color: tooltip.color,
-          background: tooltip.bg,
-          backdropFilter: 'blur(16px) saturate(1.3)',
-          WebkitBackdropFilter: 'blur(16px) saturate(1.3)',
-          border: `1px solid ${tooltip.border}`,
-          boxShadow: `0 8px 32px rgba(0,0,0,0.06), 0 0 0 1px ${tooltip.border}18`,
-          zIndex: 1000,
-          pointerEvents: 'none',
-          opacity: visible ? 1 : 0,
-          animation: visible ? 'tooltipElasticIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) forwards' : 'none',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'flex-start',
-          gap: 3,
-          maxWidth: Math.max(tooltip.cardLeft - 32, 120),
-          overflow: 'hidden',
-        }}
+      <motion.div
+        className="sheet-scrim"
+        onClick={onClose}
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+      />
+      <motion.div
+        className="preview-sheet"
+        role="dialog" aria-label={`${citeFor(p)} full passage`}
+        initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}
+        transition={{ duration: 0.28, ease: EASE.decelerate }}
       >
-        {/* Shimmer sweep overlay */}
-        {visible && (
-          <div
-            style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              borderRadius: 12,
-              overflow: 'hidden',
-              pointerEvents: 'none',
-            }}
-          >
-            <div
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: '-100%',
-                width: '60%',
-                height: '100%',
-                background: 'linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.5) 50%, transparent 70%)',
-                animation: 'tooltipShimmer 0.8s ease-out 0.3s forwards',
-              }}
-            />
-          </div>
-        )}
-
-        {/* Content */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7, position: 'relative', zIndex: 1 }}>
-          <span style={{
-            width: 8,
-            height: 8,
-            borderRadius: '50%',
-            background: tooltip.dotColor,
-            flexShrink: 0,
-            boxShadow: `0 0 6px ${tooltip.dotColor}44`,
-            animation: visible ? 'tooltipDotPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both' : 'none',
-          }} />
-          <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.01em', lineHeight: 1.4 }}>
-            {tooltip.text}
+        <div className="preview-head">
+          <span className="cite-chip" aria-hidden><span className="cite-dot" data-type={dotType(p)} />{citeFor(p)}</span>
+          <button className="sheet-close" onClick={onClose} aria-label="Close preview">&times;</button>
+        </div>
+        <LabelLine p={p} />
+        <div className="preview-body passage-body" dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="preview-actions">
+          <CopyButton onCopy={() => onCopy(p)} label="Copy with reference" />
+          <span className="preview-links">
+            {p.url && (
+              <a className="vedabase-link" href={p.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
+            )}
           </span>
         </div>
-        {tooltip.subtext && (
-          <span style={{
-            fontSize: 10,
-            fontWeight: 500,
-            opacity: 0.65,
-            marginLeft: 15,
-            lineHeight: 1.3,
-            whiteSpace: 'normal',
-            position: 'relative',
-            zIndex: 1,
-          }}>
-            {tooltip.subtext}
-          </span>
-        )}
-      </div>
+      </motion.div>
     </>
   );
 }
 
-/* ─── Main Component ─── */
+/* ─────────────────────────── The second tier ───────────────────────────
+   Every passage that survived retrieval but was not rendered in full: label,
+   citation, one sentence-safe snippet, a Vedabase link when one exists.
+   Collapsed by default (progressive disclosure — complete, not drowning), and
+   expanding re-requests NOTHING: the data is already in the response. */
+
+const ADDITIONAL_GROUPS: { type: AdditionalSearchPassage["type"]; title: string }[] = [
+  { type: "verse", title: "Verses" },
+  { type: "purport", title: "Purports" },
+  { type: "book", title: "Books" },
+  { type: "lecture", title: "Lectures & Conversations" },
+  { type: "letter", title: "Letters" },
+];
+
+function AdditionalTier({ list, truncated }: { list: AdditionalSearchPassage[]; truncated?: boolean }) {
+  if (list.length === 0) return null;
+  const count = list.length.toLocaleString("en-US");
+  return (
+    <details className="additional-tier">
+      <summary className="font-body">
+        {/* "every one the library found" was not true and could not be.
+            This tier holds what THIS SEARCH retrieved — a pool capped at 700
+            candidates across the five sources — not everything the library
+            holds on the subject. Honesty is the point of this project, so the
+            line says what actually happened and claims nothing more. */}
+        {count} more {list.length === 1 ? "passage" : "passages"} retrieved in this search
+      </summary>
+      {truncated && (
+        <p className="additional-truncated font-body">
+          This list was shortened to fit the response — the counts above are the true totals.
+        </p>
+      )}
+      {ADDITIONAL_GROUPS.map(({ type, title }) => {
+        const group = list.filter((a) => a.type === type);
+        if (group.length === 0) return null;
+        return (
+          <section key={type} className="additional-group">
+            <h4 className="font-body">
+              {title} · {group.length.toLocaleString("en-US")}
+            </h4>
+            <ul>
+              {group.map((a, index) => (
+                <li key={`${type}:${a.reference ?? a.label}:${index}`} className="additional-row">
+                  <div className="additional-label font-body">
+                    <span>{a.label}</span>
+                    {a.provenanceNote && <span className="passage-label-note">{a.provenanceNote}</span>}
+                    {a.url && (
+                      <a href={a.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${a.reference || a.label} on Vedabase in a new tab`}>
+                        ↗
+                      </a>
+                    )}
+                  </div>
+                  {a.snippet && <p className="additional-snippet font-body">{a.snippet}</p>}
+                </li>
+              ))}
+            </ul>
+          </section>
+        );
+      })}
+    </details>
+  );
+}
+
+/* ─────────────────────────── Main component ─────────────────────────── */
+
 interface Props {
   results: SearchResults | null;
   isLoading: boolean;
@@ -599,809 +420,393 @@ interface Props {
   onViewModeChange: (mode: "article" | "references") => void;
 }
 
-export default function NarrativeResponse({ results, isLoading, isStreaming, streamingNarrative, onSearch, searchLogId, viewMode, onViewModeChange }: Props) {
-  const [modalBook, setModalBook] = useState<BookGroup | null>(null);
-  const [digDeeperOpen, setDigDeeperOpen] = useState(false);
-  const [summaries, setSummaries] = useState<SummaryItem[]>([]);
-  const [showSummaryPopup, setShowSummaryPopup] = useState(false);
+export default function NarrativeResponse({ results, isLoading, onSearch, searchLogId, viewMode, onViewModeChange }: Props) {
+  const [preview, setPreview] = useState<SearchPassage | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const nextIdxRef = useRef(0);
+  const shellRef = useRef<HTMLDivElement>(null);
 
-  // Reset states when results change
+  useEffect(() => { setPreview(null); }, [results?.query]);
   useEffect(() => {
-    setDigDeeperOpen(false);
-    setSummaries([]);
-    setShowSummaryPopup(false);
-  }, [results?.query]);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2200);
+    return () => clearTimeout(t);
+  }, [toast]);
 
-  // Fetch AI-generated summaries when search results arrive
+  // The bloom: each emphasized sentence glows in ONCE when it scrolls into view,
+  // one at a time (a small serial queue), then settles to a calm resting tint.
+  // A MutationObserver picks up sentences revealed by expanding a passage.
   useEffect(() => {
-    if (!results || results.totalResults === 0) return;
+    const shell = shellRef.current;
+    if (!shell || !results) return;
+    const reduce = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const queue: HTMLElement[] = [];
+    let busy = false;
+    let timer: number | undefined;
 
-    // Build passage list from citations and books
-    const passages: { reference: string; text: string }[] = [];
-    for (const book of results.books) {
-      for (const v of book.verses) {
-        const ref = `${v.scripture || ""} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`;
-        passages.push({ reference: ref.trim(), text: v.translation || v.purport || "" });
+    const runNext = () => {
+      if (busy) return;
+      const el = queue.shift();
+      if (!el) return;
+      busy = true;
+      el.classList.add("bloom");
+      timer = window.setTimeout(() => { busy = false; runNext(); }, reduce ? 0 : 780);
+    };
+
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        const el = e.target as HTMLElement;
+        io.unobserve(el);
+        if (el.dataset.bloomed) continue;
+        el.dataset.bloomed = "1";
+        if (reduce) { el.classList.add("bloom"); continue; }
+        queue.push(el);
+        runNext();
       }
-      for (const p of book.prose) {
-        passages.push({ reference: p.chapter_title || `${p.book_slug} #${p.paragraph_number}`, text: p.body_text || "" });
+    }, { threshold: 0.6 });
+
+    const observe = (el: HTMLElement) => { if (!el.dataset.bloomed) io.observe(el); };
+    shell.querySelectorAll<HTMLElement>(".hl-sentence").forEach(observe);
+
+    const mo = new MutationObserver((muts) => {
+      for (const m of muts) {
+        m.addedNodes.forEach((n) => {
+          if (n.nodeType !== 1) return;
+          const el = n as HTMLElement;
+          if (el.matches(".hl-sentence")) observe(el);
+          el.querySelectorAll<HTMLElement>(".hl-sentence").forEach(observe);
+        });
       }
+    });
+    mo.observe(shell, { childList: true, subtree: true });
+
+    return () => { io.disconnect(); mo.disconnect(); if (timer) window.clearTimeout(timer); };
+  }, [results]);
+
+  const queryTerms = useMemo(() => results?.queryTerms || [], [results]);
+  const passages = useMemo(() => results?.passages || [], [results]);
+
+  // "By source": the SAME list, grouped under book names. Shelves appear in the
+  // order their first passage appears; within a shelf, arrival order holds.
+  const shelves = useMemo(() => {
+    const out: { name: string; passages: SearchPassage[] }[] = [];
+    const byName = new Map<string, { name: string; passages: SearchPassage[] }>();
+    for (const p of passages) {
+      const name = shelfFor(p);
+      let shelf = byName.get(name);
+      if (!shelf) {
+        shelf = { name, passages: [] };
+        byName.set(name, shelf);
+        out.push(shelf);
+      }
+      shelf.passages.push(p);
     }
+    return out;
+  }, [passages]);
 
-    const top10 = passages.slice(0, 10);
-    if (top10.length === 0) return;
+  const fullTextFor = (p: SearchPassage): string => {
+    if (p.type === "verse") {
+      const parts: string[] = [];
+      if (p.text?.trim()) parts.push(p.text.trim());
+      const pur = stripPurportBoilerplate(p.purport || "").trim();
+      if (pur) parts.push(pur);
+      return parts.join("\n\n");
+    }
+    return (p.text || "").trim();
+  };
 
-    fetch("/api/generate-summary", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ passages: top10 }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.summaries && Array.isArray(data.summaries)) {
-          setSummaries(
-            data.summaries.map((s: string, i: number) => ({
-              summary: s,
-              reference: top10[i]?.reference || "",
-            }))
-          );
-        }
-      })
-      .catch(() => {
-        // Silently fail — sidebar just won't show summaries
-      });
-  }, [results]);
+  const copyWithRef = async (p: SearchPassage) => {
+    const text = fullTextFor(p);
+    if (!text) return;
+    // Recorded-talk copies carry attribution because visual labels do not
+    // travel with clipboard text.
+    const payload = buildPassageCopyText({
+      type: p.type,
+      text,
+      speaker: p.speaker,
+      speakerUnidentified: p.speakerUnidentified,
+      citation: citeFor(p),
+      url: p.url,
+    });
+    try {
+      await navigator.clipboard.writeText(payload);
+      setToast("Copied with reference");
+    } catch {
+      setToast("Copy failed — long-press to copy");
+    }
+  };
 
-  // Follow-up suggestions — extract themes from search results
-  const followUps = useMemo(() => {
-    if (!results || results.totalResults === 0) return [];
-    const themes = results.citations
-      .slice(0, 10)
-      .map(c => c.title)
-      .filter(t => t && t.length > 5)
-      .slice(0, 3);
-    if (themes.length === 0) return [];
-    return themes.map(t => `What does Prabhupāda teach about ${t}?`);
-  }, [results]);
+  const jumpNextQuote = () => {
+    if (passages.length === 0) return;
+    const i = nextIdxRef.current % passages.length;
+    nextIdxRef.current = i + 1;
+    scrollToSource(i);
+  };
 
   if (isLoading) return null;
   if (!results) return null;
 
   if (results.totalResults === 0) {
+    const examples = ["What is the soul?", "How to chant with attention", "Overcoming anger"];
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "60px 20px", gap: 12 }}>
-        <p className="font-display" style={{ fontSize: "1.1rem", color: "#6B7280", fontStyle: "italic" }}>No results found.</p>
-        <p className="font-body" style={{ fontSize: 14, color: "#6B7280" }}>Try different words or a simpler question.</p>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "clamp(48px,10vw,80px) 24px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+        <p className="font-display" style={{ fontSize: "1.4rem", color: "var(--ink)", margin: 0 }}>
+          {results.retrievalStatus === "degraded"
+            ? "No passages were found in the sources that were available."
+            : "No passages found for that phrasing."}
+        </p>
+        {results.suggestion && results.suggestionDisplay && (
+          <p className="font-body" style={{ fontSize: "1rem", color: "var(--ink)", margin: 0 }}>
+            Did you mean{" "}
+            <button
+              className="font-body"
+              onClick={() => onSearch(results.suggestion!)}
+              style={{ fontSize: "1rem", fontWeight: 600, color: "var(--accent-strong)", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
+            >
+              {results.suggestionDisplay}
+            </button>
+            ?
+          </p>
+        )}
+        <p className="font-body" style={{ fontSize: "0.95rem", color: "var(--ink-muted)", maxWidth: 440, lineHeight: 1.6, margin: 0 }}>
+          Try rephrasing your question — or a different spelling (Krsna, Krishna, and Kṛṣṇa all work).
+        </p>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", marginTop: 8 }}>
+          {examples.map((q) => (
+            <button key={q} className="font-body" onClick={() => onSearch(q)}
+              style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--accent-strong)", background: "var(--accent-tint)", border: "1px solid transparent", borderRadius: "var(--radius-full)", padding: "8px 16px", cursor: "pointer" }}>
+              {q}
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
 
-  // Handle "want more" clicks from the narrative HTML
-  const handleNarrativeClick = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    const trigger = target.closest(".want-more-trigger");
-    if (trigger) {
-      const bookSlug = trigger.getAttribute("data-book");
-      const book = results.books.find(b => b.slug === bookSlug);
-      if (book) setModalBook(book);
-    }
-  };
-
-  // Book breakdown for sidebar
-  const bookGroups = results.books
-    .map(b => ({ name: b.name, slug: b.slug, count: b.verses.length + b.prose.length }))
-    .filter(b => b.count > 0)
-    .sort((a, b) => b.count - a.count);
-
   return (
-    <>
-      {/* Controls row — sits ABOVE the grid */}
-      <div className="results-controls-row">
-        {/* Mobile: View key answers button */}
-        {summaries.length > 0 && (
-          <div
-            className="mobile-only-btn"
-            onClick={() => setShowSummaryPopup(true)}
-            style={{
-              width: "100%", padding: "12px 16px", background: "#EEEDFE", border: "1px solid #CECBF6",
-              borderRadius: 8, cursor: "pointer", display: "flex", alignItems: "center",
-              justifyContent: "space-between", marginBottom: 16,
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <svg width="16" height="16" viewBox="0 0 16 16">
-                <path d="M8 1.5l2 4 4.5.7-3.2 3.1.8 4.4L8 11.5l-4.1 2.2.8-4.4L1.5 6.2l4.5-.7z" fill="#7F77DD" stroke="none" />
-              </svg>
-              <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#3C3489" }}>View key answers</span>
-            </div>
-            <svg width="14" height="14" viewBox="0 0 14 14">
-              <path d="M5 3l5 4-5 4" fill="none" stroke="#3C3489" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
+    <MotionConfig reducedMotion="user">
+      <div className="results-shell" ref={shellRef}>
+        {/* View toggle — quiet, right-aligned */}
+        <div className="view-toggle-row">
+          <div className="view-mode-toggle" role="tablist" aria-label="Result view">
+            <button role="tab" aria-selected={viewMode === "article"} className={`font-body${viewMode === "article" ? " active" : ""}`} onClick={() => onViewModeChange("article")}>Essay</button>
+            <button role="tab" aria-selected={viewMode === "references"} className={`font-body${viewMode === "references" ? " active" : ""}`} onClick={() => onViewModeChange("references")}>By source</button>
           </div>
+        </div>
+
+        {viewMode === "article" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4, ease: EASE.decelerate }}>
+            {/* Neutral orientation (subordinate framing — never doctrine) */}
+            {results.intro && <p className="framing-note framing-intro font-body">{results.intro}</p>}
+
+            {/* Desktop Contents jump-list — collapsed by default, navigation only */}
+            {passages.length > 1 && (
+              <details className="contents">
+                <summary className="font-body">Contents · {passages.length} passages</summary>
+                <ol>
+                  {passages.map((p, index) => (
+                    <li key={`${p.type}:${p.reference ?? p.label}:${index}`}>
+                      <button className="font-body" onClick={() => scrollToSource(index)}>{citeFor(p)}</button>
+                    </li>
+                  ))}
+                </ol>
+              </details>
+            )}
+
+            {/* Every passage, in the reranker's order, words on screen. */}
+            <div className="essay-flow">
+              {passages.map((p, i) => (
+                <PassageCard
+                  key={`${results.query}:${p.type}:${p.reference ?? p.label}:${i}`}
+                  p={p} index={i}
+                  queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreview}
+                />
+              ))}
+            </div>
+
+            {results.totalResults > 0 && <SearchFeedback searchLogId={searchLogId || null} />}
+          </motion.div>
         )}
 
-        {/* ─── Article / References Toggle ─── */}
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
-          <span className="font-body" style={{ fontSize: 12, color: "#888", textTransform: "uppercase", letterSpacing: "0.05em" }}>View as</span>
-          <div className="view-mode-toggle">
-            <button
-              className={`font-body${viewMode === "article" ? " active" : ""}`}
-              onClick={() => onViewModeChange("article")}
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <rect x="2" y="1" width="10" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-                <line x1="4.5" y1="4" x2="9.5" y2="4" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                <line x1="4.5" y1="6.5" x2="9.5" y2="6.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                <line x1="4.5" y1="9" x2="7.5" y2="9" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-              </svg>
-              Article
-            </button>
-            <button
-              className={`font-body${viewMode === "references" ? " active" : ""}`}
-              onClick={() => onViewModeChange("references")}
-            >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <rect x="1" y="1.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
-                <rect x="1" y="7.5" width="4" height="5" rx="0.5" stroke="currentColor" strokeWidth="1" />
-                <line x1="7" y1="2.5" x2="13" y2="2.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                <line x1="7" y1="4.5" x2="11" y2="4.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
-                <line x1="7" y1="8.5" x2="13" y2="8.5" stroke="currentColor" strokeWidth="1" strokeLinecap="round" />
-                <line x1="7" y1="10.5" x2="11" y2="10.5" stroke="currentColor" strokeWidth="0.8" strokeLinecap="round" />
-              </svg>
-              References
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* 2-column grid — both columns now start at the same level */}
-      <div className="results-grid-container">
-        {/* ─── Content Column ─── */}
-        <div>
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-
-            {/* ─── Article Mode ─── */}
-            {viewMode === "article" && (
-              <div style={{ opacity: 1, transform: "translateY(0)", transition: "opacity 0.2s ease, transform 0.2s ease" }}>
-                <div className="aurora-card" style={{ padding: "32px clamp(20px, 3vw, 32px)", borderRadius: 24 }}>
-                  <div
-                    className="narrative-content font-body"
-                    dangerouslySetInnerHTML={{ __html: results.narrative }}
-                    onClick={handleNarrativeClick}
-                    style={{ fontSize: 15, lineHeight: 1.8, color: "#374151" }}
-                  />
+        {viewMode === "references" && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4, ease: EASE.decelerate }}>
+            {shelves.map(shelf => (
+              <section key={shelf.name} className="ref-book">
+                <h3 className="font-display">{shelf.name}</h3>
+                <div className="essay-flow">
+                  {shelf.passages.map((p, shelfIndex) => {
+                    const sourceIndex = passages.indexOf(p);
+                    return (
+                      <PassageCard
+                        key={`${results.query}:ref:${shelf.name}:${shelfIndex}`}
+                        p={p}
+                        anchorIndex={sourceIndex}
+                        queryTerms={queryTerms} onCopy={copyWithRef} onOpenPreview={setPreview}
+                      />
+                    );
+                  })}
                 </div>
-
-                {/* Feedback widget */}
-                {results && results.totalResults > 0 && (
-                  <SearchFeedback searchLogId={searchLogId || null} />
-                )}
-
-                {/* Dig Deeper */}
-                {results && ((results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)) > 25 && (
-                  <button
-                    onClick={() => setDigDeeperOpen(true)}
-                    className="font-body"
-                    style={{
-                      width: "100%", marginTop: 16, padding: "14px 20px", borderRadius: 16,
-                      border: "1px dashed rgba(196,181,253,0.4)", background: "rgba(139,92,246,0.04)",
-                      fontSize: 14, fontWeight: 600, color: "#7C3AED", cursor: "pointer",
-                      textAlign: "center", transition: "all 0.3s ease",
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
-                  >
-                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.overflowTranscripts?.length || 0) + (results.overflowLetters?.length || 0)} additional sources &rarr;
-                  </button>
-                )}
-
-                {/* Follow-up questions */}
-                {followUps.length > 0 && (
-                  <div style={{ marginTop: 20, padding: "clamp(14px, 3vw, 20px) clamp(16px, 3vw, 24px)", borderRadius: 20, background: "rgba(245,240,255,0.4)", border: "1px solid rgba(196,181,253,0.2)" }}>
-                    <p className="font-body" style={{ fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "#6B7280", marginBottom: 12 }}>
-                      People also explore
-                    </p>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {followUps.map((q, i) => (
-                        <button
-                          key={`${i}-${q}`}
-                          onClick={() => onSearch(q)}
-                          className="font-body"
-                          style={{ textAlign: "left", padding: "10px 16px", borderRadius: 12, border: "1px solid rgba(196,181,253,0.25)", background: "rgba(255,255,255,0.6)", fontSize: 14, color: "#374151", cursor: "pointer", transition: "all 0.3s ease" }}
-                          onMouseEnter={e => { e.currentTarget.style.borderColor = "#8B5CF6"; e.currentTarget.style.color = "#7C3AED"; }}
-                          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(196,181,253,0.25)"; e.currentTarget.style.color = "#374151"; }}
-                        >
-                          {q} &rarr;
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ─── References Mode ─── */}
-            {viewMode === "references" && (
-              <div style={{ opacity: 1, transform: "translateY(0)", transition: "opacity 0.2s ease, transform 0.2s ease" }}>
-                {results.books.filter(b => b.verses.length > 0 || b.prose.length > 0 || (b.transcripts?.length || 0) > 0 || (b.letters?.length || 0) > 0).map(book => {
-                  const bookColor = getBookColor(book.slug.toUpperCase());
-                  const tCount = book.transcripts?.length || 0;
-                  const lCount = book.letters?.length || 0;
-                  return (
-                    <div key={book.slug} className="references-book-group">
-                      <h3>{book.name}</h3>
-                      <p className="references-book-count">
-                        {book.verses.length > 0 && `${book.verses.length} verse${book.verses.length !== 1 ? "s" : ""}`}
-                        {book.verses.length > 0 && (book.prose.length > 0 || tCount > 0 || lCount > 0) && " · "}
-                        {book.prose.length > 0 && `${book.prose.length} passage${book.prose.length !== 1 ? "s" : ""}`}
-                        {book.prose.length > 0 && (tCount > 0 || lCount > 0) && " · "}
-                        {tCount > 0 && `${tCount} lecture${tCount !== 1 ? "s" : ""}`}
-                        {tCount > 0 && lCount > 0 && " · "}
-                        {lCount > 0 && `${lCount} letter${lCount !== 1 ? "s" : ""}`}
-                      </p>
-
-                      {book.verses.map(v => {
-                        const ref = `${v.scripture || ""} ${v.canto_or_division ? v.canto_or_division + "." : ""}${v.chapter_number ? v.chapter_number + "." : ""}${v.verse_number}`.trim();
-                        const vColor = getBookColor(ref);
-                        return (
-                          <div key={v.id} className="reference-card" id={`source-${ref}`} style={{ borderLeft: `3px solid ${vColor.border}` }}>
-                            <span style={{
-                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
-                              borderRadius: 8, background: vColor.bg, color: vColor.text,
-                            }}>
-                              [{ref}]
-                            </span>
-                            {v.translation && (
-                              <p className="reference-card__translation">{v.translation}</p>
-                            )}
-                            {v.purport && (
-                              <ExpandableReferenceCard
-                                preview={v.purport.length > 200 ? v.purport.slice(0, 200) + "…" : v.purport}
-                                fullText={v.purport}
-                              >
-                                <span />
-                              </ExpandableReferenceCard>
-                            )}
-                            <div className="reference-card__links">
-                              <a href={`/verse/${v.id}`} style={{ color: "#534AB7" }}>
-                                Read full purport &rarr;
-                              </a>
-                              {v.vedabase_url && (
-                                <a href={v.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
-                                  Open on Vedabase &#8599;
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {book.prose.map(p => (
-                        <div key={p.id} className="reference-card" id={`source-${p.chapter_title || `${p.book_slug} #${p.paragraph_number}`}`} style={{ borderLeft: `3px solid ${bookColor.border}` }}>
-                          {p.chapter_title && (
-                            <span style={{
-                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
-                              borderRadius: 8, background: bookColor.bg, color: bookColor.text,
-                            }}>
-                              {p.chapter_title}
-                            </span>
-                          )}
-                          <ExpandableReferenceCard
-                            preview={p.body_text.length > 250 ? p.body_text.slice(0, 250) + "…" : p.body_text}
-                            fullText={p.body_text}
-                          >
-                            <span />
-                          </ExpandableReferenceCard>
-                          <div className="reference-card__links">
-                            <span />
-                            {p.vedabase_url && (
-                              <a href={p.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
-                                Open on Vedabase &#8599;
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-
-                      {(book.transcripts || []).map(t => {
-                        const lectureColor = BOOK_COLORS["LECTURES"];
-                        const datePart = t.date ? new Date(t.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
-                        const label = t.title || [datePart, t.location].filter(Boolean).join(" — ") || "Lecture";
-                        return (
-                          <div key={t.id} className="reference-card" style={{ borderLeft: `3px solid ${lectureColor.border}` }}>
-                            <span style={{
-                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
-                              borderRadius: 8, background: lectureColor.bg, color: lectureColor.text,
-                            }}>
-                              Lecture
-                            </span>
-                            <p style={{ fontSize: 12, color: "#666", margin: "4px 0 2px", fontStyle: "italic" }}>
-                              {label}
-                            </p>
-                            <ExpandableReferenceCard
-                              preview={t.body_text.length > 250 ? t.body_text.slice(0, 250) + "…" : t.body_text}
-                              fullText={t.body_text}
-                            >
-                              <span />
-                            </ExpandableReferenceCard>
-                            <div className="reference-card__links">
-                              <span />
-                              {t.vedabase_url && (
-                                <a href={t.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
-                                  Open on Vedabase &#8599;
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-
-                      {(book.letters || []).map(l => {
-                        const letterColor = BOOK_COLORS["LETTERS"];
-                        const datePart = l.date ? new Date(l.date).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "";
-                        const label = [l.recipient ? `To ${l.recipient}` : "", datePart].filter(Boolean).join(" — ") || "Letter";
-                        return (
-                          <div key={l.id} className="reference-card" style={{ borderLeft: `3px solid ${letterColor.border}` }}>
-                            <span style={{
-                              display: "inline-block", fontSize: 11, fontWeight: 500, padding: "2px 8px",
-                              borderRadius: 8, background: letterColor.bg, color: letterColor.text,
-                            }}>
-                              Letter
-                            </span>
-                            <p style={{ fontSize: 12, color: "#666", margin: "4px 0 2px", fontStyle: "italic" }}>
-                              {label}
-                            </p>
-                            <ExpandableReferenceCard
-                              preview={l.body_text.length > 250 ? l.body_text.slice(0, 250) + "…" : l.body_text}
-                              fullText={l.body_text}
-                            >
-                              <span />
-                            </ExpandableReferenceCard>
-                            <div className="reference-card__links">
-                              <span />
-                              {l.vedabase_url && (
-                                <a href={l.vedabase_url} target="_blank" rel="noopener noreferrer" style={{ color: "#888" }}>
-                                  Open on Vedabase &#8599;
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })}
-
-                {/* Dig Deeper in references mode */}
-                {results && ((results.totalVerses || 0) + (results.totalProse || 0) + (results.totalTranscripts || 0) + (results.totalLetters || 0)) > 25 && (
-                  <button
-                    onClick={() => setDigDeeperOpen(true)}
-                    className="font-body"
-                    style={{
-                      width: "100%", marginTop: 16, padding: "14px 20px", borderRadius: 16,
-                      border: "1px dashed rgba(196,181,253,0.4)", background: "rgba(139,92,246,0.04)",
-                      fontSize: 14, fontWeight: 600, color: "#7C3AED", cursor: "pointer",
-                      textAlign: "center", transition: "all 0.3s ease",
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.background = "rgba(139,92,246,0.1)"; e.currentTarget.style.borderColor = "#8B5CF6"; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "rgba(139,92,246,0.04)"; e.currentTarget.style.borderColor = "rgba(196,181,253,0.4)"; }}
-                  >
-                    Explore all {(results.overflowVerses?.length || 0) + (results.overflowProse?.length || 0) + (results.overflowTranscripts?.length || 0) + (results.overflowLetters?.length || 0)} additional sources &rarr;
-                  </button>
-                )}
-              </div>
-            )}
-          </motion.div>
-        </div>
-
-        {/* ─── Desktop Summary Sidebar ─── */}
-        <div className="desktop-sidebar" style={{ opacity: 1 }}>
-          <div style={{
-            background: "white", border: "1px solid rgba(0,0,0,0.08)", borderRadius: 12,
-            padding: 16, position: "sticky", top: 80, alignSelf: "start",
-          }}>
-            {/* Key answers section */}
-            {summaries.length > 0 && (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-                  <svg width="14" height="14" viewBox="0 0 14 14">
-                    <path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z" fill="#7F77DD" stroke="none" />
-                  </svg>
-                  <span className="font-body" style={{ fontSize: 13, fontWeight: 500 }}>Key answers</span>
-                </div>
-                {summaries.map((item, i) => (
-                  <div
-                    key={i}
-                    onClick={() => scrollToSource(item.reference)}
-                    style={{
-                      display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12,
-                      animation: `sidebarItemIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.08}s both`,
-                    }}
-                  >
-                    <span style={{
-                      fontSize: 11, fontWeight: 500, color: "#534AB7", background: "#EEEDFE",
-                      padding: "1px 6px", borderRadius: 4, whiteSpace: "nowrap", marginTop: 2,
-                      animation: `badgePop 0.35s cubic-bezier(0.16, 1, 0.3, 1) ${i * 0.08 + 0.1}s both`,
-                    }}>{i + 1}</span>
-                    <div>
-                      <p className="font-body" style={{ fontSize: 12, margin: "0 0 2px", lineHeight: 1.5 }}>{item.summary}</p>
-                      <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{item.reference}</span>
-                    </div>
-                  </div>
-                ))}
-              </>
-            )}
-
-            {/* Loading state for summaries */}
-            {summaries.length === 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
-                <svg width="14" height="14" viewBox="0 0 14 14">
-                  <path d="M7 1l1.8 3.6L13 5.3l-3 2.9.7 4.1L7 10.4l-3.7 1.9.7-4.1-3-2.9 4.2-.7z" fill="#7F77DD" stroke="none" />
-                </svg>
-                <span className="font-body" style={{ fontSize: 13, fontWeight: 500, color: "#888" }}>Generating key answers...</span>
-              </div>
-            )}
-
-            {/* Divider */}
-            <div style={{ borderTop: "1px solid rgba(0,0,0,0.06)", margin: "14px 0" }} />
-
-            {/* Sources by book */}
-            <p className="font-body" style={{ fontSize: 11, color: "#888", textTransform: "uppercase", letterSpacing: "0.3px", margin: "0 0 8px" }}>
-              Sources by book
-            </p>
-            {bookGroups.map(g => (
-              <div key={g.name} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
-                <span className="font-body" style={{ fontSize: 12 }}>{g.name}</span>
-                <span className="font-body" style={{ fontSize: 11, color: "#888" }}>{g.count}</span>
-              </div>
+              </section>
             ))}
-          </div>
-        </div>
+          </motion.div>
+        )}
+
+        {/* Below the main article in either view: every other passage THIS
+            SEARCH retrieved, grouped by kind, collapsed until asked for. Not
+            everything the library holds — the candidate pool is capped. */}
+        <AdditionalTier list={results.additional || []} truncated={results.additionalTruncated} />
       </div>
 
-      {/* Mobile Summary Popup */}
-      <SummaryPopup
-        isOpen={showSummaryPopup}
-        onClose={() => setShowSummaryPopup(false)}
-        summaries={summaries}
-        totalSources={results.totalResults}
-      />
-
-      {/* Want More Modal */}
-      {modalBook && <WantMoreModal book={modalBook} onClose={() => setModalBook(null)} />}
-
-      {/* Dig Deeper Modal */}
-      {digDeeperOpen && results && (
-        <DigDeeperModal
-          overflowVerses={results.overflowVerses || []}
-          overflowProse={results.overflowProse || []}
-          overflowTranscripts={results.overflowTranscripts || []}
-          overflowLetters={results.overflowLetters || []}
-          totalVerses={results.totalVerses || 0}
-          totalProse={results.totalProse || 0}
-          totalTranscripts={results.totalTranscripts || 0}
-          totalLetters={results.totalLetters || 0}
-          articleVerseIds={new Set(results.articleVerseIds || [])}
-          onClose={() => setDigDeeperOpen(false)}
-        />
+      {/* Mobile floating "next passage" */}
+      {passages.length > 2 && (
+        <button className="next-quote-btn" onClick={jumpNextQuote} aria-label="Jump to the next passage">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 5v14M5 12l7 7 7-7" /></svg>
+        </button>
       )}
 
-      <QuoteTooltip />
+      {/* Citation preview sheet */}
+      <AnimatePresence>
+        {preview && (
+          <PreviewSheet p={preview} onClose={() => setPreview(null)} onCopy={copyWithRef} />
+        )}
+      </AnimatePresence>
 
-      {/* Styles */}
+      {/* Copy toast */}
+      <AnimatePresence>
+        {toast && (
+          <motion.div className="copy-toast font-body" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }} transition={{ duration: 0.24, ease: EASE.decelerate }}>
+            {toast}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <style jsx global>{`
-        /* Controls row above grid */
-        .results-controls-row {
-          max-width: 1100px;
-          margin: 0 auto;
-          padding: 0 20px;
+        .results-shell { max-width: 720px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 24px); }
+
+        .view-toggle-row { display: flex; justify-content: flex-end; margin-bottom: var(--space-5); }
+        .view-mode-toggle { display: inline-flex; border: 1px solid var(--border-hair); border-radius: var(--radius-full); overflow: hidden; background: var(--surface-raised); }
+        .view-mode-toggle button { padding: 7px 16px; font-size: var(--type-label-size); font-weight: 500; border: none; cursor: pointer; background: transparent; color: var(--ink-muted); transition: background var(--dur-2) var(--ease-standard), color var(--dur-2) var(--ease-standard); }
+        .view-mode-toggle button.active { background: var(--accent); color: var(--on-accent); }
+
+        /* Neutral AI framing — visually subordinate so it can never read as scripture. */
+        .framing-note { font-size: 0.95rem; line-height: 1.6; color: var(--framing); max-width: var(--measure); }
+        .framing-intro { margin-bottom: var(--space-7); }
+
+        .contents { margin: 0 0 var(--space-6); border: 1px solid var(--border-hair); border-radius: var(--radius-md); background: var(--surface-raised); }
+        .contents > summary { cursor: pointer; padding: 10px 14px; font-size: var(--type-label-size); color: var(--ink-muted); list-style: none; }
+        .contents > summary::-webkit-details-marker { display: none; }
+        .contents ol { margin: 0; padding: 0 14px 12px 14px; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+        .contents li button { background: none; border: none; padding: 4px 0; color: var(--accent-strong); font-size: 0.85rem; cursor: pointer; text-align: left; }
+        .contents li button:hover { text-decoration: underline; }
+        @media (max-width: 900px) { .contents { display: none; } }
+
+        .essay-flow { display: flex; flex-direction: column; }
+
+        .passage { padding: var(--space-6) 0; border-bottom: 1px solid var(--border-hair); }
+        .essay-flow .passage:last-child { border-bottom: none; }
+
+        /* Framing the reader must see for letters / recorded exchanges. */
+        .context-notice { font-size: 0.82rem; color: var(--ink-muted); font-style: italic; margin: 0 0 var(--space-3); }
+        .also-appears { font-size: 0.8rem; color: var(--ink-subtle); margin: var(--space-3) 0 0; }
+
+        /* Source types distinguished by TYPOGRAPHY (no colored bars, no legend). */
+        .verse-translation { font-family: var(--font-display), 'Cormorant Garamond', Georgia, serif; font-size: clamp(1.2rem, 2.4vw, 1.4rem); line-height: 1.45; color: var(--ink-strong); }
+        .verse-translation .pp { margin: 0 0 var(--space-3); }
+        .verse-translation .pp:last-child { margin-bottom: 0; }
+
+        .passage-body { font-size: var(--type-body-size); line-height: var(--type-body-lh); color: var(--ink); }
+        .passage-body .pp { margin: 0 0 var(--space-3); }
+        .passage-body .pp:last-child { margin-bottom: 0; }
+        .letter-body .passage-body, .passage[data-passage-type="letter"] .passage-body { font-style: italic; }
+
+        /* Purport: subtle indent under its verse (a quiet commentary voice). */
+        .purport-block { margin-top: var(--space-4); padding-left: var(--space-4); border-left: 2px solid var(--border-hair); }
+
+        .fold-expand-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--space-3); padding: 4px 0; background: none; border: none; cursor: pointer; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 600; color: var(--accent-strong); }
+        .fold-expand-btn:hover { text-decoration: underline; }
+
+        .passage-foot { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); }
+        .cite-chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em; color: var(--accent-strong); background: var(--accent-tint); border: 1px solid transparent; border-radius: var(--radius-full); padding: 3px 11px; cursor: pointer; transition: border-color var(--dur-2) var(--ease-standard); }
+        .cite-chip:hover { border-color: var(--accent); }
+        .cite-external { padding: 3px 9px; text-decoration: none; }
+        .cite-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+        .cite-dot[data-type="lecture"] { background: var(--p-gold); }
+        .cite-dot[data-type="letter"] { background: #8AA48F; }
+        .copy-chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 500; color: var(--ink-muted); background: none; border: none; cursor: pointer; transition: color var(--dur-2) var(--ease-standard); }
+        .copy-chip:hover { color: var(--accent-strong); }
+        .copy-ico { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; }
+        .cite-chip, .copy-chip { min-height: 30px; }
+        .fold-expand-btn:active, .view-mode-toggle button:active { transform: scale(0.985); }
+
+        .ref-book { margin-bottom: var(--space-7); }
+        .ref-book h3 { font-size: 1.3rem; font-weight: 600; color: var(--ink-strong); margin: 0 0 var(--space-2); }
+
+        /* ── The second tier: complete, collapsed, citation-weight ── */
+        .additional-tier { margin: var(--space-7) 0 0; border: 1px solid var(--border-hair); border-radius: var(--radius-md); background: var(--surface-raised); }
+        .additional-tier > summary { cursor: pointer; padding: 12px 16px; font-size: var(--type-label-size); font-weight: 600; color: var(--ink-muted); list-style: none; }
+        .additional-tier > summary::-webkit-details-marker { display: none; }
+        .additional-tier > summary::before { content: "▸ "; }
+        .additional-tier[open] > summary::before { content: "▾ "; }
+        .additional-truncated { margin: 0 16px var(--space-3); font-size: 0.8rem; color: var(--ink-subtle); font-style: italic; }
+        .additional-group { padding: 0 16px var(--space-4); }
+        .additional-group h4 { margin: var(--space-3) 0 var(--space-2); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-subtle); }
+        .additional-group ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
+        .additional-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 0.82rem; font-weight: 600; color: var(--ink); }
+        .additional-label a { color: var(--accent-strong); text-decoration: none; }
+        .additional-label a:hover { text-decoration: underline; }
+        .additional-snippet { margin: 2px 0 0; font-size: 0.86rem; line-height: 1.55; color: var(--ink-muted); }
+
+        /* ── Matched-sentence emphasis (the bloom): lavender→gold, blooms once,
+           then settles to a calm resting tint. Never a flat yellow block. ── */
+        mark.hl-sentence, mark.hl-word { color: inherit; }
+        .hl-sentence {
+          background-image: linear-gradient(90deg, transparent 0%, var(--emphasis-from) 9%, var(--emphasis-to) 91%, transparent 100%);
+          background-repeat: no-repeat; background-position: left center;
+          background-size: 0% 76%; /* dormant until it enters the viewport */
+          border-radius: 7px; padding: 0.04em 0.32em;
+          -webkit-box-decoration-break: clone; box-decoration-break: clone;
+        }
+        /* Blooms once, left→right, holds ~600ms, then eases down to a calm resting tint. */
+        .hl-sentence.bloom { animation: hlBloom 1.25s var(--ease-decelerate) forwards; }
+        @keyframes hlBloom {
+          0%   { background-size: 0% 76%;   box-shadow: 0 1px 12px color-mix(in srgb, var(--accent) 0%, transparent); }
+          48%  { background-size: 100% 76%; box-shadow: 0 1px 16px color-mix(in srgb, var(--accent) 20%, transparent); }
+          70%  { background-size: 100% 76%; box-shadow: 0 1px 16px color-mix(in srgb, var(--accent) 20%, transparent); }
+          100% { background-size: 100% 76%; box-shadow: 0 1px 9px color-mix(in srgb, var(--accent) 6%, transparent); }
+        }
+        .hl-word { background-image: linear-gradient(transparent 58%, color-mix(in srgb, var(--accent) 22%, transparent) 58%); border-radius: 1px; padding: 0 0.5px; font-weight: 500; color: var(--accent-strong); }
+
+        /* ── Citation preview sheet + scrim ── */
+        .sheet-scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--ink-strong) 32%, transparent); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 200; }
+        .preview-sheet { position: fixed; z-index: 201; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(640px, 92vw); max-height: 82vh; overflow-y: auto; background: var(--surface-raised); border: 1px solid var(--border-hair); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); padding: var(--space-5); }
+        .preview-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
+        .preview-head .cite-chip { cursor: default; }
+        .sheet-close { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-hair); background: transparent; color: var(--ink-muted); font-size: 20px; cursor: pointer; line-height: 1; }
+        .preview-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border-hair); }
+        .preview-actions .copy-chip { font-size: 0.85rem; }
+        .vedabase-link { font-size: 0.85rem; font-weight: 600; color: var(--accent-strong); text-decoration: none; }
+        .vedabase-link:hover { text-decoration: underline; }
+        .preview-links { display: flex; gap: var(--space-4); align-items: center; }
+        @media (max-width: 640px) {
+          .preview-sheet { left: 0; right: 0; bottom: 0; top: auto; transform: none; width: 100%; max-height: 85vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+        }
+
+        /* ── Mobile "next passage" floating button ── */
+        .next-quote-btn { position: fixed; right: 16px; bottom: 20px; z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-hair); background: var(--surface-raised); color: var(--accent-strong); box-shadow: var(--shadow-soft); cursor: pointer; display: none; align-items: center; justify-content: center; transition: transform var(--dur-2) var(--ease-standard); }
+        .next-quote-btn:active { transform: scale(0.94); }
+        @media (max-width: 900px) { .next-quote-btn { display: flex; } }
+
+        .copy-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 210; background: var(--ink-strong); color: var(--surface-raised); font-size: 0.85rem; padding: 10px 18px; border-radius: var(--radius-full); box-shadow: var(--shadow-soft); }
+
+        @media (prefers-reduced-motion: reduce) {
+          .hl-sentence.bloom { animation-duration: 0.01ms; }
         }
 
         @media (max-width: 768px) {
-          .results-controls-row {
-            padding: 0 16px;
-          }
-        }
-
-        /* 2-column grid: content (1fr) + sidebar (220px) — aligned at top */
-        .results-grid-container {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) 220px;
-          gap: 20px;
-          align-items: start;
-          max-width: 1100px;
-          margin: 0 auto;
-          padding: 0 20px;
-        }
-
-        /* Mobile: single column */
-        @media (max-width: 768px) {
-          .results-grid-container {
-            grid-template-columns: 1fr;
-            padding: 0 16px;
-          }
-        }
-
-        /* Desktop sidebar visibility */
-        .desktop-sidebar { display: block; }
-        @media (max-width: 768px) { .desktop-sidebar { display: none; } }
-
-        /* Mobile button visibility */
-        .mobile-only-btn { display: none !important; }
-        @media (max-width: 768px) { .mobile-only-btn { display: flex !important; } }
-
-        /* Bottom-sheet animations */
-        @keyframes summaryFadeIn { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes summarySlideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
-
-        /* Scripture card styles */
-        .scripture-card {
-          padding: 16px 20px;
-          margin-bottom: 20px;
-          border-left: 3px solid #AFA9EC;
-          background: #FAFAFA;
-          border-radius: 0 8px 8px 0;
-        }
-        .scripture-card__reference-tag {
-          display: inline-block;
-          font-size: 11px;
-          font-weight: 500;
-          padding: 2px 8px;
-          border-radius: 8px;
-          margin-bottom: 10px;
-          background: #EEEDFE;
-          color: #534AB7;
-        }
-        .scripture-card__text {
-          font-size: 16px;
-          line-height: 1.8;
-          font-style: italic;
-          font-family: Georgia, 'Times New Roman', serif;
-          color: #1a1a1a;
-          margin: 0;
-        }
-        @media (max-width: 768px) {
-          .scripture-card__text {
-            font-size: 15px;
-            line-height: 1.75;
-          }
-        }
-
-        /* Verse and purport blocks animate in when they appear during streaming */
-        .narrative-content .verse-quote,
-        .narrative-content .purport-quote,
-        .narrative-content .prose-quote {
-          animation: verseBorderGrow 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-        }
-
-        /* Stagger h3 headings in the narrative */
-        .narrative-content h3 {
-          animation: fadeInUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
-        }
-
-        /* Narrative content styles */
-        .narrative-content h3 {
-          font-family: 'Cormorant Garamond', serif;
-          font-size: 1.2rem; font-weight: 600; color: #1E1B4B;
-          margin: 28px 0 12px; padding-bottom: 8px;
-          border-bottom: 1px solid rgba(196,181,253,0.2);
-        }
-        .narrative-content h3:first-child { margin-top: 0; }
-        .narrative-content p {
-          margin-bottom: 16px; font-size: 16px; line-height: 1.85; color: #1E1B4B;
-        }
-        .narrative-content .verse-quote {
-          background: transparent; border: none;
-          border-left: 3px solid #8B5CF6; padding: 12px 20px; border-radius: 0; margin: 20px 0;
-          font-family: Georgia, 'Times New Roman', serif; font-size: 16px; font-style: italic; line-height: 1.8; color: #1E1B4B;
-        }
-        .narrative-content .purport-quote {
-          background: transparent; border: none;
-          border-left: 3px solid #7C3AED; padding: 12px 20px; border-radius: 0; margin: 16px 0;
-          font-size: 15px; line-height: 1.8; color: #374151;
-        }
-        .narrative-content .prose-quote {
-          background: transparent; border: none;
-          border-left: 3px solid #6366F1; padding: 12px 20px; border-radius: 0; margin: 16px 0;
-          font-size: 15px; line-height: 1.8; color: #374151;
-        }
-        .narrative-content .lecture-quote {
-          background: rgba(251,146,60,0.04); border: none;
-          border-left: 3px solid #FB923C; padding: 12px 20px; border-radius: 0; margin: 16px 0;
-          font-size: 15px; line-height: 1.8; color: #374151;
-        }
-        .narrative-content .letter-quote {
-          background: rgba(74,222,128,0.04); border: none;
-          border-left: 3px solid #4ADE80; padding: 12px 20px; border-radius: 0; margin: 16px 0;
-          font-size: 15px; line-height: 1.8; color: #374151;
-        }
-        .narrative-content .verse-ref {
-          font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 600;
-          color: #8B5CF6; font-style: normal;
-        }
-        .narrative-content .verse-link { text-decoration: none; color: #8B5CF6; }
-        .narrative-content .verse-link:hover { text-decoration: underline; }
-        .narrative-content .want-more-trigger {
-          text-align: center; padding: 12px; margin: 16px 0 8px;
-          font-size: 13px; font-weight: 600; color: #7C3AED; cursor: pointer;
-          border: 1px dashed rgba(196,181,253,0.4); border-radius: 12px;
-          background: rgba(139,92,246,0.04); transition: all 0.3s ease;
-        }
-        .narrative-content .want-more-trigger:hover {
-          background: rgba(139,92,246,0.1); border-color: #8B5CF6;
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 0.4; transform: scale(1); }
-          50% { opacity: 1; transform: scale(1.3); }
-        }
-        @keyframes articlePulse {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 1; }
-        }
-
-        /* Article/References toggle */
-        .view-mode-toggle {
-          display: inline-flex;
-          border: 1px solid rgba(0,0,0,0.12);
-          border-radius: 10px;
-          overflow: hidden;
-        }
-        .view-mode-toggle button {
-          padding: 8px 18px;
-          font-size: 13px;
-          font-weight: 500;
-          border: none;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-          transition: background 0.15s ease, color 0.15s ease;
-        }
-        .view-mode-toggle button.active {
-          background: #534AB7;
-          color: white;
-        }
-        .view-mode-toggle button:not(.active) {
-          background: transparent;
-          color: #666;
-        }
-        .view-mode-toggle button:not(.active):hover {
-          background: rgba(83, 74, 183, 0.08);
-        }
-
-        /* References view cards */
-        .references-book-group {
-          margin-bottom: 32px;
-        }
-        .references-book-group h3 {
-          font-family: 'Cormorant Garamond', serif;
-          font-size: 1.15rem;
-          font-weight: 600;
-          color: #1E1B4B;
-          margin: 0 0 4px;
-        }
-        .references-book-count {
-          font-size: 12px;
-          color: #888;
-          margin-bottom: 16px;
-        }
-        .reference-card {
-          margin-bottom: 14px;
-          padding: 16px 20px;
-          background: #FAFAFA;
-          border-radius: 0 8px 8px 0;
-          transition: background 0.2s ease;
-        }
-        .reference-card:hover {
-          background: #F5F3FF;
-        }
-        .reference-card__translation {
-          font-size: 15px;
-          line-height: 1.8;
-          font-style: italic;
-          font-family: Georgia, 'Times New Roman', serif;
-          color: #1a1a1a;
-          margin: 8px 0;
-        }
-        .reference-card__purport {
-          font-size: 13px;
-          line-height: 1.7;
-          color: #555;
-          margin: 8px 0;
-        }
-        .reference-card__links {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 12px;
-          margin-top: 8px;
-        }
-        .reference-card__links a {
-          font-size: 12px;
-          font-weight: 500;
-          text-decoration: none;
-          transition: text-decoration 0.2s;
-        }
-        .reference-card__links a:hover {
-          text-decoration: underline;
-        }
-
-        @media (max-width: 768px) {
-          .view-mode-toggle button {
-            padding: 10px 16px;
-            font-size: 14px;
-          }
-        }
-
-        /* Quote block cursor */
-        .narrative-content .verse-quote,
-        .narrative-content .purport-quote,
-        .narrative-content .prose-quote,
-        .narrative-content .lecture-quote,
-        .narrative-content .letter-quote {
-          cursor: default;
-        }
-
-        /* ─── Premium Quote Tooltip Animations ─── */
-        @keyframes tooltipElasticIn {
-          0% {
-            opacity: 0;
-            transform: translateX(-100%) translateY(-50%) translateX(16px) scale(0.85);
-          }
-          40% {
-            opacity: 1;
-            transform: translateX(-100%) translateY(-50%) translateX(-5px) scale(1.04);
-          }
-          65% {
-            transform: translateX(-100%) translateY(-50%) translateX(2px) scale(0.98);
-          }
-          85% {
-            transform: translateX(-100%) translateY(-50%) translateX(-1px) scale(1.01);
-          }
-          100% {
-            opacity: 1;
-            transform: translateX(-100%) translateY(-50%) translateX(0) scale(1);
-          }
-        }
-
-        @keyframes tooltipLineGrow {
-          0% {
-            transform: scaleX(0);
-            opacity: 0;
-          }
-          60% {
-            opacity: 1;
-          }
-          100% {
-            transform: scaleX(1);
-            opacity: 1;
-          }
-        }
-
-        @keyframes tooltipDotPop {
-          0% {
-            transform: scale(0);
-          }
-          50% {
-            transform: scale(1.8);
-          }
-          75% {
-            transform: scale(0.85);
-          }
-          100% {
-            transform: scale(1);
-          }
-        }
-
-        @keyframes tooltipShimmer {
-          0% {
-            left: -100%;
-          }
-          100% {
-            left: 200%;
-          }
+          .passage { padding: var(--space-5) 0; }
         }
       `}</style>
-    </>
+    </MotionConfig>
   );
 }
