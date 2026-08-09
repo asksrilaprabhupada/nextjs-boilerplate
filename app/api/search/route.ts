@@ -61,6 +61,10 @@ import {
 } from "@/app/lib/search-v2/preview-verification";
 import { SEARCH_PROGRESS_LABELS } from "@/app/lib/24-search-progress";
 import {
+  SEARCH_STAGE_ORDER,
+  SEARCH_STAGE_PERCENT,
+} from "@/app/lib/25-search-stage-events";
+import {
   clearSnapshotSessionCookie,
   readSnapshotSession,
   type SnapshotSession,
@@ -123,13 +127,15 @@ function guardPayloadSize(
 type OnStage = (stage: SearchStageKey, labelOverride?: string, found?: number) => void;
 
 const STAGE_META: Record<SearchStageKey, { pct: number; label: string }> = {
-  understood: { pct: 12, label: "Reading your question…" },
-  expanding: { pct: 22, label: "Exploring several angles of your question…" },
-  searching: { pct: 45, label: "Searching 244,148 passages…" },
-  reranking: { pct: 70, label: SEARCH_PROGRESS_LABELS.reranking },
-  weaving: { pct: 90, label: SEARCH_PROGRESS_LABELS.weaving },
+  understood: { pct: SEARCH_STAGE_PERCENT.understood, label: "Reading your question…" },
+  searching: { pct: SEARCH_STAGE_PERCENT.searching, label: "Searching 244,148 passages…" },
+  reranking: { pct: SEARCH_STAGE_PERCENT.reranking, label: SEARCH_PROGRESS_LABELS.reranking },
+  verifying: {
+    pct: SEARCH_STAGE_PERCENT.verifying,
+    label: "Verifying every quote against its source…",
+  },
+  weaving: { pct: SEARCH_STAGE_PERCENT.weaving, label: SEARCH_PROGRESS_LABELS.weaving },
 };
-const STAGE_ORDER: SearchStageKey[] = ["understood", "expanding", "searching", "reranking", "weaving"];
 
 /**
  * Bridges the pipeline's stage vocabulary onto the SSE events the mandala loader
@@ -145,6 +151,7 @@ const STAGE_TO_WIRE: Partial<Record<PipelineStage, SearchStageKey>> = {
   fusing: "searching",
   reranking: "reranking",
   selecting: "reranking",
+  verifying: "verifying",
   organizing: "weaving",
 };
 
@@ -159,6 +166,9 @@ function liveLabel(stage: PipelineStage, info?: PipelineStageInfo): string | und
   }
   if (info?.kept !== undefined && stage === "organizing") {
     return `Weaving ${n(info.kept)} passages…`;
+  }
+  if (info?.kept !== undefined && stage === "verifying") {
+    return `Verifying ${n(info.kept)} passages against their original sources…`;
   }
   return undefined;
 }
@@ -315,7 +325,6 @@ async function getOrComputeResult(
           verificationMode,
         ),
       });
-      onStage?.("weaving");
       return {
         result: { ...cached.result, query, searchLogId: searchRun?.rowId ?? null, requestId },
         fromCache: true,
@@ -653,7 +662,7 @@ export async function GET(request: NextRequest) {
         if (execution.fromCache) {
           // Cached answer: replay the stages in fast succession so the loader
           // still arcs rather than snapping to a finished result.
-          for (const s of STAGE_ORDER) {
+          for (const s of SEARCH_STAGE_ORDER) {
             onStage(s);
             await new Promise((r) => setTimeout(r, 120));
           }

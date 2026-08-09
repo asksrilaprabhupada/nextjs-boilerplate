@@ -203,7 +203,12 @@ export interface DegradedSource {
 
 /* ── SSE stage events (?stream=1) ── */
 
-export type SearchStageKey = "understood" | "expanding" | "searching" | "reranking" | "weaving";
+export type SearchStageKey =
+  | "understood"
+  | "searching"
+  | "reranking"
+  | "verifying"
+  | "weaving";
 
 export interface SearchStageEvent {
   stage: SearchStageKey;

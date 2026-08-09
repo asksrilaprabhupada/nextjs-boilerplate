@@ -89,6 +89,7 @@ export type PipelineStage =
   | "fusing"
   | "reranking"
   | "selecting"
+  | "verifying"
   | "organizing"
   | "complete"
   | "degraded"
@@ -556,6 +557,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // ── verify: the hard stop ──
   // Main-tier passages always receive a fresh source-row read. Additional-tier
   // previews remain complete retrieval evidence and are never speaker-filtered.
+  onStage?.("verifying", { kept: selection.selected.length });
   const refetched = await time("verifying", () =>
     refetchAndVerify(db as never, selection.selected, { requestId }),
   );

@@ -590,8 +590,15 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       requestId: "req_stage",
       onStage: (s) => seen.push(s),
     });
-    expect(seen.slice(0, 3)).toEqual(["planning", "retrieving", "fusing"]);
-    expect(seen).toContain("selecting");
+    expect(seen.slice(0, -1)).toEqual([
+      "planning",
+      "retrieving",
+      "fusing",
+      "reranking",
+      "selecting",
+      "verifying",
+      "organizing",
+    ]);
     expect(seen[seen.length - 1]).toBe("degraded");
   });
 
