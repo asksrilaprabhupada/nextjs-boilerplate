@@ -1,17 +1,17 @@
 # Part C transcript-speaker approval packet
 
-## Status: schema applied and verified; backfill approval ready
+## Status: schema and backfill applied and verified; merge approval pending
 
 This packet records four separate decisions:
 
 1. The additive Supabase schema migration was explicitly approved, applied, and verified.
-2. The paragraph backfill is frozen but still awaits its distinct approval marker.
+2. The paragraph backfill was separately approved, applied, and verified against the frozen packet.
 3. The application read-path change was merged by the owner in PR #148.
 4. Vercel reported the resulting `main` deployment complete.
 
-None is implied by approval of another. The additive schema change is the only Supabase write performed. No paragraph data write, backfill, index creation, paid call, or agent-initiated merge or production promotion was performed.
+None is implied by approval of another. The only Supabase writes performed were the separately approved additive schema migration and the separately approved `speaker_names` backfill. No index creation, paid call, agent-initiated merge, or production promotion was performed.
 
-Supabase recorded the schema operation as live migration `20260809143133_add_transcript_speaker_names`. The local migration and rollback paths are aligned to that version, and a new complete post-schema read-only scan froze the only packet eligible for backfill approval.
+Supabase recorded the schema operation as live migration `20260809143133_add_transcript_speaker_names`. The local migration and rollback paths are aligned to that version, and a complete post-schema read-only scan froze the exact packet used by the approved backfill.
 
 ## Observed live facts
 
@@ -19,7 +19,7 @@ Supabase recorded the schema operation as live migration `20260809143133_add_tra
 - `public.transcript_paragraphs`: 144,438 rows across 3,703 transcripts.
 - Transcript IDs and paragraph numbers are non-null. Every transcript starts at paragraph 1 and is contiguous; the largest has 265 rows.
 - Row-level security is enabled and the table remains publicly readable through its current policy.
-- `speaker_names` exists as nullable `text[]` with no default. All 144,438 rows remain `NULL`, and no speaker index exists.
+- `speaker_names` exists as nullable `text[]` with no default. All 144,438 rows are processed, zero remain `NULL`, and no speaker index exists.
 - `trg_transcript_search_vectors` now fires before insert or updates of `body_text`, `fts_expansion_src`, or `fts_core` only.
 - The live `body_search_vectors_trigger()` raw `pg_proc.prosrc` MD5 is `2b79af99b4080b9c2c0b80ef8a642074`; its `proconfig` is exactly `search_path=public, pg_temp`.
 - `scripts/tags-rebuild/backfill_fts_core.py` still deliberately performs `SET fts_core = fts_core`. The narrowed trigger must therefore retain `fts_core` in its update-column list.
@@ -202,6 +202,22 @@ preflight and final checks 120 seconds and restores the 30-second limit before
 any batch write. The 3-second lock limit, 30-second write limit, 500-row
 maximum, mappings, and conflict checks are unchanged.
 
+The replacement marker was then explicitly approved. The backfill ran from
+`2026-08-09T15:24:59Z` through `2026-08-09T16:04:13Z`. A local 30-minute
+controller limit interrupted the first process after a durable ledger prefix;
+the approved resumable path revalidated the frozen packet, reverified every
+committed batch, and continued without overwriting any third-party value. The
+final ledger contains all 309 contiguous batches and all 144,438 rows, with
+144,438 updates and zero unchanged rows. Its SHA-256 is:
+
+```text
+bade0e9b6e86cc917019c962cc585dd1dd9d339cc4a69ea2c6019329051f9803
+```
+
+The runner's final serializable whole-corpus pass verified every frozen row ID,
+transcript ID, paragraph number, body hash, and ordered speaker array before
+reporting success.
+
 After all batches, a serializable whole-corpus pass rechecks every identity, body hash, and final array under `FOR SHARE` locks. Corpus writers must be paused or coordinated through the same advisory-lock protocol throughout the mutation window. The final pass is a point-in-time guarantee; non-cooperating writers after it remain an operational risk.
 
 Adding a nullable no-default column is expected to be metadata-only, but replacing the trigger needs a table lock and will fail after 3 seconds rather than wait. Narrowing the trigger prevents 144,438 speaker-only updates from recalculating indexed search vectors while preserving the active `fts_core = fts_core` repair workflow.
@@ -285,7 +301,7 @@ JOIN public.transcript_paragraphs AS p USING (id)
 ORDER BY p.id;
 ```
 
-The final post-schema packet expects 144,438 total, zero unprocessed, 4,994 empty, 87,463 known-single-only, 36,909 known-multiple-only, 15,072 known-and-unknown, zero invalid-unknown-only, and both fixtures passing after the separately approved backfill.
+The completed postflight observed 144,438 total, zero unprocessed, 4,994 empty, 87,463 known-single-only, 36,909 known-multiple-only, 15,072 known-and-unknown, zero invalid-unknown-only, and both fixtures passing. RLS remained enabled, the vector-function MD5 remained `2b79af99b4080b9c2c0b80ef8a642074`, the trigger remained narrowed to `body_text`, `fts_expansion_src`, and `fts_core`, and no speaker index was added.
 
 ## Rollback and interruption
 
@@ -336,7 +352,7 @@ runner timeout repair**:
 I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:7b2a8d2870a014e84d7bdb727c22c08bffea25bc2e157a72182808c1a758f50e
 ```
 
-The replacement post-schema backfill marker is:
+Consumed replacement post-schema backfill marker:
 
 ```text
 I_APPROVE_TRANSCRIPT_SPEAKER_BACKFILL:11ee0501916f6a124d6b603750fc1234391e668e2a9a90b65a147330c9b60e17
