@@ -18,7 +18,7 @@ SITE=<url> bash scripts/verify-release.sh   # release acceptance checks against 
 
 ### Tech Stack
 
-Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses, verse_chunks, prose_paragraphs, transcript_paragraphs, letter_paragraphs tables, 244,000+ searchable passages; RLS enabled everywhere), Tailwind CSS 4, Framer Motion, vitest. Image processing: sharp (HEIC → JPEG). Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
+Next.js 16 (App Router, Turbopack), TypeScript strict, Supabase (PostgreSQL — verses, verse_chunks, prose_paragraphs, transcript_paragraphs, letter_paragraphs tables, 244,000+ searchable passages; RLS enabled everywhere), Tailwind CSS 4, Framer Motion, vitest. Image processing: sharp plus bundled `heic-decode` JavaScript/WebAssembly for HEIC/HEVC → JPEG. Fonts: Cormorant Garamond, DM Sans, Noto Serif Devanagari.
 
 ### Environment Variables (in .env.local)
 
@@ -85,7 +85,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── generate-article/route.ts  (AI generation quarantined/disabled — HTTP 410)
 │   │   ├── lockscreen-images/
 │   │   │   ├── route.ts               (image list endpoint)
-│   │   │   └── heic/route.ts          (HEIC-to-JPEG conversion via sharp)
+│   │   │   └── heic/route.ts          (HEIC/HEVC + mismatch normalization to JPEG)
 │   │   ├── health/route.ts            (can this deployment actually serve a search?)
 │   │   ├── search/route.ts            (request boundary only: validate → cache → pipeline → log → JSON or SSE)
 │   │   ├── search/plan-probe/route.ts (PREVIEW ONLY, 404 elsewhere: runs the query planner alone over the gold set and reports times, tokens, angles — the A1 merge gate)
@@ -118,7 +118,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 02-analytics.ts           (tracking helpers: logFeedback/logBehavior/logCitationClick)
 │   │   ├── 03-embed.ts               (Voyage embeddings; embedQueries batches original + variants)
 │   │   ├── 05-link-postprocessor.ts   (citation linking)
-│   │   ├── 06-lockscreen-data.ts      (slideshow fallback + daily verses)
+│   │   ├── 06-lockscreen-data.ts      (shared lock-screen types + dormant legacy data)
 │   │   ├── 08-cohere-rerank.ts        (Cohere Rerank v4.0 Pro relevance reranking)
 │   │   ├── 09-purport-format.ts       (shared purport paragraph/footer helpers)
 │   │   ├── 10-passage-fold.ts         (shared fold preview + matched-line highlight + verbatim key line)
@@ -128,9 +128,9 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── 14-verse-speaker.ts        (story speaker from uvāca markers)
 │   │   ├── 15-transcript-speakers.ts  (Name: prefix segmentation for lectures)
 │   │   ├── 17-verbatim-validator.ts   (re-fetch + normalize ⊆ assertion for every rendered block)
-│   │   ├── 18-image-manifest.ts       (photo registry: src/alt/caption/allowFullBleed)
 │   │   ├── 19-seva-config.ts          (donation rows per region; an empty value renders as "Add in project")
 │   │   ├── 20-site.ts                 (canonical origin from NEXT_PUBLIC_SITE_URL)
+│   │   ├── 27-lockscreen-photo-deck.ts (session-persistent Web Crypto shuffle deck)
 │   │   ├── search-v2/                 # THE SEARCH ENGINE — the only one
 │   │   │   ├── pipeline.ts            (the orchestrator; joins every stage, holds the budgets)
 │   │   │   ├── config.ts              (fusion weights, per-source quotas, pool sizes, model ids)
@@ -148,7 +148,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── adapt.ts               (maps pipeline output onto the wire contract the UI renders)
 │   │   │   ├── cache.ts · rpc.ts · errors.ts · citation.ts
 │   │   ├── types/01-search.ts         (shared server↔client search contract + SSE stage events)
-│   │   └── server/01-lockscreen-images.ts (filesystem image reader)
+│   │   └── server/01-lockscreen-images.ts (validated build-time photo discovery + normalization)
 │   ├── types/01-speech.d.ts           (Web Speech API types)
 │   ├── verse/[id]/page.tsx            (verse detail page — server-rendered)
 │   ├── search/page.tsx                (dynamic: reads ?q server-side → SearchExperience; noindex)
@@ -164,7 +164,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   ├── data/donate.json               (legacy; live seva rows come from app/lib/19-seva-config.ts)
 │   ├── data/entrance-quotes.json      (entrance verse pool — bhāva/prema only; add lines here, no code change)
 │   ├── images/
-│   │   ├── README.md                  (how to add photos + register them in the manifest)
+│   │   ├── README.md                  (how automatic photo discovery and validation work)
 │   │   ├── lockscreen/                (photos; auto-discovered by /api/lockscreen-images)
 │   │   ├── journey/                   (path-addressed /journey chapter photos; exact filenames in its README)
 │   │   ├── moments/                   (path-addressed landing Moments photos: moments-01.jpg … moments-04.jpg)
@@ -189,7 +189,7 @@ All server-side Supabase access goes through the single shared client in `app/li
 
 ### Admin Actions Required
 
-- Upload Śrīla Prabhupāda photos to `public/images/lockscreen/` (auto-discovered by `/api/lockscreen-images`) AND register them in `app/lib/18-image-manifest.ts` with truthful alt/caption so they join the intro rotation and galleries.
+- Upload Śrīla Prabhupāda photos to `public/images/lockscreen/`, commit, and redeploy. Valid photos are byte-checked and added to the intro automatically; no manifest edit is needed. Corrupt or unsupported files fail the build with the exact filename.
 - Upload the /journey chapter photos and the landing Moments photos by their exact filenames per `public/images/journey/README.md` and `public/images/moments/README.md` (path-addressed slots — placeholders are replaced automatically on redeploy, no code change).
 - Fill in the real account details in `app/lib/19-seva-config.ts` (India and international rows). Any row left empty shows "Add in project" with its Copy button disabled; a filled row turns solid and copyable on its own.
 - Set the real inbox in `FEEDBACK_EMAIL` (`app/components/cinematic/13-site-modals.tsx`) — every form currently composes a mail to a placeholder address. To store submissions in the `feedback` table instead, POST to `/api/feedback` from `submitForm` and update the line under the button.

@@ -8,6 +8,9 @@
  */
 import type { Metadata } from "next";
 import JourneyPage from "../components/cinematic/05-journey-page";
+import { getLockscreenPublicImageUrl } from "../lib/server/01-lockscreen-images";
+
+const DEITIES_FILE = "Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg";
 
 export const metadata: Metadata = {
   title: "His Journey — Ask Śrīla Prabhupāda",
@@ -16,6 +19,9 @@ export const metadata: Metadata = {
   alternates: { canonical: "/journey" },
 };
 
-export default function Journey() {
-  return <JourneyPage />;
+export const dynamic = "force-static";
+
+export default async function Journey() {
+  const deitiesImageUrl = await getLockscreenPublicImageUrl(DEITIES_FILE);
+  return <JourneyPage deitiesImageUrl={deitiesImageUrl} />;
 }
