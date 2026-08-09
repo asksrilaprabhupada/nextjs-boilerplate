@@ -386,12 +386,23 @@ export default function SearchLoader({
           display: flex;
           flex-direction: column;
           gap: 3px;
+          min-width: 0;
+          max-width: 100%;
           margin-top: 8px;
           color: #817765;
           font-size: 11px;
           font-weight: 600;
           line-height: 1.45;
           letter-spacing: 0.035em;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+        }
+        .cine-search-loader__passage figcaption span,
+        .cine-search-loader__passage figcaption cite,
+        .cine-search-loader__passage figcaption a {
+          min-width: 0;
+          max-width: 100%;
+          overflow-wrap: anywhere;
         }
         .cine-search-loader__source {
           letter-spacing: 0.06em;

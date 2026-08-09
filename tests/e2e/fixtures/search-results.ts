@@ -1,0 +1,210 @@
+/** Fixed search payloads used only by responsive Playwright verification. */
+import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
+
+export const RESPONSIVE_TEST_QUERY = "responsive layout verification";
+
+const LONG_TOKEN = `unbroken-${"speaker-attribution-".repeat(12)}end`;
+
+export const RESPONSIVE_SEARCH_RESULT: SearchResults = {
+  query: RESPONSIVE_TEST_QUERY,
+  passages: [
+    {
+      type: "lecture",
+      reference: "Lecture · Vṛndāvana · 1976",
+      url: null,
+      text: "Śrīla Prabhupāda: [Responsive layout fixture passage.]\nDevotee: [Second fixture turn.]",
+      sanskrit: null,
+      transliteration: null,
+      synonyms: null,
+      purport: null,
+      speaker: "Śrīla Prabhupāda · Devotee",
+      speakerUnidentified: true,
+      recipient: null,
+      date: "1976-01-01",
+      location: "Vṛndāvana",
+      label: `Lecture · Vṛndāvana · Śrīla Prabhupāda · Devotee · ${LONG_TOKEN}`,
+      provenanceNote: "Speaker not identified — part of a recorded conversation",
+      purportLabel: null,
+      contextNotice: "This is part of a recorded exchange; speaker labels are shown only where proved.",
+      rerankScore: 0.99,
+      alsoAppearsIn: 0,
+    },
+    {
+      type: "verse",
+      reference: "BG 6.34",
+      url: "https://vedabase.io/en/library/bg/6/34/",
+      text: "[Responsive layout fixture translation.]",
+      sanskrit: null,
+      transliteration: null,
+      synonyms: null,
+      purport: "[Responsive layout fixture purport.]",
+      speaker: null,
+      recipient: null,
+      date: null,
+      location: null,
+      label: "Bhagavad-gītā 6.34 · Translation",
+      provenanceNote: "",
+      purportLabel: "Bhagavad-gītā 6.34 · Purport",
+      contextNotice: null,
+      rerankScore: 0.91,
+      alsoAppearsIn: 1,
+    },
+    {
+      type: "letter",
+      reference: "Letter · Responsive fixture",
+      url: null,
+      text: `[Responsive layout fixture letter with a long token: ${LONG_TOKEN}.]`,
+      sanskrit: null,
+      transliteration: null,
+      synonyms: null,
+      purport: null,
+      speaker: null,
+      recipient: "A recipient whose attribution label is intentionally very long for responsive verification",
+      date: "1972-02-02",
+      location: "Los Angeles",
+      label: "Letter · A deliberately long recipient attribution · 1972",
+      provenanceNote: "",
+      purportLabel: null,
+      contextNotice: "A dated letter to a named recipient; read it in that setting.",
+      rerankScore: 0.83,
+      alsoAppearsIn: 0,
+    },
+  ],
+  additional: [
+    {
+      type: "lecture",
+      reference: "Morning Walk · Additional fixture",
+      url: null,
+      label: `Morning Walk · Śrīla Prabhupāda · ${LONG_TOKEN}`,
+      provenanceNote: "",
+      snippet: `[Morning-walk responsive fixture containing ${LONG_TOKEN}.]`,
+      speaker: "Śrīla Prabhupāda",
+      speakerUnidentified: false,
+      recipient: null,
+      date: "1975-05-01",
+      location: "Māyāpura",
+      rerankScore: 0.76,
+    },
+    {
+      type: "lecture",
+      reference: "Room Conversation · Additional fixture",
+      url: null,
+      label: "Room Conversation · Mixed speakers",
+      provenanceNote: "Speaker not identified — part of a recorded conversation",
+      snippet: "[Room-conversation responsive fixture.]",
+      speaker: "Śrīla Prabhupāda · Guest",
+      speakerUnidentified: true,
+      recipient: null,
+      date: "1975-01-01",
+      location: "Vṛndāvana",
+      rerankScore: 0.74,
+    },
+    {
+      type: "verse",
+      reference: "SB 7.8.9",
+      url: "https://vedabase.io/en/library/sb/7/8/9/",
+      label: "Śrīmad-Bhāgavatam 7.8.9 · Translation",
+      provenanceNote: "",
+      snippet: "[Skandha and chapter responsive fixture.]",
+      speaker: null,
+      recipient: null,
+      date: null,
+      location: null,
+      rerankScore: 0.72,
+    },
+    {
+      type: "purport",
+      reference: "CC Madhya 9.265",
+      url: "https://vedabase.io/en/library/cc/madhya/9/265/",
+      label: "Śrī Caitanya-caritāmṛta Madhya 9.265 · Purport",
+      provenanceNote: "",
+      snippet: "[Division and chapter responsive fixture.]",
+      speaker: null,
+      recipient: null,
+      date: null,
+      location: null,
+      rerankScore: 0.7,
+    },
+    {
+      type: "book",
+      reference: "nod",
+      url: "https://vedabase.io/en/library/nod/",
+      label: "Nectar of Devotion · Additional fixture",
+      provenanceNote: "",
+      snippet: "[Second additional responsive fixture.]",
+      speaker: null,
+      recipient: null,
+      date: null,
+      location: null,
+      rerankScore: 0.68,
+    },
+    {
+      type: "letter",
+      reference: "Letter · Additional fixture",
+      url: null,
+      label: "Letter · Rūpānuga · 1972",
+      provenanceNote: "",
+      snippet: "[Dated letter responsive fixture.]",
+      speaker: null,
+      recipient: "Rūpānuga",
+      date: "1972-03-15",
+      location: "Bombay",
+      rerankScore: 0.66,
+    },
+  ],
+  additionalCount: 6,
+  totalResults: 9,
+  citations: [],
+  intro: "Responsive verification fixture — not teaching text.",
+  suggestion: null,
+  suggestionDisplay: null,
+  queryTerms: ["responsive", "fixture"],
+  queryVariants: [
+    "A follow-up question whose label should wrap safely on a narrow screen",
+    "A short follow-up",
+  ],
+  validated: true,
+  droppedBlocks: 0,
+  searchLogId: null,
+  requestId: "responsive-e2e-fixture",
+  degraded: true,
+  retrievalStatus: "degraded",
+  degradedSources: [
+    { source: "Letters", reason: "temporarily unavailable" },
+  ],
+  disabledLanes: [],
+};
+
+export const CLEAN_RESPONSIVE_SEARCH_RESULT: SearchResults = {
+  ...RESPONSIVE_SEARCH_RESULT,
+  requestId: "responsive-e2e-clean-fixture",
+  degraded: false,
+  retrievalStatus: "complete",
+  degradedSources: [],
+};
+
+export const RESPONSIVE_STAGE: SearchStageEvent = {
+  stage: "verifying",
+  pct: 84,
+  label: "Verifying 5 passages against their original sources…",
+  found: 5,
+};
+
+function frame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+export function resultEventStream(
+  result: SearchResults = RESPONSIVE_SEARCH_RESULT,
+): string {
+  return [
+    frame("stage", RESPONSIVE_STAGE),
+    frame("result", result),
+    frame("done", {}),
+  ].join("");
+}
+
+export const failureEventStream = `${frame("failure", {
+  code: "SEARCH_FAILED",
+  requestId: "responsive-e2e-failure",
+})}${frame("done", {})}`;

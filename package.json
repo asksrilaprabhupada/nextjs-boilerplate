@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "verify:contract": "node scripts/verify-search-contract.mjs",
     "verify:snapshot-storage": "node scripts/provision-search-snapshot-storage.mjs",
@@ -36,6 +37,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
+    "@playwright/test": "^1.62.1",
     "@types/heic-decode": "2.0.0",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.5",

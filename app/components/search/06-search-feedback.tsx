@@ -58,86 +58,54 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
   if (!searchLogId) return null;
 
   return (
-    <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center",
-      gap: 12, padding: "20px 0 4px", marginTop: 8,
-      borderTop: "1px solid var(--border-hair)",
-    }}>
+    <div className="search-feedback">
       <AnimatePresence mode="wait">
         {submitted ? (
           <motion.div
             key="thanks"
+            className="search-feedback__thanks"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
-            style={{ display: "flex", alignItems: "center", gap: 8 }}
           >
-            <span style={{ fontSize: 16 }}>🙏</span>
-            <span className="font-body" style={{
-              fontSize: 13, fontWeight: 500, color: "var(--accent-strong)",
-            }}>
+            <span className="search-feedback__thanks-icon" aria-hidden>🙏</span>
+            <span className="search-feedback__thanks-copy font-body">
               Thank you for your feedback
             </span>
           </motion.div>
         ) : showTextInput ? (
           <motion.div
             key="text-input"
+            className="search-feedback__form"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
-            style={{
-              display: "flex", flexDirection: "column", alignItems: "center",
-              gap: 10, width: "100%", maxWidth: 420,
-            }}
           >
-            <p className="font-body" style={{
-              fontSize: 13, color: "var(--ink-muted)", textAlign: "center",
-            }}>
+            <p className="search-feedback__prompt font-body">
               What could be improved?
             </p>
             <textarea
               value={feedbackText}
               onChange={e => setFeedbackText(e.target.value)}
               placeholder="The answer didn't address..., Wrong verses were shown..., etc."
-              className="font-body"
+              aria-label="What could be improved?"
+              className="search-feedback__textarea font-body"
               rows={3}
-              style={{
-                width: "100%", padding: "10px 14px", borderRadius: 12,
-                border: "1px solid var(--border-hair)",
-                background: "var(--surface-raised)", fontSize: 13,
-                color: "var(--ink)", outline: "none", resize: "vertical",
-                minHeight: 60, transition: "border-color 0.3s",
-              }}
-              onFocus={e => { e.currentTarget.style.borderColor = "var(--accent)"; }}
-              onBlur={e => { e.currentTarget.style.borderColor = "var(--border-hair)"; }}
             />
-            <div style={{ display: "flex", gap: 8 }}>
+            <div className="search-feedback__actions">
               <button
                 onClick={handleSubmitText}
                 disabled={sending}
-                className="font-body"
-                style={{
-                  padding: "7px 18px", borderRadius: 8, fontSize: 12, fontWeight: 600,
-                  background: "linear-gradient(135deg, var(--accent), var(--accent-strong))",
-                  color: "var(--on-accent)", border: "none", cursor: "pointer",
-                  transition: "opacity 0.2s",
-                  opacity: sending ? 0.6 : 1,
-                }}
+                className="search-feedback__action search-feedback__action--primary font-body"
               >
                 {sending ? "Sending..." : "Submit"}
               </button>
               <button
                 onClick={handleSkipText}
                 disabled={sending}
-                className="font-body"
-                style={{
-                  padding: "7px 18px", borderRadius: 8, fontSize: 12, fontWeight: 500,
-                  background: "transparent", color: "var(--ink-muted)",
-                  border: "1px solid var(--border-hair)", cursor: "pointer",
-                  transition: "all 0.2s",
-                }}
+                className="search-feedback__action search-feedback__action--secondary font-body"
               >
                 Skip
               </button>
@@ -146,15 +114,13 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
         ) : (
           <motion.div
             key="vote-buttons"
+            className="search-feedback__vote-row"
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.3 }}
-            style={{ display: "flex", alignItems: "center", gap: 12 }}
           >
-            <span className="font-body" style={{
-              fontSize: 12, color: "var(--ink-muted)", fontWeight: 500,
-            }}>
+            <span className="search-feedback__question font-body">
               Was this helpful?
             </span>
 
@@ -163,30 +129,10 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
               onClick={() => handleVote(1)}
               disabled={sending}
               aria-label="Thumbs up"
-              style={{
-                width: 36, height: 36, borderRadius: 10,
-                border: "1px solid var(--border-hair)",
-                background: vote === 1 ? "rgba(16,185,129,0.1)" : "var(--surface-raised)",
-                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.3s var(--ease-standard)",
-                color: vote === 1 ? "#059669" : "var(--ink-muted)",
-              }}
-              onMouseEnter={e => {
-                if (!vote) {
-                  e.currentTarget.style.background = "rgba(16,185,129,0.08)";
-                  e.currentTarget.style.borderColor = "rgba(16,185,129,0.3)";
-                  e.currentTarget.style.color = "#059669";
-                  e.currentTarget.style.transform = "translateY(-1px)";
-                }
-              }}
-              onMouseLeave={e => {
-                if (!vote) {
-                  e.currentTarget.style.background = "var(--surface-raised)";
-                  e.currentTarget.style.borderColor = "var(--border-hair)";
-                  e.currentTarget.style.color = "var(--ink-muted)";
-                  e.currentTarget.style.transform = "translateY(0)";
-                }
-              }}
+              aria-pressed={vote === 1}
+              data-selected={vote === 1 ? "true" : "false"}
+              data-tone="up"
+              className="search-feedback__vote"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3m7-2V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14"
@@ -199,30 +145,10 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
               onClick={() => handleVote(-1)}
               disabled={sending}
               aria-label="Thumbs down"
-              style={{
-                width: 36, height: 36, borderRadius: 10,
-                border: "1px solid var(--border-hair)",
-                background: vote === -1 ? "rgba(239,68,68,0.08)" : "var(--surface-raised)",
-                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.3s var(--ease-standard)",
-                color: vote === -1 ? "#DC2626" : "var(--ink-muted)",
-              }}
-              onMouseEnter={e => {
-                if (!vote) {
-                  e.currentTarget.style.background = "rgba(239,68,68,0.06)";
-                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.3)";
-                  e.currentTarget.style.color = "#DC2626";
-                  e.currentTarget.style.transform = "translateY(-1px)";
-                }
-              }}
-              onMouseLeave={e => {
-                if (!vote) {
-                  e.currentTarget.style.background = "var(--surface-raised)";
-                  e.currentTarget.style.borderColor = "var(--border-hair)";
-                  e.currentTarget.style.color = "var(--ink-muted)";
-                  e.currentTarget.style.transform = "translateY(0)";
-                }
-              }}
+              aria-pressed={vote === -1}
+              data-selected={vote === -1 ? "true" : "false"}
+              data-tone="down"
+              className="search-feedback__vote"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
                 <path d="M17 2H19.67a2 2 0 0 1 2 1.7l.33 2.3h0a2 2 0 0 1-2 2.3H14l1 4.5V17a3 3 0 0 1-3 3l-4-9V2h9zM7 2v11H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h3z"
@@ -232,6 +158,200 @@ export default function SearchFeedback({ searchLogId }: SearchFeedbackProps) {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <style jsx global>{`
+        .search-feedback {
+          width: 100%;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 12px;
+          margin-top: 8px;
+          padding: 20px 0 4px;
+          border-top: 1px solid var(--border-hair);
+        }
+
+        .search-feedback__thanks {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          min-width: 0;
+          text-align: center;
+        }
+
+        .search-feedback__thanks-icon {
+          flex: 0 0 auto;
+          font-size: 16px;
+        }
+
+        .search-feedback__thanks-copy {
+          overflow-wrap: anywhere;
+          color: var(--accent-strong);
+          font-size: 13px;
+          font-weight: 500;
+        }
+
+        .search-feedback__form {
+          width: 100%;
+          max-width: 420px;
+          min-width: 0;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .search-feedback__prompt {
+          margin: 0;
+          color: var(--ink-muted);
+          font-size: 13px;
+          text-align: center;
+        }
+
+        .search-feedback__textarea {
+          width: 100%;
+          min-width: 0;
+          min-height: 88px;
+          padding: 12px 14px;
+          resize: vertical;
+          overflow-wrap: anywhere;
+          color: var(--ink);
+          background: var(--surface-raised);
+          border: 1px solid var(--border-hair);
+          border-radius: 12px;
+          font-size: 16px;
+          line-height: 1.5;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .search-feedback__textarea:focus {
+          border-color: var(--accent);
+        }
+
+        .search-feedback__actions {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: 8px;
+          width: 100%;
+        }
+
+        .search-feedback__action {
+          min-width: 104px;
+          min-height: 44px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 10px 18px;
+          border-radius: 10px;
+          font-size: 13px;
+          line-height: 1.2;
+          cursor: pointer;
+          transition: opacity 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+        }
+
+        .search-feedback__action--primary {
+          color: var(--on-accent);
+          background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+          border: none;
+          font-weight: 600;
+        }
+
+        .search-feedback__action--secondary {
+          color: var(--ink-muted);
+          background: transparent;
+          border: 1px solid var(--border-hair);
+          font-weight: 500;
+        }
+
+        .search-feedback__action:disabled,
+        .search-feedback__vote:disabled {
+          cursor: not-allowed;
+          opacity: 0.6;
+        }
+
+        .search-feedback__vote-row {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: center;
+          gap: 12px;
+          min-width: 0;
+        }
+
+        .search-feedback__question {
+          color: var(--ink-muted);
+          font-size: 12px;
+          font-weight: 500;
+        }
+
+        .search-feedback__vote {
+          width: 44px;
+          height: 44px;
+          flex: 0 0 44px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--ink-muted);
+          background: var(--surface-raised);
+          border: 1px solid var(--border-hair);
+          border-radius: 11px;
+          cursor: pointer;
+          transition: color 0.2s var(--ease-standard), background 0.2s var(--ease-standard), border-color 0.2s var(--ease-standard), transform 0.2s var(--ease-standard);
+        }
+
+        .search-feedback__vote[data-tone="up"]:hover:not(:disabled),
+        .search-feedback__vote[data-tone="up"]:focus-visible,
+        .search-feedback__vote[data-tone="up"][data-selected="true"] {
+          color: #059669;
+          background: rgba(16, 185, 129, 0.1);
+          border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .search-feedback__vote[data-tone="down"]:hover:not(:disabled),
+        .search-feedback__vote[data-tone="down"]:focus-visible,
+        .search-feedback__vote[data-tone="down"][data-selected="true"] {
+          color: #dc2626;
+          background: rgba(239, 68, 68, 0.08);
+          border-color: rgba(239, 68, 68, 0.3);
+        }
+
+        .search-feedback__vote:hover:not(:disabled) {
+          transform: translateY(-1px);
+        }
+
+        .search-feedback__textarea:focus-visible,
+        .search-feedback__action:focus-visible,
+        .search-feedback__vote:focus-visible {
+          outline: 3px solid color-mix(in srgb, var(--accent) 50%, transparent);
+          outline-offset: 3px;
+        }
+
+        @media (max-width: 380px) {
+          .search-feedback__question {
+            flex-basis: 100%;
+            text-align: center;
+          }
+
+          .search-feedback__action {
+            flex: 1 1 120px;
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .search-feedback__textarea,
+          .search-feedback__action,
+          .search-feedback__vote {
+            transition: none;
+          }
+
+          .search-feedback__vote:hover:not(:disabled) {
+            transform: none;
+          }
+        }
+      `}</style>
     </div>
   );
 }

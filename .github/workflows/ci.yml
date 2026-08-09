@@ -44,3 +44,11 @@ jobs:
           # The build must succeed without runtime credentials — client
           # construction is lazy precisely so this holds.
           NEXT_TELEMETRY_DISABLED: "1"
+
+      - name: Install Chromium for responsive browser tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Responsive browser tests
+        # Every /api/search request is intercepted with deterministic SSE data,
+        # so this step never calls Supabase or a paid provider.
+        run: npm run test:e2e

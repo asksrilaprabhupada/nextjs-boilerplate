@@ -5,6 +5,8 @@
 
 # testing
 /coverage
+/playwright-report/
+/test-results/
 __pycache__/
 /work/a2-rerank-comparison/
 /work/transcript-speaker-backfill/
