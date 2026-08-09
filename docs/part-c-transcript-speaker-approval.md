@@ -1,13 +1,14 @@
 # Part C transcript-speaker approval packet
 
-## Status: schema and backfill applied and verified; merge approval pending
+## Status: schema and backfill applied and verified; completion-record merge pending
 
-This packet records four separate decisions:
+This packet records five separate decisions:
 
 1. The additive Supabase schema migration was explicitly approved, applied, and verified.
 2. The paragraph backfill was separately approved, applied, and verified against the frozen packet.
 3. The application read-path change was merged by the owner in PR #148.
-4. Vercel reported the resulting `main` deployment complete.
+4. The operator and live-migration alignment was merged by the owner in PR #149.
+5. Vercel reported the resulting `main` deployment complete.
 
 None is implied by approval of another. The only Supabase writes performed were the separately approved additive schema migration and the separately approved `speaker_names` backfill. No index creation, paid call, agent-initiated merge, or production promotion was performed.
 
