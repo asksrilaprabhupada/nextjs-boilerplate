@@ -17,7 +17,7 @@ import type {
 import type { SnapshotSession } from "@/app/lib/search-v2/diagnostic-session";
 
 export const SEARCH_SNAPSHOT_BUCKET = "search-answer-snapshots";
-export const SEARCH_SNAPSHOT_SCHEMA_VERSION = "search-answer-snapshot-v1";
+export const SEARCH_SNAPSHOT_SCHEMA_VERSION = "search-answer-snapshot-v2";
 export const SEARCH_SNAPSHOT_RETENTION_DAYS = 30;
 export const SEARCH_SNAPSHOT_MAX_OBJECT_BYTES = 10 * 1024 * 1024;
 
@@ -111,7 +111,6 @@ export function buildSearchSnapshotArtifact(input: SearchSnapshotInput): SearchS
       pipelineVersion: input.telemetry.pipelineVersion,
       corpusVersion: input.telemetry.corpusVersion,
       configVersion: searchConfigVersion(),
-      speakerFilter: input.session.speakerFilter,
     },
     question: input.question,
     telemetry: input.telemetry,
@@ -126,7 +125,7 @@ export function buildSearchSnapshotArtifact(input: SearchSnapshotInput): SearchS
   const payloadBytes = Buffer.byteLength(payloadJson, "utf8");
   const payloadSha256 = sha256(payloadJson);
   const envelope = JSON.stringify({
-    envelopeVersion: "search-answer-snapshot-envelope-v1",
+    envelopeVersion: "search-answer-snapshot-envelope-v2",
     payload,
     payloadIntegrity: {
       algorithm: "sha256",
@@ -139,6 +138,9 @@ export function buildSearchSnapshotArtifact(input: SearchSnapshotInput): SearchS
     throw new Error("snapshot object exceeds the private bucket limit");
   }
   const objectSha256 = sha256(compressed);
+  // The applied metadata constraint intentionally fixes Storage objects under
+  // the v1 path namespace. Payload/signing versions may evolve independently;
+  // changing this prefix requires a separately approved forward migration.
   const objectPath = `v1/${isoDatePath(capturedAt)}/${input.session.captureId}.json.gz`;
   const metadata: SnapshotMetadata = {
     search_log_id: input.searchLogId,

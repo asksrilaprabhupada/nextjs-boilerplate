@@ -11,27 +11,14 @@ export function incompleteSearchWarning(
   sources: readonly DegradedSource[],
   degraded = sources.length > 0,
 ): string {
-  const unavailable = [...new Set(sources
-    .filter((item) => item.reason === "temporarily unavailable")
-    .map((item) => item.source))];
-  const partial = [...new Set(sources
-    .filter((item) => item.reason === "some passages could not be verified")
-    .map((item) => item.source))]
-    .filter((source) => !unavailable.includes(source));
-  if (unavailable.length === 0 && partial.length === 0) {
+  const unavailable = [...new Set(sources.map((item) => item.source))];
+  if (unavailable.length === 0) {
     return degraded
       ? "Some search guidance was unavailable this time. This answer may be less complete. Please search again."
       : "";
   }
 
-  const clauses: string[] = [];
-  if (unavailable.length > 0) {
-    clauses.push(`${friendlyList(unavailable)} could not be searched this time.`);
-  }
-  if (partial.length > 0) {
-    clauses.push(`Some passages from ${friendlyList(partial.map((name) => name.toLocaleLowerCase("en")))} could not be verified.`);
-  }
-  return `${clauses.join(" ")} This answer is incomplete. Please search again.`;
+  return `${friendlyList(unavailable)} could not be searched this time. This answer is incomplete. Please search again.`;
 }
 
 export default function IncompleteSearchWarning({

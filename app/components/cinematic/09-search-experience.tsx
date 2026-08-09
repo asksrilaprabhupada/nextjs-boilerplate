@@ -19,7 +19,6 @@ import SiteFooter from "./12-site-footer";
 import SearchLoader from "./10-search-loader";
 import NarrativeResponse from "../results/01-narrative-response";
 import IncompleteSearchWarning from "../results/02-incomplete-search-warning";
-import SpeakerFilterControls from "../results/03-speaker-filter-controls";
 import { buildSearchHref } from "@/app/lib/22-search-navigation";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
 
@@ -33,7 +32,7 @@ type Phase = "loading" | "ready" | "error";
 /** Why the error card is showing — each case earns different honest copy. */
 type FailureKind = "dropped" | "server" | "timeout";
 
-export default function SearchExperience({ q, onlyHis = false }: { q: string; onlyHis?: boolean }) {
+export default function SearchExperience({ q }: { q: string }) {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("loading");
   const [failureKind, setFailureKind] = useState<FailureKind>("timeout");
@@ -48,9 +47,9 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
     (next: string) => {
       const trimmed = next.trim();
       if (!trimmed) return;
-      router.push(buildSearchHref(trimmed, onlyHis));
+      router.push(buildSearchHref(trimmed));
     },
-    [onlyHis, router],
+    [router],
   );
 
   useEffect(() => {
@@ -70,7 +69,7 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
     // only ever one.
     let fellBack = false;
 
-    const queryString = `q=${encodeURIComponent(q)}${onlyHis ? "&only_his=1" : ""}`;
+    const queryString = `q=${encodeURIComponent(q)}`;
 
     const settle = (fn: () => void) => {
       if (settled) return;
@@ -153,7 +152,7 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
       es?.close();
       clearTimeout(timeout);
     };
-  }, [q, onlyHis, retryNonce]);
+  }, [q, retryNonce]);
 
   const answered = phase === "ready" && !!results;
   const ans = answered ? { op: 1, ty: "0px", rule: "160px" } : { op: 0, ty: "26px", rule: "0px" };
@@ -161,9 +160,6 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
   const passageCount = results?.passages?.length || 0;
   const additionalCount = results?.additionalCount ?? results?.additional?.length ?? 0;
   const variants = (results?.queryVariants || []).slice(0, 6);
-  const speakerFiltered = results?.speakerFilter
-    ? results.speakerFilter === "prabhupada_segments"
-    : onlyHis;
 
   const submitFollowUp = (e: React.FormEvent) => {
     e.preventDefault();
@@ -241,15 +237,15 @@ export default function SearchExperience({ q, onlyHis = false }: { q: string; on
               degraded={results.degraded}
             />
 
-            {/* Counts plus speaker-filter control. The control remains visible
-                at zero results so a filtered empty search can be broadened. */}
-            <SpeakerFilterControls
-              passageCount={passageCount}
-              additionalCount={additionalCount}
-              onlyHis={onlyHis}
-              speakerFiltered={speakerFiltered}
-              onToggle={() => router.push(buildSearchHref(q, !onlyHis))}
-            />
+            {/* Honest result counts, without filtering the recorded conversation. */}
+            {passageCount > 0 ? (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginBottom: "clamp(36px,6vh,54px)", opacity: 1, transition: "opacity 0.9s ease 0.4s" }}>
+                <span className="font-body" style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", color: "#6E6353", background: "rgba(107,87,201,0.07)", border: "1px solid #E8E0D2", borderRadius: 100, padding: "6px 14px" }}>
+                  {passageCount} {passageCount === 1 ? "passage" : "passages"} in full
+                  {additionalCount > 0 ? <> · {additionalCount.toLocaleString("en-US")} more as citations below</> : null}
+                </span>
+              </div>
+            ) : null}
 
             {/* The woven answer — fully data-driven */}
             <NarrativeResponse

@@ -14,7 +14,7 @@ import type { RpcCapableClient, RpcResult } from "@/app/lib/search-v2/rpc";
 const secret = "0123456789abcdef0123456789abcdef";
 const timestamp = "1785686400";
 const nonce = "verification-nonce-0001";
-const url = "https://preview.example/api/search?only_his=0&q=control%20the%20mind";
+const url = "https://preview.example/api/search?q=control%20the%20mind";
 
 function signedRequest(
   mode: "degrade-transcripts" | "fail-all-sources",

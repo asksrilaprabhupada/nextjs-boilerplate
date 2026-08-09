@@ -47,7 +47,6 @@ import {
   retrieveCandidates,
   ORIGINAL_QUERY_ID,
   type RetrievalSourceTelemetry,
-  type SpeakerFilterTelemetry,
 } from "@/app/lib/search-v2/retrieval";
 import type { FriendlyRetrievalSource } from "@/app/lib/types/01-search";
 import {
@@ -66,11 +65,7 @@ import {
   type RerankOutcome,
 } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
-import {
-  refetchAndVerify,
-  refetchAndVerifyFilteredTranscripts,
-  type VerifiedPassage,
-} from "@/app/lib/search-v2/refetch";
+import { refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { planArticle, type PlannedArticle } from "@/app/lib/search-v2/article-plan";
 import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
@@ -146,10 +141,6 @@ export interface SearchTelemetry {
   cutGap: number;
   pinnedExactReference: boolean;
   droppedOnRefetch: number;
-  speakerFilter: SpeakerFilterTelemetry & {
-    additionalTranscriptRowsVerified: number;
-    additionalTranscriptRowsDropped: number;
-  };
   degraded: boolean;
   degradedStages: DegradedStage[];
   /** Detailed server-only evidence for each actual retrieval RPC invocation. */
@@ -164,9 +155,8 @@ export interface SearchTelemetry {
 
 /**
  * One second-tier passage: citation, who-and-when, and a sentence-safe snippet.
- * Identity/metadata normally come from retrieval. In speaker-only mode every
- * transcript snippet is rebuilt from a fresh, verified canonical projection;
- * the other second-tier sources keep their existing retrieval previews.
+ * Identity/metadata come from retrieval. Transcript snippets retain the same
+ * complete source text as every other second-tier preview.
  */
 export interface AdditionalPassage {
   passageKey: string;
@@ -267,35 +257,8 @@ export interface PipelineDiagnostics {
   verification: {
     verifiedPassageKeys: string[];
     mainDrops: unknown[];
-    additionalTranscriptDrops: unknown[];
   };
   articlePlan: PlannedArticle;
-}
-
-interface VerificationDropLike {
-  passageKey: string;
-}
-
-export const FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE =
-  "filtered_transcript_verification_partial";
-
-/**
- * Report whether speaker-only verification actually lost transcript evidence.
- * Error reasons are deliberately ignored:
- * `fetch_failed`, `row_not_found`, `empty_text`, and projection failures are
- * all incomplete transcript searches, while the same reasons on books or
- * verses must not masquerade as filtered-transcript verification loss.
- */
-export function hasFilteredTranscriptVerificationDrop(
-  speakerOnly: boolean | undefined,
-  mainDrops: readonly VerificationDropLike[],
-  filteredAdditionalTranscriptDrops: readonly VerificationDropLike[],
-): boolean {
-  if (!speakerOnly) return false;
-  return (
-    mainDrops.some((item) => item.passageKey.startsWith("lecture:"))
-    || filteredAdditionalTranscriptDrops.length > 0
-  );
 }
 
 export interface PipelineInput {
@@ -305,8 +268,6 @@ export interface PipelineInput {
   onStage?: OnPipelineStage;
   /** Receives completed stage timings even when a later stage throws. */
   onStageDuration?: (stage: string, durationMs: number) => void;
-  /** "Śrīla Prabhupāda's words only" — a transcripts-RPC constraint. */
-  speakerOnly?: boolean;
   /** Allocate the private decision trace only for an authorized preview run. */
   captureDiagnostics?: boolean;
   /**
@@ -474,7 +435,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
         plan: planned.plan,
         requestId,
         degraded,
-        speakerOnly: input.speakerOnly,
         onEmbeddingUsage: (providerCalls) => {
           try {
             input.privatePaidUsageObserver?.({ stage: "embeddings", providerCalls });
@@ -576,10 +536,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // pre-filter's set-asides in fused order. Snippets aim at the question's own
   // terms and never end mid-sentence.
   const queryTerms = extractQueryTerms(query);
-  const toAdditional = (
-    c: RankedCandidate | FusedCandidate,
-    verifiedText = c.retrieval_text,
-  ): AdditionalPassage => ({
+  const toAdditional = (c: RankedCandidate | FusedCandidate): AdditionalPassage => ({
     passageKey: c.passage_key,
     sourceType: c.source_type,
     reference: c.reference,
@@ -589,7 +546,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     occurredOn: c.occurred_on,
     location: c.location,
     rerankScore: "rerankScore" in c ? (c as RankedCandidate).rerankScore : null,
-    snippet: makeSnippet(verifiedText, 220, queryTerms),
+    snippet: makeSnippet(c.retrieval_text, 220, queryTerms),
   });
   const additionalCandidates: Array<RankedCandidate | FusedCandidate> = [
     ...selection.additional,
@@ -597,33 +554,19 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   ];
 
   // ── verify: the hard stop ──
-  // Main-tier passages always receive a fresh source-row read. In speaker-only
-  // mode the additional transcript previews do too, because their projected
-  // snippets must not reintroduce a stale guest turn.
-  const verification = await time("verifying", async () => {
-    const main = await refetchAndVerify(db as never, selection.selected, {
-      requestId,
-      speakerOnly: input.speakerOnly,
-    });
-    const additionalTranscripts = input.speakerOnly
-      ? await refetchAndVerifyFilteredTranscripts(db as never, additionalCandidates, { requestId })
-      : { textByPassageKey: new Map<string, string>(), dropped: [], fetchCount: 0 };
-    return { main, additionalTranscripts };
-  });
-  const refetched = verification.main;
-  const speakerAdditional = verification.additionalTranscripts;
-  const verificationDropCount = refetched.dropped.length + speakerAdditional.dropped.length;
+  // Main-tier passages always receive a fresh source-row read. Additional-tier
+  // previews remain complete retrieval evidence and are never speaker-filtered.
+  const refetched = await time("verifying", () =>
+    refetchAndVerify(db as never, selection.selected, { requestId }),
+  );
+  const verificationDropCount = refetched.dropped.length;
   if (verificationDropCount > 0) {
     degraded.record("verifying", "refetch", { code: `dropped_${verificationDropCount}` });
   }
 
-  const additional: AdditionalPassage[] = additionalCandidates.flatMap((candidate) => {
-    if (!input.speakerOnly || candidate.source_type !== "lecture") {
-      return [toAdditional(candidate)];
-    }
-    const freshProjection = speakerAdditional.textByPassageKey.get(candidate.passage_key);
-    return freshProjection ? [toAdditional(candidate, freshProjection)] : [];
-  });
+  const additional: AdditionalPassage[] = additionalCandidates.map((candidate) =>
+    toAdditional(candidate),
+  );
 
   // ── organise ──
   // The planner contributes arrangement only, and receives ONLY the main tier
@@ -643,18 +586,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   const article = organized.article;
 
   const degradedStages = degraded.list();
-  const filteredTranscriptVerificationPartial = hasFilteredTranscriptVerificationDrop(
-    input.speakerOnly,
-    refetched.dropped,
-    speakerAdditional.dropped,
-  );
-  if (filteredTranscriptVerificationPartial) {
-    degradedStages.push({
-      stage: "verification",
-      source: "filtered_transcripts",
-      code: FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE,
-    });
-  }
   const degradedSources = [...retrieved.degradedSources];
   const responseDegraded = degradedStages.length > 0 || degradedSources.length > 0;
   onStage?.(responseDegraded ? "degraded" : "complete");
@@ -673,7 +604,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     tableRpcCount: retrieved.tableRpcCount,
     tableRpcAttemptCount: retrieved.tableRpcAttemptCount,
     vocabularyRpcCount: retrieved.vocabularyRpcCount,
-    refetchCount: refetched.fetchCount + speakerAdditional.fetchCount,
+    refetchCount: refetched.fetchCount,
     embeddingProviderCalls: retrieved.embeddingProviderCalls,
     candidatesBeforeFusion: retrieved.candidateCount,
     candidatesAfterFusion: fused.length,
@@ -690,11 +621,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     cutGap: Math.round(selection.cutGap * 1000) / 1000,
     pinnedExactReference: Boolean(pinnedCandidate),
     droppedOnRefetch: verificationDropCount,
-    speakerFilter: {
-      ...retrieved.speakerFilter,
-      additionalTranscriptRowsVerified: speakerAdditional.textByPassageKey.size,
-      additionalTranscriptRowsDropped: speakerAdditional.dropped.length,
-    },
     degraded: responseDegraded,
     degradedStages,
     sourceRetrieval: retrieved.sourceRetrieval,
@@ -761,7 +687,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
           verification: {
             verifiedPassageKeys: refetched.verified.map((passage) => passage.passageKey),
             mainDrops: refetched.dropped,
-            additionalTranscriptDrops: speakerAdditional.dropped,
           },
           articlePlan: organized.plan,
         };

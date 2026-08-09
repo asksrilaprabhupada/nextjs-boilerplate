@@ -13,7 +13,6 @@ import { createClient } from "@supabase/supabase-js";
 const site = String(process.env.SITE || "").replace(/\/$/, "");
 const expectedSha = String(process.env.EXPECTED_SHA || "");
 const query = String(process.env.QUERY || "").trim();
-const onlyHis = process.env.ONLY_HIS === "1";
 const secret = String(process.env.SEARCH_PREVIEW_VERIFICATION_SECRET || "");
 const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
 const serviceKey = process.env.SUPABASE_SERVICE_KEY;
@@ -34,19 +33,17 @@ if (
 const normalizeQuestion = (value) => value.trim().toLowerCase().replace(/\s+/g, " ").replace(/[?!.]+$/, "");
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const questionHash = sha256(normalizeQuestion(query));
-const speakerFilter = onlyHis ? "prabhupada_segments" : "all";
 const sessionUrl = `${site}/api/search/diagnostic-session`;
 const sessionTarget = new URL(sessionUrl);
 const timestamp = String(Math.floor(Date.now() / 1000));
 const nonce = randomBytes(18).toString("base64url");
 const signaturePayload = [
-  "snapshot-authorization-v1",
+  "snapshot-authorization-v2",
   timestamp,
   nonce,
   "POST",
   `${sessionTarget.origin}/api/search/diagnostic-session`,
   questionHash,
-  speakerFilter,
 ].join("\n");
 const signature = createHmac("sha256", secret).update(signaturePayload).digest("hex");
 
@@ -58,7 +55,7 @@ const sessionResponse = await fetch(sessionUrl, {
     "x-asp-snapshot-nonce": nonce,
     "x-asp-snapshot-signature": signature,
   },
-  body: JSON.stringify({ q: query, onlyHis }),
+  body: JSON.stringify({ q: query }),
   signal: AbortSignal.timeout(30_000),
 });
 const cookie = sessionResponse.headers.get("set-cookie")?.split(";")[0] || "";
@@ -67,7 +64,7 @@ if (sessionResponse.status !== 204 || !cookie.startsWith("__Secure-asp_search_sn
   process.exit(1);
 }
 
-const target = `${site}/api/search?q=${encodeURIComponent(query)}&only_his=${onlyHis ? "1" : "0"}`;
+const target = `${site}/api/search?q=${encodeURIComponent(query)}`;
 const authorizedResponse = await fetch(`${target}&stream=1`, {
   headers: { cookie },
   signal: AbortSignal.timeout(300_000),
@@ -119,12 +116,16 @@ const payloadJson = JSON.stringify(envelope.payload);
 const expectedGuardedJson = JSON.stringify(authorizedResult);
 const snapshotValid = metadata.environment === "preview"
   && metadata.deployment_sha === expectedSha
+  && metadata.object_path.startsWith("v1/")
   && metadata.object_bytes === compressed.byteLength
   && metadata.object_sha256 === sha256(compressed)
   && metadata.payload_bytes === Buffer.byteLength(payloadJson, "utf8")
   && metadata.payload_sha256 === sha256(payloadJson)
   && envelope.payloadIntegrity.bytes === metadata.payload_bytes
   && envelope.payloadIntegrity.sha256 === metadata.payload_sha256
+  && envelope.envelopeVersion === "search-answer-snapshot-envelope-v2"
+  && envelope.payload.schemaVersion === "search-answer-snapshot-v2"
+  && !Object.hasOwn(envelope.payload.identifiers, "speakerFilter")
   && envelope.payload.responses.guardedJson === expectedGuardedJson
   && JSON.stringify(envelope.payload.responses.guarded) === expectedGuardedJson;
 if (!snapshotValid) {

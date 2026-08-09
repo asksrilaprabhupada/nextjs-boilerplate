@@ -523,7 +523,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(out.sourceRetrieval.map((source) => source.internalFunction)).toEqual(expected);
   });
 
-  it("enforces speaker-only segments even when the transcript RPC ignores the constraint", async () => {
+  it("retains mixed, guest-only, and unlabelled transcript evidence", async () => {
     const mixedText = [
       "Dr. Patel: guest sentinel.",
       "Prabhupāda: This canonical answer remains.",
@@ -558,34 +558,28 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       db: db as never,
       original: "control the mind in conversations",
       plan,
-      requestId: "req_speaker_postcondition",
-      degraded: new DegradationLog("req_speaker_postcondition"),
-      speakerOnly: true,
+      requestId: "req_complete_transcripts",
+      degraded: new DegradationLog("req_complete_transcripts"),
     });
 
     expect(out.groups).toHaveLength(1);
-    expect(out.groups[0]).toHaveLength(1);
-    expect(out.groups[0][0].retrieval_text).toBe("Prabhupāda: This canonical answer remains.\n");
-    expect(out.groups[0][0].retrieval_text).not.toContain("guest sentinel");
-    expect(out.groups[0][0].speakerProjection).toMatchObject({
-      mode: "prabhupada_segments",
-      keptSegments: 1,
-      guestSegmentsRemoved: 2,
-    });
-    expect(out.speakerFilter).toEqual({
-      mode: "prabhupada_segments",
-      rawTranscriptRows: 3,
-      retainedTranscriptRows: 1,
-      droppedTranscriptRows: 2,
-      keptSegments: 1,
-      guestSegmentsRemoved: 3,
-      unknownSegmentsRemoved: 1,
-    });
+    expect(out.groups[0]).toHaveLength(3);
+    expect(out.groups[0].map((row) => row.retrieval_text)).toEqual([
+      mixedText,
+      "Dr. Patel: guest-only sentinel.",
+      "Wholly unlabelled continuation.",
+    ]);
+    expect(out.groups[0].map((row) => row.speaker)).toEqual([
+      "Dr. Patel, Śrīla Prabhupāda, Guest",
+      "Dr. Patel",
+      null,
+    ]);
+    expect(out.groups[0].map((row) => row.speakerUnidentified)).toEqual([false, false, true]);
     expect(out.sourceRetrieval[0]).toMatchObject({
       rawCandidateCount: 3,
-      candidateCount: 1,
+      candidateCount: 3,
     });
-    expect((db.rpcCalls[0].args.p_constraints as Record<string, unknown>).speaker_only).toBe(true);
+    expect(db.rpcCalls[0].args.p_constraints).not.toHaveProperty("speaker_only");
   });
 
   it("emits stages in order and finishes degraded rather than complete", async () => {

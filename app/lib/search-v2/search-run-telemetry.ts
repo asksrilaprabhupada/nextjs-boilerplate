@@ -395,17 +395,6 @@ export function allowlistedTechnicalTelemetry(
       cutGap: telemetry.cutGap,
       pinnedExactReference: telemetry.pinnedExactReference,
     },
-    speakerFilter: {
-      mode: telemetry.speakerFilter.mode,
-      rawTranscriptRows: telemetry.speakerFilter.rawTranscriptRows,
-      retainedTranscriptRows: telemetry.speakerFilter.retainedTranscriptRows,
-      droppedTranscriptRows: telemetry.speakerFilter.droppedTranscriptRows,
-      keptSegments: telemetry.speakerFilter.keptSegments,
-      guestSegmentsRemoved: telemetry.speakerFilter.guestSegmentsRemoved,
-      unknownSegmentsRemoved: telemetry.speakerFilter.unknownSegmentsRemoved,
-      additionalTranscriptRowsVerified: telemetry.speakerFilter.additionalTranscriptRowsVerified,
-      additionalTranscriptRowsDropped: telemetry.speakerFilter.additionalTranscriptRowsDropped,
-    },
     sources: telemetry.sourceRetrieval.map((source) => ({
       internalFunction: source.internalFunction,
       operation: source.operation,
@@ -432,7 +421,6 @@ export function allowlistedTechnicalTelemetry(
 
 export function cacheHitTechnicalTelemetry(
   questionHash: string,
-  speakerFilterMode: "all" | "prabhupada_segments" = "all",
 ): Record<string, unknown> {
   return {
     questionHash,
@@ -441,7 +429,6 @@ export function cacheHitTechnicalTelemetry(
     rpcCounts: { table: 0, tableAttempts: 0, vocabulary: 0, refetch: 0 },
     candidates: {},
     selection: {},
-    speakerFilter: { mode: speakerFilterMode },
     sources: [],
     degradation: [],
     versions: {
@@ -455,7 +442,6 @@ export function cacheHitTechnicalTelemetry(
 export function failureTechnicalTelemetry(
   questionHash: string,
   err: unknown,
-  speakerFilterMode: "all" | "prabhupada_segments" = "all",
 ): {
   failedStage: string;
   errorCode: string;
@@ -471,7 +457,6 @@ export function failureTechnicalTelemetry(
         questionHash,
         cache: "miss",
         providers: {},
-        speakerFilter: { mode: speakerFilterMode },
         sources: [],
         degradation: [{ stage: "pipeline", code: "internal_error" }],
         versions: {
@@ -503,7 +488,6 @@ export function failureTechnicalTelemetry(
       questionHash,
       cache: "miss",
       providers: {},
-      speakerFilter: { mode: speakerFilterMode },
       sources,
       degradation: [{ stage: err.stage ?? "pipeline", code: err.code }],
       versions: {

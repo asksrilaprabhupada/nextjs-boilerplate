@@ -23,12 +23,10 @@ export const metadata: Metadata = {
 export default async function SearchResults({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; only_his?: string }>;
+  searchParams: Promise<{ q?: string }>;
 }) {
-  const { q, only_his } = await searchParams;
+  const { q } = await searchParams;
   const query = (q || "").trim();
   if (!query) redirect("/");
-  // "Śrīla Prabhupāda's words only" — forwarded to the search API, where it
-  // retains only explicitly labelled Prabhupāda segments from recorded talks.
-  return <SearchExperience q={query} onlyHis={only_his === "1"} />;
+  return <SearchExperience q={query} />;
 }

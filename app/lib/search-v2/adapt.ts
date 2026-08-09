@@ -15,11 +15,10 @@
  * Every string here originates from a fresh source-row read (refetch.ts) or a
  * fixed server-side table. No model output reaches this file.
  */
-import {
-  FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE,
-  type AdditionalPassage,
-  type PipelineOutput,
-  type SearchTelemetry,
+import type {
+  AdditionalPassage,
+  PipelineOutput,
+  SearchTelemetry,
 } from "@/app/lib/search-v2/pipeline";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { contextNoticeFor } from "@/app/lib/search-v2/render";
@@ -40,23 +39,12 @@ import type {
 } from "@/app/lib/types/01-search";
 
 export function degradedSourcesForWire(
-  telemetry: Pick<SearchTelemetry, "degradedSources" | "degradedStages">,
+  telemetry: Pick<SearchTelemetry, "degradedSources">,
 ): DegradedSource[] {
-  const unavailable = new Set(telemetry.degradedSources);
-  const out: DegradedSource[] = [...unavailable].map((source) => ({
+  return [...new Set(telemetry.degradedSources)].map((source) => ({
     source,
     reason: "temporarily unavailable",
   }));
-  const transcriptVerificationPartial = telemetry.degradedStages.some(
-    (item) => item.code === FILTERED_TRANSCRIPT_VERIFICATION_PARTIAL_CODE,
-  );
-  if (transcriptVerificationPartial && !unavailable.has("Lectures and conversations")) {
-    out.push({
-      source: "Lectures and conversations",
-      reason: "some passages could not be verified",
-    });
-  }
-  return out;
 }
 
 const CITATION_TYPE: Record<string, Citation["type"]> = {
@@ -168,7 +156,6 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
     citations,
     intro: article.title,
     queryTerms: extractQueryTerms(query),
-    speakerFilter: telemetry.speakerFilter.mode,
     validated: true, // every passage came out of refetchAndVerify
     droppedBlocks: telemetry.droppedOnRefetch,
     requestId: telemetry.requestId,

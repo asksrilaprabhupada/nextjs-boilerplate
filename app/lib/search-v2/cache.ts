@@ -150,13 +150,11 @@ export const cacheKeys = {
     `rerank:v1:${sha256(normalizeQuestion(question))}:${candidateSetHash}`,
   articlePlan: (question: string, selectedIdHash: string) =>
     `article-plan:v1:${sha256(normalizeQuestion(question))}:${selectedIdHash}`,
-  // `variant` distinguishes retrieval-changing request options (today only the
-  // "Śrīla Prabhupāda's words only" filter). A filtered answer cached under the
-  // unfiltered key would serve the wrong evidence to the next asker.
-  response: (question: string, variant?: string) =>
-    // v6 makes every pre-ID-removal response unreachable. Runtime Cache has
-    // no required delete step: old v5 entries expire naturally after 24 h.
-    `response:v6:${searchCorpusVersion()}:${variant ? `${variant}:` : ""}${sha256(normalizeQuestion(question))}`,
+  // v7 makes every response from the retired speaker-filter policy
+  // unreachable. Runtime Cache has no required delete step: old entries
+  // expire naturally after 24 h.
+  response: (question: string) =>
+    `response:v7:${searchCorpusVersion()}:${sha256(normalizeQuestion(question))}`,
 } as const;
 
 /**

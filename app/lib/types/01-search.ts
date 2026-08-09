@@ -74,10 +74,9 @@ export interface SearchPassage {
 /**
  * One second-tier passage: everything that survived retrieval but was not
  * rendered in full. Citation, label and a sentence-safe snippet — enough to
- * scan, cite and follow to Vedabase. Most are retrieval previews; speaker-only
- * transcript snippets are freshly re-read and projected so another speaker's
- * turn cannot re-enter through this tier. A snippet remains a preview, not a
- * claim that the whole source row is one speaker's quotation.
+ * scan, cite and follow to Vedabase. Transcript previews retain mixed, guest,
+ * devotee, and unidentified turns; the adjacent label states only the speaker
+ * attribution that can actually be proved.
  */
 export interface AdditionalSearchPassage {
   type: "verse" | "purport" | "book" | "lecture" | "letter";
@@ -165,8 +164,6 @@ export interface SearchResults {
   queryTerms?: string[];
   /** Follow-up questions offered under the answer, when available. */
   queryVariants?: string[];
-  /** Speaker policy actually applied to recorded-talk passages in this response. */
-  speakerFilter?: "all" | "prabhupada_segments";
   /** True when every passage was verbatim-verified against its source row. */
   validated?: boolean;
   /** Number of passages dropped by the verbatim validator (0 in the normal case). */
@@ -201,7 +198,7 @@ export type FriendlyRetrievalSource =
 /** The only degradation detail allowed across the browser boundary. */
 export interface DegradedSource {
   source: FriendlyRetrievalSource;
-  reason: "temporarily unavailable" | "some passages could not be verified";
+  reason: "temporarily unavailable";
 }
 
 /* ── SSE stage events (?stream=1) ── */

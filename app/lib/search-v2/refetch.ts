@@ -24,12 +24,7 @@ import { unwrapOrThrow, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
 import { normalizeVerbatim } from "@/app/lib/17-verbatim-validator";
 import { formatVerseReference } from "@/app/lib/search-v2/citation";
 import type { SelectedPassage } from "@/app/lib/search-v2/select";
-import type { RetrievedCandidate } from "@/app/lib/search-v2/fusion";
-import { fullSha256 } from "@/app/lib/search-v2/cache";
-import {
-  projectPrabhupadaSegments,
-  transcriptSpeakerAttribution,
-} from "@/app/lib/15-transcript-speakers";
+import { transcriptSpeakerAttribution } from "@/app/lib/15-transcript-speakers";
 
 /** Namespace → the table and columns that namespace is allowed to resolve to. */
 const SOURCE_TABLES = {
@@ -88,9 +83,6 @@ export interface DroppedPassage {
     | "row_not_found"
     | "text_mismatch"
     | "empty_text"
-    | "speaker_projection_missing"
-    | "speaker_projection_mismatch"
-    | "speaker_projection_empty"
     | "fetch_failed";
 }
 
@@ -141,25 +133,6 @@ function str(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
 
-function verifySpeakerProjection(
-  candidate: RetrievedCandidate,
-  fresh: string,
-): { text: string; reason: null } | { text: null; reason: DroppedPassage["reason"] } {
-  const marker = candidate.speakerProjection;
-  if (!marker || marker.mode !== "prabhupada_segments") {
-    return { text: null, reason: "speaker_projection_missing" };
-  }
-  if (marker.sourceVerificationHash !== fullSha256(fresh)) {
-    return { text: null, reason: "speaker_projection_mismatch" };
-  }
-  const projection = projectPrabhupadaSegments(fresh);
-  if (!projection.text) return { text: null, reason: "speaker_projection_empty" };
-  if (projection.text !== (candidate.retrieval_text || "")) {
-    return { text: null, reason: "speaker_projection_mismatch" };
-  }
-  return { text: projection.text, reason: null };
-}
-
 /**
  * Re-reads every selected passage and verifies it.
  *
@@ -170,7 +143,7 @@ function verifySpeakerProjection(
 export async function refetchAndVerify(
   db: SupabaseLike,
   selected: SelectedPassage[],
-  ctx: { requestId: string; speakerOnly?: boolean },
+  ctx: { requestId: string },
 ): Promise<RefetchResult> {
   const verified: VerifiedPassage[] = [];
   const dropped: DroppedPassage[] = [];
@@ -235,25 +208,15 @@ export async function refetchAndVerify(
       }
 
       const retrieved = g.candidate.retrieval_text || "";
-      let verifiedText = fresh;
-      if (ns === "lecture" && ctx.speakerOnly) {
-        const projection = verifySpeakerProjection(g.candidate, fresh);
-        if (projection.reason) {
-          dropped.push({ passageKey: key, reason: projection.reason });
-          continue;
-        }
-        verifiedText = projection.text;
-      } else {
-        // The retrieved copy is compared against the fresh row under the SAME
-        // cosmetic normalisation the verbatim validator uses. A difference
-        // means the row changed under us, or the candidate was misidentified.
-        if (retrieved && normalizeVerbatim(retrieved) !== normalizeVerbatim(fresh)) {
-          dropped.push({ passageKey: key, reason: "text_mismatch" });
-          continue;
-        }
+      // The retrieved copy is compared against the fresh row under the SAME
+      // cosmetic normalisation the verbatim validator uses. A difference
+      // means the row changed under us, or the candidate was misidentified.
+      if (retrieved && normalizeVerbatim(retrieved) !== normalizeVerbatim(fresh)) {
+        dropped.push({ passageKey: key, reason: "text_mismatch" });
+        continue;
       }
 
-      verified.push(buildVerified(ns, key, id, row, verifiedText, g));
+      verified.push(buildVerified(ns, key, id, row, fresh, g));
     }
   }
 
@@ -273,82 +236,6 @@ export async function refetchAndVerify(
   verified.sort((a, b) => (order.get(a.passageKey) ?? 0) - (order.get(b.passageKey) ?? 0));
 
   return { verified, dropped, fetchCount };
-}
-
-export interface FilteredTranscriptVerification {
-  textByPassageKey: Map<string, string>;
-  dropped: DroppedPassage[];
-  fetchCount: number;
-}
-
-/**
- * The additional tier normally carries retrieval previews. In speaker-only
- * mode its transcript previews receive the same fresh-row projection proof as
- * main-tier blocks, in one bounded table read, so a stale mixed block can never
- * re-enter through a snippet.
- */
-export async function refetchAndVerifyFilteredTranscripts(
-  db: SupabaseLike,
-  candidates: RetrievedCandidate[],
-  ctx: { requestId: string },
-): Promise<FilteredTranscriptVerification> {
-  const transcripts = candidates.filter((candidate) => candidate.source_type === "lecture");
-  const textByPassageKey = new Map<string, string>();
-  const dropped: DroppedPassage[] = [];
-  if (transcripts.length === 0) return { textByPassageKey, dropped, fetchCount: 0 };
-
-  const ids = [...new Set(transcripts.map((candidate) => parseKey(candidate.passage_key)?.id)
-    .filter((id): id is string => Boolean(id)))];
-  let rows: Record<string, unknown>[];
-  try {
-    const result = await db.from(SOURCE_TABLES.lecture.table).select(COLUMNS.lecture).in("id", ids);
-    rows = unwrapOrThrow<Record<string, unknown>[]>(result, "refetch:lecture:additional", {
-      stage: "verify:refetch_additional",
-      requestId: ctx.requestId,
-    });
-  } catch {
-    for (const candidate of transcripts) {
-      dropped.push({ passageKey: candidate.passage_key, reason: "fetch_failed" });
-    }
-    return { textByPassageKey, dropped, fetchCount: 1 };
-  }
-
-  const byId = new Map<string, Record<string, unknown>>();
-  for (const row of rows ?? []) {
-    const id = str(row.id);
-    if (id) byId.set(id, row);
-  }
-
-  for (const candidate of transcripts) {
-    const parsed = parseKey(candidate.passage_key);
-    const row = parsed ? byId.get(parsed.id) : null;
-    if (!row) {
-      dropped.push({ passageKey: candidate.passage_key, reason: "row_not_found" });
-      continue;
-    }
-    const fresh = str(row.body_text);
-    if (!fresh) {
-      dropped.push({ passageKey: candidate.passage_key, reason: "empty_text" });
-      continue;
-    }
-    const projection = verifySpeakerProjection(candidate, fresh);
-    if (projection.reason) {
-      dropped.push({ passageKey: candidate.passage_key, reason: projection.reason });
-      continue;
-    }
-    textByPassageKey.set(candidate.passage_key, projection.text);
-  }
-
-  if (dropped.length > 0) {
-    console.warn(JSON.stringify({
-      level: "warn",
-      event: "search.additional_transcript_refetch_dropped",
-      requestId: ctx.requestId,
-      dropped: dropped.map((item) => ({ reason: item.reason })),
-    }));
-  }
-
-  return { textByPassageKey, dropped, fetchCount: 1 };
 }
 
 function buildVerified(

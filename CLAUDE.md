@@ -56,7 +56,7 @@ Cinematic + simple: the dark frames (the doorway, the Journey opening, the Featu
 
 **ONE ENGINE, ONE ROAD.** There is a single pipeline. No flag, no environment variable, no `mode=` parameter and no question-classifier selects a different one, because there is no different one. A `mode=` parameter in the URL is ignored silently so old links keep working.
 
-GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood → expanding → searching → reranking → weaving, then `result`, then `done`). An optional `only_his=1` restricts recorded talks to paragraphs whose labelled speaker is Śrīla Prabhupāda; any other parameter is ignored silently.
+GET `/api/search?q=…` (JSON) or `?stream=1` (SSE: `stage` events understood → expanding → searching → reranking → weaving, then `result`, then `done`). A legacy `only_his` parameter is ignored silently. Recorded talks always retain complete mixed, guest, devotee, and unidentified text, with conservative speaker labels kept alongside it.
 
 `route.ts` is the request boundary only — validate, read cache, call pipeline, log, respond (with a 3 MB payload tripwire that should never fire). The stages live in `app/lib/search-v2/`, joined in `pipeline.ts` as a **cascade — a spending plan, never a filter**: retrieve wide, spend the reranker on a few hundred, render ~20 in full, return everything else as citations:
 
