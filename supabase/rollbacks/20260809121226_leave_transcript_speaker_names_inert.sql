@@ -1,0 +1,15 @@
+-- OWNER APPROVAL REQUIRED. DO NOT APPLY AUTOMATICALLY.
+--
+-- This is an intentionally inert, non-destructive rollback packet.
+-- First deploy the previous application version so it no longer reads or
+-- writes speaker_names. The nullable additive column and any reviewed data
+-- remain in place for audit and possible later reuse.
+--
+-- The narrowed search-vector trigger also remains in place: inserts and changes
+-- to body_text or fts_expansion_src still maintain both FTS vectors, while
+-- unrelated metadata writes do not cause needless vector recomputation.
+--
+-- Any destructive schema or data reversal, or any trigger broadening, requires
+-- a separate forward migration and explicit owner approval.
+--
+-- No SQL is intentionally executed by this file.

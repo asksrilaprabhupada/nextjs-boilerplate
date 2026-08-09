@@ -570,7 +570,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       "Wholly unlabelled continuation.",
     ]);
     expect(out.groups[0].map((row) => row.speaker)).toEqual([
-      "Dr. Patel, Śrīla Prabhupāda, Guest",
+      "Dr. Patel · Śrīla Prabhupāda · Guest",
       "Dr. Patel",
       null,
     ]);
