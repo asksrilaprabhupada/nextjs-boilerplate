@@ -25,7 +25,6 @@ import PhotoSlot, { useImageAvailable } from "./14-photo-slot";
 
 const IMG = {
   disciples: "/images/lockscreen/prabhupadaanddisciplessmiling.jpg",
-  deities: "/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg",
 };
 
 const JALADUTA = "/images/journey/journey-1965-jaladuta-ship.jpg";
@@ -101,7 +100,7 @@ const CHAPTERS: Chapter[] = [
 
 const EASE = "cubic-bezier(0.16,1,0.3,1)";
 
-export default function JourneyPage() {
+export default function JourneyPage({ deitiesImageUrl }: { deitiesImageUrl: string | null }) {
   const { rootRef, entered, rev } = useCinematicReveal({ railFill: true, revealDistance: 40, revealMargin: 60 });
   const quoteBgReady = useImageAvailable(QUOTE_BACKGROUND);
 
@@ -188,7 +187,7 @@ export default function JourneyPage() {
 
       {/* ── INTERLUDE — the verse he lived ── */}
       <section style={{ position: "relative", height: "clamp(440px, 76vh, 720px)", overflow: "hidden" }}>
-        <div style={{ position: "absolute", inset: 0, backgroundImage: `url('${quoteBgReady ? QUOTE_BACKGROUND : IMG.deities}')`, backgroundSize: "cover", backgroundPosition: "center 25%" }} />
+        <div style={{ position: "absolute", inset: 0, backgroundImage: quoteBgReady ? `url('${QUOTE_BACKGROUND}')` : deitiesImageUrl ? `url('${deitiesImageUrl}')` : "none", backgroundSize: "cover", backgroundPosition: "center 25%" }} />
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(250,247,241,1) 0%, rgba(22,18,12,0.12) 20%, rgba(22,18,12,0.10) 48%, rgba(22,18,12,0.68) 100%)" }} />
         <div data-creveal="inter" style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "0 clamp(24px,7vw,110px) clamp(44px,8vh,84px)", opacity: rev("inter").op, transform: `translateY(${rev("inter").ty})`, transition: `opacity 1.1s ${EASE}, transform 1.1s ${EASE}` }}>
           <div aria-hidden style={{ width: 56, height: 1, background: "rgba(201,162,75,0.9)", marginBottom: 22 }} />

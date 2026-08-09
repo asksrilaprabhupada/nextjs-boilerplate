@@ -10,8 +10,7 @@
  * Two things the earlier version got wrong are fixed here: the page opens with
  * content in the first viewport (no 74vh void), and the small Vṛndāvana scan
  * is rendered at its honest card size against a blurred backdrop instead of
- * being stretched full-bleed (app/lib/18-image-manifest.ts marks it
- * allowFullBleed: false).
+ * being stretched full-bleed.
  */
 "use client";
 
@@ -21,7 +20,6 @@ import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import { useCinematicReveal } from "./04-use-cinematic-reveal";
 
-const DEITIES = "/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg";
 const GITHUB_URL = "https://github.com/asksrilaprabhupada/nextjs-boilerplate";
 const EASE = "cubic-bezier(0.16,1,0.3,1)";
 const VIGNETTE_QUERY = "How do I control my restless mind?";
@@ -50,7 +48,7 @@ const ALSO = [
   { title: "Dig deeper", body: "Nothing is removed — every further passage the search found waits in one quiet drawer, filterable by source." },
 ];
 
-export default function FeaturesPage() {
+export default function FeaturesPage({ deitiesImageUrl }: { deitiesImageUrl: string | null }) {
   const { rootRef, entered, rev } = useCinematicReveal({ revealDistance: 40 });
   const [typed, setTyped] = useState("");
 
@@ -200,13 +198,13 @@ export default function FeaturesPage() {
 
       {/* ── INTERLUDE — the photo kept at its honest size ── */}
       <section data-creveal="inter" style={{ position: "relative", overflow: "hidden", background: "#16120C", padding: "clamp(60px,10vh,110px) clamp(24px,6vw,100px)" }}>
-        <div aria-hidden style={{ position: "absolute", inset: 0, backgroundImage: `url('${DEITIES}')`, backgroundSize: "cover", backgroundPosition: "center 25%", filter: "blur(34px) brightness(0.5) saturate(1.05)", transform: "scale(1.15)" }} />
+        {deitiesImageUrl && <div aria-hidden style={{ position: "absolute", inset: 0, backgroundImage: `url('${deitiesImageUrl}')`, backgroundSize: "cover", backgroundPosition: "center 25%", filter: "blur(34px) brightness(0.5) saturate(1.05)", transform: "scale(1.15)" }} />}
         <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(90% 80% at 50% 50%, rgba(22,18,12,0.10), rgba(22,18,12,0.72))" }} />
         <div className="cine-feature-row" style={{ position: "relative", zIndex: 1, maxWidth: 1080, margin: "0 auto", display: "grid", gridTemplateColumns: "minmax(220px, 380px) 1fr", gap: "clamp(28px,5vw,64px)", alignItems: "center", opacity: rev("inter").op, transform: `translateY(${rev("inter").ty})`, transition: `opacity 1.1s ${EASE}, transform 1.1s ${EASE}` }}>
           <figure data-vignette style={{ margin: 0 }}>
             <div style={{ overflow: "hidden", borderRadius: 16, boxShadow: "0 24px 70px rgba(0,0,0,0.4)" }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={DEITIES} alt="Śrīla Prabhupāda before the Kṛṣṇa-Balarāma Deities in Vṛndāvana" loading="lazy" style={{ width: "100%", display: "block" }} />
+              {deitiesImageUrl && <img src={deitiesImageUrl} alt="Śrīla Prabhupāda before the Kṛṣṇa-Balarāma Deities in Vṛndāvana" loading="lazy" style={{ width: "100%", display: "block" }} />}
             </div>
             <figcaption className="font-body" style={{ marginTop: 10, fontSize: 11, fontWeight: 500, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(255,248,232,0.55)" }}>Before the Kṛṣṇa-Balarāma Deities, Vṛndāvana</figcaption>
           </figure>

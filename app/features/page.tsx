@@ -8,6 +8,9 @@
  */
 import type { Metadata } from "next";
 import FeaturesPage from "../components/cinematic/06-features-page";
+import { getLockscreenPublicImageUrl } from "../lib/server/01-lockscreen-images";
+
+const DEITIES_FILE = "Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg";
 
 export const metadata: Metadata = {
   title: "Features — Ask Śrīla Prabhupāda",
@@ -16,6 +19,9 @@ export const metadata: Metadata = {
   alternates: { canonical: "/features" },
 };
 
-export default function Features() {
-  return <FeaturesPage />;
+export const dynamic = "force-static";
+
+export default async function Features() {
+  const deitiesImageUrl = await getLockscreenPublicImageUrl(DEITIES_FILE);
+  return <FeaturesPage deitiesImageUrl={deitiesImageUrl} />;
 }

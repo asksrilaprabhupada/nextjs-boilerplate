@@ -33,7 +33,12 @@ import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import { useSiteModals } from "./13-site-modals";
 import PhotoSlot, { useImageAvailable } from "./14-photo-slot";
-import { INTRO_IMAGES } from "@/app/lib/18-image-manifest";
+import type { SlideImage } from "@/app/lib/06-lockscreen-data";
+import {
+  drawLockscreenPhoto,
+  LOCKSCREEN_DECK_STORAGE_KEY,
+  parseLockscreenPhotoDeck,
+} from "@/app/lib/27-lockscreen-photo-deck";
 
 const EASE = "cubic-bezier(0.16,1,0.3,1)";
 
@@ -98,14 +103,22 @@ interface Props {
   showEntrance?: boolean;
   filmGrain?: boolean;
   showMotes?: boolean;
+  introImages?: readonly SlideImage[];
 }
 
 interface Mote { left: string; bottom: string; size: number; gold: boolean; blur: string; mx: string; mo: number; anim: string }
 
+const DEFAULT_INTRO_IMAGES: readonly SlideImage[] = [];
+
 /** The doorway is decided before the browser paints, so ?entrance=0 never flashes it. */
 const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
-export default function CinematicHome({ showEntrance = true, filmGrain = true, showMotes = true }: Props) {
+export default function CinematicHome({
+  showEntrance = true,
+  filmGrain = true,
+  showMotes = true,
+  introImages = DEFAULT_INTRO_IMAGES,
+}: Props) {
   const router = useRouter();
   const { openModal } = useSiteModals();
   const rootRef = useRef<HTMLDivElement>(null);
@@ -115,9 +128,11 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
   const [lockVisible, setLockVisible] = useState(showEntrance);
   const [lockMounted, setLockMounted] = useState(showEntrance);
   const [beat, setBeat] = useState(0);
-  const [photo, setPhoto] = useState(INTRO_IMAGES[0].src);
+  const introPhotoUrls = useMemo(() => introImages.map((image) => image.url), [introImages]);
+  const [photo, setPhoto] = useState<string | null>(introPhotoUrls.find(Boolean) ?? null);
   const [verse, setVerse] = useState(VERSES[0]);
   const [verseIn, setVerseIn] = useState(true);
+  const entrancePhotoDrawnRef = useRef(false);
 
   // Hero
   const [heroIn, setHeroIn] = useState(!showEntrance);
@@ -150,12 +165,34 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
     }
   }, [showEntrance]);
 
+  /* ── Entrance photograph: one cryptographically shuffled draw per arrival ── */
+  useEffect(() => {
+    if (skipRef.current || entrancePhotoDrawnRef.current) return;
+    entrancePhotoDrawnRef.current = true;
+
+    let persisted: ReturnType<typeof parseLockscreenPhotoDeck> = null;
+    try {
+      persisted = parseLockscreenPhotoDeck(sessionStorage.getItem(LOCKSCREEN_DECK_STORAGE_KEY));
+    } catch {
+      // Storage can be blocked; selection still uses Web Crypto below.
+    }
+
+    try {
+      const selection = drawLockscreenPhoto(introPhotoUrls, persisted);
+      if (selection.photo) setPhoto(selection.photo);
+      try {
+        sessionStorage.setItem(LOCKSCREEN_DECK_STORAGE_KEY, JSON.stringify(selection.state));
+      } catch {
+        // The photo remains random even when persistence is unavailable.
+      }
+    } catch {
+      // Web Crypto is universal in supported browsers; retain the first frame if unavailable.
+    }
+  }, [introPhotoUrls]);
+
   /* ── Entrance: one composed frame, settled by ~2s ── */
   useEffect(() => {
     if (skipRef.current) return;
-    // The photograph rotates per visit; picked after mount so server and client
-    // markup stay identical (the layer is still at opacity 0 at this point).
-    setPhoto(INTRO_IMAGES[Math.floor(Math.random() * INTRO_IMAGES.length)].src);
     const timers = [
       setTimeout(() => setBeat(1), 150),
       setTimeout(() => setBeat(2), 450),
@@ -371,15 +408,17 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
           style={{ position: "fixed", inset: 0, zIndex: 1000, background: "#16120C", cursor: "pointer", overflow: "hidden", opacity: lockVisible ? 1 : 0, transition: "opacity 0.9s cubic-bezier(0.4,0,0.2,1)", pointerEvents: lockVisible ? "auto" : "none" }}
         >
           {/* The photograph — never cropped away from his face */}
-          <div style={{ position: "absolute", inset: 0, opacity: beat >= 1 ? 1 : 0, transition: "opacity 1.6s cubic-bezier(0.4,0,0.2,1)" }}>
-            <div aria-hidden style={{ position: "absolute", inset: 0, backgroundImage: `url('${photo}')`, backgroundSize: "cover", backgroundPosition: "center 30%", filter: "blur(30px) saturate(1.05) brightness(0.62)", transform: "scale(1.12)" }} />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="cine-door-photo" src={photo} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 28%" }} />
-            <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(22,18,12,0.42) 0%, rgba(22,18,12,0.10) 30%, rgba(22,18,12,0.46) 60%, rgba(22,18,12,0.92) 100%)" }} />
-            <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(115% 62% at 50% 88%, rgba(22,18,12,0.62), rgba(22,18,12,0.28) 55%, transparent 78%)" }} />
-            <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 90% at 50% 92%, rgba(201,162,75,0.16), transparent 55%)" }} />
-            <div aria-hidden style={{ position: "absolute", top: "-30%", left: 0, width: "45%", height: "160%", background: "linear-gradient(90deg, transparent, rgba(255,244,214,0.16), transparent)", filter: "blur(30px)", animation: "lightSweep 11s ease-in-out infinite", pointerEvents: "none" }} />
-          </div>
+          {photo && (
+            <div style={{ position: "absolute", inset: 0, opacity: beat >= 1 ? 1 : 0, transition: "opacity 1.6s cubic-bezier(0.4,0,0.2,1)" }}>
+              <div aria-hidden style={{ position: "absolute", inset: 0, backgroundImage: `url('${photo}')`, backgroundSize: "cover", backgroundPosition: "center 30%", filter: "blur(30px) saturate(1.05) brightness(0.62)", transform: "scale(1.12)" }} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="cine-door-photo" src={photo} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 28%" }} />
+              <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(22,18,12,0.42) 0%, rgba(22,18,12,0.10) 30%, rgba(22,18,12,0.46) 60%, rgba(22,18,12,0.92) 100%)" }} />
+              <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(115% 62% at 50% 88%, rgba(22,18,12,0.62), rgba(22,18,12,0.28) 55%, transparent 78%)" }} />
+              <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 90% at 50% 92%, rgba(201,162,75,0.16), transparent 55%)" }} />
+              <div aria-hidden style={{ position: "absolute", top: "-30%", left: 0, width: "45%", height: "160%", background: "linear-gradient(90deg, transparent, rgba(255,244,214,0.16), transparent)", filter: "blur(30px)", animation: "lightSweep 11s ease-in-out infinite", pointerEvents: "none" }} />
+            </div>
+          )}
 
           {/* Identity first — name settled by ~1.2s, then one verse */}
           <div style={{ position: "relative", zIndex: 5, height: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "88px 24px clamp(56px, 13vh, 130px)", textAlign: "center", transform: `translateY(${lockVisible ? "0px" : "-50px"})`, transition: "transform 0.9s cubic-bezier(0.4,0,0.2,1)" }}>

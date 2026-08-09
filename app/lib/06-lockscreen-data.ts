@@ -16,12 +16,10 @@ export const KEN_BURNS_DIRECTIONS: SlideImage["kenBurnsDirection"][] = [
   "pan-right",
 ];
 
-/**
- * Fallback image used if no usable lock screen photos are discovered.
- */
+/** Empty-image sentinel retained for the dormant legacy lock-screen component. */
 export const lockscreenFallbackImage: SlideImage = {
-  url: "/images/lockscreen/Prabh14.jpg",
-  alt: "Śrīla Prabhupāda",
+  url: "",
+  alt: "",
   kenBurnsDirection: "zoom-in",
 };
 

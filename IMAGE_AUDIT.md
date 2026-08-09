@@ -3,6 +3,12 @@
 Inventory date: 2026-07-05. Full recursive listing of `public/` image/video assets and every
 reference in code.
 
+> Historical snapshot: on 2026-08-09 the manual `app/lib/18-image-manifest.ts`
+> registry was removed in favor of validated build-time discovery from
+> `public/images/lockscreen/`. `Prabh14.jpg` and `CT03-044-620x350.avif` were
+> deleted at the owner's request. The dated findings below are retained as the
+> record of the earlier release.
+
 ## A. Present assets
 
 | File | Size | Referenced by |
