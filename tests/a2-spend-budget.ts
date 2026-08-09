@@ -271,7 +271,33 @@ type LegacyLedgerEntry = LegacyLedgerHeader | LegacyLedgerReserve | LegacyLedger
 type LedgerEntry = LedgerHeader | LedgerReserve | LedgerSettle;
 type AnyLedgerEntry = LegacyLedgerEntry | LedgerEntry;
 
-interface LedgerRowState {
+const A2_V4_LEDGER_HEADER_FIELDS = [
+  "carryManifestSha256",
+  "definitionSha256",
+  "lifetimeMaxMicrousd",
+  "manifestSha256",
+  "maxMicrousd",
+  "priorCommittedMicrousd",
+  "runId",
+  "schemaVersion",
+  "type",
+] as const;
+
+const A2_V4_LEDGER_RESERVE_FIELDS = ["reservation", "rowKey", "type"] as const;
+const A2_V4_LEDGER_SETTLE_FIELDS = [
+  "chargedMicrousd",
+  "checkpointRowSha256",
+  "cohereMicrousd",
+  "completeUsage",
+  "geminiMicrousd",
+  "proofSha256",
+  "rowKey",
+  "settlementKind",
+  "type",
+  "voyageMicrousd",
+] as const;
+
+export interface A2SpendLedgerRowState {
   reservedMicrousd: number;
   cohereReservedMicrousd: number | null;
   geminiReservedMicrousd: number | null;
@@ -288,6 +314,8 @@ interface LedgerRowState {
   proofSha256: string | null;
   checkpointRowSha256: string | null;
 }
+
+type LedgerRowState = A2SpendLedgerRowState;
 
 function assertSafeMicrousd(value: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
@@ -1177,16 +1205,76 @@ function appendDurably(path: string, entry: AnyLedgerEntry, exclusive = false): 
   }
 }
 
-function parseLedger(path: string): AnyLedgerEntry[] {
-  const body = readFileSync(path, "utf8");
+function parseLedgerBytes(bytes: Buffer, strict = false): AnyLedgerEntry[] {
+  const body = bytes.toString("utf8");
+  if (!Buffer.from(body, "utf8").equals(bytes)) {
+    throw new Error("A2 spend ledger is not valid UTF-8");
+  }
   if (!body.endsWith("\n")) throw new Error("A2 spend ledger has a partial final entry");
-  return body.split("\n").filter(Boolean).map((line, index) => {
+  const rawLines = body.split("\n");
+  rawLines.pop();
+  if (strict && rawLines.some((line) => line.length === 0)) {
+    throw new Error("A2 spend ledger has an empty entry");
+  }
+  const lines = strict ? rawLines : rawLines.filter(Boolean);
+  return lines.map((line, index) => {
     try {
       return JSON.parse(line) as AnyLedgerEntry;
     } catch {
       throw new Error(`A2 spend ledger entry ${index + 1} is invalid JSON`);
     }
   });
+}
+
+function parseLedger(path: string): AnyLedgerEntry[] {
+  return parseLedgerBytes(readFileSync(path));
+}
+
+function assertExactObjectFields(
+  value: unknown,
+  fields: readonly string[],
+  label: string,
+): asserts value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || JSON.stringify(Object.keys(value).sort()) !== JSON.stringify([...fields].sort())) {
+    throw new Error(`${label} has malformed fields`);
+  }
+}
+
+function assertV4LedgerHeaderFields(value: unknown): asserts value is LedgerHeader {
+  assertExactObjectFields(value, A2_V4_LEDGER_HEADER_FIELDS, "A2 v4 spend ledger header");
+}
+
+function assertV4LedgerEntryFields(
+  value: unknown,
+  entryNumber: number,
+): asserts value is LedgerReserve | LedgerSettle {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`A2 v4 spend ledger entry ${entryNumber} is malformed`);
+  }
+  const type = (value as Record<string, unknown>).type;
+  if (type === "reserve") {
+    assertExactObjectFields(
+      value,
+      A2_V4_LEDGER_RESERVE_FIELDS,
+      `A2 v4 spend ledger reserve entry ${entryNumber}`,
+    );
+    try {
+      cloneA2RowBudgetReservation((value as unknown as LedgerReserve).reservation);
+    } catch {
+      throw new Error(`A2 v4 spend ledger reserve entry ${entryNumber} is malformed`);
+    }
+    return;
+  }
+  if (type === "settle") {
+    assertExactObjectFields(
+      value,
+      A2_V4_LEDGER_SETTLE_FIELDS,
+      `A2 v4 spend ledger settlement entry ${entryNumber}`,
+    );
+    return;
+  }
+  throw new Error(`A2 v4 spend ledger entry ${entryNumber} has an unknown type`);
 }
 
 export interface A2SpendLedgerIdentity {
@@ -1204,6 +1292,30 @@ export interface A2LegacySpendLedgerIdentity {
   definitionSha256: string;
   manifestSha256: string;
   maxMicrousd: number;
+}
+
+/**
+ * Query-only view of a fully validated v4 ledger. The facade owns immutable
+ * snapshots rather than the mutable ledger object, so reserve and settlement
+ * methods are absent from both its TypeScript and runtime surfaces.
+ */
+export interface A2V4ReadOnlySpendLedger {
+  readonly path: string;
+  readonly runId: string;
+  readonly definitionSha256: string;
+  readonly manifestSha256: string;
+  readonly carryManifestSha256: string;
+  readonly maxMicrousd: number;
+  readonly priorCommittedMicrousd: number;
+  readonly lifetimeMaxMicrousd: number;
+  readonly schemaVersion: typeof A2_SPEND_LEDGER_SCHEMA_VERSION;
+  committedMicrousd(): number;
+  lifetimeCommittedMicrousd(): number;
+  openRowKeys(): readonly string[];
+  rowKeys(): readonly string[];
+  hasRow(rowKey: string): boolean;
+  rowState(rowKey: string): Readonly<A2SpendLedgerRowState> | null;
+  sha256(): string;
 }
 
 function assertSha256(value: string, label: string): void {
@@ -1301,6 +1413,51 @@ export class A2SpendLedger {
     );
     for (const entry of entries.slice(1)) ledger.replay(entry as LedgerEntry);
     return ledger;
+  }
+
+  static openV4ReadOnly(
+    path: string,
+    expected: A2SpendLedgerIdentity,
+  ): A2V4ReadOnlySpendLedger {
+    assertLedgerIdentity(expected);
+    const sourceBytes = readFileSync(path);
+    const entries = parseLedgerBytes(sourceBytes, true);
+    const header = entries[0];
+    assertV4LedgerHeaderFields(header);
+    if (header.type !== "header"
+      || header.schemaVersion !== A2_SPEND_LEDGER_SCHEMA_VERSION
+      || header.runId !== expected.runId
+      || header.definitionSha256 !== expected.definitionSha256
+      || header.manifestSha256 !== expected.manifestSha256
+      || header.carryManifestSha256 !== expected.carryManifestSha256
+      || header.maxMicrousd !== expected.maxMicrousd
+      || header.priorCommittedMicrousd !== expected.priorCommittedMicrousd
+      || header.lifetimeMaxMicrousd !== expected.lifetimeMaxMicrousd) {
+      throw new Error("A2 v4 spend ledger header differs from its pinned evidence");
+    }
+    const ledger = new A2SpendLedger(
+      path,
+      header.runId,
+      header.definitionSha256,
+      header.manifestSha256,
+      header.maxMicrousd,
+      header.carryManifestSha256,
+      header.priorCommittedMicrousd,
+      header.lifetimeMaxMicrousd,
+      A2_SPEND_LEDGER_SCHEMA_VERSION,
+      false,
+    );
+    entries.slice(1).forEach((entry, index) => {
+      assertV4LedgerEntryFields(entry, index + 2);
+      ledger.replay(entry);
+    });
+    if (!readFileSync(path).equals(sourceBytes)) {
+      throw new Error("A2 v4 spend ledger changed while it was opened read-only");
+    }
+    return createA2V4ReadOnlySpendLedgerFacade(
+      ledger,
+      createHash("sha256").update(sourceBytes).digest("hex"),
+    );
   }
 
   static openLegacyReadOnly(
@@ -1591,4 +1748,44 @@ export class A2SpendLedger {
   sha256(): string {
     return createHash("sha256").update(readFileSync(this.path)).digest("hex");
   }
+}
+
+function createA2V4ReadOnlySpendLedgerFacade(
+  ledger: A2SpendLedger,
+  sourceSha256: string,
+): A2V4ReadOnlySpendLedger {
+  if (ledger.schemaVersion !== A2_SPEND_LEDGER_SCHEMA_VERSION
+    || ledger.carryManifestSha256 === null) {
+    throw new Error("A2 read-only v4 ledger facade requires v4 evidence");
+  }
+  const rowKeys = Object.freeze([...ledger.rowKeys()]);
+  const openRowKeys = Object.freeze([...ledger.openRowKeys()]);
+  const rows = new Map<string, Readonly<A2SpendLedgerRowState>>(
+    rowKeys.map((rowKey) => {
+      const state = ledger.rowState(rowKey);
+      if (!state) throw new Error("A2 v4 spend ledger lost a validated row snapshot");
+      return [rowKey, state] as const;
+    }),
+  );
+  const committedMicrousd = ledger.committedMicrousd();
+  const lifetimeCommittedMicrousd = ledger.lifetimeCommittedMicrousd();
+  const facade: A2V4ReadOnlySpendLedger = {
+    path: ledger.path,
+    runId: ledger.runId,
+    definitionSha256: ledger.definitionSha256,
+    manifestSha256: ledger.manifestSha256,
+    carryManifestSha256: ledger.carryManifestSha256,
+    maxMicrousd: ledger.maxMicrousd,
+    priorCommittedMicrousd: ledger.priorCommittedMicrousd,
+    lifetimeMaxMicrousd: ledger.lifetimeMaxMicrousd,
+    schemaVersion: A2_SPEND_LEDGER_SCHEMA_VERSION,
+    committedMicrousd: () => committedMicrousd,
+    lifetimeCommittedMicrousd: () => lifetimeCommittedMicrousd,
+    openRowKeys: () => openRowKeys,
+    rowKeys: () => rowKeys,
+    hasRow: (rowKey) => rows.has(rowKey),
+    rowState: (rowKey) => rows.get(rowKey) ?? null,
+    sha256: () => sourceSha256,
+  };
+  return Object.freeze(facade);
 }

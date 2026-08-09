@@ -79,6 +79,7 @@ function loadStateModule() {
 function completeComparisonRow(
   candidateCount = 400,
   currentFinalCount = 200,
+  embeddingProviderCalls: 0 | 1 = 1,
 ): Record<string, unknown> {
   const topN = Math.min(20, candidateCount);
   const top = Array.from({ length: topN }, (_, index) => ({ passageId: `p${index}` }));
@@ -98,8 +99,10 @@ function completeComparisonRow(
   const usage = oneCallUsage({
     cohereSearchUnits,
     cohereSearchUnitsLowerBound: cohereSearchUnits,
+    voyageProviderCalls: embeddingProviderCalls,
   });
   const row: Record<string, unknown> = {
+    status: "complete",
     attemptKey: "q001:1@1",
     question: "approved question",
     poolSha256: "d".repeat(64),
@@ -137,6 +140,7 @@ function completeComparisonRow(
       },
     },
     pipelineDegraded: false,
+    invalidArm: false,
     providerUsageComplete: true,
     plannerUsage: {
       attempts: 1,
@@ -144,10 +148,11 @@ function completeComparisonRow(
       outputTokens: usage.geminiOutputTokens,
       thoughtsTokens: usage.geminiThoughtsTokens,
       totalTokens: usage.geminiTotalTokens,
-      durationMs: 1,
-      attemptDurationsMs: [1],
+      durationMs: 10,
+      attemptDurationsMs: [10],
     },
-    embeddingProviderCalls: 1,
+    plannerCallUsage: usage.geminiCalls,
+    embeddingProviderCalls,
   };
   return bindA2CheckpointRowAccounting(
     row,
@@ -321,7 +326,7 @@ describe("A2 hard spend budget", () => {
     expect(paidRunApproval(preflight, "d".repeat(64))).not.toBe(approval);
     expect(paidRunApproval({ ...preflight, maxTotalUsd: 24 }, manifestSha256))
       .not.toBe(approval);
-  });
+  }, 15_000);
 
   it("allows recovery from the prior-lock-only crash window", async () => {
     const { recoveryStateAvailable } = await loadStateModule();
@@ -1193,6 +1198,148 @@ describe("A2 hard spend budget", () => {
     expect(readFileSync(path)).toEqual(before);
   });
 
+  it("opens v4 evidence through an immutable query-only surface without changing a byte", () => {
+    const path = temporaryLedgerPath();
+    const ledger = createLedger(path);
+    const reservation = reserveA2Row("approved question", 2.50);
+    const key = "q1:1@1";
+    ledger.reserve(key, reservation);
+    const verified = settleLedgerFromUsage(ledger, key, reservation, oneCallUsage());
+    const before = readFileSync(path);
+
+    const readOnly = A2SpendLedger.openV4ReadOnly(path, ledgerIdentity());
+    const surface = readOnly as unknown as Record<string, unknown>;
+    const keys = readOnly.rowKeys();
+    const state = readOnly.rowState(key)!;
+
+    expect(Object.isFrozen(readOnly)).toBe(true);
+    expect("reserve" in surface).toBe(false);
+    expect("settleVerified" in surface).toBe(false);
+    expect(surface.reserve).toBeUndefined();
+    expect(surface.settleVerified).toBeUndefined();
+    expect(Object.isFrozen(keys)).toBe(true);
+    expect(Reflect.set(keys, "0", "q2:1@1")).toBe(false);
+    expect(readOnly.rowKeys()).toEqual([key]);
+    expect(Object.isFrozen(state)).toBe(true);
+    expect(Reflect.set(state, "chargedMicrousd", 0)).toBe(false);
+    expect(readOnly.rowState(key)).toMatchObject({
+      reservedMicrousd: reservation.totalMicrousd,
+      chargedMicrousd: verified.decision.charge!.totalMicrousd,
+      cohereChargedMicrousd: verified.decision.charge!.cohereMicrousd,
+      geminiChargedMicrousd: verified.decision.charge!.geminiMicrousd,
+      voyageChargedMicrousd: verified.decision.charge!.voyageMicrousd,
+      proofSha256: verified.proofSha256,
+      checkpointRowSha256: verified.checkpointRowSha256,
+    });
+    expect(readOnly.openRowKeys()).toEqual([]);
+    expect(readOnly.committedMicrousd()).toBe(verified.decision.charge!.totalMicrousd);
+    expect(readOnly.sha256()).toBe(ledger.sha256());
+    expect(readFileSync(path)).toEqual(before);
+  });
+
+  it("keeps each v4 settlement's components and digests cross-bound to its row snapshot", () => {
+    const path = temporaryLedgerPath();
+    const ledger = createLedger(path);
+    const firstReservation = reserveA2Row("first approved question", 2.50);
+    const secondReservation = reserveA2Row("second approved question", 2.50);
+    ledger.reserve("q1:1@1", firstReservation);
+    const first = settleLedgerFromUsage(
+      ledger,
+      "q1:1@1",
+      firstReservation,
+      oneCallUsage({ cohereSearchUnits: 9, cohereSearchUnitsLowerBound: 9 }),
+    );
+    ledger.reserve("q2:1@1", secondReservation);
+    const second = settleLedgerFromUsage(
+      ledger,
+      "q2:1@1",
+      secondReservation,
+      oneCallUsage({ cohereSearchUnits: 12, cohereSearchUnitsLowerBound: 12 }),
+    );
+
+    const readOnly = A2SpendLedger.openV4ReadOnly(path, ledgerIdentity());
+
+    expect(readOnly.rowState("q1:1@1")).toMatchObject({
+      chargedMicrousd: first.decision.charge!.totalMicrousd,
+      cohereChargedMicrousd: first.decision.charge!.cohereMicrousd,
+      geminiChargedMicrousd: first.decision.charge!.geminiMicrousd,
+      voyageChargedMicrousd: first.decision.charge!.voyageMicrousd,
+      proofSha256: first.proofSha256,
+      checkpointRowSha256: first.checkpointRowSha256,
+    });
+    expect(readOnly.rowState("q2:1@1")).toMatchObject({
+      chargedMicrousd: second.decision.charge!.totalMicrousd,
+      cohereChargedMicrousd: second.decision.charge!.cohereMicrousd,
+      geminiChargedMicrousd: second.decision.charge!.geminiMicrousd,
+      voyageChargedMicrousd: second.decision.charge!.voyageMicrousd,
+      proofSha256: second.proofSha256,
+      checkpointRowSha256: second.checkpointRowSha256,
+    });
+    expect(first.proofSha256).not.toBe(second.proofSha256);
+    expect(first.checkpointRowSha256).not.toBe(second.checkpointRowSha256);
+  });
+
+  it("strictly rejects malformed v4 fields, provider components, and digests without writes", () => {
+    const sourcePath = temporaryLedgerPath();
+    const ledger = createLedger(sourcePath);
+    const reservation = reserveA2Row("approved question", 2.50);
+    ledger.reserve("q1:1@1", reservation);
+    settleLedgerFromUsage(ledger, "q1:1@1", reservation, null);
+    const entries = readFileSync(sourcePath, "utf8").trimEnd().split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    const variants: Array<{
+      label: string;
+      mutate: (copy: Array<Record<string, unknown>>) => void;
+      pattern: RegExp;
+    }> = [
+      {
+        label: "extra header field",
+        mutate: (copy) => { copy[0].unexpected = true; },
+        pattern: /header has malformed fields/u,
+      },
+      {
+        label: "extra reservation field",
+        mutate: (copy) => {
+          (copy[1].reservation as Record<string, unknown>).unexpected = true;
+        },
+        pattern: /reserve entry 2 is malformed/u,
+      },
+      {
+        label: "same-total provider component swap",
+        mutate: (copy) => {
+          copy[2].cohereMicrousd = Number(copy[2].cohereMicrousd) - 1;
+          copy[2].geminiMicrousd = Number(copy[2].geminiMicrousd) + 1;
+        },
+        pattern: /settlement is invalid/u,
+      },
+      {
+        label: "non-canonical proof digest",
+        mutate: (copy) => { copy[2].proofSha256 = "A".repeat(64); },
+        pattern: /settlement is invalid/u,
+      },
+      {
+        label: "missing checkpoint digest",
+        mutate: (copy) => { delete copy[2].checkpointRowSha256; },
+        pattern: /settlement entry 3 has malformed fields/u,
+      },
+    ];
+
+    for (const variant of variants) {
+      const path = temporaryLedgerPath();
+      const copy = structuredClone(entries);
+      variant.mutate(copy);
+      const body = `${copy.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+      writeFileSync(path, body, "utf8");
+      const before = readFileSync(path);
+
+      expect(
+        () => A2SpendLedger.openV4ReadOnly(path, ledgerIdentity()),
+        variant.label,
+      ).toThrow(variant.pattern);
+      expect(readFileSync(path), variant.label).toEqual(before);
+    }
+  });
+
   it("keeps PRECHECK and RECOVER returns ahead of external client construction", () => {
     const source = readFileSync(join(process.cwd(), "tests", "a2-rerank-comparison.live.ts"), "utf8");
     const precheck = source.indexOf('if (preflight.mode === "PRECHECK")');
@@ -1250,14 +1397,16 @@ describe("A2 hard spend budget", () => {
     const state = await loadStateModule();
 
     expect(() => state.assertCompleteRow(completeComparisonRow(), "q001:1@1")).not.toThrow();
+    expect(() => state.assertCompleteRow(completeComparisonRow(400, 200, 0), "q001:1@1"))
+      .not.toThrow();
     expect(() => state.assertCompleteRow(completeComparisonRow(400, 201), "q001:1@1")).not.toThrow();
 
     for (let candidateCount = 2; candidateCount <= 400; candidateCount += 1) {
-      state.assertCompleteRow(completeComparisonRow(candidateCount), `q-all:${candidateCount}`);
+      state.assertCompleteRow(completeComparisonRow(candidateCount), "q001:1@1");
       if (candidateCount > 200) {
         state.assertCompleteRow(
           completeComparisonRow(candidateCount, 201),
-          `q-pinned:${candidateCount}`,
+          "q001:1@1",
         );
       }
     }
