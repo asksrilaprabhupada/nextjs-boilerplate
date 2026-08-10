@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 const layoutSource = readFileSync(join(process.cwd(), "app/layout.tsx"), "utf8");
 const socialImage = join(
   process.cwd(),
-  "public/images/ChatGPT Image Aug 9, 2026, 07_33_10 PM.png",
+  "public/images/ChatGPT Image Aug 10, 2026, 05_51_20 AM.png",
 );
 const retiredImage = join(process.cwd(), "public/images/og-image.png");
 
@@ -26,7 +26,7 @@ describe("social preview image metadata", () => {
     );
 
     expect(layoutSource).toContain(
-      '"/images/ChatGPT%20Image%20Aug%209%2C%202026%2C%2007_33_10%20PM.png"',
+      '"/images/ChatGPT%20Image%20Aug%2010%2C%202026%2C%2005_51_20%20AM.png"',
     );
     expect(openGraphBlock).toContain("url: SOCIAL_IMAGE_PATH");
     expect(twitterBlock).toContain("url: SOCIAL_IMAGE_PATH");
