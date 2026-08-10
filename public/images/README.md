@@ -17,7 +17,7 @@ show an honest placeholder until each file exists. Upload the file, commit,
 redeploy — no manifest entry and no code change needed. See
 `journey/README.md` and `moments/README.md` for the exact filenames.
 
-`ChatGPT Image Aug 9, 2026, 07_33_10 PM.png` is the owner-selected social-share
+`ChatGPT Image Aug 10, 2026, 05_51_20 AM.png` is the owner-selected social-share
 card used by the Open Graph, Twitter, and structured metadata in
 `app/layout.tsx`. When `lockscreen/` contains no photos, the doorway keeps its
 existing dark gradient and text treatment without requesting a substitute

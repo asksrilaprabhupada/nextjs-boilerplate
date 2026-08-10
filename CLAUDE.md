@@ -168,7 +168,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   ├── lockscreen/                (photos; auto-discovered by /api/lockscreen-images)
 │   │   ├── journey/                   (path-addressed /journey chapter photos; exact filenames in its README)
 │   │   ├── moments/                   (path-addressed landing Moments photos: moments-01.jpg … moments-04.jpg)
-│   │   └── ChatGPT Image Aug 9, 2026, 07_33_10 PM.png (Open Graph/Twitter social preview)
+│   │   └── ChatGPT Image Aug 10, 2026, 05_51_20 AM.png (Open Graph/Twitter social preview)
 │   └── videos/lockscreen/             (optional admin video upload)
 ├── scripts/verify-release.sh          (acceptance checks: run with SITE=<url>)
 ├── supabase/migrations/               (applied migrations, committed for record)

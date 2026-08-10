@@ -38,7 +38,7 @@ const fontDeva = Noto_Serif_Devanagari({
 });
 
 const SOCIAL_IMAGE_PATH =
-  "/images/ChatGPT%20Image%20Aug%209%2C%202026%2C%2007_33_10%20PM.png";
+  "/images/ChatGPT%20Image%20Aug%2010%2C%202026%2C%2005_51_20%20AM.png";
 const SOCIAL_IMAGE_WIDTH = 1672;
 const SOCIAL_IMAGE_HEIGHT = 941;
 const SOCIAL_IMAGE_ALT = "Ask Śrīla Prabhupāda — Books, Lectures, and Letters";
