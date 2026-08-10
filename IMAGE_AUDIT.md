@@ -10,9 +10,10 @@ reference in code.
 > record of the earlier release.
 >
 > The final Task 8 cleanup also replaced the retired social card with the
-> owner-selected `ChatGPT Image Aug 10, 2026, 05_51_20 AM.png` in Open Graph,
-> Twitter, and structured metadata. Its real 1672×941 dimensions are declared;
-> no crop or image alteration is performed by the application.
+> owner-selected `ChatGPT Image Aug 10, 2026, 05_51_20 AM.png`. Open Graph,
+> Twitter, and structured metadata use its no-crop baseline-JPEG derivative,
+> `social-share-v2.jpg`, to remain below the conservative 300 KiB messenger
+> budget. Both retain the real 1672×941 dimensions.
 
 ## A. Present assets
 
@@ -21,7 +22,8 @@ reference in code.
 | `public/images/lockscreen/prabhupadaanddisciplessmiling.jpg` | 642 KB | `cinematic/01-cinematic-home.tsx` (IMG.disciples — entrance beat 2, gallery, CTA), `05-journey-page.tsx` ×2, `06/07-*` pages |
 | `public/images/lockscreen/Srila-Prabhupada-looking-at-Krishna-Balaram-Deities-Vrindavan-India.jpg` | 38 KB | `IMG.deities` — gallery ×2, journey interlude + storefront |
 | `public/images/lockscreen/Srila-Prabhupada-on-morning-walk-in-Vrindavan-620x350.avif` | 10 KB | `IMG.walk` — gallery, journey crossing. **Only 620×350 — must never render wider than ~620 px** (Task 8 policy: card-width slots only) |
-| `public/images/ChatGPT Image Aug 10, 2026, 05_51_20 AM.png` | 2.38 MB | `app/layout.tsx` Open Graph/Twitter/structured metadata |
+| `public/images/ChatGPT Image Aug 10, 2026, 05_51_20 AM.png` | 2.38 MB | Untouched owner-selected social-card source |
+| `public/images/social-share-v2.jpg` | 280 KB | No-crop baseline-JPEG derivative used by `app/layout.tsx` Open Graph/Twitter/structured metadata |
 | `public/data/donate.json` | 153 B | orphaned `overlays/03-donate-overlay.tsx` only |
 | `public/videos/lockscreen/` | empty (`.gitkeep`) | optional admin video slot |
 
