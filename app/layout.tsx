@@ -37,8 +37,8 @@ const fontDeva = Noto_Serif_Devanagari({
   display: "swap",
 });
 
-const SOCIAL_IMAGE_PATH =
-  "/images/ChatGPT%20Image%20Aug%2010%2C%202026%2C%2005_51_20%20AM.png";
+const SOCIAL_IMAGE_PATH = "/images/social-share-v2.jpg";
+const SOCIAL_IMAGE_TYPE = "image/jpeg";
 const SOCIAL_IMAGE_WIDTH = 1672;
 const SOCIAL_IMAGE_HEIGHT = 941;
 const SOCIAL_IMAGE_ALT = "Ask Śrīla Prabhupāda — Books, Lectures, and Letters";
@@ -70,6 +70,7 @@ export const metadata: Metadata = {
         width: SOCIAL_IMAGE_WIDTH,
         height: SOCIAL_IMAGE_HEIGHT,
         alt: SOCIAL_IMAGE_ALT,
+        type: SOCIAL_IMAGE_TYPE,
       },
     ],
   },
@@ -84,6 +85,7 @@ export const metadata: Metadata = {
         width: SOCIAL_IMAGE_WIDTH,
         height: SOCIAL_IMAGE_HEIGHT,
         alt: SOCIAL_IMAGE_ALT,
+        type: SOCIAL_IMAGE_TYPE,
       },
     ],
   },

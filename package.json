@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "vitest run tests/social-image-metadata.test.ts",
     "build": "next build",
     "start": "next start",
     "test": "vitest run",
