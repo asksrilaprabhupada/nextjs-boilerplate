@@ -13,7 +13,11 @@
  * carry ?entrance=0 so navigation never replays the doorway.
  */
 import CinematicHome from "./components/cinematic/01-cinematic-home";
+import { getLockscreenSlideshowImages } from "./lib/server/01-lockscreen-images";
 
-export default function Home() {
-  return <CinematicHome />;
+export const dynamic = "force-static";
+
+export default async function Home() {
+  const introImages = await getLockscreenSlideshowImages();
+  return <CinematicHome introImages={introImages} />;
 }

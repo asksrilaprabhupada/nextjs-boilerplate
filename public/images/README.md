@@ -2,19 +2,23 @@
 
 Two different mechanisms live under this folder:
 
-**`lockscreen/` — manifest-registered.** Drop new photographs into
-`lockscreen/` — they are auto-discovered and served by `/api/lockscreen-images`
-(HEIC/HEIF files are converted on the fly). To include a photo in the
-cinematic intro rotation, also register it in
-**`app/lib/18-image-manifest.ts`** with a truthful `alt` and `caption`
-(describe what the photo actually shows). Mark `allowFullBleed: true` only for
-sources comfortably wider than ~1600px — smaller scans (like the 620×350
-AVIFs) must stay in card-width slots or behind a deliberate blur backdrop.
+**`lockscreen/` — automatic.** Drop a photograph directly into `lockscreen/`,
+commit, and redeploy. The production build inspects the actual image bytes and
+automatically adds every valid photo to the cinematic doorway. Real HEIC/HEIF
+(HEVC) bytes are detected from their container brand and decoded by the bundled
+JavaScript/WebAssembly decoder; AVIF and the other supported formats stay on
+the Sharp path. HEIC/HEIF and extension-mismatched files are normalized to a
+browser-safe JPEG without resizing or cropping. A corrupt or unsupported file
+fails the build and names the exact file to fix. No manifest edit is needed.
 
-**`journey/` and `moments/` — path-addressed slots.** The /journey chapter
+**`journey/` and `moments/` — path-addressed slots.** The `/journey` chapter
 frames and the landing Moments gallery load fixed, exactly named paths and
 show an honest placeholder until each file exists. Upload the file, commit,
 redeploy — no manifest entry and no code change needed. See
 `journey/README.md` and `moments/README.md` for the exact filenames.
 
-`og-image.png` is the social-share card referenced from `app/layout.tsx`.
+`ChatGPT Image Aug 9, 2026, 07_33_10 PM.png` is the owner-selected social-share
+card used by the Open Graph, Twitter, and structured metadata in
+`app/layout.tsx`. When `lockscreen/` contains no photos, the doorway keeps its
+existing dark gradient and text treatment without requesting a substitute
+image.

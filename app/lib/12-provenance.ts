@@ -29,18 +29,6 @@
 
 export type Authorship = "HIS" | "NOT_HIS" | "MIXED_VERIFY";
 
-/**
- * Content policy (user's answered choice, 2026-07): passages that are not
- * verifiably Śrīla Prabhupāda's own words (NOT_HIS and MIXED_VERIFY alike)
- * appear ONLY in the Dig Deeper overflow, clearly labeled — never in heroes,
- * the woven essay, citations, or framing. A verse the user explicitly looked
- * up by reference is still returned, labeled. Flip the flag to restore the
- * previous behavior — nothing is deleted, routing is fully reversible.
- */
-export const PROVENANCE_POLICY = {
-  restrictedToDigDeeperOnly: true,
-};
-
 export interface BookInfo {
   title: string;
   authorship: Authorship;

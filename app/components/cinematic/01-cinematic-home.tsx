@@ -33,7 +33,12 @@ import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import { useSiteModals } from "./13-site-modals";
 import PhotoSlot, { useImageAvailable } from "./14-photo-slot";
-import { INTRO_IMAGES } from "@/app/lib/18-image-manifest";
+import type { SlideImage } from "@/app/lib/06-lockscreen-data";
+import {
+  drawLockscreenPhoto,
+  LOCKSCREEN_DECK_STORAGE_KEY,
+  parseLockscreenPhotoDeck,
+} from "@/app/lib/27-lockscreen-photo-deck";
 
 const EASE = "cubic-bezier(0.16,1,0.3,1)";
 
@@ -98,26 +103,38 @@ interface Props {
   showEntrance?: boolean;
   filmGrain?: boolean;
   showMotes?: boolean;
+  introImages?: readonly SlideImage[];
 }
 
 interface Mote { left: string; bottom: string; size: number; gold: boolean; blur: string; mx: string; mo: number; anim: string }
 
+const DEFAULT_INTRO_IMAGES: readonly SlideImage[] = [];
+
 /** The doorway is decided before the browser paints, so ?entrance=0 never flashes it. */
 const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
-export default function CinematicHome({ showEntrance = true, filmGrain = true, showMotes = true }: Props) {
+export default function CinematicHome({
+  showEntrance = true,
+  filmGrain = true,
+  showMotes = true,
+  introImages = DEFAULT_INTRO_IMAGES,
+}: Props) {
   const router = useRouter();
   const { openModal } = useSiteModals();
   const rootRef = useRef<HTMLDivElement>(null);
   const parallaxRef = useRef<HTMLDivElement>(null);
+  const examplesDialogRef = useRef<HTMLDivElement>(null);
+  const examplesCloseRef = useRef<HTMLButtonElement>(null);
 
   // Entrance
   const [lockVisible, setLockVisible] = useState(showEntrance);
   const [lockMounted, setLockMounted] = useState(showEntrance);
   const [beat, setBeat] = useState(0);
-  const [photo, setPhoto] = useState(INTRO_IMAGES[0].src);
+  const introPhotoUrls = useMemo(() => introImages.map((image) => image.url), [introImages]);
+  const [photo, setPhoto] = useState<string | null>(introPhotoUrls.find(Boolean) ?? null);
   const [verse, setVerse] = useState(VERSES[0]);
   const [verseIn, setVerseIn] = useState(true);
+  const entrancePhotoDrawnRef = useRef(false);
 
   // Hero
   const [heroIn, setHeroIn] = useState(!showEntrance);
@@ -150,12 +167,34 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
     }
   }, [showEntrance]);
 
+  /* ── Entrance photograph: one cryptographically shuffled draw per arrival ── */
+  useEffect(() => {
+    if (skipRef.current || entrancePhotoDrawnRef.current) return;
+    entrancePhotoDrawnRef.current = true;
+
+    let persisted: ReturnType<typeof parseLockscreenPhotoDeck> = null;
+    try {
+      persisted = parseLockscreenPhotoDeck(sessionStorage.getItem(LOCKSCREEN_DECK_STORAGE_KEY));
+    } catch {
+      // Storage can be blocked; selection still uses Web Crypto below.
+    }
+
+    try {
+      const selection = drawLockscreenPhoto(introPhotoUrls, persisted);
+      if (selection.photo) setPhoto(selection.photo);
+      try {
+        sessionStorage.setItem(LOCKSCREEN_DECK_STORAGE_KEY, JSON.stringify(selection.state));
+      } catch {
+        // The photo remains random even when persistence is unavailable.
+      }
+    } catch {
+      // Web Crypto is universal in supported browsers; retain the first frame if unavailable.
+    }
+  }, [introPhotoUrls]);
+
   /* ── Entrance: one composed frame, settled by ~2s ── */
   useEffect(() => {
     if (skipRef.current) return;
-    // The photograph rotates per visit; picked after mount so server and client
-    // markup stay identical (the layer is still at opacity 0 at this point).
-    setPhoto(INTRO_IMAGES[Math.floor(Math.random() * INTRO_IMAGES.length)].src);
     const timers = [
       setTimeout(() => setBeat(1), 150),
       setTimeout(() => setBeat(2), 450),
@@ -204,11 +243,104 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.key === "Enter" || e.key === " ") && lockVisible) { e.preventDefault(); dismiss(); }
-      if (e.key === "Escape") setMoreOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [lockVisible, dismiss]);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+
+    const dialog = examplesDialogRef.current;
+    const root = rootRef.current;
+    if (!dialog || !root) return;
+
+    const previouslyFocused = document.activeElement;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousBodyPaddingRight = document.body.style.paddingRight;
+    const previousBodyOverscroll = document.body.style.overscrollBehavior;
+    const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+    const backgroundElements = Array.from(root.children).filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement && element !== dialog && element.tagName !== "STYLE",
+    );
+    const backgroundState = backgroundElements.map((element) => ({
+      element,
+      hadInert: element.hasAttribute("inert"),
+      ariaHidden: element.getAttribute("aria-hidden"),
+    }));
+
+    (examplesCloseRef.current ?? dialog).focus({ preventScroll: true });
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    if (scrollbarWidth > 0) {
+      const currentPadding = Number.parseFloat(window.getComputedStyle(document.body).paddingRight) || 0;
+      document.body.style.paddingRight = `${currentPadding + scrollbarWidth}px`;
+    }
+    backgroundElements.forEach((element) => {
+      element.setAttribute("inert", "");
+      element.setAttribute("aria-hidden", "true");
+    });
+
+    const getFocusableElements = () =>
+      Array.from(
+        dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter(
+        (element) =>
+          !element.closest('[aria-hidden="true"], [inert]') && element.getClientRects().length > 0,
+      );
+
+    const onDialogKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        setMoreOpen(false);
+        return;
+      }
+
+      if (event.key !== "Tab") return;
+
+      const focusableElements = getFocusableElements();
+      if (focusableElements.length === 0) {
+        event.preventDefault();
+        dialog.focus({ preventScroll: true });
+        return;
+      }
+
+      const first = focusableElements[0];
+      const last = focusableElements[focusableElements.length - 1];
+      const active = document.activeElement;
+      const focusIsOutside = active === dialog || !dialog.contains(active);
+
+      if (event.shiftKey && (active === first || focusIsOutside)) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && (active === last || focusIsOutside)) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    };
+
+    document.addEventListener("keydown", onDialogKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onDialogKeyDown, true);
+      document.body.style.overflow = previousBodyOverflow;
+      document.body.style.paddingRight = previousBodyPaddingRight;
+      document.body.style.overscrollBehavior = previousBodyOverscroll;
+      backgroundState.forEach(({ element, hadInert, ariaHidden }) => {
+        if (hadInert) element.setAttribute("inert", "");
+        else element.removeAttribute("inert");
+
+        if (ariaHidden === null) element.removeAttribute("aria-hidden");
+        else element.setAttribute("aria-hidden", ariaHidden);
+      });
+      if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
+        previouslyFocused.focus({ preventScroll: true });
+      }
+    };
+  }, [moreOpen]);
 
   /* ── Light motes (client-only so SSR markup matches) ── */
   useEffect(() => {
@@ -331,6 +463,11 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
     router.push(`/search?q=${encodeURIComponent(trimmed)}`);
   }, [router]);
 
+  const scrollToSearch = useCallback(() => {
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+  }, []);
+
   const rev = (k: string) => (revealed[k] ? { op: 1, ty: "0px" } : { op: 0, ty: "40px" });
   const num = (n: number) => n.toLocaleString("en-US");
 
@@ -354,7 +491,7 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
   );
 
   return (
-    <div ref={rootRef}>
+    <div ref={rootRef} className="cine-home">
       {/* Film grade — a gentle vignette, and the optional grain */}
       <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 90, pointerEvents: "none", background: "radial-gradient(120% 100% at 50% 42%, transparent 66%, rgba(22,18,12,0.12) 100%)" }} />
       {filmGrain && (
@@ -371,15 +508,17 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
           style={{ position: "fixed", inset: 0, zIndex: 1000, background: "#16120C", cursor: "pointer", overflow: "hidden", opacity: lockVisible ? 1 : 0, transition: "opacity 0.9s cubic-bezier(0.4,0,0.2,1)", pointerEvents: lockVisible ? "auto" : "none" }}
         >
           {/* The photograph — never cropped away from his face */}
-          <div style={{ position: "absolute", inset: 0, opacity: beat >= 1 ? 1 : 0, transition: "opacity 1.6s cubic-bezier(0.4,0,0.2,1)" }}>
-            <div aria-hidden style={{ position: "absolute", inset: 0, backgroundImage: `url('${photo}')`, backgroundSize: "cover", backgroundPosition: "center 30%", filter: "blur(30px) saturate(1.05) brightness(0.62)", transform: "scale(1.12)" }} />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img className="cine-door-photo" src={photo} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 28%" }} />
-            <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(22,18,12,0.42) 0%, rgba(22,18,12,0.10) 30%, rgba(22,18,12,0.46) 60%, rgba(22,18,12,0.92) 100%)" }} />
-            <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(115% 62% at 50% 88%, rgba(22,18,12,0.62), rgba(22,18,12,0.28) 55%, transparent 78%)" }} />
-            <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 90% at 50% 92%, rgba(201,162,75,0.16), transparent 55%)" }} />
-            <div aria-hidden style={{ position: "absolute", top: "-30%", left: 0, width: "45%", height: "160%", background: "linear-gradient(90deg, transparent, rgba(255,244,214,0.16), transparent)", filter: "blur(30px)", animation: "lightSweep 11s ease-in-out infinite", pointerEvents: "none" }} />
-          </div>
+          {photo && (
+            <div style={{ position: "absolute", inset: 0, opacity: beat >= 1 ? 1 : 0, transition: "opacity 1.6s cubic-bezier(0.4,0,0.2,1)" }}>
+              <div aria-hidden style={{ position: "absolute", inset: 0, backgroundImage: `url('${photo}')`, backgroundSize: "cover", backgroundPosition: "center 30%", filter: "blur(30px) saturate(1.05) brightness(0.62)", transform: "scale(1.12)" }} />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img className="cine-door-photo" src={photo} alt="" aria-hidden style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", objectPosition: "center 28%" }} />
+              <div aria-hidden style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(22,18,12,0.42) 0%, rgba(22,18,12,0.10) 30%, rgba(22,18,12,0.46) 60%, rgba(22,18,12,0.92) 100%)" }} />
+              <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(115% 62% at 50% 88%, rgba(22,18,12,0.62), rgba(22,18,12,0.28) 55%, transparent 78%)" }} />
+              <div aria-hidden style={{ position: "absolute", inset: 0, background: "radial-gradient(120% 90% at 50% 92%, rgba(201,162,75,0.16), transparent 55%)" }} />
+              <div aria-hidden style={{ position: "absolute", top: "-30%", left: 0, width: "45%", height: "160%", background: "linear-gradient(90deg, transparent, rgba(255,244,214,0.16), transparent)", filter: "blur(30px)", animation: "lightSweep 11s ease-in-out infinite", pointerEvents: "none" }} />
+            </div>
+          )}
 
           {/* Identity first — name settled by ~1.2s, then one verse */}
           <div style={{ position: "relative", zIndex: 5, height: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", padding: "88px 24px clamp(56px, 13vh, 130px)", textAlign: "center", transform: `translateY(${lockVisible ? "0px" : "-50px"})`, transition: "transform 0.9s cubic-bezier(0.4,0,0.2,1)" }}>
@@ -401,9 +540,9 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
 
       {/* ═══════ MORE QUESTIONS ═══════ */}
       {moreOpen && (
-        <div role="dialog" aria-label="Example questions" onClick={() => setMoreOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 1300, display: "flex", alignItems: "center", justifyContent: "center", padding: "clamp(20px,5vw,60px)", background: "radial-gradient(120% 100% at 50% 30%, rgba(45,36,80,0.42), rgba(22,18,12,0.66))", backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)", animation: "moreOverlayIn 0.5s ease both" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: "100%", maxWidth: 760, maxHeight: "86vh", overflowY: "auto", padding: "clamp(32px,4vw,52px)", borderRadius: 28, background: "linear-gradient(160deg, rgba(254,252,248,0.98), rgba(250,247,241,0.96))", border: "1px solid rgba(255,255,255,0.6)", boxShadow: "0 40px 120px rgba(22,18,12,0.5), 0 0 0 1px rgba(107,87,201,0.08)", animation: `morePanelIn 0.7s ${EASE} both` }}>
-            <button onClick={() => setMoreOpen(false)} aria-label="Close" className="cine-close" style={{ position: "absolute", top: 18, right: 18, width: 38, height: 38, borderRadius: "50%", border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", color: "#6E6353", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all 0.3s ease" }}>
+        <div ref={examplesDialogRef} role="dialog" aria-modal="true" aria-label="Example questions" tabIndex={-1} onClick={() => setMoreOpen(false)} className="cine-home-examples-scrim" style={{ background: "radial-gradient(120% 100% at 50% 30%, rgba(45,36,80,0.42), rgba(22,18,12,0.66))", backdropFilter: "blur(16px) saturate(1.1)", WebkitBackdropFilter: "blur(16px) saturate(1.1)", animation: "moreOverlayIn 0.5s ease both" }}>
+          <div onClick={(e) => e.stopPropagation()} className="cine-home-examples-panel" style={{ background: "linear-gradient(160deg, rgba(254,252,248,0.98), rgba(250,247,241,0.96))", border: "1px solid rgba(255,255,255,0.6)", boxShadow: "0 40px 120px rgba(22,18,12,0.5), 0 0 0 1px rgba(107,87,201,0.08)", animation: `morePanelIn 0.7s ${EASE} both` }}>
+            <button ref={examplesCloseRef} onClick={() => setMoreOpen(false)} aria-label="Close" className="cine-close cine-home-examples-close" style={{ border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", color: "#6E6353", cursor: "pointer", transition: "all 0.3s ease" }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
             </button>
             <p className="font-body" style={{ margin: 0, fontSize: 11, fontWeight: 600, letterSpacing: "0.32em", textTransform: "uppercase", color: "#6B57C9", textAlign: "center" }}>Ask him anything</p>
@@ -411,8 +550,8 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
             <p className="font-display" style={{ margin: "0 0 clamp(26px,3vh,36px)", fontSize: "clamp(15px,1.8vw,19px)", fontStyle: "italic", color: "#6E6353", textAlign: "center" }}>Choose a question — his own words will answer.</p>
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10 }}>
               {QUESTIONS.map((q, i) => (
-                <button key={q} onClick={() => { setMoreOpen(false); runSearch(q); }} className="cine-overlay-pill font-body"
-                  style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 20px", borderRadius: 100, border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", fontSize: 14, color: "#2B2519", cursor: "pointer", whiteSpace: "nowrap", opacity: 0, animation: `moreCardIn 0.6s ${EASE} both`, animationDelay: `${(0.14 + i * 0.05).toFixed(2)}s`, transition: "background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s, transform 0.3s" }}>
+                <button key={q} onClick={() => { setMoreOpen(false); runSearch(q); }} className="cine-overlay-pill cine-home-question-pill font-body"
+                  style={{ border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.9)", color: "#2B2519", cursor: "pointer", opacity: 0, animation: `moreCardIn 0.6s ${EASE} both`, animationDelay: `${(0.14 + i * 0.05).toFixed(2)}s`, transition: "background 0.3s, border-color 0.3s, color 0.3s, box-shadow 0.3s, transform 0.3s" }}>
                   {q}
                 </button>
               ))}
@@ -425,19 +564,19 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
 
       {/* Feedback FAB — no audio controls anywhere on the site */}
       {!lockVisible && (
-        <button aria-label="Send feedback" onClick={() => openModal("feedback")} className="cine-fab font-body"
-          style={{ position: "fixed", bottom: 20, right: 20, zIndex: 500, display: "inline-flex", alignItems: "center", gap: 9, padding: "13px 22px", borderRadius: 100, border: "1px solid rgba(255,244,214,0.35)", background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFF8E8", fontSize: 13, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.35)", animation: `fabIn 0.9s ${EASE} 0.6s backwards`, opacity: footerNear ? 0 : 1, transform: footerNear ? "translateY(18px) scale(0.92)" : "translateY(0px) scale(1)", pointerEvents: footerNear ? "none" : "auto", transition: `opacity 0.4s ease, transform 0.5s ${EASE}, box-shadow 0.35s ease` }}>
+        <button aria-label="Send feedback" onClick={() => openModal("feedback")} className="cine-fab cine-home-feedback font-body"
+          style={{ border: "1px solid rgba(255,244,214,0.35)", background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFF8E8", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.35)", animation: `fabIn 0.9s ${EASE} 0.6s backwards`, opacity: footerNear ? 0 : 1, transform: footerNear ? "translateY(18px) scale(0.92)" : "translateY(0px) scale(1)", pointerEvents: footerNear ? "none" : "auto", transition: `opacity 0.4s ease, transform 0.5s ${EASE}, box-shadow 0.35s ease` }}>
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" /></svg>
           <span>Feedback</span>
         </button>
       )}
 
       {/* ═══════ THE PAGE ═══════ */}
-      <div style={{ opacity: lockVisible ? 0 : 1, transform: `scale(${lockVisible ? 0.98 : 1})`, transformOrigin: "50% 20%", transition: `opacity 1.0s ease 0.2s, transform 1.2s ${EASE} 0.1s`, minHeight: "100vh", display: "flex", flexDirection: "column", position: "relative", zIndex: 2 }}>
+      <div className="cine-home-page" style={{ opacity: lockVisible ? 0 : 1, transform: `scale(${lockVisible ? 0.98 : 1})`, transformOrigin: "50% 20%", transition: `opacity 1.0s ease 0.2s, transform 1.2s ${EASE} 0.1s` }}>
         <main style={{ flex: 1 }}>
 
           {/* ── HERO — the search IS the page ── */}
-          <section style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "80px clamp(16px,4vw,80px) 60px", position: "relative", overflow: "hidden" }}>
+          <section className="cine-home-hero">
             <div aria-hidden style={{ position: "absolute", top: "44%", left: "50%", width: "min(90vw,760px)", height: "min(90vw,760px)", borderRadius: "50%", background: "radial-gradient(circle, rgba(139,110,224,0.26) 0%, rgba(201,162,75,0.09) 40%, transparent 70%)", filter: "blur(52px)", transform: "translate(-50%,-50%)", animation: "auraBreathe 9s ease-in-out infinite", pointerEvents: "none" }} />
             {showMotes && motes.length > 0 && (
               <div aria-hidden style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
@@ -458,8 +597,8 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
                 <p className="font-display" style={{ margin: 0, fontSize: "clamp(17px, 2.4vw, 24px)", fontStyle: "italic", fontWeight: 500, textAlign: "center", color: "#6E6353", transform: `translateY(${hero.l})`, transition: `transform 1.0s ${EASE} 0.5s` }}>Nothing added. Nothing invented.</p>
               </div>
 
-              <form onSubmit={(e) => { e.preventDefault(); runSearch(query); }} style={{ width: "100%", maxWidth: 720, position: "relative", marginTop: 40, opacity: hero.formOp, transform: `translateY(${hero.formY})`, transition: `opacity 0.9s ease 0.7s, transform 0.9s ${EASE} 0.7s` }}>
-                <div style={{ position: "relative", borderRadius: 20, padding: 1.5, background: `linear-gradient(135deg, ${focused ? "rgba(107,87,201,0.72)" : "rgba(107,87,201,0.40)"}, ${focused ? "rgba(201,162,75,0.5)" : "rgba(201,162,75,0.26)"})`, boxShadow: focused ? "0 0 0 4px rgba(107,87,201,0.10), 0 18px 60px rgba(107,87,201,0.16)" : "0 2px 6px rgba(43,37,25,0.05), 0 18px 50px rgba(43,37,25,0.08)", transition: "background 0.3s cubic-bezier(0.2,0,0,1), box-shadow 0.5s cubic-bezier(0.2,0,0,1)" }}>
+              <form onSubmit={(e) => { e.preventDefault(); runSearch(query); }} className="cine-home-search-form" style={{ opacity: hero.formOp, transform: `translateY(${hero.formY})`, transition: `opacity 0.9s ease 0.7s, transform 0.9s ${EASE} 0.7s` }}>
+                <div className="cine-home-search-frame" style={{ background: `linear-gradient(135deg, ${focused ? "rgba(107,87,201,0.72)" : "rgba(107,87,201,0.40)"}, ${focused ? "rgba(201,162,75,0.5)" : "rgba(201,162,75,0.26)"})`, boxShadow: focused ? "0 0 0 4px rgba(107,87,201,0.10), 0 18px 60px rgba(107,87,201,0.16)" : "0 2px 6px rgba(43,37,25,0.05), 0 18px 50px rgba(43,37,25,0.08)", transition: "background 0.3s cubic-bezier(0.2,0,0,1), box-shadow 0.5s cubic-bezier(0.2,0,0,1)" }}>
                   <textarea
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -468,38 +607,37 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); runSearch(query); } }}
                     aria-label="Search Prabhupāda's books"
                     rows={1}
-                    className="font-body"
-                    style={{ width: "100%", display: "block", padding: "22px clamp(100px,16vw,120px) 22px clamp(18px,3vw,28px)", fontSize: "clamp(15px,2.8vw,18px)", fontWeight: 400, border: "none", borderRadius: 18, background: "#FEFCF8", color: "#2B2519", outline: "none", resize: "none", overflow: "hidden", lineHeight: 1.5, boxSizing: "border-box" }}
+                    className="font-body cine-home-search-input"
                   />
                   {!query && !focused && (
-                    <span aria-hidden className="font-body" style={{ position: "absolute", left: 28, top: 24, right: 104, fontSize: "clamp(15px,2.8vw,18px)", color: "#6E6353", pointerEvents: "none", display: "flex", alignItems: "center", overflow: "hidden", whiteSpace: "nowrap" }}>
+                    <span aria-hidden className="font-body cine-home-search-placeholder" style={{ color: "#6E6353", display: "flex", alignItems: "center" }}>
                       {twText}
                       <span style={{ display: "inline-block", width: 2, height: "1.2em", background: "#6B57C9", marginLeft: 1, animation: "typewriterBlink 0.8s step-end infinite", opacity: 0.7 }} />
                     </span>
                   )}
                   {!query && focused && (
-                    <span aria-hidden className="font-body" style={{ position: "absolute", left: 28, top: 24, right: 104, fontSize: "clamp(15px,2.8vw,18px)", color: "#9A8F7D", pointerEvents: "none", lineHeight: 1.5, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>Ask anything about the scriptures...</span>
+                    <span aria-hidden className="font-body cine-home-search-placeholder" style={{ color: "#9A8F7D", lineHeight: 1.5, textOverflow: "ellipsis" }}>Ask anything about the scriptures...</span>
                   )}
-                  <button type="submit" aria-label="Search" className="cine-submit-btn" style={{ position: "absolute", right: 10, top: 12, width: 48, height: 48, borderRadius: 14, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", cursor: canSubmit ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", opacity: canSubmit ? 1 : 0.4, transition: "all 0.3s cubic-bezier(0.2,0,0,1)", boxShadow: canSubmit ? "0 4px 14px rgba(107,87,201,0.30)" : "none" }}>
+                  <button type="submit" aria-label="Search" className="cine-submit-btn cine-home-search-submit" style={{ background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", cursor: canSubmit ? "pointer" : "default", opacity: canSubmit ? 1 : 0.4, transition: "all 0.3s cubic-bezier(0.2,0,0,1)", boxShadow: canSubmit ? "0 4px 14px rgba(107,87,201,0.30)" : "none" }}>
                     <svg width="19" height="19" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
                   </button>
                 </div>
               </form>
 
-              <div style={{ marginTop: 20, display: "flex", flexWrap: "wrap", justifyContent: "center", alignItems: "center", gap: 8, opacity: hero.formOp, transition: "opacity 0.9s ease 0.95s" }}>
+              <div className="cine-home-prompts" style={{ opacity: hero.formOp, transition: "opacity 0.9s ease 0.95s" }}>
                 {QUESTIONS.slice(0, 3).map((q) => (
-                  <button key={q} onClick={() => runSearch(q)} className="cine-pill font-body" style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 100, border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.8)", fontSize: 13, color: "#2B2519", cursor: "pointer", transition: "all 0.35s cubic-bezier(0.2,0,0,1)", whiteSpace: "nowrap" }}>{q}</button>
+                  <button key={q} onClick={() => runSearch(q)} className="cine-pill cine-home-question-pill font-body" style={{ border: "1px solid #E8E0D2", background: "rgba(254,252,248,0.8)", color: "#2B2519", cursor: "pointer", transition: "all 0.35s cubic-bezier(0.2,0,0,1)" }}>{q}</button>
                 ))}
-                <button onClick={() => setMoreOpen(true)} className="cine-more-pill font-body" style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 16px", borderRadius: 100, border: "1px dashed rgba(107,87,201,0.35)", background: "rgba(107,87,201,0.05)", fontSize: 13, fontWeight: 500, color: "#51409A", cursor: "pointer", transition: "all 0.35s cubic-bezier(0.2,0,0,1)", whiteSpace: "nowrap" }}>
+                <button onClick={() => setMoreOpen(true)} className="cine-more-pill cine-home-question-pill font-body" style={{ gap: 7, border: "1px dashed rgba(107,87,201,0.35)", background: "rgba(107,87,201,0.05)", fontWeight: 500, color: "#51409A", cursor: "pointer", transition: "all 0.35s cubic-bezier(0.2,0,0,1)" }}>
                   More questions
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14M5 12h14" /></svg>
                 </button>
               </div>
 
-              <p className="font-body" style={{ margin: "26px 0 0", fontSize: 12.5, fontWeight: 500, letterSpacing: "0.04em", color: "#9A8F7D", textAlign: "center", opacity: hero.formOp, transition: "opacity 0.9s ease 1.1s" }}>36 books · 3,700 lectures · 6,500 letters — every answer verbatim, every citation linked</p>
+              <p className="font-body cine-home-stats" style={{ fontSize: 12.5, fontWeight: 500, letterSpacing: "0.04em", color: "#9A8F7D", textAlign: "center", opacity: hero.formOp, transition: "opacity 0.9s ease 1.1s" }}>36 books · 3,700 lectures · 6,500 letters — every answer verbatim, every citation linked</p>
             </div>
 
-            <div aria-hidden style={{ position: "absolute", bottom: 26, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, opacity: hero.formOp, transition: "opacity 1s ease 1.4s" }}>
+            <div aria-hidden className="cine-home-scroll-cue" style={{ opacity: hero.formOp, transition: "opacity 1s ease 1.4s" }}>
               <span className="font-body" style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.3em", textTransform: "uppercase", color: "#9A8F7D", marginLeft: "0.3em" }}>Scroll</span>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ animation: "scrollCue 2.2s ease-in-out infinite", color: "#9A8F7D" }}><path d="M12 5v14M5 12l7 7 7-7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </div>
@@ -575,10 +713,10 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
 
           {/* ── VOICES — honestly labelled samples ── */}
           <section data-creveal="voices" style={{ padding: "clamp(70px,11vh,130px) clamp(24px,6vw,100px)", maxWidth: 1280, margin: "0 auto", width: "100%", boxSizing: "border-box" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 20, marginBottom: "clamp(36px,5vh,56px)", opacity: rev("voices").op, transform: `translateY(${rev("voices").ty})`, transition: `opacity 0.9s ${EASE}, transform 0.9s ${EASE}` }}>
-              <p className="font-body" style={{ margin: 0, fontSize: 12, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.32em", color: "#6B57C9", whiteSpace: "nowrap" }}>From the devotees</p>
-              <div aria-hidden style={{ flex: 1, height: 1, background: "#E8E0D2" }} />
-              <p className="font-body" style={{ margin: 0, fontSize: 12, fontWeight: 500, color: "#9A8F7D", whiteSpace: "nowrap" }}>Sample voices — real quotes coming</p>
+            <div className="cine-home-voices-head" style={{ opacity: rev("voices").op, transform: `translateY(${rev("voices").ty})`, transition: `opacity 0.9s ${EASE}, transform 0.9s ${EASE}` }}>
+              <p className="cine-home-voices-label font-body" style={{ color: "#6B57C9" }}>From the devotees</p>
+              <div className="cine-home-voices-rule" aria-hidden style={{ background: "#E8E0D2" }} />
+              <p className="cine-home-voices-note font-body" style={{ color: "#9A8F7D" }}>Sample voices — real quotes coming</p>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "clamp(18px,2.5vw,28px)" }}>
               {VOICES.map((v, i) => (
@@ -598,7 +736,7 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
             <div aria-hidden style={{ width: 56, height: 1, background: "#C9A24B", margin: "0 auto 26px" }} />
             <h2 className="font-display" style={{ margin: "0 0 14px", fontSize: "clamp(32px,4.6vw,62px)", fontWeight: 600, lineHeight: 1.1, letterSpacing: "-0.02em", color: "#201B12", textWrap: "balance" }}>Ask your first question</h2>
             <p className="font-display" style={{ margin: "0 auto 30px", fontSize: "clamp(16px,2vw,21px)", fontStyle: "italic", color: "#6E6353", maxWidth: 480 }}>His words are waiting.</p>
-            <button onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} className="cine-cta-btn font-body" style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "16px 40px", fontSize: 15, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.30)", transition: `all 0.45s ${EASE}` }}>
+            <button onClick={scrollToSearch} className="cine-cta-btn font-body" style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "linear-gradient(135deg, #6B57C9, #51409A)", color: "#FFFFFF", border: "none", borderRadius: 100, padding: "16px 40px", fontSize: 15, fontWeight: 500, letterSpacing: "0.04em", cursor: "pointer", boxShadow: "0 10px 34px rgba(107,87,201,0.30)", transition: `all 0.45s ${EASE}` }}>
               <span>Search the books</span>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
@@ -607,6 +745,275 @@ export default function CinematicHome({ showEntrance = true, filmGrain = true, s
           <SiteFooter />
         </main>
       </div>
+
+      <style jsx global>{`
+        .cine-home-page {
+          position: relative;
+          z-index: 2;
+          min-height: 100dvh;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .cine-home-hero {
+          position: relative;
+          min-height: 100dvh;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          overflow: hidden;
+          padding-top: max(80px, calc(60px + env(safe-area-inset-top)));
+          padding-right: max(clamp(16px, 4vw, 80px), env(safe-area-inset-right));
+          padding-bottom: max(60px, env(safe-area-inset-bottom));
+          padding-left: max(clamp(16px, 4vw, 80px), env(safe-area-inset-left));
+        }
+
+        .cine-home-search-form {
+          position: relative;
+          width: 100%;
+          max-width: 720px;
+          margin-top: 40px;
+        }
+
+        .cine-home-search-frame {
+          position: relative;
+          padding: 1.5px;
+          border-radius: 20px;
+        }
+
+        .cine-home-search-input {
+          box-sizing: border-box;
+          display: block;
+          width: 100%;
+          padding: 22px clamp(100px, 16vw, 120px) 22px clamp(18px, 3vw, 28px);
+          overflow: hidden;
+          border: none;
+          border-radius: 18px;
+          outline: none;
+          background: #fefcf8;
+          color: #2b2519;
+          font-family: inherit;
+          font-size: clamp(15px, 2.8vw, 18px);
+          font-weight: 400;
+          line-height: 1.5;
+          resize: none;
+        }
+
+        .cine-home-search-placeholder {
+          position: absolute;
+          top: 24px;
+          right: 104px;
+          left: 28px;
+          overflow: hidden;
+          color: #6e6353;
+          font-size: clamp(15px, 2.8vw, 18px);
+          white-space: nowrap;
+          pointer-events: none;
+        }
+
+        .cine-home-search-submit {
+          position: absolute;
+          top: 12px;
+          right: 10px;
+          width: 48px;
+          height: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border: none;
+          border-radius: 14px;
+        }
+
+        .cine-home-prompts {
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          margin-top: 20px;
+        }
+
+        .cine-home-question-pill {
+          min-height: 44px;
+          max-width: 100%;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          padding: 8px 16px;
+          border-radius: 100px;
+          font-size: 13px;
+          line-height: 1.35;
+          text-align: center;
+          white-space: nowrap;
+        }
+
+        .cine-overlay-pill.cine-home-question-pill {
+          gap: 8px;
+          padding: 11px 20px;
+          font-size: 14px;
+        }
+
+        .cine-home-stats {
+          max-width: 100%;
+          margin: 26px 0 0;
+          overflow-wrap: anywhere;
+        }
+
+        .cine-home-scroll-cue {
+          position: absolute;
+          bottom: max(26px, env(safe-area-inset-bottom));
+          left: 50%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          transform: translateX(-50%);
+        }
+
+        .cine-home-feedback {
+          position: fixed;
+          right: max(20px, env(safe-area-inset-right));
+          bottom: max(20px, env(safe-area-inset-bottom));
+          z-index: 500;
+          min-height: 44px;
+          display: inline-flex;
+          align-items: center;
+          gap: 9px;
+          padding: 13px 22px;
+          border-radius: 100px;
+          font-size: 13px;
+          font-weight: 500;
+          letter-spacing: 0.04em;
+        }
+
+        .cine-home-voices-head {
+          min-width: 0;
+          display: flex;
+          align-items: baseline;
+          gap: 20px;
+          margin-bottom: clamp(36px, 5vh, 56px);
+        }
+
+        .cine-home-voices-label,
+        .cine-home-voices-note {
+          min-width: 0;
+          margin: 0;
+          overflow-wrap: anywhere;
+          font-size: 12px;
+          white-space: nowrap;
+        }
+
+        .cine-home-voices-label {
+          font-weight: 600;
+          letter-spacing: 0.32em;
+          text-transform: uppercase;
+        }
+
+        .cine-home-voices-note {
+          font-weight: 500;
+        }
+
+        .cine-home-voices-rule {
+          min-width: 24px;
+          height: 1px;
+          flex: 1 1 auto;
+        }
+
+        .cine-home-examples-scrim {
+          position: fixed;
+          inset: 0;
+          z-index: 1300;
+          width: 100%;
+          height: 100dvh;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding-top: max(20px, env(safe-area-inset-top));
+          padding-right: max(clamp(20px, 5vw, 60px), env(safe-area-inset-right));
+          padding-bottom: max(20px, env(safe-area-inset-bottom));
+          padding-left: max(clamp(20px, 5vw, 60px), env(safe-area-inset-left));
+        }
+
+        .cine-home-examples-panel {
+          position: relative;
+          width: 100%;
+          max-width: 760px;
+          max-height: 100%;
+          overflow-x: hidden;
+          overflow-y: auto;
+          padding: clamp(32px, 4vw, 52px);
+          border-radius: 28px;
+        }
+
+        .cine-home-examples-close {
+          position: absolute;
+          top: 14px;
+          right: 14px;
+          width: 44px;
+          height: 44px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+        }
+
+        .cine-home :where(button, a, textarea, [role="button"]):focus-visible {
+          outline: 3px solid #51409a;
+          outline-offset: 3px;
+        }
+
+        .cine-home-search-input:focus-visible {
+          outline-offset: 4px;
+        }
+
+        @media (max-width: 480px) {
+          .cine-home-examples-scrim {
+            padding-right: max(12px, env(safe-area-inset-right));
+            padding-left: max(12px, env(safe-area-inset-left));
+          }
+          .cine-home-examples-panel { padding: 64px 18px 22px; }
+          .cine-home-question-pill {
+            white-space: normal;
+            overflow-wrap: anywhere;
+          }
+          .cine-home-voices-head {
+            flex-wrap: wrap;
+            gap: 10px 14px;
+          }
+          .cine-home-voices-label,
+          .cine-home-voices-note {
+            max-width: 100%;
+            white-space: normal;
+          }
+          .cine-home-voices-note {
+            flex-basis: 100%;
+          }
+        }
+
+        @media (max-height: 520px) and (orientation: landscape) {
+          .cine-home-hero {
+            min-height: 100dvh;
+            justify-content: flex-start;
+            overflow-x: hidden;
+            overflow-y: auto;
+            padding-top: max(76px, calc(60px + env(safe-area-inset-top) + 12px));
+            padding-bottom: max(24px, env(safe-area-inset-bottom));
+          }
+          .cine-home-search-form { margin-top: 18px; }
+          .cine-home-prompts { margin-top: 12px; }
+          .cine-home-stats { margin-top: 16px; }
+          .cine-home-scroll-cue { display: none; }
+          .cine-home-examples-scrim {
+            align-items: flex-start;
+            padding-top: max(12px, env(safe-area-inset-top));
+            padding-bottom: max(12px, env(safe-area-inset-bottom));
+          }
+        }
+      `}</style>
     </div>
   );
 }

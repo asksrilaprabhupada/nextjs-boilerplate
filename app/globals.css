@@ -218,6 +218,19 @@ html {
   scroll-behavior: smooth;
 }
 
+:where(
+  a,
+  button,
+  input,
+  textarea,
+  select,
+  summary,
+  [tabindex]:not([tabindex="-1"])
+):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent-strong) 78%, white);
+  outline-offset: 3px;
+}
+
 body {
   font-family: var(--font-body), 'DM Sans', system-ui, sans-serif;
   font-size: var(--type-body-size);
@@ -654,9 +667,17 @@ body {
   margin-bottom: 10px;
 }
 
+.passage-label > * {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 /* Provenance badge — amber, so NOT-HIS / MIXED-VERIFY passages are never
    rendered unlabelled ("Completed by his disciples after his passing"). */
 .passage-label .passage-label-note {
+  min-width: 0;
+  max-width: 100%;
   font-weight: 600;
   font-style: normal;
   letter-spacing: 0.02em;
@@ -666,6 +687,7 @@ body {
   border: 1px solid rgba(201, 142, 36, 0.30);
   border-radius: 100px;
   padding: 2px 10px;
+  overflow-wrap: anywhere;
 }
 
 /* Dialogue-turn prefix ("Prabhupāda:", "Pradyumna:") inside lecture/conversation
@@ -728,6 +750,10 @@ body {
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
@@ -1039,11 +1065,6 @@ body {
 /* Search Results — follow-up bar controls */
 .cine-newsearch:hover { background: rgba(107,87,201,0.08) !important; color: #6B57C9 !important; }
 
-/* Search Results — Dig deeper trigger + drawer */
-.cine-deep-btn:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateY(-2px); box-shadow: 0 14px 40px rgba(107,87,201,0.12); }
-.cine-drawer-close:hover { background: rgba(107,87,201,0.08) !important; color: #2B2519 !important; }
-.cine-deep-item:hover { border-color: rgba(107,87,201,0.35) !important; transform: translateX(3px); box-shadow: 0 8px 26px rgba(107,87,201,0.10); }
-.cine-results-vote:hover { border-color: #6B57C9 !important; }
 /* ═══════════ UNIFIED SITE HEADER (11-site-header) ═══════════ */
 /* Inline styles carry the desktop defaults (nav visible, burger hidden);
    these !important rules flip them below the tablet breakpoint. */

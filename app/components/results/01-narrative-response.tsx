@@ -19,9 +19,18 @@
  */
 "use client";
 
-import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { motion, AnimatePresence, MotionConfig } from "framer-motion";
 import SearchFeedback from "../search/06-search-feedback";
+import CinematicDigDeeper from "./03-cinematic-dig-deeper";
 import {
   buildFoldPreviewHtml,
   highlightParagraphsHtml,
@@ -34,30 +43,12 @@ import { getBookName } from "@/app/lib/12-provenance";
 import { buildPassageCopyText } from "@/app/lib/23-passage-copy";
 
 /* ─────────────────────────── Data contract ───────────────────────────
-   The response types live in the shared server↔client contract
-   (app/lib/types/01-search.ts) and are re-exported here so existing
-   importers (e.g. 02-dig-deeper-modal) keep working unchanged. */
+   The response types live in the shared server↔client contract. */
 
 import type {
-  AdditionalSearchPassage,
-  Citation,
   SearchPassage,
   SearchResults,
-  VerseHit,
-  ProseHit,
-  TranscriptHit,
-  LetterHit,
 } from "@/app/lib/types/01-search";
-
-export type {
-  Citation,
-  SearchPassage,
-  SearchResults,
-  VerseHit,
-  ProseHit,
-  TranscriptHit,
-  LetterHit,
-};
 
 /* ─────────────────────────── Citation display ─────────────────────────── */
 
@@ -101,8 +92,21 @@ function shelfFor(p: SearchPassage): string {
   return m ? getBookName(m[1].toLowerCase()) : "Other sources";
 }
 
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  '[tabindex]:not([tabindex="-1"])',
+].join(",");
+
 function scrollToSource(index: number) {
-  document.getElementById(`source-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  document.getElementById(`source-${index}`)?.scrollIntoView({
+    behavior: reduceMotion ? "auto" : "smooth",
+    block: "center",
+  });
 }
 
 /** Cite-dot palette key. */
@@ -291,10 +295,69 @@ function PreviewSheet({
   onClose: () => void;
   onCopy: (p: SearchPassage) => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const titleId = useId();
+  const citation = citeFor(p) || "Source preview";
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const dialog = dialogRef.current;
+    const body = document.body;
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = body.style.overflow;
+    const previousPaddingRight = body.style.paddingRight;
+    const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth);
+
+    body.style.overflow = "hidden";
+    if (scrollbarWidth > 0) {
+      const currentPadding = Number.parseFloat(window.getComputedStyle(body).paddingRight) || 0;
+      body.style.paddingRight = `${currentPadding + scrollbarWidth}px`;
+    }
+
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
+        .filter((element) => !element.hasAttribute("hidden") && element.getAttribute("aria-hidden") !== "true");
+
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus({ preventScroll: true });
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!dialog.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus({ preventScroll: true });
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus({ preventScroll: true });
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus({ preventScroll: true });
+      }
+    };
+
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    closeButtonRef.current?.focus({ preventScroll: true });
+
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      body.style.overflow = previousOverflow;
+      body.style.paddingRight = previousPaddingRight;
+      if (previouslyFocused?.isConnected) previouslyFocused.focus({ preventScroll: true });
+    };
   }, [onClose]);
 
   let html = "";
@@ -316,94 +379,43 @@ function PreviewSheet({
       <motion.div
         className="sheet-scrim"
         onClick={onClose}
+        aria-hidden="true"
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
         transition={{ duration: 0.2 }}
       />
-      <motion.div
-        className="preview-sheet"
-        role="dialog" aria-label={`${citeFor(p)} full passage`}
-        initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}
-        transition={{ duration: 0.28, ease: EASE.decelerate }}
-      >
-        <div className="preview-head">
-          <span className="cite-chip" aria-hidden><span className="cite-dot" data-type={dotType(p)} />{citeFor(p)}</span>
-          <button className="sheet-close" onClick={onClose} aria-label="Close preview">&times;</button>
-        </div>
-        <LabelLine p={p} />
-        <div className="preview-body passage-body" dangerouslySetInnerHTML={{ __html: html }} />
-        <div className="preview-actions">
-          <CopyButton onCopy={() => onCopy(p)} label="Copy with reference" />
-          <span className="preview-links">
-            {p.url && (
-              <a className="vedabase-link" href={p.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
-            )}
-          </span>
-        </div>
-      </motion.div>
+      <div className="preview-sheet-positioner">
+        <motion.div
+          ref={dialogRef}
+          className="preview-sheet"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 24 }}
+          transition={{ duration: 0.28, ease: EASE.decelerate }}
+        >
+          <div className="preview-head">
+            <h2 id={titleId} className="cite-chip preview-title">
+              <span className="cite-dot" data-type={dotType(p)} aria-hidden />
+              {citation}
+            </h2>
+            <button ref={closeButtonRef} type="button" className="sheet-close" onClick={onClose} aria-label="Close preview">&times;</button>
+          </div>
+          <div className="preview-scroll-region">
+            <LabelLine p={p} />
+            <div className="preview-body passage-body" dangerouslySetInnerHTML={{ __html: html }} />
+          </div>
+          <div className="preview-actions">
+            <CopyButton onCopy={() => onCopy(p)} label="Copy with reference" />
+            <span className="preview-links">
+              {p.url && (
+                <a className="vedabase-link" href={p.url} target="_blank" rel="noopener noreferrer">Open in Vedabase ↗</a>
+              )}
+            </span>
+          </div>
+        </motion.div>
+      </div>
     </>
-  );
-}
-
-/* ─────────────────────────── The second tier ───────────────────────────
-   Every passage that survived retrieval but was not rendered in full: label,
-   citation, one sentence-safe snippet, a Vedabase link when one exists.
-   Collapsed by default (progressive disclosure — complete, not drowning), and
-   expanding re-requests NOTHING: the data is already in the response. */
-
-const ADDITIONAL_GROUPS: { type: AdditionalSearchPassage["type"]; title: string }[] = [
-  { type: "verse", title: "Verses" },
-  { type: "purport", title: "Purports" },
-  { type: "book", title: "Books" },
-  { type: "lecture", title: "Lectures & Conversations" },
-  { type: "letter", title: "Letters" },
-];
-
-function AdditionalTier({ list, truncated }: { list: AdditionalSearchPassage[]; truncated?: boolean }) {
-  if (list.length === 0) return null;
-  const count = list.length.toLocaleString("en-US");
-  return (
-    <details className="additional-tier">
-      <summary className="font-body">
-        {/* "every one the library found" was not true and could not be.
-            This tier holds what THIS SEARCH retrieved — a pool capped at 700
-            candidates across the five sources — not everything the library
-            holds on the subject. Honesty is the point of this project, so the
-            line says what actually happened and claims nothing more. */}
-        {count} more {list.length === 1 ? "passage" : "passages"} retrieved in this search
-      </summary>
-      {truncated && (
-        <p className="additional-truncated font-body">
-          This list was shortened to fit the response — the counts above are the true totals.
-        </p>
-      )}
-      {ADDITIONAL_GROUPS.map(({ type, title }) => {
-        const group = list.filter((a) => a.type === type);
-        if (group.length === 0) return null;
-        return (
-          <section key={type} className="additional-group">
-            <h4 className="font-body">
-              {title} · {group.length.toLocaleString("en-US")}
-            </h4>
-            <ul>
-              {group.map((a, index) => (
-                <li key={`${type}:${a.reference ?? a.label}:${index}`} className="additional-row">
-                  <div className="additional-label font-body">
-                    <span>{a.label}</span>
-                    {a.provenanceNote && <span className="passage-label-note">{a.provenanceNote}</span>}
-                    {a.url && (
-                      <a href={a.url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${a.reference || a.label} on Vedabase in a new tab`}>
-                        ↗
-                      </a>
-                    )}
-                  </div>
-                  {a.snippet && <p className="additional-snippet font-body">{a.snippet}</p>}
-                </li>
-              ))}
-            </ul>
-          </section>
-        );
-      })}
-    </details>
   );
 }
 
@@ -425,6 +437,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
   const [toast, setToast] = useState<string | null>(null);
   const nextIdxRef = useRef(0);
   const shellRef = useRef<HTMLDivElement>(null);
+  const closePreview = useCallback(() => setPreview(null), []);
 
   useEffect(() => { setPreview(null); }, [results?.query]);
   useEffect(() => {
@@ -562,7 +575,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
             <button
               className="font-body"
               onClick={() => onSearch(results.suggestion!)}
-              style={{ fontSize: "1rem", fontWeight: 600, color: "var(--accent-strong)", background: "none", border: "none", padding: 0, cursor: "pointer", textDecoration: "underline" }}
+              style={{ display: "inline-flex", minHeight: 44, alignItems: "center", fontSize: "1rem", fontWeight: 600, color: "var(--accent-strong)", background: "none", border: "none", padding: "6px 2px", cursor: "pointer", textDecoration: "underline" }}
             >
               {results.suggestionDisplay}
             </button>
@@ -575,7 +588,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center", marginTop: 8 }}>
           {examples.map((q) => (
             <button key={q} className="font-body" onClick={() => onSearch(q)}
-              style={{ fontSize: "0.85rem", fontWeight: 500, color: "var(--accent-strong)", background: "var(--accent-tint)", border: "1px solid transparent", borderRadius: "var(--radius-full)", padding: "8px 16px", cursor: "pointer" }}>
+              style={{ minHeight: 44, fontSize: "0.85rem", fontWeight: 500, color: "var(--accent-strong)", background: "var(--accent-tint)", border: "1px solid transparent", borderRadius: "var(--radius-full)", padding: "8px 16px", cursor: "pointer" }}>
               {q}
             </button>
           ))}
@@ -655,7 +668,11 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         {/* Below the main article in either view: every other passage THIS
             SEARCH retrieved, grouped by kind, collapsed until asked for. Not
             everything the library holds — the candidate pool is capped. */}
-        <AdditionalTier list={results.additional || []} truncated={results.additionalTruncated} />
+        <CinematicDigDeeper
+          list={results.additional || []}
+          totalCount={results.additionalCount}
+          truncated={results.additionalTruncated}
+        />
       </div>
 
       {/* Mobile floating "next passage" */}
@@ -668,7 +685,7 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
       {/* Citation preview sheet */}
       <AnimatePresence>
         {preview && (
-          <PreviewSheet p={preview} onClose={() => setPreview(null)} onCopy={copyWithRef} />
+          <PreviewSheet p={preview} onClose={closePreview} onCopy={copyWithRef} />
         )}
       </AnimatePresence>
 
@@ -682,40 +699,42 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
       </AnimatePresence>
 
       <style jsx global>{`
-        .results-shell { max-width: 720px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 24px); }
+        .results-shell { box-sizing: border-box; width: 100%; min-width: 0; max-width: 720px; margin: 0 auto; padding: 0; }
 
         .view-toggle-row { display: flex; justify-content: flex-end; margin-bottom: var(--space-5); }
-        .view-mode-toggle { display: inline-flex; border: 1px solid var(--border-hair); border-radius: var(--radius-full); overflow: hidden; background: var(--surface-raised); }
-        .view-mode-toggle button { padding: 7px 16px; font-size: var(--type-label-size); font-weight: 500; border: none; cursor: pointer; background: transparent; color: var(--ink-muted); transition: background var(--dur-2) var(--ease-standard), color var(--dur-2) var(--ease-standard); }
+        .view-mode-toggle { display: inline-flex; max-width: 100%; border: 1px solid var(--border-hair); border-radius: var(--radius-full); overflow: hidden; background: var(--surface-raised); }
+        .view-mode-toggle button { min-height: 44px; padding: 7px 16px; font-size: var(--type-label-size); font-weight: 500; border: none; cursor: pointer; background: transparent; color: var(--ink-muted); transition: background var(--dur-2) var(--ease-standard), color var(--dur-2) var(--ease-standard); }
         .view-mode-toggle button.active { background: var(--accent); color: var(--on-accent); }
+        .view-mode-toggle button:focus-visible, .contents summary:focus-visible, .contents button:focus-visible, .fold-expand-btn:focus-visible, .cite-chip:focus-visible, .copy-chip:focus-visible, .sheet-close:focus-visible, .vedabase-link:focus-visible, .next-quote-btn:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 
         /* Neutral AI framing — visually subordinate so it can never read as scripture. */
         .framing-note { font-size: 0.95rem; line-height: 1.6; color: var(--framing); max-width: var(--measure); }
         .framing-intro { margin-bottom: var(--space-7); }
 
         .contents { margin: 0 0 var(--space-6); border: 1px solid var(--border-hair); border-radius: var(--radius-md); background: var(--surface-raised); }
-        .contents > summary { cursor: pointer; padding: 10px 14px; font-size: var(--type-label-size); color: var(--ink-muted); list-style: none; }
+        .contents > summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; padding: 8px 14px; font-size: var(--type-label-size); color: var(--ink-muted); list-style: none; }
         .contents > summary::-webkit-details-marker { display: none; }
         .contents ol { margin: 0; padding: 0 14px 12px 14px; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
-        .contents li button { background: none; border: none; padding: 4px 0; color: var(--accent-strong); font-size: 0.85rem; cursor: pointer; text-align: left; }
+        .contents li button { display: flex; align-items: center; width: 100%; min-height: 44px; background: none; border: none; padding: 6px 0; color: var(--accent-strong); font-size: 0.85rem; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
         .contents li button:hover { text-decoration: underline; }
         @media (max-width: 900px) { .contents { display: none; } }
 
-        .essay-flow { display: flex; flex-direction: column; }
+        .essay-flow { display: flex; min-width: 0; flex-direction: column; }
 
-        .passage { padding: var(--space-6) 0; border-bottom: 1px solid var(--border-hair); }
+        .passage { min-width: 0; padding: var(--space-6) 0; border-bottom: 1px solid var(--border-hair); }
         .essay-flow .passage:last-child { border-bottom: none; }
 
         /* Framing the reader must see for letters / recorded exchanges. */
+        .passage-label, .passage-label-note, .context-notice, .also-appears, .ref-book h3 { overflow-wrap: anywhere; }
         .context-notice { font-size: 0.82rem; color: var(--ink-muted); font-style: italic; margin: 0 0 var(--space-3); }
         .also-appears { font-size: 0.8rem; color: var(--ink-subtle); margin: var(--space-3) 0 0; }
 
         /* Source types distinguished by TYPOGRAPHY (no colored bars, no legend). */
-        .verse-translation { font-family: var(--font-display), 'Cormorant Garamond', Georgia, serif; font-size: clamp(1.2rem, 2.4vw, 1.4rem); line-height: 1.45; color: var(--ink-strong); }
+        .verse-translation { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-display), 'Cormorant Garamond', Georgia, serif; font-size: clamp(1.2rem, 2.4vw, 1.4rem); line-height: 1.45; color: var(--ink-strong); }
         .verse-translation .pp { margin: 0 0 var(--space-3); }
         .verse-translation .pp:last-child { margin-bottom: 0; }
 
-        .passage-body { font-size: var(--type-body-size); line-height: var(--type-body-lh); color: var(--ink); }
+        .passage-body { min-width: 0; overflow-wrap: anywhere; font-size: var(--type-body-size); line-height: var(--type-body-lh); color: var(--ink); }
         .passage-body .pp { margin: 0 0 var(--space-3); }
         .passage-body .pp:last-child { margin-bottom: 0; }
         .letter-body .passage-body, .passage[data-passage-type="letter"] .passage-body { font-style: italic; }
@@ -723,39 +742,25 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         /* Purport: subtle indent under its verse (a quiet commentary voice). */
         .purport-block { margin-top: var(--space-4); padding-left: var(--space-4); border-left: 2px solid var(--border-hair); }
 
-        .fold-expand-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--space-3); padding: 4px 0; background: none; border: none; cursor: pointer; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 600; color: var(--accent-strong); }
+        .fold-expand-btn { display: inline-flex; min-height: 44px; align-items: center; gap: 6px; margin-top: var(--space-3); padding: 6px 0; background: none; border: none; cursor: pointer; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.85rem; font-weight: 600; color: var(--accent-strong); }
         .fold-expand-btn:hover { text-decoration: underline; }
 
-        .passage-foot { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-4); }
-        .cite-chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em; color: var(--accent-strong); background: var(--accent-tint); border: 1px solid transparent; border-radius: var(--radius-full); padding: 3px 11px; cursor: pointer; transition: border-color var(--dur-2) var(--ease-standard); }
+        .passage-foot { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 8px var(--space-3); margin-top: var(--space-4); }
+        .passage-foot > .cite-chip:first-child { flex: 1 1 220px; }
+        .cite-chip { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: 6px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 600; line-height: 1.35; letter-spacing: 0.01em; text-align: left; overflow-wrap: anywhere; white-space: normal; color: var(--accent-strong); background: var(--accent-tint); border: 1px solid transparent; border-radius: var(--radius-full); padding: 6px 11px; cursor: pointer; transition: border-color var(--dur-2) var(--ease-standard); }
         .cite-chip:hover { border-color: var(--accent); }
-        .cite-external { padding: 3px 9px; text-decoration: none; }
+        .cite-external { flex: 0 0 44px; min-width: 44px; justify-content: center; padding: 6px 9px; text-decoration: none; }
         .cite-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
         .cite-dot[data-type="lecture"] { background: var(--p-gold); }
         .cite-dot[data-type="letter"] { background: #8AA48F; }
-        .copy-chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 500; color: var(--ink-muted); background: none; border: none; cursor: pointer; transition: color var(--dur-2) var(--ease-standard); }
+        .copy-chip { display: inline-flex; min-width: 0; align-items: center; justify-content: center; gap: 5px; padding: 6px 4px; font-family: var(--font-body), 'DM Sans', sans-serif; font-size: 0.78rem; font-weight: 500; line-height: 1.35; text-align: center; overflow-wrap: anywhere; color: var(--ink-muted); background: none; border: none; cursor: pointer; transition: color var(--dur-2) var(--ease-standard); }
         .copy-chip:hover { color: var(--accent-strong); }
         .copy-ico { display: inline-flex; width: 14px; height: 14px; align-items: center; justify-content: center; }
-        .cite-chip, .copy-chip { min-height: 30px; }
+        .cite-chip, .copy-chip { min-height: 44px; box-sizing: border-box; }
         .fold-expand-btn:active, .view-mode-toggle button:active { transform: scale(0.985); }
 
-        .ref-book { margin-bottom: var(--space-7); }
+        .ref-book { min-width: 0; margin-bottom: var(--space-7); }
         .ref-book h3 { font-size: 1.3rem; font-weight: 600; color: var(--ink-strong); margin: 0 0 var(--space-2); }
-
-        /* ── The second tier: complete, collapsed, citation-weight ── */
-        .additional-tier { margin: var(--space-7) 0 0; border: 1px solid var(--border-hair); border-radius: var(--radius-md); background: var(--surface-raised); }
-        .additional-tier > summary { cursor: pointer; padding: 12px 16px; font-size: var(--type-label-size); font-weight: 600; color: var(--ink-muted); list-style: none; }
-        .additional-tier > summary::-webkit-details-marker { display: none; }
-        .additional-tier > summary::before { content: "▸ "; }
-        .additional-tier[open] > summary::before { content: "▾ "; }
-        .additional-truncated { margin: 0 16px var(--space-3); font-size: 0.8rem; color: var(--ink-subtle); font-style: italic; }
-        .additional-group { padding: 0 16px var(--space-4); }
-        .additional-group h4 { margin: var(--space-3) 0 var(--space-2); font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-subtle); }
-        .additional-group ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-3); }
-        .additional-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; font-size: 0.82rem; font-weight: 600; color: var(--ink); }
-        .additional-label a { color: var(--accent-strong); text-decoration: none; }
-        .additional-label a:hover { text-decoration: underline; }
-        .additional-snippet { margin: 2px 0 0; font-size: 0.86rem; line-height: 1.55; color: var(--ink-muted); }
 
         /* ── Matched-sentence emphasis (the bloom): lavender→gold, blooms once,
            then settles to a calm resting tint. Never a flat yellow block. ── */
@@ -779,32 +784,57 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
 
         /* ── Citation preview sheet + scrim ── */
         .sheet-scrim { position: fixed; inset: 0; background: color-mix(in srgb, var(--ink-strong) 32%, transparent); backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); z-index: 200; }
-        .preview-sheet { position: fixed; z-index: 201; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(640px, 92vw); max-height: 82vh; overflow-y: auto; background: var(--surface-raised); border: 1px solid var(--border-hair); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); padding: var(--space-5); }
-        .preview-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); }
+        .preview-sheet-positioner { position: fixed; z-index: 201; left: 50%; top: 50%; width: min(640px, 92vw); max-width: calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); max-height: 82vh; max-height: min(82dvh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 32px)); transform: translate(-50%, -50%); }
+        .preview-sheet { display: flex; box-sizing: border-box; width: 100%; max-height: inherit; flex-direction: column; overflow: hidden; background: var(--surface-raised); border: 1px solid var(--border-hair); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); padding: var(--space-5); }
+        .preview-sheet:focus { outline: none; }
+        .preview-head { display: flex; min-width: 0; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
         .preview-head .cite-chip { cursor: default; }
-        .sheet-close { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--border-hair); background: transparent; color: var(--ink-muted); font-size: 20px; cursor: pointer; line-height: 1; }
-        .preview-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border-hair); }
+        .preview-title { flex: 1 1 auto; margin: 0; }
+        .sheet-close { display: inline-flex; width: 44px; min-width: 44px; height: 44px; align-items: center; justify-content: center; flex: 0 0 44px; border-radius: 50%; border: 1px solid var(--border-hair); background: transparent; color: var(--ink-muted); font-size: 20px; cursor: pointer; line-height: 1; }
+        .preview-scroll-region { min-width: 0; min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+        .preview-actions { display: flex; min-width: 0; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) var(--space-4); margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border-hair); }
         .preview-actions .copy-chip { font-size: 0.85rem; }
-        .vedabase-link { font-size: 0.85rem; font-weight: 600; color: var(--accent-strong); text-decoration: none; }
+        .vedabase-link { display: inline-flex; min-height: 44px; align-items: center; font-size: 0.85rem; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; color: var(--accent-strong); text-decoration: none; }
         .vedabase-link:hover { text-decoration: underline; }
-        .preview-links { display: flex; gap: var(--space-4); align-items: center; }
+        .preview-links { display: flex; min-width: 0; max-width: 100%; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
         @media (max-width: 640px) {
-          .preview-sheet { left: 0; right: 0; bottom: 0; top: auto; transform: none; width: 100%; max-height: 85vh; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+          .preview-sheet-positioner { left: 0; right: 0; bottom: 0; top: auto; width: 100%; max-width: none; max-height: 85vh; max-height: calc(100dvh - max(8px, env(safe-area-inset-top, 0px))); transform: none; }
+          .preview-sheet { border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding-top: var(--space-5); padding-right: max(var(--space-5), env(safe-area-inset-right, 0px)); padding-bottom: max(var(--space-5), env(safe-area-inset-bottom, 0px)); padding-left: max(var(--space-5), env(safe-area-inset-left, 0px)); }
+        }
+        @media (max-width: 480px) {
+          .preview-actions { align-items: stretch; flex-direction: column; }
+          .preview-actions .copy-chip, .preview-links, .vedabase-link { width: 100%; justify-content: center; }
+        }
+        @media (max-height: 500px) {
+          .preview-sheet-positioner { max-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 12px); }
+          .preview-sheet { padding-top: var(--space-3); padding-bottom: max(var(--space-3), env(safe-area-inset-bottom, 0px)); }
+          .preview-head { margin-bottom: var(--space-2); }
+          .preview-actions { margin-top: var(--space-2); padding-top: var(--space-2); }
         }
 
         /* ── Mobile "next passage" floating button ── */
-        .next-quote-btn { position: fixed; right: 16px; bottom: 20px; z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-hair); background: var(--surface-raised); color: var(--accent-strong); box-shadow: var(--shadow-soft); cursor: pointer; display: none; align-items: center; justify-content: center; transition: transform var(--dur-2) var(--ease-standard); }
+        .next-quote-btn { position: fixed; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); z-index: 60; width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--border-hair); background: var(--surface-raised); color: var(--accent-strong); box-shadow: var(--shadow-soft); cursor: pointer; display: none; align-items: center; justify-content: center; transition: transform var(--dur-2) var(--ease-standard); }
         .next-quote-btn:active { transform: scale(0.94); }
         @media (max-width: 900px) { .next-quote-btn { display: flex; } }
 
-        .copy-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 210; background: var(--ink-strong); color: var(--surface-raised); font-size: 0.85rem; padding: 10px 18px; border-radius: var(--radius-full); box-shadow: var(--shadow-soft); }
+        .copy-toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); box-sizing: border-box; max-width: calc(100vw - 32px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)); transform: translateX(-50%); z-index: 210; background: var(--ink-strong); color: var(--surface-raised); font-size: 0.85rem; line-height: 1.4; overflow-wrap: anywhere; padding: 10px 18px; border-radius: var(--radius-full); box-shadow: var(--shadow-soft); }
 
         @media (prefers-reduced-motion: reduce) {
           .hl-sentence.bloom { animation-duration: 0.01ms; }
+          .view-mode-toggle button, .cite-chip, .copy-chip, .next-quote-btn { transition-duration: 0.01ms; }
+          .fold-expand-btn:active, .view-mode-toggle button:active, .next-quote-btn:active { transform: none; }
         }
 
         @media (max-width: 768px) {
           .passage { padding: var(--space-5) 0; }
+          .purport-block { padding-left: var(--space-3); }
+        }
+
+        @media (max-width: 360px) {
+          .view-toggle-row { justify-content: stretch; }
+          .view-mode-toggle { width: 100%; }
+          .view-mode-toggle button { min-width: 0; flex: 1 1 50%; padding-right: 10px; padding-left: 10px; }
+          .passage-foot > .cite-chip:first-child { flex-basis: 100%; }
         }
       `}</style>
     </MotionConfig>

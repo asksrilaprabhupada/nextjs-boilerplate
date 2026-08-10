@@ -38,7 +38,7 @@ const NAV: { key: string; label: string; href: string; match: (p: string) => boo
 
 const linkBase: CSSProperties = {
   textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "7px 16px",
-  borderRadius: 9, fontSize: 14, lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.4s, background 0.4s",
+  minHeight: 44, borderRadius: 9, fontSize: 14, lineHeight: 1, whiteSpace: "nowrap", transition: "color 0.4s, background 0.4s",
 };
 
 const PAPER = {
@@ -114,8 +114,8 @@ export default function SiteHeader({ variant = "solid" }: { variant?: HeaderVari
 
   return (
     <>
-      <header style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 100, height: 60, background: hdr.bg, backdropFilter: hdr.blur, WebkitBackdropFilter: hdr.blur, borderBottom: `1px solid ${hdr.border}`, padding: "0 clamp(20px,4vw,48px)", display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: hdr.shadow, transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s" }}>
-        <Link href="/?entrance=0" className="font-display" style={{ textDecoration: "none", fontSize: "clamp(1rem, 3.5vw, 1.4rem)", fontWeight: 600, color: brandColor, whiteSpace: "nowrap", letterSpacing: "-0.01em", transition: "color 0.4s" }}>Ask Śrīla Prabhupāda</Link>
+      <header className="site-header" style={{ background: hdr.bg, backdropFilter: hdr.blur, WebkitBackdropFilter: hdr.blur, borderBottom: `1px solid ${hdr.border}`, boxShadow: hdr.shadow, transition: "border-color 0.4s, background 0.4s, box-shadow 0.4s" }}>
+        <Link href="/?entrance=0" className="site-header__brand font-display" style={{ color: brandColor, transition: "color 0.4s" }}>Ask Śrīla Prabhupāda</Link>
 
         {/* Desktop nav */}
         <nav className="site-nav-desktop" style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -153,7 +153,7 @@ export default function SiteHeader({ variant = "solid" }: { variant?: HeaderVari
           onClick={() => setMenuOpen((v) => !v)}
           aria-label={menuOpen ? "Close menu" : "Open menu"}
           aria-expanded={menuOpen}
-          style={{ display: "none", width: 40, height: 40, borderRadius: 10, border: `1px solid ${dark ? "rgba(232,224,210,0.4)" : "#E8E0D2"}`, background: dark ? "transparent" : "rgba(254,252,248,0.9)", color: brandColor, cursor: "pointer", alignItems: "center", justifyContent: "center", transition: "color 0.4s, border-color 0.4s, background 0.4s" }}
+          style={{ border: `1px solid ${dark ? "rgba(232,224,210,0.4)" : "#E8E0D2"}`, background: dark ? "transparent" : "rgba(254,252,248,0.9)", color: brandColor, cursor: "pointer", transition: "color 0.4s, border-color 0.4s, background 0.4s" }}
         >
           {menuOpen ? (
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -168,7 +168,7 @@ export default function SiteHeader({ variant = "solid" }: { variant?: HeaderVari
 
       {/* Mobile slide-down sheet */}
       {menuOpen && (
-        <div className="site-nav-sheet" style={{ position: "fixed", top: 60, left: 0, right: 0, zIndex: 98, background: "linear-gradient(160deg, rgba(254,252,248,0.99), rgba(250,247,241,0.98))", borderBottom: "1px solid #E8E0D2", boxShadow: "0 24px 70px rgba(43,37,25,0.16)", padding: "10px clamp(16px,4vw,32px) 18px", animation: "morePanelIn 0.35s cubic-bezier(0.16,1,0.3,1) both", display: "flex", flexDirection: "column", gap: 2 }}>
+        <div className="site-nav-sheet" style={{ background: "linear-gradient(160deg, rgba(254,252,248,0.99), rgba(250,247,241,0.98))", borderBottom: "1px solid #E8E0D2", boxShadow: "0 24px 70px rgba(43,37,25,0.16)", animation: "morePanelIn 0.35s cubic-bezier(0.16,1,0.3,1) both" }}>
           {NAV.map((item) => {
             const active = item.match(pathname);
             return (
@@ -190,6 +190,88 @@ export default function SiteHeader({ variant = "solid" }: { variant?: HeaderVari
           </div>
         </div>
       )}
+
+      <style jsx global>{`
+        .site-header {
+          position: fixed;
+          top: 0;
+          right: 0;
+          left: 0;
+          z-index: 100;
+          box-sizing: border-box;
+          height: calc(60px + env(safe-area-inset-top));
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding-top: env(safe-area-inset-top);
+          padding-right: max(clamp(20px, 4vw, 48px), env(safe-area-inset-right));
+          padding-left: max(clamp(20px, 4vw, 48px), env(safe-area-inset-left));
+        }
+
+        .site-header__brand {
+          min-width: 0;
+          overflow: hidden;
+          color: #51409a;
+          font-size: clamp(1rem, 3.5vw, 1.4rem);
+          font-weight: 600;
+          letter-spacing: -0.01em;
+          text-decoration: none;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .site-nav-burger {
+          flex: 0 0 44px;
+          width: 44px;
+          height: 44px;
+          display: none;
+          align-items: center;
+          justify-content: center;
+          margin-left: 12px;
+          border-radius: 10px;
+        }
+
+        .site-nav-sheet {
+          position: fixed;
+          top: calc(60px + env(safe-area-inset-top));
+          right: 0;
+          left: 0;
+          z-index: 98;
+          max-height: calc(100dvh - 60px - env(safe-area-inset-top));
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          overflow-y: auto;
+          overscroll-behavior: contain;
+          padding-top: 10px;
+          padding-right: max(clamp(16px, 4vw, 32px), env(safe-area-inset-right));
+          padding-bottom: max(18px, env(safe-area-inset-bottom));
+          padding-left: max(clamp(16px, 4vw, 32px), env(safe-area-inset-left));
+        }
+
+        .site-nav-sheet > a,
+        .site-nav-sheet > button {
+          min-height: 44px;
+        }
+
+        .site-nav-sheet .theme-toggle {
+          width: 44px;
+          height: 44px;
+        }
+
+        .site-header :where(a, button):focus-visible,
+        .site-nav-sheet :where(a, button):focus-visible {
+          outline: 3px solid #51409a;
+          outline-offset: 3px;
+        }
+
+        @media (max-height: 520px) and (orientation: landscape) {
+          .site-nav-sheet {
+            padding-top: 6px;
+            padding-bottom: max(10px, env(safe-area-inset-bottom));
+          }
+        }
+      `}</style>
     </>
   );
 }

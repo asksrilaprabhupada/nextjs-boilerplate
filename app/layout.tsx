@@ -37,6 +37,12 @@ const fontDeva = Noto_Serif_Devanagari({
   display: "swap",
 });
 
+const SOCIAL_IMAGE_PATH =
+  "/images/ChatGPT%20Image%20Aug%209%2C%202026%2C%2007_33_10%20PM.png";
+const SOCIAL_IMAGE_WIDTH = 1672;
+const SOCIAL_IMAGE_HEIGHT = 941;
+const SOCIAL_IMAGE_ALT = "Ask Śrīla Prabhupāda — Books, Lectures, and Letters";
+
 export const metadata: Metadata = {
   title: "Ask Śrīla Prabhupāda — Search His Books, Lectures & Letters",
   description:
@@ -60,10 +66,10 @@ export const metadata: Metadata = {
       "Ask any question and read the answer in Śrīla Prabhupāda's own words — 244,000 searchable passages from his books, lectures, and letters, every citation linked to Vedabase.",
     images: [
       {
-        url: "/images/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "Ask Śrīla Prabhupāda — Scripture Search Engine",
+        url: SOCIAL_IMAGE_PATH,
+        width: SOCIAL_IMAGE_WIDTH,
+        height: SOCIAL_IMAGE_HEIGHT,
+        alt: SOCIAL_IMAGE_ALT,
       },
     ],
   },
@@ -72,7 +78,14 @@ export const metadata: Metadata = {
     title: "Ask Śrīla Prabhupāda — Search His Books, Lectures & Letters",
     description:
       "Search Prabhupāda's books, lectures, and letters. 244,000 passages. Every answer in his actual words.",
-    images: ["/images/og-image.png"],
+    images: [
+      {
+        url: SOCIAL_IMAGE_PATH,
+        width: SOCIAL_IMAGE_WIDTH,
+        height: SOCIAL_IMAGE_HEIGHT,
+        alt: SOCIAL_IMAGE_ALT,
+      },
+    ],
   },
   robots: {
     index: true,
@@ -85,6 +98,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
   themeColor: "#FAF7F1",
 };
 
@@ -183,7 +199,7 @@ export default function RootLayout({
                 "@type": "Organization",
                 name: "Ask Śrīla Prabhupāda",
                 url: SITE_URL,
-                logo: `${SITE_URL}/images/og-image.png`,
+                logo: new URL(SOCIAL_IMAGE_PATH, SITE_URL).toString(),
               },
             ]),
           }}

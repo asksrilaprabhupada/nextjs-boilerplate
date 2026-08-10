@@ -6,6 +6,13 @@
 > environment variable that selects one**; any such instruction in this document
 > is history, not a runbook. Kept unedited so the reasoning behind the current
 > pipeline stays readable.
+>
+> **Task 8 cleanup note (2026-08-09):** the unmounted
+> `02-dig-deeper-modal.tsx` described below was later replaced by the live
+> cinematic evidence explorer and deleted after static-import, dynamic-import,
+> route, test, and build reachability checks. Its remaining mentions in this
+> report are historical. The `og-image.png` mention is historical too: the
+> owner-selected `ChatGPT Image Aug 9, 2026, 07_33_10 PM.png` replaced it.
 
 Working branch: `claude/vigilant-carson-xu98ho` (session-designated; supersedes the spec's
 `real-search-release` name per owner confirmation). Base: `main` @ `78ae7d9`.
