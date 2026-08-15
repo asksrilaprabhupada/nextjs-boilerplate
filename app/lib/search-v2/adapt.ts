@@ -111,9 +111,15 @@ export function toWireAdditional(a: AdditionalPassage): AdditionalSearchPassage 
   return {
     type,
     reference: a.reference,
-    // Derived from the reference when it parses cleanly (verses/purports);
-    // the second-tier pipeline does not carry stored source URLs to this adapter.
-    url: type === "verse" || type === "purport" ? vedabaseUrlForReference(a.reference) : null,
+    // The URL stored on the source row wins (source-url.ts reads it for every
+    // source type, taking the parent verse's URL for a verse chunk and the
+    // precise paragraph anchor for book prose). Only a verse or a purport may
+    // then fall back to rebuilding the link from its reference, because only
+    // those references address Vedabase directly. A lecture, a letter, or a
+    // book paragraph with no stored URL stays null and shows no button: a
+    // missing link is honest, a guessed one sends a devotee to the wrong page.
+    url: a.vedabaseUrl
+      ?? (type === "verse" || type === "purport" ? vedabaseUrlForReference(a.reference) : null),
     label: formatLabel(label),
     provenanceNote: label.provenanceNote,
     snippet: a.snippet,

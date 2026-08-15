@@ -66,6 +66,7 @@ import {
 } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
 import { refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
+import { fetchSourceUrls } from "@/app/lib/search-v2/source-url";
 import { planArticle, type PlannedArticle } from "@/app/lib/search-v2/article-plan";
 import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
@@ -126,6 +127,12 @@ export interface SearchTelemetry {
   tableRpcAttemptCount: number;
   vocabularyRpcCount: number;
   refetchCount: number;
+  /**
+   * Table reads issued for the citation tier's Vedabase links (source-url.ts).
+   * Counted separately from the verification reads and the five retrieval RPCs,
+   * so no read this pipeline makes is invisible.
+   */
+  sourceUrlFetchCount: number;
   embeddingProviderCalls: number;
   candidatesBeforeFusion: number;
   candidatesAfterFusion: number;
@@ -171,6 +178,13 @@ export interface AdditionalPassage {
   rerankScore: number | null;
   /** Never cut mid-sentence — see snippet.ts for the rule and its reason. */
   snippet: string;
+  /**
+   * The URL stored on the source row (see source-url.ts), or null when the row
+   * has none. Null is a real answer: adapt.ts may then fall back to the tested
+   * reference conversion for verses and purports, and to no link at all for
+   * everything else. A link is never guessed.
+   */
+  vedabaseUrl: string | null;
 }
 
 export interface PipelineOutput {
@@ -537,7 +551,10 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   // pre-filter's set-asides in fused order. Snippets aim at the question's own
   // terms and never end mid-sentence.
   const queryTerms = extractQueryTerms(query);
-  const toAdditional = (c: RankedCandidate | FusedCandidate): AdditionalPassage => ({
+  const toAdditional = (
+    c: RankedCandidate | FusedCandidate,
+    urls: Map<string, string>,
+  ): AdditionalPassage => ({
     passageKey: c.passage_key,
     sourceType: c.source_type,
     reference: c.reference,
@@ -548,11 +565,21 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     location: c.location,
     rerankScore: "rerankScore" in c ? (c as RankedCandidate).rerankScore : null,
     snippet: makeSnippet(c.retrieval_text, 220, queryTerms),
+    vedabaseUrl: urls.get(c.passage_key) ?? null,
   });
   const additionalCandidates: Array<RankedCandidate | FusedCandidate> = [
     ...selection.additional,
     ...prefiltered.setAside,
   ];
+
+  // The citation tier's links are read alongside the main tier's verification,
+  // so the extra table reads cost no wall clock. fetchSourceUrls never rejects,
+  // which is what makes it safe to start here and await after the hard stop.
+  const additionalUrlsPromise = fetchSourceUrls(
+    db as never,
+    additionalCandidates.map((candidate) => candidate.passage_key),
+    { requestId },
+  );
 
   // ── verify: the hard stop ──
   // Main-tier passages always receive a fresh source-row read. Additional-tier
@@ -566,8 +593,9 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     degraded.record("verifying", "refetch", { code: `dropped_${verificationDropCount}` });
   }
 
+  const additionalUrls = await additionalUrlsPromise;
   const additional: AdditionalPassage[] = additionalCandidates.map((candidate) =>
-    toAdditional(candidate),
+    toAdditional(candidate, additionalUrls.urls),
   );
 
   // ── organise ──
@@ -607,6 +635,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     tableRpcAttemptCount: retrieved.tableRpcAttemptCount,
     vocabularyRpcCount: retrieved.vocabularyRpcCount,
     refetchCount: refetched.fetchCount,
+    sourceUrlFetchCount: additionalUrls.fetchCount,
     embeddingProviderCalls: retrieved.embeddingProviderCalls,
     candidatesBeforeFusion: retrieved.candidateCount,
     candidatesAfterFusion: fused.length,

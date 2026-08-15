@@ -188,6 +188,7 @@ function telemetry(questionHash: string): SearchTelemetry {
     tableRpcAttemptCount: 5,
     vocabularyRpcCount: 0,
     refetchCount: 1,
+    sourceUrlFetchCount: 1,
     embeddingProviderCalls: 1,
     candidatesBeforeFusion: 1,
     candidatesAfterFusion: 1,

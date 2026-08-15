@@ -70,6 +70,7 @@ function telemetryFixture(): SearchTelemetry {
     tableRpcAttemptCount: 1,
     vocabularyRpcCount: 0,
     refetchCount: 2,
+    sourceUrlFetchCount: 1,
     embeddingProviderCalls: 1,
     candidatesBeforeFusion: 3,
     candidatesAfterFusion: 2,
