@@ -70,6 +70,13 @@ import {
   type SnapshotSession,
 } from "@/app/lib/search-v2/diagnostic-session";
 import { persistSearchSnapshot } from "@/app/lib/search-v2/search-snapshot";
+import {
+  beginQaArchive,
+  completeQaArchive,
+  failQaArchive,
+  scheduleQaArchiveWrite,
+  type QaArchiveHandle,
+} from "@/app/lib/search-v2/qa-archive";
 
 // With no candidate caps, a cold search embeds, runs five large RPCs, and
 // reranks the whole pool in Cohere batches — minutes, not seconds, on a broad
@@ -289,12 +296,26 @@ async function getOrComputeResult(
   diagnostics?: PipelineDiagnostics;
   telemetry?: SearchTelemetry;
   searchLogId?: string | null;
+  /**
+   * The archive row opened for this question. Deliberately a promise: it is
+   * never awaited on the search's own path, so the insert overlaps the pipeline
+   * and costs the devotee nothing.
+   */
+  qaArchive?: Promise<QaArchiveHandle | null>;
 }> {
   const now = (): number => globalThis.performance.now();
   const elapsed = (since: number): number =>
     Math.round(Math.max(0, now() - since) * 1000) / 1000;
   const questionHash = telemetryQuestionHash(query);
   const searchRun = await beginSearchRun({ requestId, questionHash });
+  // The question is archived the moment it arrives, before any of the work that
+  // might fail. `beginQaArchive` never rejects, so this promise is safe to hold
+  // unawaited and safe to await later from the completion write.
+  const qaArchive = beginQaArchive({
+    requestId,
+    searchLogId: searchRun?.rowId ?? null,
+    question: query,
+  });
   const workStartedAt = now();
   const partialStageDurationsMs: Record<string, number> = {};
 
@@ -325,9 +346,12 @@ async function getOrComputeResult(
           verificationMode,
         ),
       });
+      // A cache hit is a real serving, so it is archived like any other — its
+      // own row, carrying the JSON that was actually served.
       return {
         result: { ...cached.result, query, searchLogId: searchRun?.rowId ?? null, requestId },
         fromCache: true,
+        qaArchive,
       };
     }
 
@@ -375,6 +399,7 @@ async function getOrComputeResult(
       ...(out.diagnostics ? { diagnostics: out.diagnostics } : {}),
       telemetry: out.telemetry,
       searchLogId: searchRun?.rowId ?? null,
+      qaArchive,
     };
   } catch (err) {
     const failure = failureTechnicalTelemetry(questionHash, err);
@@ -397,6 +422,11 @@ async function getOrComputeResult(
       stageDurationsMs,
       sourceDurationsMs: failure.sourceDurationsMs,
       telemetry: markPreviewVerification(failure.telemetry, verificationMode),
+    });
+    // The question is kept and the row marked failed. No answer is invented,
+    // and the archive write never delays the error the caller is owed.
+    scheduleQaArchiveWrite(async () => {
+      await failQaArchive(await qaArchive);
     });
     throw err;
   }
@@ -474,6 +504,13 @@ export async function prepareSuccessfulResponse(
       console.error(JSON.stringify({ level: "error", event: "search.snapshot_failed", requestId }));
     }
   }
+  // The archive stores `guarded` — the object these exact bytes are serialized
+  // from, taken after the payload guard. What is recorded is therefore what the
+  // browser received, and the browser is never asked to send it back. The write
+  // is handed to `after()`, so it runs once the response has already gone out.
+  scheduleQaArchiveWrite(async () => {
+    await completeQaArchive((await execution.qaArchive) ?? null, guarded);
+  });
   return { guarded, guardedJson };
 }
 
