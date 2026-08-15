@@ -247,6 +247,7 @@ export default function SearchExperience({ q }: { q: string }) {
             <IncompleteSearchWarning
               sources={results.degradedSources ?? []}
               degraded={results.degraded}
+              rankingUnavailable={results.rankingUnavailable ?? false}
             />
 
             {/* Honest result counts, without filtering the recorded conversation. */}

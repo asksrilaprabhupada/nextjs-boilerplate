@@ -47,6 +47,20 @@ export function degradedSourcesForWire(
   }));
 }
 
+/**
+ * Did the relevance ranking fail?
+ *
+ * Read off the recorded degradation, not off the scores. The reranking stage
+ * records a degradation whenever Cohere could not be trusted — unavailable,
+ * partially dead batches, an outright throw, or no API key — and that record is
+ * the only honest evidence that the order on the page is arrival order.
+ */
+export function rankingUnavailableFor(
+  telemetry: Pick<SearchTelemetry, "degradedStages">,
+): boolean {
+  return telemetry.degradedStages.some((stage) => stage.stage === "reranking");
+}
+
 const CITATION_TYPE: Record<string, Citation["type"]> = {
   verse: "verse",
   purport: "verse",
@@ -168,6 +182,7 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
     degraded: telemetry.degraded,
     retrievalStatus: degradedSources.length > 0 ? "degraded" : "complete",
     degradedSources,
+    rankingUnavailable: rankingUnavailableFor(telemetry),
     disabledLanes: [],
   };
 }

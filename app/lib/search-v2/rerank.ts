@@ -347,23 +347,45 @@ export async function rerankCurrentPool(
               request.responseSucceeded = usage.responseSucceeded;
               request.billedSearchUnits = usage.billedSearchUnits;
             },
-          );
+          ).then((results) => ({ request, results }));
         }
-        return provider(question, batch, batch.length);
+        return provider(question, batch, batch.length)
+          .then((results) => ({ request: null, results }));
       }),
     );
 
     const scoreByKey = new Map<string, number>();
     let deadBatches = 0;
-    for (const results of batchResults) {
-      const alive = results.some((result) => result.relevance_score > 0);
-      if (!alive) {
-        deadBatches += 1;
-        continue;
+    let networkBatches = 0;
+    for (const { request, results } of batchResults) {
+      // The provider itself reports whether a complete 2xx body was parsed.
+      // That signal is authoritative and this code now believes it rather than
+      // guessing from the scores: the old test — "did any score exceed zero?"
+      // — cannot tell a 402, a 429, a 5xx, a timeout or a malformed body from a
+      // batch of passages the cross-encoder honestly judged irrelevant, and it
+      // is the only thing standing between a failed rerank and a page that
+      // looks ranked.
+      if (request) {
+        networkBatches += 1;
+        if (request.responseSucceeded === false) {
+          deadBatches += 1;
+          continue;
+        }
       }
       for (const result of results) {
         scoreByKey.set(result.item.__key, result.relevance_score);
       }
+    }
+
+    // Every request that could have reached Cohere failed. The passages are
+    // still real, but their order is arrival order and the answer must say so.
+    if (networkBatches > 0 && deadBatches === networkBatches) {
+      return {
+        ...emptyOutcome(candidates, "cohere_unavailable"),
+        documentCount,
+        providerCallCount,
+        providerRequests,
+      };
     }
 
     if (scoreByKey.size === 0) {
@@ -411,7 +433,16 @@ export async function rerankCurrentPool(
           finalRequest.billedSearchUnits = usage.billedSearchUnits;
         },
       );
-      if (finalResults.some((result) => result.relevance_score > 0)) {
+      // Same rule as the batches: trust the provider's own report, not the
+      // shape of the scores.
+      //
+      // A failed FINAL pass is deliberately not counted as a dead batch. The
+      // pool was still ranked by the first pass, so the page is ordered — just
+      // not given its last refinement over the top slice. Calling that "the
+      // relevance ranking was unavailable" would overstate it to a devotee,
+      // and it would make an otherwise good answer uncacheable. The failure is
+      // still recorded on providerRequests, where the spend gate reads it.
+      if (finalRequest.responseSucceeded !== false) {
         for (const result of finalResults) {
           scoreByKey.set(result.item.__key, result.relevance_score);
         }

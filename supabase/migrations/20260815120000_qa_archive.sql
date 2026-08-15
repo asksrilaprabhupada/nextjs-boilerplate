@@ -295,7 +295,10 @@ DECLARE
     'suggestion', 'suggestionDisplay', 'queryTerms', 'queryVariants',
     'totalResults', 'validated', 'droppedBlocks',
     'searchLogId', 'requestId',
-    'degraded', 'retrievalStatus', 'degradedSources', 'disabledLanes'
+    'degraded', 'retrievalStatus', 'degradedSources', 'disabledLanes',
+    -- Whether the relevance ranking completed. A boolean fact about the search,
+    -- carrying no words, so it is technical metadata and survives reduction.
+    'rankingUnavailable'
   ];
   reduced_count integer;
 BEGIN
