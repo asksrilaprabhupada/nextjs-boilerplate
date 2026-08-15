@@ -43,16 +43,19 @@ describe("qa_archive table shape", () => {
     }
   });
 
-  it("allows only the three statuses", () => {
-    expect(migration).toContain("status IN ('running', 'success', 'failed')");
+  it("allows only the four statuses", () => {
+    expect(migration).toContain("status IN ('running', 'success', 'failed', 'abandoned')");
   });
 
   it("refuses to hold an invented answer", () => {
-    // A failed row may never carry a response, and a success row must carry
-    // one. The database, not just the writer, enforces this.
+    // A failed or abandoned row may never carry a response, and a success row
+    // must carry one. The database, not just the writer, enforces this.
     expect(migration).toContain("qa_archive_status_shape");
     expect(migration).toContain(
       "(status = 'failed' AND response_json IS NULL AND completed_at IS NOT NULL)",
+    );
+    expect(migration).toContain(
+      "(status = 'abandoned' AND response_json IS NULL AND completed_at IS NOT NULL)",
     );
     expect(migration).toContain(
       "(status = 'success' AND response_json IS NOT NULL AND completed_at IS NOT NULL)",
@@ -82,9 +85,15 @@ describe("the two-year retention the owner chose", () => {
 
   it("reduces a row rather than deleting it", () => {
     expect(migration).toContain("CREATE OR REPLACE FUNCTION public.reduce_qa_archive");
-    // Nothing in the retention path removes a row or a question.
-    expect(migration).not.toContain("DELETE FROM public.qa_archive");
-    expect(migration).not.toMatch(/UPDATE public\.qa_archive[\s\S]*?SET[\s\S]*?question\s*=/);
+    // Nothing in the RETENTION path removes a row or a question. Scoped to the
+    // reduce function's own body: administrator erasure is a separate,
+    // deliberate path and does contain a DELETE.
+    const reduce = migration.slice(
+      migration.indexOf("CREATE OR REPLACE FUNCTION public.reduce_qa_archive"),
+    );
+    const body = reduce.slice(0, reduce.indexOf("$fn$;"));
+    expect(body).not.toContain("DELETE");
+    expect(body).not.toMatch(/SET[\s\S]*?question\s*=/);
   });
 
   it("keeps the question, the main passages and their citations", () => {
@@ -130,6 +139,106 @@ describe("the two-year retention the owner chose", () => {
   });
 });
 
+describe("safeguard: one record can be erased, by an administrator only", () => {
+  it("erases exactly one record, by primary key", () => {
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION public.erase_qa_archive_record(p_id uuid, p_reason text)",
+    );
+    expect(migration).toContain("DELETE FROM public.qa_archive\n  WHERE id = p_id");
+  });
+
+  it("refuses to run without an id and a written reason", () => {
+    expect(migration).toContain("requires the id of one record");
+    expect(migration).toContain("requires a written reason");
+    expect(migration).toContain("btrim(p_reason) = ''");
+  });
+
+  it("fails loudly when the id matches nothing", () => {
+    // A mistyped id must not look like a successful erasure.
+    expect(migration).toContain("does not exist; nothing was erased");
+  });
+
+  it("is callable by no role at all — not even the application", () => {
+    for (const role of ["PUBLIC", "anon, authenticated", "service_role"]) {
+      expect(migration).toContain(
+        `REVOKE ALL ON FUNCTION public.erase_qa_archive_record(uuid, text) FROM ${role}`,
+      );
+    }
+    expect(migration).not.toMatch(/GRANT EXECUTE ON FUNCTION public\.erase_qa_archive_record/);
+  });
+
+  it("still grants the application no DELETE on the table itself", () => {
+    expect(migration).toContain(
+      "GRANT SELECT, INSERT, UPDATE ON TABLE public.qa_archive TO service_role",
+    );
+    expect(migration).not.toMatch(/GRANT[^;]*DELETE[^;]*ON TABLE public\.qa_archive/);
+  });
+
+  it("leaves a contentless audit row behind", () => {
+    expect(migration).toContain("CREATE TABLE public.qa_archive_erasures");
+    expect(migration).toContain("INSERT INTO public.qa_archive_erasures");
+    // The audit must never carry what was erased, or the erasure is undone.
+    const audit = migration.slice(
+      migration.indexOf("CREATE TABLE public.qa_archive_erasures"),
+    );
+    const columns = audit.slice(0, audit.indexOf(");"));
+    expect(columns).not.toContain("question");
+    expect(columns).not.toContain("response_json");
+  });
+
+  it("keeps the audit read-only to the application", () => {
+    expect(migration).toContain(
+      "GRANT SELECT ON TABLE public.qa_archive_erasures TO service_role",
+    );
+    expect(migration).toContain(
+      "RAISE EXCEPTION 'qa_archive_erasures must be read-only to the application'",
+    );
+  });
+});
+
+describe("safeguard: no row stays outside retention forever", () => {
+  it("sweeps stale running rows to abandoned", () => {
+    expect(migration).toContain(
+      "CREATE OR REPLACE FUNCTION public.settle_stale_qa_archive_rows",
+    );
+    expect(migration).toContain("SET status = 'abandoned'");
+    expect(migration).toContain("WHERE status = 'running'");
+  });
+
+  it("keeps the question and invents no answer when settling", () => {
+    const settle = migration.slice(
+      migration.indexOf("CREATE OR REPLACE FUNCTION public.settle_stale_qa_archive_rows"),
+    );
+    const body = settle.slice(0, settle.indexOf("$fn$;"));
+    expect(body).not.toMatch(/SET[\s\S]*question\s*=/);
+    expect(body).not.toMatch(/response_json\s*=/);
+    expect(body).not.toContain("DELETE");
+  });
+
+  it("refuses a threshold short enough to race a running search", () => {
+    // route.ts allows a search up to 300 seconds.
+    expect(migration).toContain("p_older_than < interval '10 minutes'");
+    expect(migration).toContain("a search may still be running");
+  });
+
+  it("brings abandoned rows into the two-year reduction", () => {
+    expect(migration).toContain("status IN ('success', 'failed', 'abandoned')");
+  });
+
+  it("sweeps in lock-skipping batches", () => {
+    const settle = migration.slice(
+      migration.indexOf("CREATE OR REPLACE FUNCTION public.settle_stale_qa_archive_rows"),
+    );
+    expect(settle.slice(0, settle.indexOf("$fn$;"))).toContain("FOR UPDATE SKIP LOCKED");
+  });
+
+  it("is not callable from a browser role", () => {
+    expect(migration).toContain(
+      "REVOKE ALL ON FUNCTION public.settle_stale_qa_archive_rows(interval, integer)\n  FROM anon, authenticated",
+    );
+  });
+});
+
 describe("qa_archive is private", () => {
   it("enables row level security", () => {
     expect(migration).toContain("ALTER TABLE public.qa_archive ENABLE ROW LEVEL SECURITY");
@@ -154,7 +263,7 @@ describe("qa_archive is private", () => {
   });
 
   it("verifies its own privacy at apply time", () => {
-    expect(migration).toContain("RAISE EXCEPTION 'qa_archive RLS is not enabled'");
+    expect(migration).toContain("RAISE EXCEPTION 'qa_archive RLS is not enabled on both tables'");
     expect(migration).toContain("RAISE EXCEPTION 'qa_archive must have no browser policies'");
     expect(migration).toContain("has_table_privilege('anon'");
     expect(migration).toContain("has_table_privilege('authenticated'");
