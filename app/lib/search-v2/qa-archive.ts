@@ -28,7 +28,13 @@ import { getSupabaseAdmin } from "@/app/lib/01-supabase";
 
 const DEFAULT_WRITE_DEADLINE_MS = 2_000;
 
-export type QaArchiveStatus = "running" | "success" | "failed";
+/**
+ * `abandoned` is never written from here. A search cannot know that it died, so
+ * the sweep in the migration (settle_stale_qa_archive_rows) is what settles a
+ * `running` row whose outcome was never observed — keeping the question and
+ * inventing no answer. It is listed because it is a status this table holds.
+ */
+export type QaArchiveStatus = "running" | "success" | "failed" | "abandoned";
 
 export interface QaArchiveHandle {
   /** Primary key of the row opened when the question arrived. */
