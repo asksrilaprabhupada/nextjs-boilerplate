@@ -72,6 +72,64 @@ describe("qa_archive table shape", () => {
   });
 });
 
+describe("the two-year retention the owner chose", () => {
+  it("fixes the reduction point at two years, derived from created_at", () => {
+    expect(migration).toContain("created_at <= now() - interval '2 years'");
+    // Not a stored column: timestamptz + interval is STABLE, so a generated
+    // column is rejected, and a defaulted one could be back-dated by a write.
+    expect(migration).not.toContain("GENERATED ALWAYS AS");
+  });
+
+  it("reduces a row rather than deleting it", () => {
+    expect(migration).toContain("CREATE OR REPLACE FUNCTION public.reduce_qa_archive");
+    // Nothing in the retention path removes a row or a question.
+    expect(migration).not.toContain("DELETE FROM public.qa_archive");
+    expect(migration).not.toMatch(/UPDATE public\.qa_archive[\s\S]*?SET[\s\S]*?question\s*=/);
+  });
+
+  it("keeps the question, the main passages and their citations", () => {
+    for (const kept of ["'query'", "'passages'", "'citations'"]) {
+      expect(migration).toContain(kept);
+    }
+  });
+
+  it("removes the Dig Deeper section and only it", () => {
+    // The allowlist is the whole wire contract minus the three Dig Deeper keys.
+    // Asserted against the live contract so a shape change is caught here.
+    const contract = readFileSync("app/lib/types/01-search.ts", "utf8");
+    const results = contract.slice(contract.indexOf("export interface SearchResults"));
+    const body = results.slice(0, results.indexOf("\n}"));
+    const contractKeys = [...body.matchAll(/^\s{2}(\w+)\??:/gmu)].map((m) => m[1]);
+    const digDeeperOnly = ["additional", "additionalCount", "additionalTruncated"];
+
+    const allowlist = migration.slice(migration.indexOf("kept_keys constant text[]"));
+    const listed = [...allowlist.slice(0, allowlist.indexOf("];")).matchAll(/'(\w+)'/gu)]
+      .map((m) => m[1]);
+
+    expect(contractKeys.length).toBeGreaterThan(10);
+    for (const key of contractKeys) {
+      if (digDeeperOnly.includes(key)) expect(listed).not.toContain(key);
+      else expect(listed).toContain(key);
+    }
+  });
+
+  it("is not scheduled by the migration itself", () => {
+    // Turning the job on is a separately approved cron.schedule call.
+    expect(migration).not.toContain("cron.schedule");
+  });
+
+  it("reduces in lock-skipping batches so it cannot block a live search", () => {
+    expect(migration).toContain("FOR UPDATE SKIP LOCKED");
+    expect(migration).toContain("LIMIT p_limit");
+  });
+
+  it("never lets a browser role run the reduction", () => {
+    expect(migration).toContain(
+      "REVOKE ALL ON FUNCTION public.reduce_qa_archive(integer) FROM anon, authenticated",
+    );
+  });
+});
+
 describe("qa_archive is private", () => {
   it("enables row level security", () => {
     expect(migration).toContain("ALTER TABLE public.qa_archive ENABLE ROW LEVEL SECURITY");
