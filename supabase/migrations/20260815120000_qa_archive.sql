@@ -270,15 +270,23 @@ GRANT EXECUTE ON FUNCTION public.settle_stale_qa_archive_rows(interval, integer)
 -- ─────────────────────────────────────────────────────────────────────────────
 -- The two-year reduction.
 --
--- Keeps an explicit allowlist of top-level response keys rather than deleting a
--- blocklist. If the response contract ever gains another Dig-Deeper-only field,
--- an allowlist drops it automatically; a blocklist would have kept it forever.
--- tests/qa-archive-migration.test.ts pins this list against the live wire
--- contract so a contract change is noticed here rather than discovered in two
--- years' time.
+-- The rule is literal: after two years keep the raw question, the main passages
+-- that were shown, their citations and source URLs, and genuinely non-content
+-- technical metadata. Nothing else that carries words survives — no generated
+-- or framing text is kept permanently merely because it sat beside the answer.
 --
--- Removed: additional, additionalCount, additionalTruncated — the Dig Deeper
--- section and the two fields that exist only to describe it.
+-- Keeps an explicit allowlist of top-level response keys rather than deleting a
+-- blocklist. If the response contract ever gains another field, an allowlist
+-- drops it automatically; a blocklist would have kept it forever.
+-- tests/qa-archive-migration.test.ts pins this list against the live wire
+-- contract and requires every contract key to be deliberately classified, so a
+-- contract change is noticed here rather than discovered in two years' time.
+--
+-- Removed, and why:
+--   additional, additionalCount, additionalTruncated — the Dig Deeper section
+--     and the two fields that exist only to describe it.
+--   intro, suggestion, suggestionDisplay, queryTerms, queryVariants — generated
+--     answer and framing content that is not part of the main passages.
 --
 -- Abandoned and failed rows carry no response to reduce; they are still marked
 -- reduced so that every row, without exception, passes through retention.
@@ -291,8 +299,10 @@ SET search_path = ''
 AS $fn$
 DECLARE
   kept_keys constant text[] := ARRAY[
-    'query', 'passages', 'citations', 'intro',
-    'suggestion', 'suggestionDisplay', 'queryTerms', 'queryVariants',
+    -- The question, the passages that were shown, and their citations and
+    -- source URLs. Nothing else that carries words.
+    'query', 'passages', 'citations',
+    -- Genuinely non-content technical metadata.
     'totalResults', 'validated', 'droppedBlocks',
     'searchLogId', 'requestId',
     'degraded', 'retrievalStatus', 'degradedSources', 'disabledLanes'

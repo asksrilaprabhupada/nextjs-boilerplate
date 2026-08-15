@@ -25,6 +25,13 @@ function executable(path: string): string {
 const migration = executable(MIGRATION);
 const rollback = executable(ROLLBACK);
 
+/** The reduction's allowlist, read out of the SQL and sorted for comparison. */
+function keptKeys(): string[] {
+  const from = migration.slice(migration.indexOf("kept_keys constant text[]"));
+  const array = from.slice(0, from.indexOf("];"));
+  return [...array.matchAll(/'(\w+)'/gu)].map((m) => m[1]).sort();
+}
+
 describe("qa_archive table shape", () => {
   it("creates the table with every column the archive needs", () => {
     expect(migration).toContain("CREATE TABLE public.qa_archive");
@@ -96,30 +103,59 @@ describe("the two-year retention the owner chose", () => {
     expect(body).not.toMatch(/SET[\s\S]*?question\s*=/);
   });
 
-  it("keeps the question, the main passages and their citations", () => {
-    for (const kept of ["'query'", "'passages'", "'citations'"]) {
-      expect(migration).toContain(kept);
+  it("keeps exactly the twelve permitted keys, and no others", () => {
+    // The owner's rule is literal: the raw question, the main passages, their
+    // citations and source URLs, and genuinely non-content technical metadata.
+    expect(keptKeys()).toEqual([
+      "citations",
+      "degraded",
+      "degradedSources",
+      "disabledLanes",
+      "droppedBlocks",
+      "passages",
+      "query",
+      "requestId",
+      "retrievalStatus",
+      "searchLogId",
+      "totalResults",
+      "validated",
+    ]);
+  });
+
+  it("permanently keeps no generated answer or framing content", () => {
+    // These carry words that are not part of the main passages, so they do not
+    // survive the two-year reduction.
+    for (const generated of [
+      "intro", "suggestion", "suggestionDisplay", "queryTerms", "queryVariants",
+    ]) {
+      expect(keptKeys()).not.toContain(generated);
     }
   });
 
-  it("removes the Dig Deeper section and only it", () => {
-    // The allowlist is the whole wire contract minus the three Dig Deeper keys.
-    // Asserted against the live contract so a shape change is caught here.
+  it("removes the whole Dig Deeper section", () => {
+    for (const digDeeper of ["additional", "additionalCount", "additionalTruncated"]) {
+      expect(keptKeys()).not.toContain(digDeeper);
+    }
+  });
+
+  it("forces every wire-contract key to be deliberately classified", () => {
+    // Read against the live contract: a key added to SearchResults later must
+    // be consciously placed in one bucket or the other. Without this, a new
+    // field would silently default to being dropped — or, if the allowlist were
+    // ever rewritten as a blocklist, silently kept forever.
     const contract = readFileSync("app/lib/types/01-search.ts", "utf8");
     const results = contract.slice(contract.indexOf("export interface SearchResults"));
     const body = results.slice(0, results.indexOf("\n}"));
     const contractKeys = [...body.matchAll(/^\s{2}(\w+)\??:/gmu)].map((m) => m[1]);
-    const digDeeperOnly = ["additional", "additionalCount", "additionalTruncated"];
-
-    const allowlist = migration.slice(migration.indexOf("kept_keys constant text[]"));
-    const listed = [...allowlist.slice(0, allowlist.indexOf("];")).matchAll(/'(\w+)'/gu)]
-      .map((m) => m[1]);
+    const dropped = [
+      "additional", "additionalCount", "additionalTruncated",
+      "intro", "suggestion", "suggestionDisplay", "queryTerms", "queryVariants",
+    ];
 
     expect(contractKeys.length).toBeGreaterThan(10);
-    for (const key of contractKeys) {
-      if (digDeeperOnly.includes(key)) expect(listed).not.toContain(key);
-      else expect(listed).toContain(key);
-    }
+    const classified = new Set([...keptKeys(), ...dropped]);
+    const unclassified = contractKeys.filter((key) => !classified.has(key));
+    expect(unclassified).toEqual([]);
   });
 
   it("is not scheduled by the migration itself", () => {
