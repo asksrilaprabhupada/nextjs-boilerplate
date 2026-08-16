@@ -1,0 +1,41 @@
+{
+  "schema_version": "benchmark-questions-v1",
+  "gold_set": "tests/gold/gold-set-v1.json",
+  "corpus_version": "2026-07-08-tags-v3",
+  "chosen_on": "2026-08-16",
+  "why_these_three": [
+    "These three are fixed forever. Changing them would silently reset the baseline and every comparison made against it, so a later job that wants a different question adds a fourth rather than swapping one out.",
+    "No exact_verse or exact_quotation question is here on purpose. A bare citation like 'BG 18.66' takes the pinned-lookup road with no five-angle plan and no real fan-out, so it measures a cheaper pipeline than the one we are trying to make faster, and would flatter every later job.",
+    "The three differ in shape so that a change which helps one and hurts another is visible instead of averaging out."
+  ],
+  "questions": [
+    {
+      "id": "q022",
+      "question": "How do I control my mind?",
+      "category": "practical_how",
+      "role": "The clean middle case: short, ordinary, gets a full five-angle plan.",
+      "has_human_reviewed_must_find": true
+    },
+    {
+      "id": "q043",
+      "question": "Compare karma-yoga and bhakti-yoga",
+      "category": "comparison",
+      "role": "The plain topic phrase with no question mark. A devotee who omits the punctuation is still asking, and this must still earn five angles rather than being read as a pointer. A repeated ROLE across its angles is legitimate here, because comparing two things means defining both.",
+      "has_human_reviewed_must_find": false
+    },
+    {
+      "id": "q055",
+      "question": "I have been trying to chant regularly for about two years now but my mind keeps wandering during japa and I often feel that I am simply going through the motions without any real attachment, so what did Srila Prabhupada advise for someone in this situation?",
+      "category": "long_natural_language",
+      "role": "What devotees actually type. Both live searches on record were this shape, and it exercises the long-query preprocessing path that the short questions never reach.",
+      "has_human_reviewed_must_find": false
+    }
+  ],
+  "how_to_run": {
+    "total_searches": 13,
+    "cold": "One search of question 1 alone, after at least 30 minutes idle. That single run is the cold number.",
+    "warm": "Then four rounds, each round being question 1, then 2, then 3, in order.",
+    "labelling": "Only the first isolated run is genuinely cold. By the second question the shared indexes are already partly resident, so nothing else may be called cold.",
+    "reporting": "Per question: the cold number once, and the MEDIAN of the four warm runs. Never average cold and warm together."
+  }
+}
