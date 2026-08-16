@@ -11,8 +11,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const MIGRATION = "supabase/migrations/20260815120000_qa_archive.sql";
-const ROLLBACK = "supabase/rollbacks/20260815120000_disable_qa_archive.sql";
+const MIGRATION = "supabase/migrations/20260816135330_qa_archive.sql";
+const ROLLBACK = "supabase/rollbacks/20260816135330_disable_qa_archive.sql";
 
 /** The file minus its comment lines — only what would actually execute. */
 function executable(path: string): string {
