@@ -103,9 +103,14 @@ describe("the two-year retention the owner chose", () => {
     expect(body).not.toMatch(/SET[\s\S]*?question\s*=/);
   });
 
-  it("keeps exactly the twelve permitted keys, and no others", () => {
+  it("keeps exactly the permitted keys, and no others", () => {
     // The owner's rule is literal: the raw question, the main passages, their
     // citations and source URLs, and genuinely non-content technical metadata.
+    //
+    // Twelve keys were approved. `rankingUnavailable` is the thirteenth, added
+    // with the honest-rerank-failure work: a boolean saying whether the
+    // relevance ranking completed. It carries no words, so it is metadata by
+    // the same rule that admits `degraded` and `retrievalStatus`.
     expect(keptKeys()).toEqual([
       "citations",
       "degraded",
@@ -114,6 +119,7 @@ describe("the two-year retention the owner chose", () => {
       "droppedBlocks",
       "passages",
       "query",
+      "rankingUnavailable",
       "requestId",
       "retrievalStatus",
       "searchLogId",
