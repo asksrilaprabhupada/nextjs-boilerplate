@@ -34,22 +34,10 @@ vi.mock("@/app/lib/search-v2/adapt", () => ({
   adaptToSearchResults: harness.adaptToSearchResults,
 }));
 
-vi.mock("@/app/lib/search-v2/cache", () => ({
-  cacheKeys: {
-    response: (question: string) =>
-      `response:test:${question.trim().toLocaleLowerCase("en").replace(/\s+/g, " ")}`,
-  },
-  getCacheAdapter: vi.fn(async () => ({
-    get: harness.cacheGet,
-    set: harness.cacheSet,
-  })),
-  TTL: { response: 86_400_000 },
-}));
-
 vi.mock("@/app/lib/search-v2/search-run-telemetry", () => ({
   allowlistedTechnicalTelemetry: vi.fn(() => ({})),
+  CACHE_STATUS: "disabled",
   beginSearchRun: vi.fn(async () => ({ rowId: `search-log-${++harness.searchLogCounter}` })),
-  cacheHitTechnicalTelemetry: vi.fn(() => ({})),
   completeSearchRun: harness.completeSearchRun,
   EMPTY_RESULT_FIELDS: {},
   failureTechnicalTelemetry: vi.fn(() => ({
@@ -233,22 +221,4 @@ describe("search progress SSE", () => {
     expect(frames.map((frame) => frame.event).slice(-2)).toEqual(["result", "done"]);
   });
 
-  it("replays the same monotonic order on a cache hit without an early weave", async () => {
-    const url = "https://example.test/api/search?q=cached%20truthful%20progress";
-    const warm = await GET(new NextRequest(url));
-    expect(warm.status).toBe(200);
-    await warm.text();
-    expect(harness.runSearchV2).toHaveBeenCalledTimes(1);
-
-    const cached = await GET(new NextRequest(`${url}&stream=1`));
-    const frames = parseSseFrames(await cached.text());
-    const stages = stageFrames(frames);
-
-    expect(stages.map((stage) => stage.stage)).toEqual([...SEARCH_STAGE_ORDER]);
-    expect(stages[0]?.stage).toBe("understood");
-    expect(stages.at(-2)?.stage).toBe("verifying");
-    expect(stages.at(-1)?.stage).toBe("weaving");
-    expect(harness.runSearchV2).toHaveBeenCalledTimes(1);
-    expect(frames.map((frame) => frame.event).slice(-2)).toEqual(["result", "done"]);
-  });
 });

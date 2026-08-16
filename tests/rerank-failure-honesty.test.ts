@@ -8,8 +8,7 @@
  * pin the whole chain for each way Cohere can fail:
  *
  *   provider reports the failure → the stage records a degradation →
- *   the response carries rankingUnavailable → the page prints one honest line →
- *   and the answer is never cached.
+ *   the response carries rankingUnavailable → the page prints one honest line.
  *
  * Every failure mode is exercised separately, because they take different
  * paths through the client: a 402, a 429 and a 5xx are non-ok responses, a
@@ -28,7 +27,6 @@ import {
   type RerankOutcome,
 } from "@/app/lib/search-v2/rerank";
 import { rankingUnavailableFor } from "@/app/lib/search-v2/adapt";
-import { shouldCacheSearchResult } from "@/app/api/search/route";
 import {
   incompleteSearchWarning,
   RANKING_UNAVAILABLE_MESSAGE,
@@ -159,7 +157,7 @@ function healthyProvider(): typeof cohereRerank {
   }) as unknown as typeof cohereRerank;
 }
 
-/** The telemetry shape adapt.ts and the cache gate actually read. */
+/** The telemetry shape adapt.ts actually reads. */
 function telemetryFor(outcome: RerankOutcome) {
   const degradedStages = outcome.degradedReason
     ? [{ stage: "reranking", source: "cohere", code: outcome.degradedReason }]
@@ -171,7 +169,7 @@ function telemetryFor(outcome: RerankOutcome) {
   };
 }
 
-describe("a failed rerank reaches the response, the page and the cache gate", () => {
+describe("a failed rerank reaches the response and the page", () => {
   it.each(FAILURES)("$name marks the ranking unavailable", async ({ respond }) => {
     process.env.COHERE_API_KEY = "test-key";
     // The REAL client, driven through each distinct transport failure, so the
@@ -197,14 +195,11 @@ describe("a failed rerank reaches the response, the page and the cache gate", ()
     expect(message).toContain("final relevance ranking was temporarily unavailable");
     expect(message).not.toContain("incomplete");
 
-    // 3. The answer is never written to the 24-hour cache.
-    expect(shouldCacheSearchResult({
-      telemetry: { degraded: telemetry.degraded, degradedSources: [] },
-      evidenceInsufficient: false,
-    })).toBe(false);
+    // There is no longer a cache to keep this out of — every search runs
+    // fresh — so a degraded answer cannot outlive the outage that caused it.
   });
 
-  it("a healthy rerank shows no message and stays cacheable", async () => {
+  it("a healthy rerank shows no message at all", async () => {
     process.env.COHERE_API_KEY = "test-key";
     const outcome = await rerankCurrentPool(pool(), healthyProvider());
 
@@ -214,10 +209,6 @@ describe("a failed rerank reaches the response, the page and the cache gate", ()
     const telemetry = telemetryFor(outcome);
     expect(rankingUnavailableFor(telemetry)).toBe(false);
     expect(incompleteSearchWarning([], telemetry.degraded, false)).toBe("");
-    expect(shouldCacheSearchResult({
-      telemetry: { degraded: false, degradedSources: [] },
-      evidenceInsufficient: false,
-    })).toBe(true);
   });
 });
 

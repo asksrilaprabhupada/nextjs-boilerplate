@@ -34,7 +34,6 @@ import {
 import { SEARCH_V2_CONFIG } from "@/app/lib/search-v2/config";
 import type { RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 import type { QueryPlan } from "@/app/lib/search-v2/query-plan";
-import { getCacheAdapter, cacheKeys, TTL } from "@/app/lib/search-v2/cache";
 import type { FriendlyRetrievalSource } from "@/app/lib/types/01-search";
 import { transcriptSpeakerAttribution } from "@/app/lib/15-transcript-speakers";
 
@@ -84,8 +83,14 @@ export interface EmbeddedQuery {
 
 /**
  * Embeds the original question and every approved subquery in ONE Voyage call,
- * preserving ids. Entries are cached individually by model + normalised text, so
- * a repeated question or a recurring subquery skips the provider entirely.
+ * preserving ids.
+ *
+ * There is no embedding cache any more. It kept each query text for seven days
+ * keyed by model plus normalised text, which sounds free and was not: on a MISS
+ * — the ordinary case, because a fresh question and freshly generated angles
+ * have never been seen before — it paid six sequential remote reads before
+ * doing the work anyway. Both live searches on record missed it entirely. Every
+ * search now embeds its own queries, once, in one batched call.
  */
 export async function embedPlannedQueries(
   original: string,
@@ -96,50 +101,16 @@ export async function embedPlannedQueries(
     ...plan.subqueries.map((s) => ({ id: s.id, text: s.text })),
   ];
 
-  const model = "voyage-context-4";
   const resolved = new Map<string, number[]>();
-  const missing: { id: string; text: string }[] = [];
-
-  // Read-only lookup. Deliberately NOT the `cached()` read-through helper:
-  // its producer runs on a miss, so a producer returning null would write a
-  // null into the keyspace for every query text the pipeline has never seen.
-  // That is never served as a hit, but it fills the shared cache with entries
-  // that mean "we once failed to find this", which is not worth storing.
-  let store: Awaited<ReturnType<typeof getCacheAdapter>> | null = null;
-  try {
-    store = await getCacheAdapter();
-  } catch {
-    store = null; // no cache available; every query is a miss
-  }
-
-  for (const w of wanted) {
-    let hit: number[] | null = null;
-    if (store) {
-      try {
-        hit = await store.get<number[]>(cacheKeys.embedding(model, w.text));
-      } catch {
-        hit = null;
-      }
-    }
-    if (hit && hit.length > 0) resolved.set(w.id, hit);
-    else missing.push(w);
-  }
 
   let providerCalls = 0;
-  if (missing.length > 0) {
-    // One batched call for every query the cache did not already hold.
+  if (wanted.length > 0) {
     providerCalls = 1;
-    const vectors = await embedQueries(missing.map((m) => m.text));
-    for (let i = 0; i < missing.length; i++) {
+    const vectors = await embedQueries(wanted.map((w) => w.text));
+    for (let i = 0; i < wanted.length; i++) {
       const v = vectors[i] ?? [];
       if (v.length === 0) continue; // provider failed for this entry
-      resolved.set(missing[i].id, v);
-      if (!store) continue;
-      try {
-        await store.set(cacheKeys.embedding(model, missing[i].text), v, TTL.embedding);
-      } catch {
-        // Cache write failures never affect the search.
-      }
+      resolved.set(wanted[i].id, v);
     }
   }
 

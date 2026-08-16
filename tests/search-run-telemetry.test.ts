@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   allowlistedTechnicalTelemetry,
+  CACHE_STATUS,
   beginSearchRun,
-  cacheHitTechnicalTelemetry,
   completeSearchRun,
   failureTechnicalTelemetry,
   isExpectedSearchRunId,
@@ -233,7 +233,7 @@ describe("technical telemetry minimization", () => {
       arbitraryError: new Error("SELECT secret_table"),
     } as SearchTelemetry;
 
-    const stored = allowlistedTechnicalTelemetry(oversized, "miss", startInput.questionHash);
+    const stored = allowlistedTechnicalTelemetry(oversized, CACHE_STATUS, startInput.questionHash);
     const serialized = JSON.stringify(stored);
 
     expect(serialized).toContain("voyage-context-4");
@@ -249,7 +249,7 @@ describe("technical telemetry minimization", () => {
     const telemetry = telemetryFixture();
     telemetry.models.articlePlanner = null;
 
-    const stored = allowlistedTechnicalTelemetry(telemetry, "miss", startInput.questionHash);
+    const stored = allowlistedTechnicalTelemetry(telemetry, CACHE_STATUS, startInput.questionHash);
 
     expect(stored).toMatchObject({
       providers: {
@@ -294,13 +294,11 @@ describe("technical telemetry minimization", () => {
       providerPayload: { secret: "provider secret sentinel" },
     };
 
-    const miss = allowlistedTechnicalTelemetry(telemetry, "miss", startInput.questionHash);
-    const hit = cacheHitTechnicalTelemetry(startInput.questionHash);
+    const miss = allowlistedTechnicalTelemetry(telemetry, CACHE_STATUS, startInput.questionHash);
     const failure = failureTechnicalTelemetry(startInput.questionHash, new Error("private text"));
-    const serialized = JSON.stringify({ miss, hit, failure });
+    const serialized = JSON.stringify({ miss, failure });
 
     expect(miss).not.toHaveProperty("speakerFilter");
-    expect(hit).not.toHaveProperty("speakerFilter");
     expect(failure.telemetry).not.toHaveProperty("speakerFilter");
     expect(serialized).not.toContain("prabhupada_segments");
     expect(serialized).not.toContain("private transcript sentinel");

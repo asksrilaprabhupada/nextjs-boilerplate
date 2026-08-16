@@ -7,7 +7,7 @@
  */
 import { getSupabaseAdmin } from "@/app/lib/01-supabase";
 import { VOYAGE_CONTEXT_MODEL } from "@/app/lib/03-embed";
-import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/cache";
+import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/hash";
 import {
   cohereRerankModel,
   geminiArticlePlannerModel,
@@ -21,6 +21,14 @@ import type { SearchTelemetry } from "@/app/lib/search-v2/pipeline";
 import type { RetrievalSourceTelemetry } from "@/app/lib/search-v2/retrieval";
 
 export type SearchRunStatus = "success" | "degraded" | "failed" | "abandoned";
+
+/**
+ * There is no cache. This is recorded on every row so the results table is
+ * unambiguous when it is read months from now: a search that took 27 seconds
+ * was a real search, not a miss on a cache that happened to be cold.
+ */
+export type CacheStatus = "disabled";
+export const CACHE_STATUS: CacheStatus = "disabled";
 export type SearchEnvironment = "preview" | "production";
 
 const DEFAULT_WRITE_DEADLINE_MS = 2_000;
@@ -57,7 +65,7 @@ export interface SearchRunCompletionInput {
   visitorId?: string | null;
   userAgent?: string | null;
   referrer?: string | null;
-  searchMethod: "pipeline" | "cache";
+  searchMethod: "pipeline";
   totalDurationMs: number;
   result: SearchRunResultFields;
   failedStage?: string | null;
@@ -319,12 +327,12 @@ export function sourceDurationsForTelemetry(
  */
 export function allowlistedTechnicalTelemetry(
   telemetry: SearchTelemetry,
-  cache: "hit" | "miss",
+  cacheStatus: CacheStatus,
   questionHash: string,
 ): Record<string, unknown> {
   return {
     questionHash,
-    cache,
+    cache_status: cacheStatus,
     plan: {
       source: telemetry.planSource,
       subqueryCount: telemetry.subqueryCount,
@@ -419,25 +427,6 @@ export function allowlistedTechnicalTelemetry(
   };
 }
 
-export function cacheHitTechnicalTelemetry(
-  questionHash: string,
-): Record<string, unknown> {
-  return {
-    questionHash,
-    cache: "hit",
-    providers: {},
-    rpcCounts: { table: 0, tableAttempts: 0, vocabulary: 0, refetch: 0 },
-    candidates: {},
-    selection: {},
-    sources: [],
-    degradation: [],
-    versions: {
-      pipeline: searchPipelineVersion(),
-      corpus: searchCorpusVersion(),
-      config: searchConfigVersion(),
-    },
-  };
-}
 
 export function failureTechnicalTelemetry(
   questionHash: string,
@@ -455,7 +444,7 @@ export function failureTechnicalTelemetry(
       sourceDurationsMs: {},
       telemetry: {
         questionHash,
-        cache: "miss",
+        cache_status: CACHE_STATUS,
         providers: {},
         sources: [],
         degradation: [{ stage: "pipeline", code: "internal_error" }],
@@ -486,7 +475,7 @@ export function failureTechnicalTelemetry(
     sourceDurationsMs,
     telemetry: {
       questionHash,
-      cache: "miss",
+      cache_status: CACHE_STATUS,
       providers: {},
       sources,
       degradation: [{ stage: err.stage ?? "pipeline", code: err.code }],

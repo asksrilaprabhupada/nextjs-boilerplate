@@ -9,10 +9,6 @@ const harness = vi.hoisted(() => {
     responseCache,
     runSearchV2: vi.fn(),
     adaptToSearchResults: vi.fn(),
-    cacheGet: vi.fn(async (key: string) => responseCache.get(key) ?? null),
-    cacheSet: vi.fn(async (key: string, value: unknown) => {
-      responseCache.set(key, value);
-    }),
     completeSearchRun: vi.fn(async () => undefined),
     searchLogCounter: 0,
   };
@@ -30,22 +26,10 @@ vi.mock("@/app/lib/search-v2/adapt", () => ({
   adaptToSearchResults: harness.adaptToSearchResults,
 }));
 
-vi.mock("@/app/lib/search-v2/cache", () => ({
-  cacheKeys: {
-    response: (question: string) =>
-      `response:test:${question.trim().toLocaleLowerCase("en").replace(/\s+/g, " ")}`,
-  },
-  getCacheAdapter: vi.fn(async () => ({
-    get: harness.cacheGet,
-    set: harness.cacheSet,
-  })),
-  TTL: { response: 86_400_000 },
-}));
-
 vi.mock("@/app/lib/search-v2/search-run-telemetry", () => ({
   allowlistedTechnicalTelemetry: vi.fn(() => ({})),
+  CACHE_STATUS: "disabled",
   beginSearchRun: vi.fn(async () => ({ rowId: `search-log-${++harness.searchLogCounter}` })),
-  cacheHitTechnicalTelemetry: vi.fn(() => ({})),
   completeSearchRun: harness.completeSearchRun,
   EMPTY_RESULT_FIELDS: {},
   failureTechnicalTelemetry: vi.fn(() => ({
@@ -162,9 +146,13 @@ function assertCompleteTranscriptEvidence(body: Record<string, unknown>): void {
 }
 
 function assertPipelineHasNoSpeakerPolicyInput(): void {
-  expect(harness.runSearchV2).toHaveBeenCalledTimes(1);
-  const input = harness.runSearchV2.mock.calls[0]?.[0] as Record<string, unknown>;
-  expect(input).not.toHaveProperty("speakerOnly");
+  // Every request runs the pipeline now — there is no cache, so two URLs for
+  // the same question mean two real searches. What matters is that NEITHER
+  // carries a speaker policy into the pipeline.
+  expect(harness.runSearchV2.mock.calls.length).toBeGreaterThan(0);
+  for (const call of harness.runSearchV2.mock.calls) {
+    expect(call?.[0] as Record<string, unknown>).not.toHaveProperty("speakerOnly");
+  }
 }
 
 async function jsonSearch(url: string): Promise<Record<string, unknown>> {
@@ -190,8 +178,6 @@ beforeEach(() => {
   harness.responseCache.clear();
   harness.runSearchV2.mockReset();
   harness.adaptToSearchResults.mockReset();
-  harness.cacheGet.mockClear();
-  harness.cacheSet.mockClear();
   harness.completeSearchRun.mockClear();
   harness.searchLogCounter = 0;
 
@@ -203,7 +189,7 @@ beforeEach(() => {
 });
 
 describe("speaker-filter removal route contract", () => {
-  it("serves a legacy URL from the ordinary JSON cache without changing evidence", async () => {
+  it("gives a legacy URL the same evidence as the ordinary one", async () => {
     const question = "speaker filter removal ordinary first";
     const ordinary = await jsonSearch(`https://example.test/api/search?q=${encodeURIComponent(question)}`);
     const legacy = await jsonSearch(
@@ -211,12 +197,11 @@ describe("speaker-filter removal route contract", () => {
     );
 
     assertPipelineHasNoSpeakerPolicyInput();
-    expect(harness.cacheSet).toHaveBeenCalledTimes(1);
     expect(withoutPerRequestIds(legacy)).toEqual(withoutPerRequestIds(ordinary));
     assertCompleteTranscriptEvidence(legacy);
   });
 
-  it("uses the same cache entry when the legacy URL arrives before the ordinary URL", async () => {
+  it("gives the same evidence when the legacy URL arrives first", async () => {
     const question = "speaker filter removal legacy first fresh question";
     const legacy = await jsonSearch(
       `https://example.test/api/search?only_his=1&q=${encodeURIComponent(question)}`,
@@ -224,7 +209,6 @@ describe("speaker-filter removal route contract", () => {
     const ordinary = await jsonSearch(`https://example.test/api/search?q=${encodeURIComponent(question)}`);
 
     assertPipelineHasNoSpeakerPolicyInput();
-    expect(harness.cacheSet).toHaveBeenCalledTimes(1);
     expect(withoutPerRequestIds(ordinary)).toEqual(withoutPerRequestIds(legacy));
     assertCompleteTranscriptEvidence(ordinary);
   });

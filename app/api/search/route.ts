@@ -6,7 +6,7 @@
  * parameter that split the newer engine into two more paths. Four roads, one
  * question, and no way to tell from an answer which road had produced it. Every
  * one of them is gone. What is left is the request boundary and nothing else:
- * validate, read the cache, call the pipeline, log, respond.
+ * validate, call the pipeline, log, respond.
  *
  * Two response shapes, one pipeline behind both:
  *   GET /api/search?q=…            → single JSON response
@@ -31,27 +31,20 @@ import {
   runSearchV2,
   type PipelineStage,
   type PipelineStageInfo,
-  type PipelineOutput,
   type PipelineDiagnostics,
   type SearchTelemetry,
 } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
 import {
-  cacheKeys,
-  getCacheAdapter,
-  TTL,
-} from "@/app/lib/search-v2/cache";
-import {
   allowlistedTechnicalTelemetry,
+  CACHE_STATUS,
   beginSearchRun,
-  cacheHitTechnicalTelemetry,
   completeSearchRun,
   EMPTY_RESULT_FIELDS,
   failureTechnicalTelemetry,
   resultFieldsForTelemetry,
   sourceDurationsForTelemetry,
   telemetryQuestionHash,
-  type SearchRunResultFields,
 } from "@/app/lib/search-v2/search-run-telemetry";
 import {
   markPreviewVerification,
@@ -61,7 +54,6 @@ import {
 } from "@/app/lib/search-v2/preview-verification";
 import { SEARCH_PROGRESS_LABELS } from "@/app/lib/24-search-progress";
 import {
-  SEARCH_STAGE_ORDER,
   SEARCH_STAGE_PERCENT,
 } from "@/app/lib/25-search-stage-events";
 import {
@@ -192,93 +184,13 @@ function toWireStage(onStage: OnStage): (stage: PipelineStage, info?: PipelineSt
 // =====================================================
 
 /**
- * Shared-cache read. Never throws: a cache that is down or misconfigured must
- * cost latency, never a search. The per-request fields (searchLogId, requestId)
- * are deliberately absent from the stored value — each serving logs its own row
- * and carries its own correlation id.
- */
-interface CachedSearchResponse {
-  schema: "search-response-v7";
-  result: Record<string, unknown>;
-  resultFields: SearchRunResultFields;
-}
-
-async function readCache(key: string): Promise<CachedSearchResponse | null> {
-  try {
-    const store = await getCacheAdapter();
-    const cached = await store.get<unknown>(key);
-    if (!cached || typeof cached !== "object") return null;
-    const envelope = cached as Partial<CachedSearchResponse>;
-    if (envelope.schema !== "search-response-v7"
-        || !envelope.result || typeof envelope.result !== "object"
-        || !envelope.resultFields || typeof envelope.resultFields !== "object") {
-      return null;
-    }
-    return envelope as CachedSearchResponse;
-  } catch {
-    return null;
-  }
-}
-
-async function writeCache(
-  key: string,
-  value: Record<string, unknown>,
-  resultFields: SearchRunResultFields = EMPTY_RESULT_FIELDS,
-): Promise<void> {
-  try {
-    const store = await getCacheAdapter();
-    // The exact question is reconstructed from the current request on a hit.
-    // It is not needed in the 24 h serving cache, whose key is already hashed.
-    const { searchLogId: _perRequest, requestId: _rid, query: _rawQuestion, ...cacheable } = value;
-    void _perRequest;
-    void _rid;
-    void _rawQuestion;
-    const envelope: CachedSearchResponse = {
-      schema: "search-response-v7",
-      result: cacheable,
-      resultFields,
-    };
-    await store.set(key, envelope, TTL.response);
-  } catch {
-    // A failed cache write is not a failed search.
-  }
-}
-
-type CacheAdmissionResult = Pick<PipelineOutput, "evidenceInsufficient"> & {
-  telemetry: Pick<SearchTelemetry, "degraded" | "degradedSources">;
-};
-
-export function shouldCacheSearchResult(out: CacheAdmissionResult): boolean {
-  return !out.telemetry.degraded
-    && out.telemetry.degradedSources.length === 0
-    && !out.evidenceInsufficient;
-}
-
-/** Production cache gate with an injected-writer seam for policy tests. */
-export async function writeResponseCacheIfEligible(
-  key: string,
-  value: Record<string, unknown>,
-  out: CacheAdmissionResult,
-  writer: (
-    cacheKey: string,
-    cacheValue: Record<string, unknown>,
-    resultFields?: SearchRunResultFields,
-  ) => Promise<void> = writeCache,
-  resultFields?: SearchRunResultFields,
-): Promise<boolean> {
-  if (!shouldCacheSearchResult(out)) return false;
-  if (resultFields) await writer(key, value, resultFields);
-  else await writer(key, value);
-  return true;
-}
-
-/**
- * Cache-aware pipeline entry — both handlers go through here.
+ * Pipeline entry — both handlers go through here.
  *
- * Two invariants: only a completed, non-degraded result is ever cached (an error
- * or an outage-weakened answer must never become a 24 h cached truth), and
- * correlation ids are attached AFTER the cache read so a cached body never
- * replays another request's id.
+ * There is no cache. Every search runs fresh, every time, even when the same
+ * devotee asks the same question twice. A cache made honest measurement
+ * impossible — the second run of a question could be a saved copy rather than a
+ * real search — and the machinery is deleted rather than switched off so it
+ * cannot quietly come back.
  *
  * Failures are caught only long enough to await the terminal telemetry update,
  * then rethrown unchanged. An all-source failure still reaches the handler and
@@ -292,7 +204,6 @@ async function getOrComputeResult(
   snapshotSession: SnapshotSession | null = null,
 ): Promise<{
   result: Record<string, unknown>;
-  fromCache: boolean;
   diagnostics?: PipelineDiagnostics;
   telemetry?: SearchTelemetry;
   searchLogId?: string | null;
@@ -320,41 +231,6 @@ async function getOrComputeResult(
   const partialStageDurationsMs: Record<string, number> = {};
 
   try {
-    // Keyed on the EXACT normalised question plus corpus version. A semantically
-    // close but different question is a different question and never reuses this
-    // entry — answering one devotee's question with another's evidence is how
-    // words get put in Śrīla Prabhupāda's mouth by accident.
-    const key = cacheKeys.response(query);
-    const cacheStartedAt = now();
-    // Controlled preview verification must exercise the pipeline, never replay
-    // or populate an ordinary response-cache entry.
-    const cached = verificationMode === null && snapshotSession === null
-      ? await readCache(key)
-      : null;
-    const cacheDurationMs = elapsed(cacheStartedAt);
-    if (cached) {
-      await completeSearchRun(searchRun, {
-        status: "success",
-        query,
-        searchMethod: "cache",
-        totalDurationMs: cacheDurationMs,
-        result: cached.resultFields,
-        stageDurationsMs: { cache: cacheDurationMs },
-        sourceDurationsMs: {},
-        telemetry: markPreviewVerification(
-          cacheHitTechnicalTelemetry(questionHash),
-          verificationMode,
-        ),
-      });
-      // A cache hit is a real serving, so it is archived like any other — its
-      // own row, carrying the JSON that was actually served.
-      return {
-        result: { ...cached.result, query, searchLogId: searchRun?.rowId ?? null, requestId },
-        fromCache: true,
-        qaArchive,
-      };
-    }
-
     const baseDb = getSupabaseAdmin() as unknown as RpcCapableClient;
     const out = await runSearchV2({
       db: previewVerificationClient(baseDb, verificationMode),
@@ -369,13 +245,6 @@ async function getOrComputeResult(
     const adapted = adaptToSearchResults(query, out) as unknown as Record<string, unknown>;
     const resultFields = resultFieldsForTelemetry(adapted, out.passages);
 
-    // Only a clean, non-degraded answer is cached. A response produced while
-    // Voyage or Cohere was down is correct but weaker, and caching it for 24
-    // hours would outlive the outage that caused it.
-    if (verificationMode === null && snapshotSession === null) {
-      await writeResponseCacheIfEligible(key, adapted, out, undefined, resultFields);
-    }
-
     const status = out.telemetry.degraded || out.telemetry.degradedSources.length > 0
       ? "degraded"
       : "success";
@@ -388,14 +257,13 @@ async function getOrComputeResult(
       stageDurationsMs: out.telemetry.stageDurationsMs,
       sourceDurationsMs: sourceDurationsForTelemetry(out.telemetry.sourceRetrieval),
       telemetry: markPreviewVerification(
-        allowlistedTechnicalTelemetry(out.telemetry, "miss", questionHash),
+        allowlistedTechnicalTelemetry(out.telemetry, CACHE_STATUS, questionHash),
         verificationMode,
       ),
     });
 
     return {
       result: { ...adapted, searchLogId: searchRun?.rowId ?? null, requestId },
-      fromCache: false,
       ...(out.diagnostics ? { diagnostics: out.diagnostics } : {}),
       telemetry: out.telemetry,
       searchLogId: searchRun?.rowId ?? null,
@@ -439,7 +307,7 @@ interface PreparedSearchResponse {
 
 /**
  * Final defence at the public wire boundary. The normal adapter omits corpus
- * identifiers, but JSON, SSE and cache hits all pass through this function so
+ * identifiers, but JSON and SSE both pass through this function so
  * a stale or future upstream object cannot put them back in the browser.
  * Per-request telemetry ids remain because feedback intentionally uses them.
  */
@@ -521,7 +389,7 @@ export async function prepareSuccessfulResponse(
 /**
  * The request identity has exactly one content-bearing input: `q`. Unknown
  * query parameters are deliberately ignored so old bookmarks cannot select a
- * different evidence policy or cache partition.
+ * different evidence policy.
  */
 export function parseSearchRequestUrl(requestUrl: string): {
   rawQuery: string | null;
@@ -696,14 +564,6 @@ export async function GET(request: NextRequest) {
           verificationMode,
           snapshotSession,
         );
-        if (execution.fromCache) {
-          // Cached answer: replay the stages in fast succession so the loader
-          // still arcs rather than snapping to a finished result.
-          for (const s of SEARCH_STAGE_ORDER) {
-            onStage(s);
-            await new Promise((r) => setTimeout(r, 120));
-          }
-        }
         const prepared = await prepareSuccessfulResponse(execution, query, requestId, snapshotSession);
         sendSerialized("result", prepared.guardedJson);
         // The explicit terminal frame: the client closes on it, so the browser
