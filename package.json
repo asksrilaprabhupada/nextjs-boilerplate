@@ -15,8 +15,7 @@
     "provision:snapshot-storage": "node scripts/provision-search-snapshot-storage.mjs --apply",
     "verify:snapshot": "node scripts/verify-search-snapshot.mjs",
     "lint": "eslint .",
-    "eval:gold": "node scripts/evaluate-search.mjs",
-    "eval:a2": "vitest run --config vitest.a2.config.ts"
+    "eval:gold": "node scripts/evaluate-search.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.13.0",
