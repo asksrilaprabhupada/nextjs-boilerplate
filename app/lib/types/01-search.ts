@@ -146,6 +146,17 @@ export interface SearchResults {
   retrievalStatus: "complete" | "degraded";
   /** Public, allowlisted identities for unavailable retrieval sources. */
   degradedSources: DegradedSource[];
+  /**
+   * True when the relevance ranking did not complete — Cohere returned 402,
+   * 429, a 5xx, timed out, or answered with a body that could not be trusted.
+   *
+   * The passages are real and complete; only their ORDER is arrival order
+   * rather than judged order. This is a separate marker from `degraded`
+   * because "we could not search part of the library" and "we searched it all
+   * but could not rank it" are different facts, and a devotee reading an
+   * unranked page deserves to be told which one happened.
+   */
+  rankingUnavailable?: boolean;
   /** Lanes switched off in this build. */
   disabledLanes?: string[];
 }
