@@ -26,7 +26,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { runSearchV2 } from "@/app/lib/search-v2/pipeline";
 import { adaptToSearchResults } from "@/app/lib/search-v2/adapt";
-import { __setCacheAdapter } from "@/app/lib/search-v2/cache";
 import { SearchInfrastructureError } from "@/app/lib/search-v2/errors";
 import { retrieveCandidates } from "@/app/lib/search-v2/retrieval";
 import {
@@ -270,20 +269,10 @@ beforeAll(() => {
   // Pin a deterministic in-process cache so the test never reaches for the
   // Vercel runtime cache.
   const store = new Map<string, unknown>();
-  __setCacheAdapter({
-    name: "test",
-    async get<T>(k: string) {
-      return (store.get(k) ?? null) as T | null;
-    },
-    async set<T>(k: string, v: T) {
-      store.set(k, v);
-    },
-  });
 });
 
 afterAll(() => {
   for (const k of KEYS) if (SAVED[k] !== undefined) process.env[k] = SAVED[k];
-  __setCacheAdapter(null);
 });
 
 describe("V2 pipeline, end to end, with every provider down", () => {

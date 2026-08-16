@@ -73,7 +73,7 @@ import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/s
 import { searchPipelineVersion, searchCorpusVersion } from "@/app/lib/search-v2/config";
 import { formatVerseReference } from "@/app/lib/search-v2/citation";
 import { makeSnippet } from "@/app/lib/search-v2/snippet";
-import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/cache";
+import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/hash";
 import { extractQueryTerms } from "@/app/lib/10-passage-fold";
 import type { DegradedStage } from "@/app/lib/search-v2/rpc";
 

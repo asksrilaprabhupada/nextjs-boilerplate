@@ -40,9 +40,11 @@ describe("Phase 5 private snapshot migration", () => {
   });
 
   it("keeps ordinary requests out of capture and disables automatic behavior tracking", () => {
-    expect(route).toContain("snapshotSession === null");
+    // The cache-read guard and the raw-question strip both lived in the cache,
+    // which is deleted. Ordinary requests are now kept out of capture by a
+    // stronger fact than a guard: there is no store for them to land in.
     expect(route).toContain("captureDiagnostics: snapshotSession !== null");
-    expect(route).toContain("query: _rawQuestion");
+    expect(route).not.toContain("getCacheAdapter");
     expect(experience).not.toContain("useSearchBehaviorTracker");
     expect(experience).not.toContain("logCitationClick");
   });

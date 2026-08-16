@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   failureResponseBody,
-  writeResponseCacheIfEligible,
 } from "@/app/api/search/route";
 import { SearchInfrastructureError } from "@/app/lib/search-v2/errors";
 import type { DegradedSource } from "@/app/lib/types/01-search";
@@ -97,45 +96,3 @@ describe("search failure response redaction", () => {
   });
 });
 
-describe("response cache admission", () => {
-  it("never writes a response marked degraded", async () => {
-    const writer = vi.fn(async () => undefined);
-    const wrote = await writeResponseCacheIfEligible(
-      "response:key",
-      { degraded: true },
-      cacheAdmission({ degraded: true }),
-      writer,
-    );
-
-    expect(wrote).toBe(false);
-    expect(writer).not.toHaveBeenCalled();
-  });
-
-  it("never writes when any degraded source is present, even if the aggregate flag is false", async () => {
-    const writer = vi.fn(async () => undefined);
-    const wrote = await writeResponseCacheIfEligible(
-      "response:key",
-      { degraded: false, degradedSources: [degradedSource] },
-      cacheAdmission({ degradedSources: [degradedSource] }),
-      writer,
-    );
-
-    expect(wrote).toBe(false);
-    expect(writer).not.toHaveBeenCalled();
-  });
-
-  it("writes one clean, evidence-bearing response through the injected writer", async () => {
-    const writer = vi.fn(async () => undefined);
-    const value = { degraded: false, degradedSources: [], totalResults: 3 };
-    const wrote = await writeResponseCacheIfEligible(
-      "response:key",
-      value,
-      cacheAdmission(),
-      writer,
-    );
-
-    expect(wrote).toBe(true);
-    expect(writer).toHaveBeenCalledOnce();
-    expect(writer).toHaveBeenCalledWith("response:key", value);
-  });
-});

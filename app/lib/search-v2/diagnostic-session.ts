@@ -11,7 +11,7 @@ import {
   createHmac,
   timingSafeEqual,
 } from "node:crypto";
-import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/cache";
+import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/hash";
 import { PREVIEW_VERIFICATION_SECRET_ENV } from "@/app/lib/search-v2/preview-verification";
 
 export const SNAPSHOT_SESSION_COOKIE = "__Secure-asp_search_snapshot";

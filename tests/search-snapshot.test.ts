@@ -361,7 +361,6 @@ describe("private snapshot artifact", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const result = await prepareSuccessfulResponse({
       result: input.internalResponse,
-      fromCache: false,
       diagnostics: input.diagnostics,
       telemetry: input.telemetry,
       searchLogId: input.searchLogId,
@@ -388,7 +387,6 @@ describe("private snapshot artifact", () => {
     ) as never);
     const result = await prepareSuccessfulResponse({
       result: internalResponse,
-      fromCache: false,
       diagnostics: input.diagnostics,
       telemetry: input.telemetry,
       searchLogId: input.searchLogId,
