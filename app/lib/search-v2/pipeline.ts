@@ -3,10 +3,10 @@
  *
  *   plan → embed → 5 batched RPCs (+ pinned exact-reference lookup) →
  *   junk floor → fuse → dedupe → pre-filter → rerank → tier →
- *   re-fetch (main tier) → article plan → render
+ *   re-fetch (main tier)
  *
  * ONE ROAD. Every question that reaches this function is planned, fanned out,
- * fused, reranked, tiered, re-fetched and rendered by the same code with the
+ * fused, reranked, tiered and re-fetched by the same code with the
  * same budgets. There is no classifier deciding that this question deserves six
  * angles and that one deserves two, no mode deciding that this reader gets four
  * passages and that one gets eight, and no shortcut that skips the reranker
@@ -29,8 +29,8 @@
  *     evidence continues with an explicit incomplete-answer warning; failure
  *     can never become a silent empty source.
  *   - Everything else degrades and says so: no planner, no embeddings, no
- *     reranker, no exact-reference lookup and no article planner each produce a
- *     worse but honest answer.
+ *     reranker and no exact-reference lookup each produce a worse but honest
+ *     answer.
  *
  * Telemetry carries a hash of the question, never the question itself, plus the
  * counts that let a bad result be diagnosed without re-running it.
@@ -65,10 +65,8 @@ import {
   type RerankOutcome,
 } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
-import { refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
+import { isRenderable, refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { fetchSourceUrls } from "@/app/lib/search-v2/source-url";
-import { planArticle, type PlannedArticle } from "@/app/lib/search-v2/article-plan";
-import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
 import { searchPipelineVersion, searchCorpusVersion } from "@/app/lib/search-v2/config";
 import { formatVerseReference } from "@/app/lib/search-v2/citation";
@@ -157,7 +155,7 @@ export interface SearchTelemetry {
   degradedSources: FriendlyRetrievalSource[];
   stageDurationsMs: Record<string, number>;
   totalDurationMs: number;
-  models: { queryPlanner: string | null; reranker: string; articlePlanner: string | null };
+  models: { queryPlanner: string | null; reranker: string };
   errorCategory: string | null;
 }
 
@@ -188,11 +186,10 @@ export interface AdditionalPassage {
 }
 
 export interface PipelineOutput {
-  article: RenderedArticle;
   /**
    * The verified MAIN-TIER passages, in selection order (the reranker's
-   * order). This is what the article is built from — the full words,
-   * never just names for the page to look up.
+   * order). This IS the answer — the full words, never just names for the
+   * page to look up, and never re-arranged by anything downstream.
    */
   passages: VerifiedPassage[];
   /**
@@ -273,7 +270,6 @@ export interface PipelineDiagnostics {
     verifiedPassageKeys: string[];
     mainDrops: unknown[];
   };
-  articlePlan: PlannedArticle;
 }
 
 export interface PipelineInput {
@@ -291,8 +287,6 @@ export interface PipelineInput {
    * Arm A so the rest of the production pipeline remains unchanged.
    */
   privateRerankExecutor?: (input: RerankInput) => Promise<RerankOutcome>;
-  /** Private evaluator seam used to avoid an unrelated paid article-planner call. */
-  privateArticlePlanner?: typeof planArticle;
   /** Private evaluator-only per-call Gemini usage proof. */
   privatePlannerCallUsageObserver?: PrivatePlannerCallUsageObserver;
   /**
@@ -599,28 +593,41 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   );
 
   // ── organise ──
-  // The planner contributes arrangement only, and receives ONLY the main tier
-  // (≤ MAIN_TIER_MAX + pins, comfortably inside its schema's capacity). When it
-  // fails, the deterministic renderer orders the passages — and in both cases
-  // every verified passage is shown: the renderer appends whatever a plan
-  // leaves unplaced.
-  onStage?.("organizing", { kept: refetched.verified.length });
-  const articlePlanner = input.privateArticlePlanner ?? planArticle;
-  const organized = await time("organizing", async () => {
-    const plan = await articlePlanner(query, refetched.verified); // main tier only, ≤ 20 + pins
-    return {
-      plan,
-      article: renderArticle({ question: query, passages: refetched.verified, plan: plan.plan }),
-    };
-  });
-  const article = organized.article;
+  // NOTHING HAPPENS HERE ANY MORE, and that is the point. A Gemini call used to
+  // arrange the main tier into sections and write a title. The arrangement was
+  // built, counted for telemetry and then dropped — `passages` below has always
+  // been the selector's list in the reranker's order — so the only thing the
+  // call ever put in front of a devotee was its title, printed as a framing
+  // note above passages that are supposed to be the only words on the page.
+  //
+  // The marker stays for two reasons: the loader still ticks its `weaving`
+  // stage from it, and the duration is recorded as the zero it now is rather
+  // than vanishing from `stage_durations_ms` and taking the search with it out
+  // of the benchmark table.
+  //
+  // One thing the deleted renderer did DOES survive, because it was never about
+  // arrangement: the second labelling gate. `select.ts` already refuses a letter
+  // with no recipient or no date, but re-fetch re-reads every row afterwards, so
+  // a row that lost its recipient between the two reads would otherwise reach a
+  // devotee looking like general instruction rather than correspondence.
+  const renderable = refetched.verified.filter(isRenderable);
+  if (renderable.length !== refetched.verified.length) {
+    console.warn(JSON.stringify({
+      level: "warn",
+      event: "search.unlabellable_after_refetch",
+      requestId,
+      dropped: refetched.verified.length - renderable.length,
+    }));
+  }
+  onStage?.("organizing", { kept: renderable.length });
+  recordDuration("organizing", 0);
 
   const degradedStages = degraded.list();
   const degradedSources = [...retrieved.degradedSources];
   const responseDegraded = degradedStages.length > 0 || degradedSources.length > 0;
   onStage?.(responseDegraded ? "degraded" : "complete");
 
-  const mainTierCount = refetched.verified.length;
+  const mainTierCount = renderable.length;
   const telemetry: SearchTelemetry = {
     requestId,
     plannedIntent: planned.plan.intent,
@@ -645,7 +652,10 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     prefilterSetAside: prefiltered.stats.setAside,
     rerankDocumentCount: rerank.documentCount,
     reranked: rerank.reranked,
-    selectedPassageCount: article.sections.reduce((n, s) => n + s.blocks.length, 0),
+    // Every verified main-tier passage is rendered, so this and `mainTierCount`
+    // are now the same number. It used to count the blocks an article plan
+    // placed; that plan no longer exists.
+    selectedPassageCount: mainTierCount,
     mainTierCount,
     additionalCount: additional.length,
     cutIndex: selection.cutIndex,
@@ -661,7 +671,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     models: {
       queryPlanner: planned.source === "fallback_original_only" ? null : "gemini",
       reranker: rerank.model,
-      articlePlanner: article.planned ? "gemini" : null,
     },
     errorCategory: null,
   };
@@ -719,18 +728,20 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
             verifiedPassageKeys: refetched.verified.map((passage) => passage.passageKey),
             mainDrops: refetched.dropped,
           },
-          articlePlan: organized.plan,
         };
       })()
     : undefined;
 
   return {
-    article,
-    passages: refetched.verified,
+    passages: renderable,
     additional,
     telemetry,
     uncoveredQueryIds: selection.uncoveredQueryIds,
-    evidenceInsufficient: article.evidenceInsufficient || selection.evidenceInsufficient,
+    // Nothing to show is the whole of it. An empty selection necessarily
+    // produces an empty renderable list, so this one test covers both the case
+    // where the tiering found nothing and the case where verification or the
+    // labelling gate took everything away afterwards.
+    evidenceInsufficient: renderable.length === 0,
     ...(diagnostics ? { diagnostics } : {}),
   };
 }

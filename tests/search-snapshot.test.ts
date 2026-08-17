@@ -211,7 +211,7 @@ function telemetry(questionHash: string): SearchTelemetry {
     degradedSources: [],
     stageDurationsMs: { retrieving: 10 },
     totalDurationMs: 20,
-    models: { queryPlanner: null, reranker: "rerank", articlePlanner: null },
+    models: { queryPlanner: null, reranker: "rerank" },
     errorCategory: null,
   };
 }
@@ -276,7 +276,6 @@ const diagnostics: PipelineDiagnostics = {
     additionalPassageKeys: [],
   },
   verification: { verifiedPassageKeys: [], mainDrops: [] },
-  articlePlan: { plan: null, source: "deterministic_fallback", rejections: [] },
 };
 
 function snapshotInput() {

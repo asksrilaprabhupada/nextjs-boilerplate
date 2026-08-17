@@ -10,7 +10,6 @@ import { VOYAGE_CONTEXT_MODEL } from "@/app/lib/03-embed";
 import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/hash";
 import {
   cohereRerankModel,
-  geminiArticlePlannerModel,
   geminiQueryPlannerModel,
   searchConfigVersion,
   searchCorpusVersion,
@@ -373,10 +372,6 @@ export function allowlistedTechnicalTelemetry(
           : telemetry.degradedStages.some((item) => item.stage === "reranking")
             ? "unavailable"
             : "not_called",
-      },
-      articlePlanner: {
-        model: geminiArticlePlannerModel(),
-        outcome: telemetry.models.articlePlanner !== null ? "accepted" : "fallback",
       },
     },
     rpcCounts: {

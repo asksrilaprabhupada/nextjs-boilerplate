@@ -155,7 +155,6 @@ export const RESPONSIVE_SEARCH_RESULT: SearchResults = {
   additionalCount: 6,
   totalResults: 9,
   citations: [],
-  intro: "Responsive verification fixture — not teaching text.",
   suggestion: null,
   suggestionDisplay: null,
   queryTerms: ["responsive", "fixture"],

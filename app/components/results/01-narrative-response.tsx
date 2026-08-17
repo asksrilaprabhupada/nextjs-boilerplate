@@ -610,24 +610,9 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
 
         {viewMode === "article" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.4, ease: EASE.decelerate }}>
-            {/* Neutral orientation (subordinate framing — never doctrine) */}
-            {results.intro && <p className="framing-note framing-intro font-body">{results.intro}</p>}
-
-            {/* Desktop Contents jump-list — collapsed by default, navigation only */}
-            {passages.length > 1 && (
-              <details className="contents">
-                <summary className="font-body">Contents · {passages.length} passages</summary>
-                <ol>
-                  {passages.map((p, index) => (
-                    <li key={`${p.type}:${p.reference ?? p.label}:${index}`}>
-                      <button className="font-body" onClick={() => scrollToSource(index)}>{citeFor(p)}</button>
-                    </li>
-                  ))}
-                </ol>
-              </details>
-            )}
-
-            {/* Every passage, in the reranker's order, words on screen. */}
+            {/* Śrīla Prabhupāda's words open the page. Nothing introduces them:
+                the Gemini-written framing line and the collapsed table-of-
+                contents jump list that both sat here are gone. */}
             <div className="essay-flow">
               {passages.map((p, i) => (
                 <PassageCard
@@ -705,19 +690,11 @@ export default function NarrativeResponse({ results, isLoading, onSearch, search
         .view-mode-toggle { display: inline-flex; max-width: 100%; border: 1px solid var(--border-hair); border-radius: var(--radius-full); overflow: hidden; background: var(--surface-raised); }
         .view-mode-toggle button { min-height: 44px; padding: 7px 16px; font-size: var(--type-label-size); font-weight: 500; border: none; cursor: pointer; background: transparent; color: var(--ink-muted); transition: background var(--dur-2) var(--ease-standard), color var(--dur-2) var(--ease-standard); }
         .view-mode-toggle button.active { background: var(--accent); color: var(--on-accent); }
-        .view-mode-toggle button:focus-visible, .contents summary:focus-visible, .contents button:focus-visible, .fold-expand-btn:focus-visible, .cite-chip:focus-visible, .copy-chip:focus-visible, .sheet-close:focus-visible, .vedabase-link:focus-visible, .next-quote-btn:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+        .view-mode-toggle button:focus-visible, .fold-expand-btn:focus-visible, .cite-chip:focus-visible, .copy-chip:focus-visible, .sheet-close:focus-visible, .vedabase-link:focus-visible, .next-quote-btn:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
 
         /* Neutral AI framing — visually subordinate so it can never read as scripture. */
         .framing-note { font-size: 0.95rem; line-height: 1.6; color: var(--framing); max-width: var(--measure); }
-        .framing-intro { margin-bottom: var(--space-7); }
 
-        .contents { margin: 0 0 var(--space-6); border: 1px solid var(--border-hair); border-radius: var(--radius-md); background: var(--surface-raised); }
-        .contents > summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; padding: 8px 14px; font-size: var(--type-label-size); color: var(--ink-muted); list-style: none; }
-        .contents > summary::-webkit-details-marker { display: none; }
-        .contents ol { margin: 0; padding: 0 14px 12px 14px; list-style: none; display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
-        .contents li button { display: flex; align-items: center; width: 100%; min-height: 44px; background: none; border: none; padding: 6px 0; color: var(--accent-strong); font-size: 0.85rem; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
-        .contents li button:hover { text-decoration: underline; }
-        @media (max-width: 900px) { .contents { display: none; } }
 
         .essay-flow { display: flex; min-width: 0; flex-direction: column; }
 

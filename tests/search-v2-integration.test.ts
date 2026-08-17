@@ -14,7 +14,6 @@
  *     no GEMINI_API_KEY  → query planner falls back to the original question
  *     no VOYAGE_API_KEY  → no embeddings, semantic channel dark
  *     no COHERE_API_KEY  → rerank degrades, fused order stands
- *     no article planner → deterministic renderer
  *
  * A pipeline that only works when four providers are healthy is a pipeline that
  * will hand a devotee a stack trace on the first bad afternoon. This asserts it
@@ -284,19 +283,17 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       requestId: "req_integration",
     });
 
-    const blocks = out.article.sections.flatMap((s) => s.blocks);
-    expect(blocks.length).toBeGreaterThan(0);
+    expect(out.passages.length).toBeGreaterThan(0);
 
     // Text is byte-identical to the source row — no truncation, no editing.
-    const bg634 = blocks.find((b) => b.passageKey === `verse:${BG_6_34.id}`);
+    const bg634 = out.passages.find((p) => p.passageKey === `verse:${BG_6_34.id}`);
     expect(bg634).toBeDefined();
     expect(bg634!.text).toBe(BG_6_34.translation);
 
     // Citation is rebuilt from the fresh row, via the Vedabase URL.
     expect(bg634!.reference).toBe("BG 6.34");
-    expect(bg634!.url).toBe("https://vedabase.io/en/library/bg/6/34/");
+    expect(bg634!.vedabaseUrl).toBe("https://vedabase.io/en/library/bg/6/34/");
 
-    expect(out.article.disclosure).toMatch(/assisted by AI/);
     expect(out.evidenceInsufficient).toBe(false);
   });
 
@@ -313,11 +310,6 @@ describe("V2 pipeline, end to end, with every provider down", () => {
         privatePlannerCallUsageObserver: (event) => {
           privateCalls.push({ ...event });
         },
-        privateArticlePlanner: async () => ({
-          plan: null,
-          source: "deterministic_fallback",
-          rejections: ["offline privacy test"],
-        }),
       });
 
       expect(privateCalls).toEqual([{
@@ -364,14 +356,13 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     // subquery. It must therefore be discounted to `supporting` rather than
     // inheriting the original question's weight — the spoofing guard, observed
     // through the full pipeline rather than a unit stub.
-    const all = out.article.sections.flatMap((s) => s.blocks);
-    expect(all.length).toBeGreaterThan(0);
+    expect(out.passages.length).toBeGreaterThan(0);
 
     // BG 6.34 and BG 6.26 were both matched by the ORIGINAL question at rank 1;
     // the only difference is the channel. fts_core (1.20) must beat
     // fts_expansion (0.65), because an exact-wording hit outranks an
     // alias/transliteration hit.
-    const keys = all.map((b) => b.passageKey);
+    const keys = out.passages.map((p) => p.passageKey);
     const i634 = keys.indexOf(`verse:${BG_6_34.id}`);
     const i626 = keys.indexOf(`verse:${BG_6_26.id}`);
     expect(i634).toBeGreaterThanOrEqual(0);
@@ -389,11 +380,9 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     const codes = out.telemetry.degradedStages.map((d) => d.code).join(" ");
     expect(codes).toMatch(/embeddings_unavailable/);
     expect(out.telemetry.reranked).toBe(false);
-    expect(out.article.planned).toBe(false);
-    expect(out.telemetry.models).toMatchObject({
-      queryPlanner: null,
-      articlePlanner: null,
-    });
+    expect(out.telemetry.models).toMatchObject({ queryPlanner: null });
+    // No article planner exists to name any more — the field is gone, not null.
+    expect(out.telemetry.models).not.toHaveProperty("articlePlanner");
     expect(out.telemetry.degradedStages).toContainEqual({
       stage: "planning",
       source: "gemini_query_planner",
@@ -601,7 +590,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     });
 
     expect(out.evidenceInsufficient).toBe(false);
-    expect(out.article.sections.flatMap((section) => section.blocks).length).toBeGreaterThan(0);
+    expect(out.passages.length).toBeGreaterThan(0);
     expect(out.telemetry.tableRpcCount).toBe(5);
     expect(out.telemetry.tableRpcAttemptCount).toBe(5);
     expect(out.telemetry.degradedSources).toEqual(["Lectures and conversations"]);
@@ -827,7 +816,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       query: "how do I control my restless mind",
       requestId: "req_tamper",
     });
-    const keys = out.article.sections.flatMap((s) => s.blocks.map((b) => b.passageKey));
+    const keys = out.passages.map((p) => p.passageKey);
     expect(keys).not.toContain(`verse:${BG_6_34.id}`);
     expect(out.telemetry.droppedOnRefetch).toBeGreaterThan(0);
     // The rest of the answer survives.
@@ -841,7 +830,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       requestId: "req_none",
     });
     expect(out.evidenceInsufficient).toBe(true);
-    expect(out.article.sections.flatMap((s) => s.blocks)).toHaveLength(0);
+    expect(out.passages).toHaveLength(0);
   });
 
   it("sends a bare exact reference down the same road as everything else", async () => {

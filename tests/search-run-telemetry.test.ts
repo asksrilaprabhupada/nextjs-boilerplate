@@ -109,7 +109,6 @@ function telemetryFixture(): SearchTelemetry {
     models: {
       queryPlanner: "gemini-2.5-flash",
       reranker: "rerank-v4.0-pro",
-      articlePlanner: "gemini-2.5-flash",
     },
     errorCategory: null,
   };
@@ -245,21 +244,21 @@ describe("technical telemetry minimization", () => {
     expect(serialized).not.toContain("secret_table");
   });
 
-  it("records article-planner fallback as a provider fact without degradation", () => {
-    const telemetry = telemetryFixture();
-    telemetry.models.articlePlanner = null;
+  it("names no article planner — there is no such call to record", () => {
+    // The provider block used to sit here beside the query planner and the
+    // reranker. Leaving it in place, always reporting "fallback", would tell a
+    // 2028 reader that a Gemini organising call ran and failed on every single
+    // search. It did not run at all.
+    const stored = allowlistedTechnicalTelemetry(
+      telemetryFixture(), CACHE_STATUS, startInput.questionHash,
+    );
+    const providers = (stored as { providers: Record<string, unknown> }).providers;
 
-    const stored = allowlistedTechnicalTelemetry(telemetry, CACHE_STATUS, startInput.questionHash);
-
-    expect(stored).toMatchObject({
-      providers: {
-        articlePlanner: {
-          model: expect.any(String),
-          outcome: "fallback",
-        },
-      },
-      degradation: [],
-    });
+    expect(providers).not.toHaveProperty("articlePlanner");
+    expect(Object.keys(providers).sort()).toEqual(
+      ["embeddings", "queryPlanner", "reranker"],
+    );
+    expect(JSON.stringify(stored)).not.toMatch(/article/i);
   });
 
   it("does not persist retired speaker-filter state or nested private fields", () => {
