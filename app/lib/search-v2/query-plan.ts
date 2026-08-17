@@ -161,7 +161,7 @@ export type PlanSource = "model" | "fallback_original_only";
 export type PlanFailureKind =
   /** No GEMINI_API_KEY in the environment. Not a model failure at all. */
   | "api_key_absent"
-  /** The call did not return inside PLANNER_TIMEOUT_MS. */
+  /** The call did not return inside the per-attempt cap, and was aborted. */
   | "timeout"
   /** The provider rejected or dropped the call (5xx, network, abort). */
   | "provider_error"
@@ -207,7 +207,10 @@ export function isPlanDegradation(kind: PlanFailureKind | null): boolean {
 
 /** Provider cost of the planning stage. Recorded so a search has a price. */
 export interface PlannerUsage {
-  /** 1, or 2 when a repairable plan earned its single retry. */
+  /**
+   * 1, or 2 when the single retry was earned — by a repairable plan, or by a
+   * call that failed fast enough to leave the stage budget almost whole.
+   */
   attempts: number;
   promptTokens: number;
   outputTokens: number;
@@ -217,9 +220,10 @@ export interface PlannerUsage {
   /** Wall-clock across every attempt, including the rejected one. */
   durationMs: number;
   /**
-   * One entry per planner call. The 3 s cap applies to a SINGLE call, so a
-   * total that happens to span a retry must never be mistaken for the latency
-   * the cap is judged against.
+   * One entry per planner call. The per-call cap applies to a SINGLE call, so
+   * a total that happens to span a retry must never be mistaken for the
+   * latency that cap is judged against — and judging the cap against blended
+   * numbers is how it came to be set too low twice.
    */
   attemptDurationsMs: number[];
 }
@@ -750,40 +754,204 @@ export type PrivatePlannerCallUsageObserver = (
 /** Injected in tests; the real client is constructed lazily in `planQuery`. */
 export interface PlannerDeps {
   client?: GenAiLike;
+  /** Cap on ONE attempt. Defaults to PLANNER_TIMEOUT_MS. */
   timeoutMs?: number;
+  /** Cap on the WHOLE stage, retry included. Defaults to PLANNER_STAGE_BUDGET_MS. */
+  stageBudgetMs?: number;
   /** Test seam for deterministic durations. */
   now?: () => number;
+  /** Test seam so a provider's stated retry delay costs a test nothing. */
+  sleep?: (ms: number) => Promise<void>;
   /** Evaluator-only call accounting; observer failures never affect search. */
   privateCallUsageObserver?: PrivatePlannerCallUsageObserver;
 }
 
 /**
- * 4 s PER ATTEMPT — measured, not guessed.
+ * 8 s PER ATTEMPT — because 4 s was clipping the distribution, exactly as the
+ * 3 s cap before it did.
  *
- * It stayed at 3 s until measurement said otherwise, which is the only reason
- * it moved. Over 206 single planner calls against the gold set, run serially
- * so the number means what it says:
+ * The comment this replaces recorded the previous move honestly. Over 206
+ * serial planner calls the p95 landed at 2,999.96 ms against a 3,000 ms cap,
+ * and it named that for what it was: the tail being TRUNCATED into timeouts
+ * rather than measured. Measured p95 plus one second gave 4,000 ms.
  *
- *   fastest 537 ms · median 2,273 ms · p95 2,999.96 ms · slowest 3,003 ms
+ * Four seconds then produced the same shape one level up. Over ten recent
+ * production searches on the live deployment:
  *
- * That p95 sitting a fraction under 3,000 ms is not a comfortable fit — it is
- * the distribution being CLIPPED by the old cap. Everything slower was
- * truncated into a timeout, 16 of them in that run, so the true p95 is at
- * least 3 s and unknowable from behind the cap. Measured p95 plus one second
- * gives 4,000 ms.
+ *   successes  2,585 – 3,869 ms, median ~3,208 ms
+ *   timeouts   4 of 10, EVERY one recorded at 4,001.x ms with 0 tokens
+ *
+ * A timeout that always lands a millisecond past the cap, carrying no tokens,
+ * is the abort cutting off live work — not slow work being measured. And the
+ * successful calls now sit near 3.2 s where that 206-call run had a median of
+ * 2,273 ms, so the provider is roughly 40% slower than when 4,000 ms was
+ * chosen. Its real tail is still unknowable from behind a cap.
+ *
+ * So this number is set to CLEAR the tail rather than to trace its edge: 8 s
+ * is more than twice the observed cluster's ceiling, and a healthy call near
+ * 3 s never touches it. The costs are not symmetrical — a few extra seconds of
+ * waiting on a bad day, against throwing away all five angles and telling a
+ * devotee to search again, which is what a 34 ms overshoot did.
  *
  * Thinking is still off; this is the residual tail of a loaded provider, not
- * deliberation. Planning may now take up to 8 s when a repairable plan earns
- * its retry, against a 300 s request budget and ~25 s of cold retrieval.
+ * deliberation.
  */
-const PLANNER_TIMEOUT_MS = 4000;
+export const PLANNER_TIMEOUT_MS = 8000;
 
-/** Distinguishes "took too long" from "came back wrong" at the call boundary. */
+/**
+ * 10 s FOR THE WHOLE STAGE, retry included.
+ *
+ * Two attempts at the per-call cap would be 16 s spent before a single row is
+ * retrieved. Planning must not be able to reach its own maximum twice, so
+ * every attempt's timeout is clamped to what is left of this: the full 8 s for
+ * the first, and at most the remaining 2 s for a second that follows a slow
+ * first. The stage cannot outrun the number.
+ */
+export const PLANNER_STAGE_BUDGET_MS = 10000;
+
+/**
+ * A CALL failure earns the single retry only if it failed inside this.
+ *
+ * The retry exists to buy back five angles when the first attempt died early
+ * and the budget is still almost whole. After a slow failure — a timeout above
+ * all — the budget is spent, and a second attempt would be a paid call
+ * squeezed into the seconds the first one wasted. Falling back to the original
+ * question is the honest move there, and it is still a real search.
+ *
+ * Note what this does by construction: a timeout at the 8 s cap cannot fail
+ * inside 2 s, so a timeout never earns a retry. That is the rule applying, not
+ * a special case written for it.
+ */
+export const PLANNER_FAST_FAILURE_MS = 2000;
+
+/**
+ * The smallest slice of stage budget worth paying a second attempt for. Below
+ * this a retry is a purchased timeout: the call cannot plausibly return a plan
+ * in the time left, and the fallback is reached either way.
+ */
+export const PLANNER_MIN_RETRY_BUDGET_MS = 2000;
+
+/**
+ * Distinguishes "took too long" from "came back wrong" at the call boundary.
+ *
+ * `status` carries the provider's HTTP status when there was one, because the
+ * retry rule turns on it: a 5xx is worth one more try and a 401 never is. It
+ * has to be lifted off the original error here — this class replaces it, and
+ * the status would otherwise survive only as text inside the message.
+ */
 class PlannerCallError extends Error {
-  constructor(readonly kind: PlanFailureKind, message: string) {
+  readonly status: number | null;
+
+  constructor(
+    readonly kind: PlanFailureKind,
+    message: string,
+    status: number | null = null,
+  ) {
     super(message);
     this.name = "PlannerCallError";
+    this.status = status;
   }
+}
+
+/** The HTTP status a provider rejection carries, when it carries one. */
+function httpStatusOf(err: unknown): number | null {
+  // @google/genai throws ApiError with a numeric `status`, but the class sits
+  // behind a dynamic import, so this reads the shape rather than the type.
+  if (err instanceof PlannerCallError) return err.status;
+  const direct = (err as { status?: unknown } | null | undefined)?.status;
+  if (typeof direct === "number" && Number.isFinite(direct)) return direct;
+  // The SDK stringifies the whole error body into the message, so the code is
+  // still there even when a wrapper dropped the property.
+  const message = err instanceof Error ? err.message : "";
+  const coded = /"code"\s*:\s*(\d{3})\b/.exec(message);
+  return coded ? Number(coded[1]) : null;
+}
+
+/**
+ * How long the provider asked us to wait, in milliseconds, or null.
+ *
+ * Gemini answers a 429 with google.rpc.RetryInfo — `"retryDelay":"27s"` inside
+ * the error body the SDK puts in the message. A plain `Retry-After` in seconds
+ * is read too, so a proxy or a future SDK shape is not a silent miss.
+ */
+function retryAfterMsOf(err: unknown): number | null {
+  const message = err instanceof Error ? err.message : "";
+  const delay = /"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/.exec(message);
+  if (delay) return Math.round(Number(delay[1]) * 1000);
+  const header = /retry-after"?\s*[:=]\s*"?(\d+(?:\.\d+)?)/i.exec(message);
+  return header ? Math.round(Number(header[1]) * 1000) : null;
+}
+
+/** Whether a failed call earns the retry, how long to wait, and why. */
+interface RetryDecision {
+  retry: boolean;
+  /** Milliseconds to wait first, honouring a delay the provider stated. */
+  waitMs: number;
+  /** Recorded beside the rejection so a fallback reads clearly months later. */
+  reason: string;
+}
+
+/**
+ * Does this CALL failure earn the single retry?
+ *
+ * Three gates, all of which must pass:
+ *   1. it failed fast — see PLANNER_FAST_FAILURE_MS;
+ *   2. enough stage budget is left to pay for a real second attempt;
+ *   3. the failure is one a second attempt could plausibly survive.
+ *
+ * Gate 3 refuses authentication and validation errors outright. A 401 or a 403
+ * will be a 401 or a 403 again; a 400 rejecting the request will reject it
+ * identically. Paying twice for a deterministic answer is the exact waste the
+ * single-attempt rule was written to prevent. A 5xx, a dropped socket, or a
+ * 429 whose stated delay fits the remaining budget are each worth one more go.
+ *
+ * An empty or truncated BODY is deliberately left where it was — one attempt,
+ * then the fallback. That was decided on its own evidence (a retry doubled the
+ * pre-retrieval cost of every planner outage and bought nothing the fallback
+ * plan does not already give), and a paid 200 with an unusable body is not the
+ * problem this rule was written for.
+ */
+function callFailureRetry(
+  err: unknown,
+  attemptElapsedMs: number,
+  remainingBudgetMs: number,
+): RetryDecision {
+  const no = (reason: string): RetryDecision => ({ retry: false, waitMs: 0, reason });
+  const kind = err instanceof PlannerCallError ? err.kind : "provider_error";
+
+  if (kind === "empty_body" || kind === "invalid_json") {
+    return no("an unusable body is not retried");
+  }
+  if (attemptElapsedMs >= PLANNER_FAST_FAILURE_MS) {
+    return no(`failed slowly after ${Math.round(attemptElapsedMs)}ms — the budget is spent`);
+  }
+  if (remainingBudgetMs < PLANNER_MIN_RETRY_BUDGET_MS) {
+    return no("the planning budget is spent");
+  }
+  if (kind === "timeout") {
+    return { retry: true, waitMs: 0, reason: "timed out fast, with the budget almost whole" };
+  }
+
+  const status = httpStatusOf(err);
+  if (status === null) {
+    // No status at all: a dropped socket, DNS, a proxy hiccup. Transient.
+    return { retry: true, waitMs: 0, reason: "transient network failure" };
+  }
+  if (status === 429) {
+    const stated = retryAfterMsOf(err);
+    if (stated === null) return no("429 with no stated delay — retrying blind invites another");
+    if (stated + PLANNER_MIN_RETRY_BUDGET_MS > remainingBudgetMs) {
+      return no(`429 asks for ${stated}ms, which does not fit the remaining budget`);
+    }
+    return { retry: true, waitMs: stated, reason: `429 asks for ${stated}ms, which fits` };
+  }
+  if (status === 408 || status === 425 || status >= 500) {
+    return { retry: true, waitMs: 0, reason: `provider ${status} — transient` };
+  }
+  if (status >= 400) {
+    return no(`${status} is deterministic — a second call returns it again`);
+  }
+  return { retry: true, waitMs: 0, reason: `unclassified status ${status}` };
 }
 
 interface PlannerCallResult {
@@ -803,12 +971,16 @@ async function callPlanner(
   let responseReceived = false;
   let usage: GenAiUsage = {};
   let text = "";
+  // Aborted when the cap wins, so a request we have stopped waiting for stops
+  // competing with the fallback search for two cores.
+  const controller = new AbortController();
   try {
     const response = await withTimeout(
       client.models.generateContent({
         model: geminiQueryPlannerModel(),
         contents: buildPrompt(query, maxSubqueries, repairNotes),
         config: {
+          abortSignal: controller.signal,
           responseMimeType: "application/json",
           responseJsonSchema: queryPlanResponseSchema(maxSubqueries),
           temperature: 0.2,
@@ -822,6 +994,7 @@ async function callPlanner(
         },
       }),
       timeoutMs,
+      controller,
     );
     responseReceived = true;
     // Capture accounting before body validation. Empty or malformed bodies are
@@ -833,6 +1006,9 @@ async function callPlanner(
     throw new PlannerCallError(
       "provider_error",
       err instanceof Error ? err.message : "planner call failed",
+      // Lifted off the original error while it still exists: the retry rule
+      // turns on this status, and this class is about to replace it.
+      httpStatusOf(err),
     );
   } finally {
     if (privateCallUsageObserver) {
@@ -872,12 +1048,33 @@ function parsePlannerBody(text: string): unknown {
   }
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+/**
+ * Races a call against the cap and ABORTS it when the cap wins.
+ *
+ * This used simply to stop waiting. The request carried on — a live HTTPS
+ * connection, its response still being read and parsed — competing for two
+ * cores with the fallback search already under way. Aborting hands those back.
+ *
+ * The SDK is explicit that an abort is client-side only: Google keeps working
+ * and still bills for the call. That is fine and worth saying plainly. What is
+ * reclaimed here is OUR box, which is the one that was slow.
+ *
+ * The abandoned promise rejects with an abort error a moment later. It is
+ * still handled below — rejecting an already-settled promise is a no-op — so
+ * no unhandled rejection escapes.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, controller?: AbortController): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new PlannerCallError("timeout", `planner timed out after ${ms}ms`)),
-      ms,
-    );
+    const timer = setTimeout(() => {
+      // Abort BEFORE rejecting: the fallback must not start while the request
+      // we gave up on is still holding a socket.
+      try {
+        controller?.abort();
+      } catch {
+        // An abort that throws must not replace the timeout the caller needs.
+      }
+      reject(new PlannerCallError("timeout", `planner timed out after ${ms}ms`));
+    }, ms);
     p.then(
       (v) => {
         clearTimeout(timer);
@@ -949,29 +1146,43 @@ export async function planQuery(
   }
 
   const timeoutMs = deps.timeoutMs ?? PLANNER_TIMEOUT_MS;
+  const stageBudgetMs = deps.stageBudgetMs ?? PLANNER_STAGE_BUDGET_MS;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const remainingBudgetMs = (): number => Math.max(0, stageBudgetMs - (now() - startedAt));
   const rejections: string[] = [];
   let failureKind: PlanFailureKind = "provider_error";
   let repairNotes: string[] = [];
 
-  // AT MOST TWO attempts, and the second one only happens for a plan the model
-  // could plainly do better on: too few angles, or angles that repeat one
-  // another. A timeout, an outage or a misread question do not earn a retry —
-  // paying twice for the same answer is what the single-attempt rule was
-  // protecting against, and the fallback plan is still an honest search.
+  // AT MOST TWO attempts. The second one is earned in exactly two ways, and
+  // both are narrow:
+  //
+  //   - the plan came back repairable — too few angles, or angles that repeat
+  //     one another — and the model is told what was wrong;
+  //   - the CALL failed fast, with the stage budget still almost whole, in a
+  //     way a second call could plausibly survive (see callFailureRetry).
+  //
+  // Everything else still lands on the fallback after one attempt: a misread
+  // question, an unusable body, a deterministic 4xx, and any failure slow
+  // enough to have spent the budget. Paying twice for the same answer is what
+  // the single-attempt rule was protecting against, and the fallback plan is
+  // still an honest search.
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     usage.attempts = attempt;
     const attemptStartedAt = now();
+    let attemptElapsedMs = 0;
     const recordAttempt = (): void => {
-      usage.attemptDurationsMs.push(
-        Math.round(Math.max(0, now() - attemptStartedAt) * 1000) / 1000,
-      );
+      attemptElapsedMs = Math.max(0, now() - attemptStartedAt);
+      usage.attemptDurationsMs.push(Math.round(attemptElapsedMs * 1000) / 1000);
     };
+    // No attempt may outlast the stage. The first gets the full per-call cap;
+    // a second following a slow first gets only what the stage has left.
+    const attemptTimeoutMs = Math.max(1, Math.min(timeoutMs, remainingBudgetMs()));
     try {
       const called = await callPlanner(
         client,
         query,
         maxSubqueries,
-        timeoutMs,
+        attemptTimeoutMs,
         repairNotes,
         attempt,
         deps.privateCallUsageObserver,
@@ -1001,7 +1212,13 @@ export async function planQuery(
       // buried under the duplicate reports it inevitably drags with it.
       failureKind = problems[0].kind;
       const repairable = problems.every((p) => p.repairable);
-      if (!repairable || attempt === 2) {
+      // A repair retry is still a paid call, so it obeys the stage budget too.
+      const budgetLeft = remainingBudgetMs();
+      const budgetSpent = budgetLeft < PLANNER_MIN_RETRY_BUDGET_MS;
+      if (budgetSpent && repairable && attempt === 1) {
+        rejections.push("model: no repair retry — the planning budget is spent");
+      }
+      if (!repairable || attempt === 2 || budgetSpent) {
         // A POINTER question that could not be given five distinct angles is
         // not a failure — it is a question with only one angle in it. The test
         // reads the QUESTION, never the plan, so a real question cannot reach
@@ -1019,7 +1236,20 @@ export async function planQuery(
       recordAttempt();
       failureKind = err instanceof PlannerCallError ? err.kind : "provider_error";
       rejections.push(`model: ${err instanceof Error ? err.message : "planner call failed"}`);
-      break;
+      if (attempt === 2) break;
+
+      const decision = callFailureRetry(err, attemptElapsedMs, remainingBudgetMs());
+      if (!decision.retry) {
+        rejections.push(`model: no retry — ${decision.reason}`);
+        break;
+      }
+      rejections.push(`model: retrying once — ${decision.reason}`);
+      // Honour a delay the provider itself asked for; retrying into a rate
+      // limit the instant it is raised earns the same rate limit again.
+      if (decision.waitMs > 0) await sleep(decision.waitMs);
+      // Nothing came back to repair, so the second attempt gets the plain
+      // prompt rather than repair notes about a plan that never existed.
+      repairNotes = [];
     }
   }
 
