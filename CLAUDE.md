@@ -135,7 +135,7 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   │   ├── pipeline.ts            (the orchestrator; joins every stage, holds the budgets)
 │   │   │   ├── config.ts              (fusion weights, per-source quotas, pool sizes, model ids)
 │   │   │   ├── reference.ts           (spots a scripture reference — siglum for the filter, full form for the pin)
-│   │   │   ├── query-plan.ts          (one schema-constrained Gemini query plan + its validator; exactly 5 angles, thinking off, one repair retry)
+│   │   │   ├── query-plan.ts          (one schema-constrained Gemini query plan + its validator; exactly 5 angles, thinking off, 8 s per attempt inside a 10 s stage, one retry for a repairable plan or a fast transient call failure, timed-out calls aborted)
 │   │   │   ├── planner-gate.ts        (planner-only measurement harness over the gold set: acceptance, latency, tokens, cost)
 │   │   │   ├── retrieval.ts           (vocabulary resolve, batched embedding, 5 concurrent RPCs, fail-open)
 │   │   │   ├── fusion.ts · dedup.ts   (junk floor + one weighted RRF pass, then duplicate collapse)

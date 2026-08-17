@@ -19,6 +19,9 @@ import {
   QUERY_PLANNER_MAX_OUTPUT_TOKENS,
   isPointerQuestion,
   isPlanDegradation,
+  PLANNER_TIMEOUT_MS,
+  PLANNER_STAGE_BUDGET_MS,
+  PLANNER_FAST_FAILURE_MS,
   type PrivatePlannerCallUsage,
 } from "@/app/lib/search-v2/query-plan";
 
@@ -300,8 +303,10 @@ describe("query planner loop", () => {
     });
     expect(wrongShape.failureKind).toBe("schema_rejected");
 
+    // Two, because a fast outage now earns the single retry (see below); the
+    // KIND it is finally recorded under is what this test is about.
     const outage = await planQuery(QUESTION, MAX_SUBQUERIES, {
-      client: scriptedClient([new Error("503")]),
+      client: scriptedClient([new Error("503"), new Error("503")]),
     });
     expect(outage.failureKind).toBe("provider_error");
   });
@@ -339,7 +344,7 @@ describe("query planner loop", () => {
     }
   });
 
-  it("emits one fail-closed record for timeout and provider-error attempts", async () => {
+  it("emits one fail-closed record per attempt for timeout and provider-error calls", async () => {
     const timeoutCalls: PrivatePlannerCallUsage[] = [];
     const timeout = await planQuery(QUESTION, MAX_SUBQUERIES, {
       client: {
@@ -354,13 +359,12 @@ describe("query planner loop", () => {
 
     const providerCalls: PrivatePlannerCallUsage[] = [];
     const outage = await planQuery(QUESTION, MAX_SUBQUERIES, {
-      client: scriptedClient([new Error("503")]),
+      client: scriptedClient([new Error("503"), new Error("503")]),
       privateCallUsageObserver: (event) => { providerCalls.push({ ...event }); },
     });
     expect(outage.failureKind).toBe("provider_error");
 
-    const expected = {
-      attempt: 1,
+    const nothingReturned = {
       responseReceived: false,
       promptTokenCount: null,
       candidatesTokenCount: null,
@@ -368,8 +372,16 @@ describe("query planner loop", () => {
       toolUsePromptTokenCount: null,
       totalTokenCount: null,
     };
-    expect(timeoutCalls).toEqual([expected]);
-    expect(providerCalls).toEqual([expected]);
+    // BOTH attempts are recorded. A retry that left no trace would make the
+    // planner look half as expensive as it is.
+    expect(timeoutCalls).toEqual([
+      { attempt: 1, ...nothingReturned },
+      { attempt: 2, ...nothingReturned },
+    ]);
+    expect(providerCalls).toEqual([
+      { attempt: 1, ...nothingReturned },
+      { attempt: 2, ...nothingReturned },
+    ]);
   });
 
   it("swallows evaluator observer errors without changing the accepted plan", async () => {
@@ -424,13 +436,14 @@ describe("query planner loop", () => {
     expect(out.failureKind).toBe("invalid_json");
   });
 
-  it("falls back to the original question after one failure — never throws", async () => {
-    const client = scriptedClient([new Error("503")]);
+  it("falls back to the original question when the retry fails too — never throws", async () => {
+    const client = scriptedClient([new Error("503"), new Error("503")]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("fallback_original_only");
     expect(out.plan.subqueries).toHaveLength(0);
     expect(out.plan.canonical_query).toBe(QUESTION);
-    expect(client.calls).toHaveLength(1);
+    // Two attempts, and then it stops. There is no third.
+    expect(client.calls).toHaveLength(2);
   });
 
   it("discards a schema-valid plan that fails semantic validation", async () => {
