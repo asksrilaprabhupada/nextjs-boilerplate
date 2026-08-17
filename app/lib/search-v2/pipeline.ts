@@ -68,7 +68,11 @@ import { dropRedundantVerseChunks, fetchChunkParents } from "@/app/lib/search-v2
 import { isRenderable, refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { fetchSourceUrls } from "@/app/lib/search-v2/source-url";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
-import { searchPipelineVersion, searchCorpusVersion } from "@/app/lib/search-v2/config";
+import {
+  geminiQueryPlannerModel,
+  searchPipelineVersion,
+  searchCorpusVersion,
+} from "@/app/lib/search-v2/config";
 import { formatVerseReference } from "@/app/lib/search-v2/citation";
 import { makeSnippet } from "@/app/lib/search-v2/snippet";
 import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/hash";
@@ -159,7 +163,13 @@ export interface SearchTelemetry {
   degradedSources: FriendlyRetrievalSource[];
   stageDurationsMs: Record<string, number>;
   totalDurationMs: number;
-  models: { queryPlanner: string | null; reranker: string };
+  /**
+   * WHICH MODELS PRODUCED THIS ANSWER — each string as the provider call
+   * actually carried it, reported back by the stage that made the call. Never
+   * a config default read separately at write time, which is how the reranker
+   * came to be recorded as a model it was not.
+   */
+  models: { queryPlanner: string | null; embeddings: string; reranker: string };
   errorCategory: string | null;
 }
 
@@ -694,7 +704,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     stageDurationsMs: durations,
     totalDurationMs: elapsed(started),
     models: {
-      queryPlanner: planned.source === "fallback_original_only" ? null : "gemini",
+      queryPlanner: planned.source === "fallback_original_only" ? null : geminiQueryPlannerModel(),
+      embeddings: retrieved.embeddingModel,
       reranker: rerank.model,
     },
     errorCategory: null,

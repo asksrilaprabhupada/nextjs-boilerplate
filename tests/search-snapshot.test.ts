@@ -211,7 +211,7 @@ function telemetry(questionHash: string): SearchTelemetry {
     degradedSources: [],
     stageDurationsMs: { retrieving: 10 },
     totalDurationMs: 20,
-    models: { queryPlanner: null, reranker: "rerank" },
+    models: { queryPlanner: null, embeddings: "voyage-context-4", reranker: "rerank" },
     errorCategory: null,
   };
 }

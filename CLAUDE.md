@@ -31,13 +31,16 @@ VOYAGE_API_KEY=<voyage ai key>             # query embeddings (voyage-context-4,
 GEMINI_API_KEY=<google ai studio key>      # multi-query expansion, long-query preprocessing
 COHERE_API_KEY=<cohere key>                # search result reranking (rerank-v4.0-pro)
 GEMINI_QUERY_PLANNER_MODEL=gemini-2.5-flash   # optional — query-plan model
-COHERE_RERANK_MODEL=rerank-v4.0-pro           # optional — reranker
 NEXT_PUBLIC_SITE_URL=<canonical origin>       # optional — set after attaching the custom domain
 SEARCH_CORPUS_VERSION=2026-07-08-tags-v3      # optional — cache-busts a re-tagged corpus
 ```
 
 There is no environment variable that selects a search engine or a search mode.
-There is one pipeline; nothing switches it.
+There is one pipeline; nothing switches it. There is also no variable that
+changes the reranker model: the client hard-codes `rerank-v4.0-pro`, and the
+`COHERE_RERANK_MODEL` variable that used to appear here changed nothing except
+what the database claimed the model had been. Every model string in
+`search_logs` is now the one its stage reported placing on its own request.
 
 ### Tech Stack (AI)
 

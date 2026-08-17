@@ -68,10 +68,6 @@ export const SEARCH_V2_CONFIG = {
   perSourceSemanticLimit: 300,
 } as const;
 
-/** How many candidates earn a cross-encoder reading. The rest are still shown
- *  as citations — this is a spending decision, not a relevance verdict. */
-export const PREFILTER_POOL = 400;
-
 export type QueryPriority = keyof typeof SEARCH_V2_CONFIG.queryWeights;
 export type ChannelName =
   | "fts_core"
@@ -120,6 +116,15 @@ export function geminiQueryPlannerModel(): string {
   return process.env.GEMINI_QUERY_PLANNER_MODEL || "gemini-2.5-flash";
 }
 
-export function cohereRerankModel(): string {
-  return process.env.COHERE_RERANK_MODEL || "rerank-v4.0-pro";
-}
+/*
+ * THERE IS NO cohereRerankModel(). It used to live here, returning
+ * `process.env.COHERE_RERANK_MODEL || "rerank-v4.0-pro"`, and it was a lie in
+ * two directions at once: the client hard-codes `rerank-v4.0-pro` on the
+ * request and never reads that variable, so setting COHERE_RERANK_MODEL
+ * changed nothing except what the DATABASE said the model had been. A record
+ * naming a model the call did not use is worse than no record.
+ *
+ * The value itself is unchanged and correct — it is COHERE_RERANK_MODEL in
+ * app/lib/08-cohere-rerank.ts, beside the request that carries it, and the
+ * rerank outcome reports it back for telemetry to store.
+ */

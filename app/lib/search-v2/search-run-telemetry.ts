@@ -6,10 +6,8 @@
  * visible in server logs but can never change the search result.
  */
 import { getSupabaseAdmin } from "@/app/lib/01-supabase";
-import { VOYAGE_CONTEXT_MODEL } from "@/app/lib/03-embed";
 import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/hash";
 import {
-  cohereRerankModel,
   geminiQueryPlannerModel,
   searchConfigVersion,
   searchCorpusVersion,
@@ -347,7 +345,10 @@ export function allowlistedTechnicalTelemetry(
     },
     providers: {
       queryPlanner: {
-        model: geminiQueryPlannerModel(),
+        // Every model string below is the one the STAGE reported placing on its
+        // request. Reading a config accessor here instead is what let the
+        // reranker be recorded as a model the client never sent.
+        model: telemetry.models.queryPlanner ?? geminiQueryPlannerModel(),
         outcome: telemetry.models.queryPlanner !== null ? "accepted" : "fallback",
         promptTokens: telemetry.planUsage.promptTokens,
         outputTokens: telemetry.planUsage.outputTokens,
@@ -357,7 +358,7 @@ export function allowlistedTechnicalTelemetry(
         totalTokens: telemetry.planUsage.totalTokens,
       },
       embeddings: {
-        model: VOYAGE_CONTEXT_MODEL,
+        model: telemetry.models.embeddings,
         providerCalls: telemetry.embeddingProviderCalls,
         outcome: telemetry.degradedStages.some((item) => item.code === "embeddings_unavailable")
           ? "unavailable"
@@ -366,7 +367,7 @@ export function allowlistedTechnicalTelemetry(
             : "not_called",
       },
       reranker: {
-        model: cohereRerankModel(),
+        model: telemetry.models.reranker,
         outcome: telemetry.reranked
           ? "used"
           : telemetry.degradedStages.some((item) => item.stage === "reranking")

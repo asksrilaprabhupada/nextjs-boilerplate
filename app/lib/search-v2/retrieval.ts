@@ -20,7 +20,7 @@
  * logical source invocations, while `tableRpcAttemptCount` also includes a
  * definite-transport retry. Vocabulary and hydration remain separate.
  */
-import { embedQueries } from "@/app/lib/03-embed";
+import { embedQueries, VOYAGE_CONTEXT_MODEL } from "@/app/lib/03-embed";
 import {
   rpcOrThrowMeasured,
   rpcOrDegrade,
@@ -95,7 +95,17 @@ export interface EmbeddedQuery {
 export async function embedPlannedQueries(
   original: string,
   plan: QueryPlan,
-): Promise<{ queries: EmbeddedQuery[]; embeddingAvailable: boolean; providerCalls: number }> {
+): Promise<{
+  queries: EmbeddedQuery[];
+  embeddingAvailable: boolean;
+  providerCalls: number;
+  /**
+   * The model string the request actually carried — reported back rather than
+   * imported by the telemetry writer, so a record can never name a model the
+   * call did not use.
+   */
+  model: string;
+}> {
   const wanted: { id: string; text: string }[] = [
     { id: ORIGINAL_QUERY_ID, text: original },
     ...plan.subqueries.map((s) => ({ id: s.id, text: s.text })),
@@ -124,7 +134,7 @@ export async function embedPlannedQueries(
   // running semantic on subqueries but not the question would weight the
   // scaffolding above the thing actually asked.
   const embeddingAvailable = (resolved.get(ORIGINAL_QUERY_ID) ?? []).length > 0;
-  return { queries, embeddingAvailable, providerCalls };
+  return { queries, embeddingAvailable, providerCalls, model: VOYAGE_CONTEXT_MODEL };
 }
 
 // v3, not v2: v2 pinned hnsw.ef_search to 100, so its semantic lane silently
@@ -179,6 +189,8 @@ export interface RetrievalResult {
   tableRpcAttemptCount: number;
   vocabularyRpcCount: number;
   embeddingProviderCalls: number;
+  /** The embedding model actually used, as reported by the embedding stage. */
+  embeddingModel: string;
   resolvedSlugs: string[];
   semanticAvailable: boolean;
   candidateCount: number;
@@ -497,6 +509,7 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
     tableRpcAttemptCount: sourceRetrieval.reduce((n, source) => n + source.attemptCount, 0),
     vocabularyRpcCount: plan.vocabulary_candidates.length > 0 ? 1 : 0,
     embeddingProviderCalls: embedded.providerCalls,
+    embeddingModel: embedded.model,
     resolvedSlugs: slugs,
     semanticAvailable: embedded.embeddingAvailable,
     candidateCount: groups.reduce((n, g) => n + g.length, 0),
