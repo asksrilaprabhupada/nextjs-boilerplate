@@ -108,6 +108,7 @@ function telemetryFixture(): SearchTelemetry {
     totalDurationMs: 1234,
     models: {
       queryPlanner: "gemini-2.5-flash",
+      embeddings: "voyage-context-4",
       reranker: "rerank-v4.0-pro",
     },
     errorCategory: null,
