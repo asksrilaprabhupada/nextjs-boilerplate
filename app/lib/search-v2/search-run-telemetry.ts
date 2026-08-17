@@ -385,8 +385,10 @@ export function allowlistedTechnicalTelemetry(
       afterFusion: telemetry.candidatesAfterFusion,
       duplicatesCollapsed: telemetry.duplicatesCollapsed,
       junkFloorDropped: telemetry.junkFloorDropped,
-      prefilterPassed: telemetry.prefilterPassed,
-      prefilterSetAside: telemetry.prefilterSetAside,
+      chunkDuplicatesDropped: telemetry.chunkDuplicatesDropped,
+      // Our own 4,000-character slice, not Cohere's 4,096-TOKEN limit, is what
+      // actually truncates a long transcript paragraph. Counted, not assumed.
+      truncatedDocuments: telemetry.truncatedDocumentCount,
       rerankDocuments: telemetry.rerankDocumentCount,
       selectedPassages: telemetry.selectedPassageCount,
       mainTier: telemetry.mainTierCount,
@@ -394,8 +396,10 @@ export function allowlistedTechnicalTelemetry(
       droppedOnRefetch: telemetry.droppedOnRefetch,
     },
     selection: {
-      cutIndex: telemetry.cutIndex,
-      cutGap: telemetry.cutGap,
+      mainCount: telemetry.mainCount,
+      // A pin lifted from below the boundary is a decision the ranking did not
+      // make, so it is counted where a 2028 reader can see it.
+      pinnedPromotions: telemetry.pinnedPromotions,
       pinnedExactReference: telemetry.pinnedExactReference,
     },
     sources: telemetry.sourceRetrieval.map((source) => ({
