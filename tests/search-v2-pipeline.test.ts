@@ -21,8 +21,6 @@ import { dedupeCandidates, mustNotCollapse, normalizeForHash } from "@/app/lib/s
 import {
   selectEvidence,
   isLabellable,
-  findCut,
-  MAIN_TIER_MIN,
   MAIN_TIER_MAX,
 } from "@/app/lib/search-v2/select";
 import { semanticRejections, QueryPlanSchema, fallbackPlan } from "@/app/lib/search-v2/query-plan";
@@ -292,37 +290,48 @@ describe("evidence selection", () => {
     expect(out.selected[0].contextRequirements).toContain("letter_context");
   });
 
-  it("cuts at the largest score gap inside the window — passages move tiers, never vanish", () => {
-    // Fifteen strong scores, then a cliff. The cut lands ON the cliff.
+  it("takes the first twenty survivors, whatever the score curve does", () => {
+    // A cliff after fifteen used to move the boundary to fifteen. The boundary
+    // is a decision about the page, not a fact about the scores: it is twenty,
+    // and the five below the cliff are citations rather than absent.
     const scores = Array.from({ length: 40 }, (_, i) => (i < 15 ? 0.8 : 0.05));
     const out = selectEvidence({
       ranked: scored(verses(40), scores),
       approvedQueryIds: ["q"],
       rerankAvailable: true,
     });
-    expect(out.selected).toHaveLength(15);
-    expect(out.cutIndex).toBe(15);
-    expect(out.additional).toHaveLength(25);
+    expect(out.selected).toHaveLength(MAIN_TIER_MAX);
+    expect(out.mainCount).toBe(MAIN_TIER_MAX);
+    expect(out.additional).toHaveLength(20);
   });
 
-  it("falls back to the cap when the curve is flat — no natural boundary exists", () => {
+  it("keeps the same boundary on a flat curve", () => {
     const ranked = scored(verses(60), Array.from({ length: 60 }, () => 0.55));
     const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
     expect(out.selected).toHaveLength(MAIN_TIER_MAX);
     expect(out.selected.length + out.additional.length).toBe(60);
   });
 
-  it("never cuts below the window floor, even when the real falloff is earlier", () => {
-    // The falloff at 3 sits below MAIN_TIER_MIN, so the window sees a flat
-    // curve and the cap governs. The weak tail is still visible as citations.
-    const scores = Array.from({ length: 40 }, (_, i) => (i < 3 ? 0.8 : 0.05));
+  it("keeps every survivor when fewer than twenty exist", () => {
     const out = selectEvidence({
-      ranked: scored(verses(40), scores),
+      ranked: scored(verses(6), Array.from({ length: 6 }, () => 0.5)),
       approvedQueryIds: ["q"],
       rerankAvailable: true,
     });
-    expect(out.selected.length).toBeGreaterThanOrEqual(MAIN_TIER_MIN);
-    expect(out.selected.length + out.additional.length).toBe(40);
+    expect(out.selected).toHaveLength(6);
+    expect(out.mainCount).toBe(6);
+    expect(out.additional).toHaveLength(0);
+  });
+
+  it("no passage id appears in both lists", () => {
+    const out = selectEvidence({
+      ranked: scored(verses(40), Array.from({ length: 40 }, (_, i) => 1 - i / 100)),
+      approvedQueryIds: ["q"],
+      rerankAvailable: true,
+    });
+    const main = new Set(out.selected.map((s) => s.candidate.passage_key));
+    expect(out.additional.some((c) => main.has(c.passage_key))).toBe(false);
+    expect(main.size + out.additional.length).toBe(40);
   });
 
   it("takes the cap off the fused order when the reranker was unreachable", () => {
@@ -332,19 +341,30 @@ describe("evidence selection", () => {
     expect(out.additional).toHaveLength(150 - MAIN_TIER_MAX);
   });
 
-  it("prepends a pinned exact-reference passage without consuming a slot", () => {
+  it("lifts a pinned passage into the main twenty and counts the promotion", () => {
     const pool = verses(30);
-    const pinnedPool = [
-      { ...pool[29], passage_key: "verse:pinned", pinned: true },
-      ...pool.slice(0, 29),
-    ];
-    // The pinned verse scored WORST — irrelevant: the devotee asked for it.
-    const ranked = scored(pinnedPool, [0.01, ...Array.from({ length: 29 }, () => 0.7)]);
+    // Cohere ranked the pinned verse LAST. Irrelevant: the devotee wrote its
+    // reference, so it must be on the page, not at position 30.
+    const pinnedPool = [...pool.slice(0, 29), { ...pool[29], passage_key: "verse:pinned", pinned: true }];
+    const ranked = scored(pinnedPool, [...Array.from({ length: 29 }, () => 0.7), 0.01]);
+    const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
+
+    expect(out.selected[0].candidate.passage_key).toBe("verse:pinned");
+    expect(out.selected[0].reasons[0]).toBe("exact reference requested — pinned to the main list");
+    // It takes a slot rather than riding on top: the main list is twenty.
+    expect(out.selected).toHaveLength(MAIN_TIER_MAX);
+    expect(out.pinnedPromotions).toBe(1);
+    // Nothing is lost — the passage it displaced is a citation, not absent.
+    expect(out.selected.length + out.additional.length).toBe(30);
+  });
+
+  it("counts no promotion for a pin the ranking already put on the page", () => {
+    const pool = verses(30);
+    const pinnedPool = [{ ...pool[0], passage_key: "verse:pinned", pinned: true }, ...pool.slice(1)];
+    const ranked = scored(pinnedPool, Array.from({ length: 30 }, (_, i) => 0.9 - i / 100));
     const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
     expect(out.selected[0].candidate.passage_key).toBe("verse:pinned");
-    expect(out.selected[0].reasons[0]).toBe("exact reference requested");
-    // The flat 0.7 curve caps at MAIN_TIER_MAX; the pin rides on top of it.
-    expect(out.selected).toHaveLength(MAIN_TIER_MAX + 1);
+    expect(out.pinnedPromotions).toBe(0);
   });
 
   it("preserves the reranker's order — never re-sorts", () => {
@@ -353,9 +373,14 @@ describe("evidence selection", () => {
     expect(out.selected.map((x) => x.candidate.passage_key)).toEqual(ranked.map((c) => c.passage_key));
   });
 
-  it("pulls in the purport partner of the primary verse even below the line", () => {
-    // Twelve passages clear the threshold (so the floor is not in play); the
-    // primary verse's own purport scored far below the line on its own.
+  it("does NOT pull a purport partner up beside its verse any more", () => {
+    // The selector used to promote the primary verse's own purport, on the
+    // reasoning that a purport explaining a shown verse is context rather than
+    // repetition. A verse chunk is never shown together with its parent verse
+    // now, so that promotion would quietly undo the deduplication one stage
+    // earlier — removing the chunk from the pile and then putting it back on
+    // the page. It falls to the citation tier like anything else below the
+    // boundary, which is where this test now looks for it.
     const pool = [
       candidate({ passage_key: "verse:primary", source_type: "verse", reference: "BG 6.6", retrieval_text: "the primary verse", channel_ranks: [{ query_id: "q", channel: "fts_core", rank: 1 }] }),
       ...verses(11, (i) => `supporting verse number ${i}`).map((c, i) => ({ ...c, passage_key: `verse:s${i}`, reference: `BG 9.${i + 1}` })),
@@ -364,9 +389,12 @@ describe("evidence selection", () => {
     const ranked = scored(pool, [0.9, ...Array.from({ length: 11 }, () => 0.6), 0.02]);
     const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
     const keys = out.selected.map((x) => x.candidate.passage_key);
-    expect(keys).toContain("purport:primary");
-    // Inserted directly after its verse, not appended or re-sorted elsewhere.
-    expect(keys.indexOf("purport:primary")).toBe(keys.indexOf("verse:primary") + 1);
+
+    // Only 13 passages exist, all inside the twenty, so this pool cannot show
+    // the boundary — what it shows is that no REORDERING happened: the purport
+    // sits where Cohere put it, last, not lifted to index 1.
+    expect(keys).toEqual(ranked.map((c) => c.passage_key));
+    expect(keys.indexOf("purport:primary")).toBe(keys.length - 1);
   });
 
   it("reports uncovered subqueries instead of pretending to answer them", () => {
@@ -385,30 +413,6 @@ describe("evidence selection", () => {
     );
     const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
     expect(out.evidenceInsufficient).toBe(true);
-  });
-});
-
-// ─── the tier cut, in isolation ──────────────────────────────
-
-describe("findCut", () => {
-  it("cuts after the largest drop inside the window", () => {
-    const scores = [0.9, 0.88, 0.87, 0.86, 0.85, 0.84, 0.83, 0.82, 0.81, 0.8, 0.4, 0.39];
-    // The 0.8 → 0.4 cliff sits at index 10, inside [MAIN_TIER_MIN, MAIN_TIER_MAX].
-    expect(findCut(scores)).toEqual({ cutIndex: 10, cutGap: expect.closeTo(0.4, 5) });
-  });
-
-  it("caps a flat curve at MAIN_TIER_MAX — noise is not a boundary", () => {
-    const flat = Array.from({ length: 60 }, () => 0.5);
-    expect(findCut(flat).cutIndex).toBe(MAIN_TIER_MAX);
-  });
-
-  it("keeps everything when fewer than the window floor survive", () => {
-    expect(findCut([0.9, 0.2, 0.1]).cutIndex).toBe(3);
-  });
-
-  it("caps when there are no scores to split on (reranker down)", () => {
-    const nulls = Array.from({ length: 50 }, () => null);
-    expect(findCut(nulls).cutIndex).toBe(MAIN_TIER_MAX);
   });
 });
 

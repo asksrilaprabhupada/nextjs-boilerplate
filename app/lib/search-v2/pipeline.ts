@@ -57,7 +57,6 @@ import {
   type RetrievedCandidate,
 } from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates, type DedupDecision } from "@/app/lib/search-v2/dedup";
-import { prefilterCandidates } from "@/app/lib/search-v2/prefilter";
 import {
   rerankUnified,
   type RankedCandidate,
@@ -65,6 +64,7 @@ import {
   type RerankOutcome,
 } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
+import { dropRedundantVerseChunks, fetchChunkParents } from "@/app/lib/search-v2/chunk-dedupe";
 import { isRenderable, refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { fetchSourceUrls } from "@/app/lib/search-v2/source-url";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
@@ -136,15 +136,19 @@ export interface SearchTelemetry {
   candidatesAfterFusion: number;
   duplicatesCollapsed: number;
   junkFloorDropped: number;
-  prefilterPassed: number;
-  prefilterSetAside: number;
+  /** Chunks removed by the two id rules, over Cohere's one ranked list. */
+  chunkDuplicatesDropped: number;
+  /** Documents whose text was cut at DOCUMENT_MAX_CHARS before Cohere saw them. */
+  truncatedDocumentCount: number;
   rerankDocumentCount: number;
   reranked: boolean;
   selectedPassageCount: number;
   mainTierCount: number;
   additionalCount: number;
-  cutIndex: number;
-  cutGap: number;
+  /** Where the main list ended. MAIN_TIER_MAX unless fewer passages survived. */
+  mainCount: number;
+  /** Pins lifted into the main list from below the boundary. */
+  pinnedPromotions: number;
   pinnedExactReference: boolean;
   droppedOnRefetch: number;
   degraded: boolean;
@@ -241,10 +245,9 @@ export interface PipelineDiagnostics {
     decisions: DedupDecision[];
     candidates: CandidateDiagnostic[];
   };
-  prefilter: {
-    stats: unknown;
-    passedPassageKeys: string[];
-    setAsidePassageKeys: string[];
+  chunkDedupe: {
+    dropped: Array<{ passageKey: string; verseId: string; reason: string }>;
+    lookupDegraded: boolean;
   };
   rerank: {
     model: string;
@@ -254,8 +257,8 @@ export interface PipelineDiagnostics {
     candidates: CandidateDiagnostic[];
   };
   tiering: {
-    cutIndex: number;
-    cutGap: number;
+    mainCount: number;
+    pinnedPromotions: number;
     uncoveredQueryIds: string[];
     evidenceInsufficient: boolean;
     selected: Array<{
@@ -504,46 +507,71 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     }
   }
   const deduped = dedupeCandidates(fused);
-  const prefiltered = prefilterCandidates(deduped.candidates);
   recordDuration("fusing", elapsed(fuseStart));
   console.info(
     JSON.stringify({
       level: "info",
-      event: "search.prefilter",
+      event: "search.pool",
       requestId,
-      before: prefiltered.stats.before,
-      after: prefiltered.stats.after,
-      setAside: prefiltered.stats.setAside,
-      perSource: prefiltered.stats.perSource,
+      raw: retrieved.candidateCount,
+      afterFusion: fused.length,
+      deduped: deduped.candidates.length,
     }),
   );
 
-  // ── rerank: the pre-filtered pool judged against the original question ──
+  // ── rerank: the WHOLE pool, one request, judged against the original ──
+  // Every passage the original question and the angles found goes in. There is
+  // no pre-filter deciding who earns the cross-encoder any more: Dig Deeper is
+  // built from this same ranking, and a passage that was never judged cannot
+  // honestly be placed "in the same rerank order" as the ones that were.
+  //
+  // The chunk→parent lookup rides alongside the call rather than after it. The
+  // ids are known now and the answer is not needed until Cohere replies, so it
+  // costs no wall clock.
   onStage?.("reranking", { found: deduped.candidates.length });
   const rerankExecutor = input.privateRerankExecutor ?? rerankUnified;
+  const chunkParentsPromise = fetchChunkParents(db as never, deduped.candidates, { requestId });
   const rerank = await time("reranking", () =>
     rerankExecutor({
       question: query, // the ORIGINAL question, never the canonicalisation
-      candidates: prefiltered.passed,
+      candidates: deduped.candidates,
+      requestId,
     }),
   );
   if (rerank.degradedReason) {
     degraded.record("reranking", "cohere", { code: rerank.degradedReason });
   }
 
-  // ── tier: main rendered in full, everything else kept as citations ──
+  // ── the duplicate rules, over Cohere's one list, order preserved ──
+  const chunkParents = await chunkParentsPromise;
+  const chunkDedupe = timeSync("selecting", () =>
+    dropRedundantVerseChunks(rerank.ranked, chunkParents.verseIdByChunk));
+  if (chunkDedupe.dropped.length > 0) {
+    console.info(JSON.stringify({
+      level: "info",
+      event: "search.chunk_dedupe",
+      requestId,
+      dropped: chunkDedupe.dropped.length,
+      byReason: chunkDedupe.dropped.reduce<Record<string, number>>((acc, d) => {
+        acc[d.reason] = (acc[d.reason] ?? 0) + 1;
+        return acc;
+      }, {}),
+    }));
+  }
+
+  // ── tier: the first 20 survivors in full, every other survivor as a citation ──
   onStage?.("selecting", { found: deduped.candidates.length });
   const approvedIds = [ORIGINAL_QUERY_ID, ...planned.plan.subqueries.map((s) => s.id)];
   const selection = timeSync("selecting", () => selectEvidence({
-    ranked: rerank.ranked,
+    ranked: chunkDedupe.kept,
     approvedQueryIds: approvedIds,
     rerankAvailable: rerank.reranked,
     requestId,
   }));
 
-  // The second tier: rerank-judged passages below the cut first, then the
-  // pre-filter's set-asides in fused order. Snippets aim at the question's own
-  // terms and never end mid-sentence.
+  // The second tier: every survivor below the boundary, in the SAME rerank
+  // order as the main list, because it came out of the same one ranked list.
+  // Snippets aim at the question's own terms and never end mid-sentence.
   const queryTerms = extractQueryTerms(query);
   const toAdditional = (
     c: RankedCandidate | FusedCandidate,
@@ -561,10 +589,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     snippet: makeSnippet(c.retrieval_text, 220, queryTerms),
     vedabaseUrl: urls.get(c.passage_key) ?? null,
   });
-  const additionalCandidates: Array<RankedCandidate | FusedCandidate> = [
-    ...selection.additional,
-    ...prefiltered.setAside,
-  ];
+  const additionalCandidates: RankedCandidate[] = selection.additional;
 
   // The citation tier's links are read alongside the main tier's verification,
   // so the extra table reads cost no wall clock. fetchSourceUrls never rejects,
@@ -648,8 +673,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     candidatesAfterFusion: fused.length,
     duplicatesCollapsed: deduped.stats.exactCollapsed + deduped.stats.containedCollapsed,
     junkFloorDropped: floored.dropped,
-    prefilterPassed: prefiltered.stats.after,
-    prefilterSetAside: prefiltered.stats.setAside,
+    chunkDuplicatesDropped: chunkDedupe.dropped.length,
+    truncatedDocumentCount: rerank.truncatedDocumentCount,
     rerankDocumentCount: rerank.documentCount,
     reranked: rerank.reranked,
     // Every verified main-tier passage is rendered, so this and `mainTierCount`
@@ -658,8 +683,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     selectedPassageCount: mainTierCount,
     mainTierCount,
     additionalCount: additional.length,
-    cutIndex: selection.cutIndex,
-    cutGap: Math.round(selection.cutGap * 1000) / 1000,
+    mainCount: selection.mainCount,
+    pinnedPromotions: selection.pinnedPromotions,
     pinnedExactReference: Boolean(pinnedCandidate),
     droppedOnRefetch: verificationDropCount,
     degraded: responseDegraded,
@@ -699,10 +724,9 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
             decisions: deduped.decisions,
             candidates: deduped.candidates.map(diagnosticCandidate),
           },
-          prefilter: {
-            stats: prefiltered.stats,
-            passedPassageKeys: prefiltered.passed.map((candidate) => candidate.passage_key),
-            setAsidePassageKeys: prefiltered.setAside.map((candidate) => candidate.passage_key),
+          chunkDedupe: {
+            dropped: chunkDedupe.dropped,
+            lookupDegraded: chunkParents.degraded,
           },
           rerank: {
             model: rerank.model,
@@ -712,8 +736,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
             candidates: rerank.ranked.map(diagnosticCandidate),
           },
           tiering: {
-            cutIndex: selection.cutIndex,
-            cutGap: selection.cutGap,
+            mainCount: selection.mainCount,
+            pinnedPromotions: selection.pinnedPromotions,
             uncoveredQueryIds: selection.uncoveredQueryIds,
             evidenceInsufficient: selection.evidenceInsufficient,
             selected: selection.selected.map((item) => ({

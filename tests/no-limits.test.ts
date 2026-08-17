@@ -13,7 +13,7 @@
 import { describe, it, expect } from "vitest";
 import { fuseWeighted, type RetrievedCandidate } from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates } from "@/app/lib/search-v2/dedup";
-import { selectEvidence, MAIN_TIER_MIN, MAIN_TIER_MAX } from "@/app/lib/search-v2/select";
+import { selectEvidence, MAIN_TIER_MAX } from "@/app/lib/search-v2/select";
 import { toWirePassage } from "@/app/lib/search-v2/adapt";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 
@@ -74,8 +74,7 @@ describe("2. nothing lost", () => {
 
     const out = selectEvidence({ ranked, approvedQueryIds: ["q"], rerankAvailable: true });
     // A reader gets a readable main tier…
-    expect(out.selected.length).toBeGreaterThanOrEqual(MAIN_TIER_MIN);
-    expect(out.selected.length).toBeLessThanOrEqual(MAIN_TIER_MAX);
+    expect(out.selected).toHaveLength(MAIN_TIER_MAX);
     // …and NOTHING is deleted: every other candidate is in the second tier.
     expect(out.selected.length + out.additional.length).toBe(500);
   });
