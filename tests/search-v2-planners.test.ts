@@ -19,6 +19,9 @@ import {
   QUERY_PLANNER_MAX_OUTPUT_TOKENS,
   isPointerQuestion,
   isPlanDegradation,
+  PLANNER_TIMEOUT_MS,
+  PLANNER_STAGE_BUDGET_MS,
+  PLANNER_FAST_FAILURE_MS,
   type PrivatePlannerCallUsage,
 } from "@/app/lib/search-v2/query-plan";
 import {
@@ -307,8 +310,10 @@ describe("query planner loop", () => {
     });
     expect(wrongShape.failureKind).toBe("schema_rejected");
 
+    // Two, because a fast outage now earns the single retry (see below); the
+    // KIND it is finally recorded under is what this test is about.
     const outage = await planQuery(QUESTION, MAX_SUBQUERIES, {
-      client: scriptedClient([new Error("503")]),
+      client: scriptedClient([new Error("503"), new Error("503")]),
     });
     expect(outage.failureKind).toBe("provider_error");
   });
@@ -346,7 +351,7 @@ describe("query planner loop", () => {
     }
   });
 
-  it("emits one fail-closed record for timeout and provider-error attempts", async () => {
+  it("emits one fail-closed record per attempt for timeout and provider-error calls", async () => {
     const timeoutCalls: PrivatePlannerCallUsage[] = [];
     const timeout = await planQuery(QUESTION, MAX_SUBQUERIES, {
       client: {
@@ -361,13 +366,12 @@ describe("query planner loop", () => {
 
     const providerCalls: PrivatePlannerCallUsage[] = [];
     const outage = await planQuery(QUESTION, MAX_SUBQUERIES, {
-      client: scriptedClient([new Error("503")]),
+      client: scriptedClient([new Error("503"), new Error("503")]),
       privateCallUsageObserver: (event) => { providerCalls.push({ ...event }); },
     });
     expect(outage.failureKind).toBe("provider_error");
 
-    const expected = {
-      attempt: 1,
+    const nothingReturned = {
       responseReceived: false,
       promptTokenCount: null,
       candidatesTokenCount: null,
@@ -375,8 +379,16 @@ describe("query planner loop", () => {
       toolUsePromptTokenCount: null,
       totalTokenCount: null,
     };
-    expect(timeoutCalls).toEqual([expected]);
-    expect(providerCalls).toEqual([expected]);
+    // BOTH attempts are recorded. A retry that left no trace would make the
+    // planner look half as expensive as it is.
+    expect(timeoutCalls).toEqual([
+      { attempt: 1, ...nothingReturned },
+      { attempt: 2, ...nothingReturned },
+    ]);
+    expect(providerCalls).toEqual([
+      { attempt: 1, ...nothingReturned },
+      { attempt: 2, ...nothingReturned },
+    ]);
   });
 
   it("swallows evaluator observer errors without changing the accepted plan", async () => {
@@ -431,13 +443,14 @@ describe("query planner loop", () => {
     expect(out.failureKind).toBe("invalid_json");
   });
 
-  it("falls back to the original question after one failure — never throws", async () => {
-    const client = scriptedClient([new Error("503")]);
+  it("falls back to the original question when the retry fails too — never throws", async () => {
+    const client = scriptedClient([new Error("503"), new Error("503")]);
     const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
     expect(out.source).toBe("fallback_original_only");
     expect(out.plan.subqueries).toHaveLength(0);
     expect(out.plan.canonical_query).toBe(QUESTION);
-    expect(client.calls).toHaveLength(1);
+    // Two attempts, and then it stops. There is no third.
+    expect(client.calls).toHaveLength(2);
   });
 
   it("discards a schema-valid plan that fails semantic validation", async () => {
@@ -500,6 +513,227 @@ describe("query planner loop", () => {
     const plan = fallbackPlan(QUESTION);
     expect(plan.schema_version).toBe("query-plan-v1");
     expect(plan.subqueries).toEqual([]);
+  });
+});
+
+// ─── the planning budget, and the retry it pays for ──────────
+//
+// One production search failed by 34 milliseconds — 4,034 ms against a 4,000 ms
+// cap — and threw away all five angles. These tests hold the three numbers that
+// answer it, and the rule that decides who gets a second call.
+
+describe("planner budget and call retry", () => {
+  /** An error shaped exactly as @google/genai throws one: status + JSON body. */
+  function apiError(status: number, details?: unknown[]): Error {
+    const err = new Error(
+      JSON.stringify({
+        error: {
+          code: status,
+          message: `synthetic ${status}`,
+          status: status === 429 ? "RESOURCE_EXHAUSTED" : "ERROR",
+          ...(details ? { details } : {}),
+        },
+      }),
+    );
+    (err as Error & { status: number }).status = status;
+    return err;
+  }
+
+  const retryInfo = (delay: string) => [
+    { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: delay },
+  ];
+
+  /**
+   * A clock the CLIENT advances, so "how long did the attempt take" is decided
+   * by the scripted call rather than by how many times the code reads the time.
+   */
+  function steppedClock(stepMs: number) {
+    let t = 0;
+    return { now: () => t, step: () => { t += stepMs; } };
+  }
+
+  function failingClient(errors: Error[], clock?: { step: () => void }) {
+    const calls: string[] = [];
+    const signals: AbortSignal[] = [];
+    return {
+      calls,
+      signals,
+      models: {
+        async generateContent(args: Record<string, unknown>) {
+          calls.push(String(args.model ?? ""));
+          const config = (args.config ?? {}) as { abortSignal?: AbortSignal };
+          if (config.abortSignal) signals.push(config.abortSignal);
+          clock?.step();
+          const next = errors.shift();
+          if (next) throw next;
+          return { text: goodPlan(), usageMetadata: DEFAULT_SCRIPTED_USAGE };
+        },
+      },
+    };
+  }
+
+  it("holds the three numbers: 8 s per attempt, 10 s for the stage, 2 s to earn a retry", () => {
+    // Normal planning is about 3 s, so a healthy call never approaches these.
+    expect(PLANNER_TIMEOUT_MS).toBe(8000);
+    expect(PLANNER_STAGE_BUDGET_MS).toBe(10000);
+    expect(PLANNER_FAST_FAILURE_MS).toBe(2000);
+    // Two attempts must not be able to reach twice the per-call maximum.
+    expect(PLANNER_STAGE_BUDGET_MS).toBeLessThan(PLANNER_TIMEOUT_MS * 2);
+  });
+
+  it("retries a fast outage and takes the plan the second call returns", async () => {
+    const clock = steppedClock(400);
+    const client = failingClient([apiError(503)], clock);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client, now: clock.now });
+
+    expect(client.calls).toHaveLength(2);
+    expect(out.source).toBe("model");
+    expect(out.failureKind).toBeNull();
+    expect(out.plan.subqueries).toHaveLength(REQUIRED_SUBQUERIES);
+    expect(out.usage.attempts).toBe(2);
+  });
+
+  it("does NOT retry a failure slower than 2 seconds — the budget is spent", async () => {
+    const clock = steppedClock(2500);
+    const client = failingClient([apiError(503)], clock);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client, now: clock.now });
+
+    expect(client.calls).toHaveLength(1);
+    expect(out.source).toBe("fallback_original_only");
+    expect(out.rejections.join(" ")).toMatch(/failed slowly after 2500ms/);
+  });
+
+  it("never retries an authentication or a validation error, however fast", async () => {
+    for (const status of [400, 401, 403, 404, 422]) {
+      const clock = steppedClock(50);
+      const client = failingClient([apiError(status)], clock);
+      const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client, now: clock.now });
+
+      expect(client.calls).toHaveLength(1);
+      expect(out.failureKind).toBe("provider_error");
+      expect(out.rejections.join(" ")).toMatch(
+        new RegExp(`no retry — ${status} is deterministic`),
+      );
+    }
+  });
+
+  it("retries a fast 429 whose stated delay fits, after waiting exactly that long", async () => {
+    const clock = steppedClock(300);
+    const client = failingClient([apiError(429, retryInfo("1.5s"))], clock);
+    const waited: number[] = [];
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client,
+      now: clock.now,
+      sleep: async (ms) => { waited.push(ms); },
+    });
+
+    expect(waited).toEqual([1500]);
+    expect(client.calls).toHaveLength(2);
+    expect(out.source).toBe("model");
+  });
+
+  it("refuses a 429 whose stated delay does not fit the remaining budget", async () => {
+    const clock = steppedClock(300);
+    const client = failingClient([apiError(429, retryInfo("27s"))], clock);
+    const waited: number[] = [];
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client,
+      now: clock.now,
+      sleep: async (ms) => { waited.push(ms); },
+    });
+
+    expect(waited).toEqual([]);
+    expect(client.calls).toHaveLength(1);
+    expect(out.rejections.join(" ")).toMatch(/429 asks for 27000ms, which does not fit/);
+  });
+
+  it("refuses a 429 that states no delay — retrying blind earns the same limit", async () => {
+    const clock = steppedClock(300);
+    const client = failingClient([apiError(429)], clock);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client, now: clock.now });
+
+    expect(client.calls).toHaveLength(1);
+    expect(out.rejections.join(" ")).toMatch(/429 with no stated delay/);
+  });
+
+  it("clamps an attempt to what the stage has left, so the stage cannot overrun", async () => {
+    // The per-call cap is 10 s here and the stage only 60 ms. If the attempt
+    // took its own cap this test would hang for ten seconds.
+    const started = Date.now();
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: {
+        models: {
+          generateContent: () => new Promise(() => {}) as Promise<{ text?: string }>,
+        },
+      },
+      timeoutMs: 10_000,
+      stageBudgetMs: 60,
+    });
+
+    expect(out.failureKind).toBe("timeout");
+    expect(out.source).toBe("fallback_original_only");
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it("refuses even a repairable retry once the stage budget is spent", async () => {
+    // The plan is short — normally the one case that DOES earn a second call —
+    // but it arrived after 9.5 s, so a retry would be a purchased timeout.
+    const clock = steppedClock(9_500);
+    const short = goodPlan({ subqueries: FIVE_ANGLES.slice(0, 2) });
+    const client = scriptedClient([short, goodPlan()]);
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: {
+        models: {
+          async generateContent(args: Record<string, unknown>) {
+            clock.step();
+            return client.models.generateContent(args);
+          },
+        },
+      },
+      now: clock.now,
+    });
+
+    expect(client.calls).toHaveLength(1);
+    expect(out.source).toBe("fallback_original_only");
+    expect(out.failureKind).toBe("too_few_angles");
+    expect(out.rejections.join(" ")).toMatch(/no repair retry — the planning budget is spent/);
+  });
+
+  it("ABORTS the request it stopped waiting for, rather than leaving it running", async () => {
+    // An orphaned request keeps a socket and a JSON parse competing with the
+    // fallback search for two cores.
+    const signals: AbortSignal[] = [];
+    const out = await planQuery(QUESTION, MAX_SUBQUERIES, {
+      client: {
+        models: {
+          generateContent: (args: Record<string, unknown>) => {
+            const config = (args.config ?? {}) as { abortSignal?: AbortSignal };
+            if (config.abortSignal) signals.push(config.abortSignal);
+            return new Promise(() => {}) as Promise<{ text?: string }>;
+          },
+        },
+      },
+      timeoutMs: 10,
+      stageBudgetMs: 40,
+    });
+
+    expect(out.failureKind).toBe("timeout");
+    expect(signals.length).toBeGreaterThan(0);
+    // Every request that timed out was aborted, not merely abandoned.
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it("still refuses to retry an unusable body, fast though it failed", async () => {
+    for (const [body, kind] of [
+      ["", "empty_body"],
+      ['{"schema_version":"query-pl', "invalid_json"],
+    ] as const) {
+      const client = scriptedClient([body, goodPlan()]);
+      const out = await planQuery(QUESTION, MAX_SUBQUERIES, { client });
+      expect(client.calls).toHaveLength(1);
+      expect(out.failureKind).toBe(kind);
+      expect(out.rejections.join(" ")).toMatch(/no retry — an unusable body is not retried/);
+    }
   });
 });
 
