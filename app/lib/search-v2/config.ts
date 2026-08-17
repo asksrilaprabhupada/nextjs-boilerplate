@@ -64,8 +64,20 @@ export const SEARCH_V2_CONFIG = {
     search_transcripts_hybrid_batch_v3: 150,
     search_letters_hybrid_batch_v3: 80,
   },
-  /** Semantic lane ceiling per source. Clamped to ef_search (400) by the RPC. */
-  perSourceSemanticLimit: 300,
+  /**
+   * Semantic lane ceiling per source, deliberately BELOW ef_search (200).
+   *
+   * Equal values were the fragile setting: an HNSW scan can never return more
+   * rows than ef_search allows, so asking for exactly as many as the graph is
+   * willing to consider leaves it no room to discard a poor neighbour for a
+   * better one. Half gives it somewhere to choose from.
+   *
+   * This number must match the clamp in the five `_v3` functions, which is the
+   * authority — the RPC clamps whatever is sent here. It said 300 for a while
+   * after SQL had moved to 200, which changed no behaviour but made the config
+   * a description of something that was not happening.
+   */
+  perSourceSemanticLimit: 100,
 } as const;
 
 export type QueryPriority = keyof typeof SEARCH_V2_CONFIG.queryWeights;

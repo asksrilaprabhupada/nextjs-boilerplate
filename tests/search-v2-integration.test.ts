@@ -447,11 +447,14 @@ describe("V2 pipeline, end to end, with every provider down", () => {
       outer: call.args.p_limit,
       semantic: call.args.p_semantic_limit,
     }))).toEqual([
-      { fn: "search_transcripts_hybrid_batch_v3", outer: 150, semantic: 300 },
-      { fn: "search_verses_hybrid_batch_v3", outer: 200, semantic: 300 },
-      { fn: "search_prose_hybrid_batch_v3", outer: 120, semantic: 300 },
-      { fn: "search_verse_chunks_hybrid_batch_v3", outer: 150, semantic: 300 },
-      { fn: "search_letters_hybrid_batch_v3", outer: 80, semantic: 300 },
+      // The semantic limit is 100 everywhere — deliberately half of ef_search
+      // (200), so the HNSW graph has room to discard a poor neighbour for a
+      // better one rather than being asked for exactly what it will consider.
+      { fn: "search_transcripts_hybrid_batch_v3", outer: 150, semantic: 100 },
+      { fn: "search_verses_hybrid_batch_v3", outer: 200, semantic: 100 },
+      { fn: "search_prose_hybrid_batch_v3", outer: 120, semantic: 100 },
+      { fn: "search_verse_chunks_hybrid_batch_v3", outer: 150, semantic: 100 },
+      { fn: "search_letters_hybrid_batch_v3", outer: 80, semantic: 100 },
     ]);
     expect(out.telemetry.sourceRetrieval.map((source) => source.internalFunction)).toEqual(
       BATCH_FUNCTIONS,
