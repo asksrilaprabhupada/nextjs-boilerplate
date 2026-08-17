@@ -14,6 +14,12 @@
  * paths through the client: a 402, a 429 and a 5xx are non-ok responses, a
  * timeout is an AbortError thrown out of fetch, and an invalid body is a 200
  * whose contents cannot be believed.
+ *
+ * This suite is why the 200+200+final machinery could be deleted at all. It ran
+ * green against that machinery and runs green against the single call, over the
+ * REAL Cohere client driven through each distinct transport failure — so the
+ * honest-failure feature is proved to have survived the rewrite rather than
+ * assumed to have.
  */
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
@@ -21,11 +27,7 @@ import {
   type CohereRerankUsage,
   type RerankResult,
 } from "@/app/lib/08-cohere-rerank";
-import {
-  prepareRerankPool,
-  rerankCurrentPool,
-  type RerankOutcome,
-} from "@/app/lib/search-v2/rerank";
+import { rerankUnified, type RerankOutcome } from "@/app/lib/search-v2/rerank";
 import { rankingUnavailableFor } from "@/app/lib/search-v2/adapt";
 import {
   incompleteSearchWarning,
@@ -115,9 +117,9 @@ describe("the Cohere client reports every failure to its caller", () => {
   });
 });
 
-/** A pool large enough that the batch path makes a real provider request. */
-function pool(size = 4) {
-  const candidates = Array.from({ length: size }, (_, i) => ({
+/** A pool large enough to make a real provider request (two or more). */
+function poolCandidates(size = 4) {
+  return Array.from({ length: size }, (_, i) => ({
     passage_key: `verse:v${i}`,
     source_type: "verse",
     row_id: `v${i}`,
@@ -135,12 +137,14 @@ function pool(size = 4) {
     contributions: [],
     queryCoverage: ["original"],
     alternates: [],
-  }));
-  return prepareRerankPool({
-    question: "how do I control the mind",
-    candidates: candidates as never,
-  });
+  })) as never[];
 }
+
+const rerank = (provider: typeof cohereRerank, size = 4) =>
+  rerankUnified(
+    { question: "how do I control the mind", candidates: poolCandidates(size) },
+    provider as never,
+  );
 
 function healthyProvider(): typeof cohereRerank {
   return (async (
@@ -176,7 +180,7 @@ describe("a failed rerank reaches the response and the page", () => {
     // five modes are proved end-to-end rather than through one shared stub.
     globalThis.fetch = vi.fn(async () => respond()) as unknown as typeof fetch;
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const outcome = await rerankCurrentPool(pool(), cohereRerank);
+    const outcome = await rerank(cohereRerank);
 
     // The passages survive; only the ranking is gone.
     expect(outcome.ranked).toHaveLength(4);
@@ -201,7 +205,7 @@ describe("a failed rerank reaches the response and the page", () => {
 
   it("a healthy rerank shows no message at all", async () => {
     process.env.COHERE_API_KEY = "test-key";
-    const outcome = await rerankCurrentPool(pool(), healthyProvider());
+    const outcome = await rerank(healthyProvider());
 
     expect(outcome.reranked).toBe(true);
     expect(outcome.degradedReason).toBeNull();
@@ -231,7 +235,7 @@ describe("failure is read from the provider's report, not from the scores", () =
       }));
     }) as unknown as typeof cohereRerank;
 
-    const outcome = await rerankCurrentPool(pool(), allZeroButHealthy);
+    const outcome = await rerank(allZeroButHealthy);
     expect(outcome.reranked).toBe(true);
     expect(outcome.degradedReason).toBeNull();
     expect(rankingUnavailableFor(telemetryFor(outcome)).valueOf()).toBe(false);

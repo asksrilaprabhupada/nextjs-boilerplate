@@ -120,10 +120,6 @@ export function geminiQueryPlannerModel(): string {
   return process.env.GEMINI_QUERY_PLANNER_MODEL || "gemini-2.5-flash";
 }
 
-export function geminiArticlePlannerModel(): string {
-  return process.env.GEMINI_ARTICLE_PLANNER_MODEL || "gemini-2.5-flash";
-}
-
 export function cohereRerankModel(): string {
   return process.env.COHERE_RERANK_MODEL || "rerank-v4.0-pro";
 }

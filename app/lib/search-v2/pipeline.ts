@@ -3,10 +3,10 @@
  *
  *   plan → embed → 5 batched RPCs (+ pinned exact-reference lookup) →
  *   junk floor → fuse → dedupe → pre-filter → rerank → tier →
- *   re-fetch (main tier) → article plan → render
+ *   re-fetch (main tier)
  *
  * ONE ROAD. Every question that reaches this function is planned, fanned out,
- * fused, reranked, tiered, re-fetched and rendered by the same code with the
+ * fused, reranked, tiered and re-fetched by the same code with the
  * same budgets. There is no classifier deciding that this question deserves six
  * angles and that one deserves two, no mode deciding that this reader gets four
  * passages and that one gets eight, and no shortcut that skips the reranker
@@ -29,8 +29,8 @@
  *     evidence continues with an explicit incomplete-answer warning; failure
  *     can never become a silent empty source.
  *   - Everything else degrades and says so: no planner, no embeddings, no
- *     reranker, no exact-reference lookup and no article planner each produce a
- *     worse but honest answer.
+ *     reranker and no exact-reference lookup each produce a worse but honest
+ *     answer.
  *
  * Telemetry carries a hash of the question, never the question itself, plus the
  * counts that let a bad result be diagnosed without re-running it.
@@ -57,7 +57,6 @@ import {
   type RetrievedCandidate,
 } from "@/app/lib/search-v2/fusion";
 import { dedupeCandidates, type DedupDecision } from "@/app/lib/search-v2/dedup";
-import { prefilterCandidates } from "@/app/lib/search-v2/prefilter";
 import {
   rerankUnified,
   type RankedCandidate,
@@ -65,10 +64,9 @@ import {
   type RerankOutcome,
 } from "@/app/lib/search-v2/rerank";
 import { selectEvidence } from "@/app/lib/search-v2/select";
-import { refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
+import { dropRedundantVerseChunks, fetchChunkParents } from "@/app/lib/search-v2/chunk-dedupe";
+import { isRenderable, refetchAndVerify, type VerifiedPassage } from "@/app/lib/search-v2/refetch";
 import { fetchSourceUrls } from "@/app/lib/search-v2/source-url";
-import { planArticle, type PlannedArticle } from "@/app/lib/search-v2/article-plan";
-import { renderArticle, type RenderedArticle } from "@/app/lib/search-v2/render";
 import { DegradationLog, rpcOrDegrade, type RpcCapableClient } from "@/app/lib/search-v2/rpc";
 import { searchPipelineVersion, searchCorpusVersion } from "@/app/lib/search-v2/config";
 import { formatVerseReference } from "@/app/lib/search-v2/citation";
@@ -138,15 +136,19 @@ export interface SearchTelemetry {
   candidatesAfterFusion: number;
   duplicatesCollapsed: number;
   junkFloorDropped: number;
-  prefilterPassed: number;
-  prefilterSetAside: number;
+  /** Chunks removed by the two id rules, over Cohere's one ranked list. */
+  chunkDuplicatesDropped: number;
+  /** Documents whose text was cut at DOCUMENT_MAX_CHARS before Cohere saw them. */
+  truncatedDocumentCount: number;
   rerankDocumentCount: number;
   reranked: boolean;
   selectedPassageCount: number;
   mainTierCount: number;
   additionalCount: number;
-  cutIndex: number;
-  cutGap: number;
+  /** Where the main list ended. MAIN_TIER_MAX unless fewer passages survived. */
+  mainCount: number;
+  /** Pins lifted into the main list from below the boundary. */
+  pinnedPromotions: number;
   pinnedExactReference: boolean;
   droppedOnRefetch: number;
   degraded: boolean;
@@ -157,7 +159,7 @@ export interface SearchTelemetry {
   degradedSources: FriendlyRetrievalSource[];
   stageDurationsMs: Record<string, number>;
   totalDurationMs: number;
-  models: { queryPlanner: string | null; reranker: string; articlePlanner: string | null };
+  models: { queryPlanner: string | null; reranker: string };
   errorCategory: string | null;
 }
 
@@ -188,11 +190,10 @@ export interface AdditionalPassage {
 }
 
 export interface PipelineOutput {
-  article: RenderedArticle;
   /**
    * The verified MAIN-TIER passages, in selection order (the reranker's
-   * order). This is what the article is built from — the full words,
-   * never just names for the page to look up.
+   * order). This IS the answer — the full words, never just names for the
+   * page to look up, and never re-arranged by anything downstream.
    */
   passages: VerifiedPassage[];
   /**
@@ -244,10 +245,9 @@ export interface PipelineDiagnostics {
     decisions: DedupDecision[];
     candidates: CandidateDiagnostic[];
   };
-  prefilter: {
-    stats: unknown;
-    passedPassageKeys: string[];
-    setAsidePassageKeys: string[];
+  chunkDedupe: {
+    dropped: Array<{ passageKey: string; verseId: string; reason: string }>;
+    lookupDegraded: boolean;
   };
   rerank: {
     model: string;
@@ -257,8 +257,8 @@ export interface PipelineDiagnostics {
     candidates: CandidateDiagnostic[];
   };
   tiering: {
-    cutIndex: number;
-    cutGap: number;
+    mainCount: number;
+    pinnedPromotions: number;
     uncoveredQueryIds: string[];
     evidenceInsufficient: boolean;
     selected: Array<{
@@ -273,7 +273,6 @@ export interface PipelineDiagnostics {
     verifiedPassageKeys: string[];
     mainDrops: unknown[];
   };
-  articlePlan: PlannedArticle;
 }
 
 export interface PipelineInput {
@@ -291,8 +290,6 @@ export interface PipelineInput {
    * Arm A so the rest of the production pipeline remains unchanged.
    */
   privateRerankExecutor?: (input: RerankInput) => Promise<RerankOutcome>;
-  /** Private evaluator seam used to avoid an unrelated paid article-planner call. */
-  privateArticlePlanner?: typeof planArticle;
   /** Private evaluator-only per-call Gemini usage proof. */
   privatePlannerCallUsageObserver?: PrivatePlannerCallUsageObserver;
   /**
@@ -510,46 +507,71 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     }
   }
   const deduped = dedupeCandidates(fused);
-  const prefiltered = prefilterCandidates(deduped.candidates);
   recordDuration("fusing", elapsed(fuseStart));
   console.info(
     JSON.stringify({
       level: "info",
-      event: "search.prefilter",
+      event: "search.pool",
       requestId,
-      before: prefiltered.stats.before,
-      after: prefiltered.stats.after,
-      setAside: prefiltered.stats.setAside,
-      perSource: prefiltered.stats.perSource,
+      raw: retrieved.candidateCount,
+      afterFusion: fused.length,
+      deduped: deduped.candidates.length,
     }),
   );
 
-  // ── rerank: the pre-filtered pool judged against the original question ──
+  // ── rerank: the WHOLE pool, one request, judged against the original ──
+  // Every passage the original question and the angles found goes in. There is
+  // no pre-filter deciding who earns the cross-encoder any more: Dig Deeper is
+  // built from this same ranking, and a passage that was never judged cannot
+  // honestly be placed "in the same rerank order" as the ones that were.
+  //
+  // The chunk→parent lookup rides alongside the call rather than after it. The
+  // ids are known now and the answer is not needed until Cohere replies, so it
+  // costs no wall clock.
   onStage?.("reranking", { found: deduped.candidates.length });
   const rerankExecutor = input.privateRerankExecutor ?? rerankUnified;
+  const chunkParentsPromise = fetchChunkParents(db as never, deduped.candidates, { requestId });
   const rerank = await time("reranking", () =>
     rerankExecutor({
       question: query, // the ORIGINAL question, never the canonicalisation
-      candidates: prefiltered.passed,
+      candidates: deduped.candidates,
+      requestId,
     }),
   );
   if (rerank.degradedReason) {
     degraded.record("reranking", "cohere", { code: rerank.degradedReason });
   }
 
-  // ── tier: main rendered in full, everything else kept as citations ──
+  // ── the duplicate rules, over Cohere's one list, order preserved ──
+  const chunkParents = await chunkParentsPromise;
+  const chunkDedupe = timeSync("selecting", () =>
+    dropRedundantVerseChunks(rerank.ranked, chunkParents.verseIdByChunk));
+  if (chunkDedupe.dropped.length > 0) {
+    console.info(JSON.stringify({
+      level: "info",
+      event: "search.chunk_dedupe",
+      requestId,
+      dropped: chunkDedupe.dropped.length,
+      byReason: chunkDedupe.dropped.reduce<Record<string, number>>((acc, d) => {
+        acc[d.reason] = (acc[d.reason] ?? 0) + 1;
+        return acc;
+      }, {}),
+    }));
+  }
+
+  // ── tier: the first 20 survivors in full, every other survivor as a citation ──
   onStage?.("selecting", { found: deduped.candidates.length });
   const approvedIds = [ORIGINAL_QUERY_ID, ...planned.plan.subqueries.map((s) => s.id)];
   const selection = timeSync("selecting", () => selectEvidence({
-    ranked: rerank.ranked,
+    ranked: chunkDedupe.kept,
     approvedQueryIds: approvedIds,
     rerankAvailable: rerank.reranked,
     requestId,
   }));
 
-  // The second tier: rerank-judged passages below the cut first, then the
-  // pre-filter's set-asides in fused order. Snippets aim at the question's own
-  // terms and never end mid-sentence.
+  // The second tier: every survivor below the boundary, in the SAME rerank
+  // order as the main list, because it came out of the same one ranked list.
+  // Snippets aim at the question's own terms and never end mid-sentence.
   const queryTerms = extractQueryTerms(query);
   const toAdditional = (
     c: RankedCandidate | FusedCandidate,
@@ -567,10 +589,7 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     snippet: makeSnippet(c.retrieval_text, 220, queryTerms),
     vedabaseUrl: urls.get(c.passage_key) ?? null,
   });
-  const additionalCandidates: Array<RankedCandidate | FusedCandidate> = [
-    ...selection.additional,
-    ...prefiltered.setAside,
-  ];
+  const additionalCandidates: RankedCandidate[] = selection.additional;
 
   // The citation tier's links are read alongside the main tier's verification,
   // so the extra table reads cost no wall clock. fetchSourceUrls never rejects,
@@ -599,28 +618,41 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
   );
 
   // ── organise ──
-  // The planner contributes arrangement only, and receives ONLY the main tier
-  // (≤ MAIN_TIER_MAX + pins, comfortably inside its schema's capacity). When it
-  // fails, the deterministic renderer orders the passages — and in both cases
-  // every verified passage is shown: the renderer appends whatever a plan
-  // leaves unplaced.
-  onStage?.("organizing", { kept: refetched.verified.length });
-  const articlePlanner = input.privateArticlePlanner ?? planArticle;
-  const organized = await time("organizing", async () => {
-    const plan = await articlePlanner(query, refetched.verified); // main tier only, ≤ 20 + pins
-    return {
-      plan,
-      article: renderArticle({ question: query, passages: refetched.verified, plan: plan.plan }),
-    };
-  });
-  const article = organized.article;
+  // NOTHING HAPPENS HERE ANY MORE, and that is the point. A Gemini call used to
+  // arrange the main tier into sections and write a title. The arrangement was
+  // built, counted for telemetry and then dropped — `passages` below has always
+  // been the selector's list in the reranker's order — so the only thing the
+  // call ever put in front of a devotee was its title, printed as a framing
+  // note above passages that are supposed to be the only words on the page.
+  //
+  // The marker stays for two reasons: the loader still ticks its `weaving`
+  // stage from it, and the duration is recorded as the zero it now is rather
+  // than vanishing from `stage_durations_ms` and taking the search with it out
+  // of the benchmark table.
+  //
+  // One thing the deleted renderer did DOES survive, because it was never about
+  // arrangement: the second labelling gate. `select.ts` already refuses a letter
+  // with no recipient or no date, but re-fetch re-reads every row afterwards, so
+  // a row that lost its recipient between the two reads would otherwise reach a
+  // devotee looking like general instruction rather than correspondence.
+  const renderable = refetched.verified.filter(isRenderable);
+  if (renderable.length !== refetched.verified.length) {
+    console.warn(JSON.stringify({
+      level: "warn",
+      event: "search.unlabellable_after_refetch",
+      requestId,
+      dropped: refetched.verified.length - renderable.length,
+    }));
+  }
+  onStage?.("organizing", { kept: renderable.length });
+  recordDuration("organizing", 0);
 
   const degradedStages = degraded.list();
   const degradedSources = [...retrieved.degradedSources];
   const responseDegraded = degradedStages.length > 0 || degradedSources.length > 0;
   onStage?.(responseDegraded ? "degraded" : "complete");
 
-  const mainTierCount = refetched.verified.length;
+  const mainTierCount = renderable.length;
   const telemetry: SearchTelemetry = {
     requestId,
     plannedIntent: planned.plan.intent,
@@ -641,15 +673,18 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     candidatesAfterFusion: fused.length,
     duplicatesCollapsed: deduped.stats.exactCollapsed + deduped.stats.containedCollapsed,
     junkFloorDropped: floored.dropped,
-    prefilterPassed: prefiltered.stats.after,
-    prefilterSetAside: prefiltered.stats.setAside,
+    chunkDuplicatesDropped: chunkDedupe.dropped.length,
+    truncatedDocumentCount: rerank.truncatedDocumentCount,
     rerankDocumentCount: rerank.documentCount,
     reranked: rerank.reranked,
-    selectedPassageCount: article.sections.reduce((n, s) => n + s.blocks.length, 0),
+    // Every verified main-tier passage is rendered, so this and `mainTierCount`
+    // are now the same number. It used to count the blocks an article plan
+    // placed; that plan no longer exists.
+    selectedPassageCount: mainTierCount,
     mainTierCount,
     additionalCount: additional.length,
-    cutIndex: selection.cutIndex,
-    cutGap: Math.round(selection.cutGap * 1000) / 1000,
+    mainCount: selection.mainCount,
+    pinnedPromotions: selection.pinnedPromotions,
     pinnedExactReference: Boolean(pinnedCandidate),
     droppedOnRefetch: verificationDropCount,
     degraded: responseDegraded,
@@ -661,7 +696,6 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
     models: {
       queryPlanner: planned.source === "fallback_original_only" ? null : "gemini",
       reranker: rerank.model,
-      articlePlanner: article.planned ? "gemini" : null,
     },
     errorCategory: null,
   };
@@ -690,10 +724,9 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
             decisions: deduped.decisions,
             candidates: deduped.candidates.map(diagnosticCandidate),
           },
-          prefilter: {
-            stats: prefiltered.stats,
-            passedPassageKeys: prefiltered.passed.map((candidate) => candidate.passage_key),
-            setAsidePassageKeys: prefiltered.setAside.map((candidate) => candidate.passage_key),
+          chunkDedupe: {
+            dropped: chunkDedupe.dropped,
+            lookupDegraded: chunkParents.degraded,
           },
           rerank: {
             model: rerank.model,
@@ -703,8 +736,8 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
             candidates: rerank.ranked.map(diagnosticCandidate),
           },
           tiering: {
-            cutIndex: selection.cutIndex,
-            cutGap: selection.cutGap,
+            mainCount: selection.mainCount,
+            pinnedPromotions: selection.pinnedPromotions,
             uncoveredQueryIds: selection.uncoveredQueryIds,
             evidenceInsufficient: selection.evidenceInsufficient,
             selected: selection.selected.map((item) => ({
@@ -719,18 +752,20 @@ export async function runSearchV2(input: PipelineInput): Promise<PipelineOutput>
             verifiedPassageKeys: refetched.verified.map((passage) => passage.passageKey),
             mainDrops: refetched.dropped,
           },
-          articlePlan: organized.plan,
         };
       })()
     : undefined;
 
   return {
-    article,
-    passages: refetched.verified,
+    passages: renderable,
     additional,
     telemetry,
     uncoveredQueryIds: selection.uncoveredQueryIds,
-    evidenceInsufficient: article.evidenceInsufficient || selection.evidenceInsufficient,
+    // Nothing to show is the whole of it. An empty selection necessarily
+    // produces an empty renderable list, so this one test covers both the case
+    // where the tiering found nothing and the case where verification or the
+    // labelling gate took everything away afterwards.
+    evidenceInsufficient: renderable.length === 0,
     ...(diagnostics ? { diagnostics } : {}),
   };
 }

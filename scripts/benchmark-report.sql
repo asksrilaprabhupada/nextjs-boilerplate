@@ -30,8 +30,11 @@ WITH bench AS (
     (l.stage_durations_ms ->> 'fusing')::numeric                AS fusing_ms,
     (l.stage_durations_ms ->> 'reranking')::numeric             AS reranking_ms,
     (l.stage_durations_ms ->> 'verifying')::numeric             AS verifying_ms,
-    -- Job 3 deletes the organizing stage. COALESCE keeps those searches in the
-    -- table instead of dropping them out of our own results silently.
+    -- The organizing stage is gone; the marker now records a literal 0 so the
+    -- column keeps its meaning. COALESCE stays as the belt to that braces: a
+    -- row written before the marker existed, or one where the key is missing
+    -- for any reason, must still appear in our own results table rather than
+    -- vanishing from it silently.
     COALESCE((l.stage_durations_ms ->> 'organizing')::numeric, 0) AS organizing_ms,
     l.telemetry ->> 'cache_status'                              AS cache_status,
     l.telemetry -> 'plan'  ->> 'source'                         AS plan_source,

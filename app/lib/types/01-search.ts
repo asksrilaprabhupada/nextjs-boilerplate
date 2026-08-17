@@ -119,8 +119,15 @@ export interface SearchResults {
   /** The honest total: passages.length + additionalCount. */
   totalResults: number;
   citations: Citation[];
-  /** Honest page title (the article plan's, or a deterministic one). */
-  intro?: string;
+  /**
+   * NO `intro`. A Gemini-written title used to travel here and print as a
+   * framing note above the answer — "Navigating Marriage and Brahmacharya
+   * Despite Astrological Predictions" on a page that is supposed to carry only
+   * Śrīla Prabhupāda's words. The field is removed rather than emptied, so
+   * nothing can quietly start rendering one again. Rows archived before this
+   * change still contain the key; readers ignore unknown keys, so they load
+   * unchanged.
+   */
   suggestion?: string | null;
   suggestionDisplay?: string | null;
   queryTerms?: string[];

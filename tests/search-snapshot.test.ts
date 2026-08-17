@@ -194,15 +194,15 @@ function telemetry(questionHash: string): SearchTelemetry {
     candidatesAfterFusion: 1,
     duplicatesCollapsed: 0,
     junkFloorDropped: 0,
-    prefilterPassed: 1,
-    prefilterSetAside: 0,
+    chunkDuplicatesDropped: 0,
+    truncatedDocumentCount: 0,
     rerankDocumentCount: 1,
     reranked: true,
     selectedPassageCount: 1,
     mainTierCount: 1,
     additionalCount: 0,
-    cutIndex: 1,
-    cutGap: 0,
+    mainCount: 1,
+    pinnedPromotions: 0,
     pinnedExactReference: false,
     droppedOnRefetch: 0,
     degraded: false,
@@ -211,7 +211,7 @@ function telemetry(questionHash: string): SearchTelemetry {
     degradedSources: [],
     stageDurationsMs: { retrieving: 10 },
     totalDurationMs: 20,
-    models: { queryPlanner: null, reranker: "rerank", articlePlanner: null },
+    models: { queryPlanner: null, reranker: "rerank" },
     errorCategory: null,
   };
 }
@@ -259,7 +259,7 @@ const diagnostics: PipelineDiagnostics = {
     decisions: [],
     candidates: [],
   },
-  prefilter: { stats: {}, passedPassageKeys: [], setAsidePassageKeys: [] },
+  chunkDedupe: { dropped: [], lookupDegraded: false },
   rerank: {
     model: "rerank",
     reranked: true,
@@ -268,15 +268,14 @@ const diagnostics: PipelineDiagnostics = {
     candidates: [],
   },
   tiering: {
-    cutIndex: 0,
-    cutGap: 0,
+    mainCount: 0,
+    pinnedPromotions: 0,
     uncoveredQueryIds: [],
     evidenceInsufficient: false,
     selected: [],
     additionalPassageKeys: [],
   },
   verification: { verifiedPassageKeys: [], mainDrops: [] },
-  articlePlan: { plan: null, source: "deterministic_fallback", rejections: [] },
 };
 
 function snapshotInput() {

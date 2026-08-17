@@ -152,7 +152,7 @@ export function toWireAdditional(a: AdditionalPassage): AdditionalSearchPassage 
  * else is derived from them or is integrity metadata.
  */
 export function adaptToSearchResults(query: string, out: PipelineOutput): SearchResults {
-  const { article, telemetry } = out;
+  const { telemetry } = out;
 
   const passages = out.passages.map(toWirePassage);
   const additional = out.additional.map(toWireAdditional);
@@ -174,7 +174,6 @@ export function adaptToSearchResults(query: string, out: PipelineOutput): Search
     // The honest total: what is rendered in full plus what is cited.
     totalResults: passages.length + additional.length,
     citations,
-    intro: article.title,
     queryTerms: extractQueryTerms(query),
     validated: true, // every passage came out of refetchAndVerify
     droppedBlocks: telemetry.droppedOnRefetch,

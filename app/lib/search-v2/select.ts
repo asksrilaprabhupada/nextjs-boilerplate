@@ -1,33 +1,40 @@
 /**
- * select.ts — Selection by RELEVANCE, split into two tiers, never a deletion.
+ * select.ts — WHO OWNS EACH LIST. One rule, written down, no arithmetic.
  *
- * THE CUT IS NOT A DELETION. A fixed threshold cannot work here: reranker scores
- * are query-dependent, and on a corpus this topically homogeneous almost every
- * passage scores respectably. 1,942 of 1,971 clearing 0.3 is not a bug in the
- * number, it is a category error in the method.
+ *   1. One ranked list comes back from Cohere.
+ *   2. The duplicate rules have already been applied to it, preserving order.
+ *   3. Pinned passages lead, keeping their order among themselves.
+ *   4. The first MAIN_TIER_MAX surviving items are the MAIN list.
+ *   5. Every remaining surviving item is DIG DEEPER, in the same rerank order.
+ *   6. No passage id appears in both.
  *
- * So the scores are used to SPLIT, not to filter:
- *   - main:       full text, rendered on the page. Capped, because a reader
- *                 cannot absorb a thousand purports.
- *   - additional: citation, label and one line each. Uncapped. Every passage
- *                 that survived retrieval is here. Nothing is lost.
+ * THE CUT IS NOT A DELETION. Everything below the boundary is still returned —
+ * as a citation with a sentence-safe snippet rather than full text, because a
+ * reader cannot absorb seven hundred purports, not because the passage stopped
+ * counting.
  *
- * The split point is where the scores actually fall off — the largest gap in the
- * sorted curve, searched within a sane window — not a number chosen in advance.
+ * What this replaces: a cut placed at the largest score gap between positions 8
+ * and 20. The reasoning behind it was sound — reranker scores are query-
+ * dependent, so a fixed SCORE threshold is a category error — but the answer to
+ * that is not a moving COUNT. A gap is a fact about the scores; where the main
+ * list ends is a decision about the page, and the owner has made it: twenty.
  *
  * What survives from the old selector, because it is about honesty rather than
- * counting: an unlabellable letter (no recipient or no date) is excluded
- * outright — a hard exclusion, not a scoring penalty — and the purport
- * belonging to the strongest verse is pulled in beside it, because a purport
- * explaining a shown verse is context, not repetition.
+ * counting: a letter that cannot be labelled (no recipient or no date) is
+ * excluded outright — a hard exclusion, not a scoring penalty — since an
+ * unlabelled letter reads as general instruction.
+ *
+ * What does NOT survive: the promotion that pulled the primary verse's purport
+ * up beside it. A verse chunk is never shown together with its parent verse
+ * now, so that promotion would have quietly undone the deduplication one stage
+ * earlier — removing the chunk from the pile and then putting it back on the
+ * page. The chunk is not lost; it falls to the citation tier like anything
+ * else below the boundary.
  */
 import type { RankedCandidate } from "@/app/lib/search-v2/rerank";
 
-export const MAIN_TIER_MIN = 8;
+/** The main list is exactly this long, or shorter when fewer survive. */
 export const MAIN_TIER_MAX = 20;
-
-/** A gap smaller than this is score noise, not a boundary; the cap governs. */
-export const MIN_CUT_GAP = 0.02;
 
 /** A context notice the renderer MUST show alongside the passage. */
 export type ContextRequirement =
@@ -48,30 +55,33 @@ export interface SelectionResult {
   /** The main tier: rendered in full. */
   selected: SelectedPassage[];
   /**
-   * Everything else that survived retrieval, in rerank-score order (fused
-   * score as the tiebreak). Shown as citations — never dropped.
+   * Everything else that survived, in the same rerank order. Shown as
+   * citations — never dropped.
    */
   additional: RankedCandidate[];
   /** Approved subquery ids no main-tier passage covers. Drives honest gaps. */
   uncoveredQueryIds: string[];
   evidenceInsufficient: boolean;
-  /** Where the largest-gap cut landed, and how big the gap was — for tuning. */
-  cutIndex: number;
-  cutGap: number;
+  /** Where the main list ends. Equal to MAIN_TIER_MAX unless fewer survived. */
+  mainCount: number;
+  /**
+   * Pins that were below the boundary on relevance alone and were lifted into
+   * the main list. A devotee who searches "BG 18.66" must see that verse on the
+   * page, not at position 37 — but a promotion is a decision, so it is counted.
+   */
+  pinnedPromotions: number;
 }
 
 export interface SelectionInput {
-  /** Candidates in final relevance order (reranked, or fused if rerank failed). */
+  /** Candidates in final relevance order, duplicate rules already applied. */
   ranked: RankedCandidate[];
   /** Ids of every approved query, so coverage gaps can be reported. */
   approvedQueryIds: string[];
-  /** True when the reranker actually ran, so scores exist to split on. */
+  /** True when the reranker actually ran, so the order is judged, not arrival. */
   rerankAvailable: boolean;
-  /** Correlates the score log with the request. */
+  /** Correlates the selection log with the request. */
   requestId?: string;
 }
-
-const VERSE_TYPES = new Set(["verse", "purport"]);
 
 function contextRequirementsFor(c: RankedCandidate): ContextRequirement[] {
   const out: ContextRequirement[] = [];
@@ -94,32 +104,6 @@ export function isLabellable(c: RankedCandidate): boolean {
   return Boolean((c.recipient || "").trim()) && Boolean((c.occurred_on || "").trim());
 }
 
-/**
- * The largest drop in the sorted score curve, searched between MAIN_TIER_MIN
- * and MAIN_TIER_MAX. Returns the cut index (main = first `cutIndex` items) and
- * the gap it sits on. Null scores contribute no gap, so a rerank-down search
- * falls through to the cap — with no scores there is no natural boundary.
- */
-export function findCut(scores: (number | null)[]): { cutIndex: number; cutGap: number } {
-  const cap = Math.min(MAIN_TIER_MAX, scores.length);
-  if (scores.length <= MAIN_TIER_MIN) return { cutIndex: scores.length, cutGap: 0 };
-
-  let cutIndex = cap;
-  let cutGap = 0;
-  for (let c = MAIN_TIER_MIN; c <= cap && c < scores.length; c++) {
-    const before = scores[c - 1];
-    const after = scores[c];
-    if (before === null || after === null) continue;
-    const drop = before - after;
-    if (drop > cutGap) {
-      cutGap = drop;
-      cutIndex = c;
-    }
-  }
-  if (cutGap <= MIN_CUT_GAP) return { cutIndex: cap, cutGap };
-  return { cutIndex, cutGap };
-}
-
 export function selectEvidence(input: SelectionInput): SelectionResult {
   const { ranked, approvedQueryIds, requestId } = input;
 
@@ -130,75 +114,57 @@ export function selectEvidence(input: SelectionInput): SelectionResult {
       additional: [],
       uncoveredQueryIds: approvedQueryIds,
       evidenceInsufficient: true,
-      cutIndex: 0,
-      cutGap: 0,
+      mainCount: 0,
+      pinnedPromotions: 0,
     };
   }
 
-  // Pinned passages (an exact reference the devotee wrote) lead the main tier
-  // and consume no slot — the cut is computed over the unpinned remainder.
+  // Pins lead, each group keeping its own relevance order. This is the ONLY
+  // re-ordering applied to Cohere's list, and it is a promotion rather than a
+  // sort: a devotee who wrote a reference must find that passage on the page.
   const pinned = eligible.filter((c) => c.pinned);
-  const unpinned = eligible.filter((c) => !c.pinned);
+  const rest = eligible.filter((c) => !c.pinned);
+  const ordered = [...pinned, ...rest];
 
-  // ── The cut: the largest score gap inside the window, or the cap. ──
-  const { cutIndex, cutGap } = findCut(unpinned.map((c) => c.rerankScore));
-  let kept = [...pinned, ...unpinned.slice(0, cutIndex)];
-  let additional = unpinned.slice(cutIndex);
+  // A pin that was already inside the boundary on relevance alone was not
+  // promoted by anything — only the ones that were not are counted.
+  const naturalTop = new Set(
+    eligible.slice(0, MAIN_TIER_MAX).map((c) => c.passage_key),
+  );
+  const promoted = ordered
+    .slice(0, MAIN_TIER_MAX)
+    .filter((c) => c.pinned && !naturalTop.has(c.passage_key));
 
-  // ── The purport partner of the strongest verse ──
-  // A purport explaining a shown verse is context, not repetition; it joins its
-  // verse even when its own score fell below the cut.
-  const keptKeys = new Set(kept.map((c) => c.passage_key));
-  let partnerKey: string | null = null;
-  const primary = kept[0];
-  if (primary && VERSE_TYPES.has(primary.source_type)) {
-    const partner = eligible.find(
-      (c) =>
-        !keptKeys.has(c.passage_key) &&
-        VERSE_TYPES.has(c.source_type) &&
-        c.source_type !== primary.source_type &&
-        c.reference &&
-        primary.reference &&
-        c.reference.trim() === primary.reference.trim(),
-    );
-    if (partner) {
-      kept = [kept[0], partner, ...kept.slice(1)];
-      keptKeys.add(partner.passage_key);
-      partnerKey = partner.passage_key;
-      additional = additional.filter((c) => c.passage_key !== partner.passage_key);
-    }
-  }
+  const kept = ordered.slice(0, MAIN_TIER_MAX);
+  const additional = ordered.slice(MAIN_TIER_MAX);
 
-  // ── Log every score plus the chosen cut, so the window and the gap floor
-  //    can be tuned from real distributions rather than guesses. ──
   console.info(
     JSON.stringify({
       level: "info",
-      event: "search.selection_scores",
+      event: "search.selection",
       requestId: requestId ?? null,
-      basis: input.rerankAvailable ? "largest_gap" : "rerank_unavailable",
-      cutIndex,
-      cutGap: Math.round(cutGap * 1000) / 1000,
+      basis: input.rerankAvailable ? "rerank_order" : "arrival_order_rerank_unavailable",
       eligible: eligible.length,
       main: kept.length,
       additional: additional.length,
-      scores: eligible.map((c) => (c.rerankScore === null ? null : Math.round(c.rerankScore * 1000) / 1000)),
+      pinned: pinned.length,
+      pinnedPromotions: promoted.length,
+      promotedPassageKeys: promoted.map((c) => c.passage_key),
     }),
   );
 
-  const reasonFor = (c: RankedCandidate): string => {
-    if (c.pinned) return "exact reference requested";
-    if (c.passage_key === partnerKey) return "purport/verse partner of the primary passage";
-    if (!input.rerankAvailable) return "fused order (reranker unavailable)";
-    return `above the largest score gap (cut at ${cutIndex}, gap ${cutGap.toFixed(3)})`;
+  const reasonFor = (c: RankedCandidate, index: number): string => {
+    if (c.pinned) return "exact reference requested — pinned to the main list";
+    if (!input.rerankAvailable) return `arrival order ${index + 1} (reranker unavailable)`;
+    return `rerank position ${index + 1} of the first ${MAIN_TIER_MAX}`;
   };
 
   const covered = new Set<string>();
-  const selected: SelectedPassage[] = kept.map((c) => {
+  const selected: SelectedPassage[] = kept.map((c, index) => {
     for (const q of c.queryCoverage ?? []) covered.add(q);
     return {
       candidate: c,
-      reasons: [reasonFor(c)],
+      reasons: [reasonFor(c, index)],
       contextRequirements: contextRequirementsFor(c),
       rerankPosition: c.rerankScore === null ? null : eligible.indexOf(c),
     };
@@ -209,7 +175,7 @@ export function selectEvidence(input: SelectionInput): SelectionResult {
     additional,
     uncoveredQueryIds: approvedQueryIds.filter((q) => !covered.has(q)),
     evidenceInsufficient: selected.length === 0,
-    cutIndex,
-    cutGap,
+    mainCount: kept.length,
+    pinnedPromotions: promoted.length,
   };
 }

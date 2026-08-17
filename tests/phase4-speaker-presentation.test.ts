@@ -14,8 +14,7 @@ import {
 } from "@/app/lib/21-transcript-attribution";
 import { buildSearchHref } from "@/app/lib/22-search-navigation";
 import { buildPassageCopyText } from "@/app/lib/23-passage-copy";
-import { DISCLOSURE } from "@/app/lib/search-v2/article-plan";
-import { contextNoticeFor, renderArticle } from "@/app/lib/search-v2/render";
+import { contextNoticeFor } from "@/app/lib/search-v2/render";
 import type { VerifiedPassage } from "@/app/lib/search-v2/refetch";
 
 function lecture(over: Record<string, unknown> = {}): VerifiedPassage {
@@ -89,36 +88,6 @@ describe("transcript attribution presentation", () => {
   it("does not repeat lecture attribution as a context notice", () => {
     expect(contextNoticeFor(lecture())).toBeNull();
     expect(contextNoticeFor(lecture({ speaker: null, speakerConfidence: "unknown" }))).toBeNull();
-  });
-
-  it("uses neutral source-shift copy for every recorded talk", () => {
-    const first = {
-      ...lecture(),
-      passageKey: "verse:1",
-      sourceType: "verse",
-      speaker: null,
-      speakerConfidence: null,
-      reference: "BG 6.6",
-    } as unknown as VerifiedPassage;
-    const plan = {
-      schema_version: "article-plan-v1" as const,
-      article_type: "guided_study" as const,
-      title: "Title",
-      opening: { kind: "direct_source" as const, passage_id: "verse:1" },
-      direct_answer_passage_ids: [],
-      sections: [{
-        heading_key: "foundation" as const,
-        short_subject: "",
-        passage_ids: ["verse:1"],
-        transition_type: "none" as const,
-      }],
-      closing: { kind: "none" as const, passage_ids: [] },
-      disclosure: DISCLOSURE,
-    };
-    const rendered = renderArticle({ question: "q", passages: [first, lecture()], plan });
-    const transition = rendered.sections[1].blocks[0].transition;
-    expect(transition).toBe("The following passage comes from a recorded talk.");
-    expect(transition).not.toContain("Śrīla Prabhupāda discusses");
   });
 });
 
