@@ -2,7 +2,7 @@
  * planner-gate.ts — Measures the query planner, and nothing else.
  *
  * The A1 acceptance gate is a claim about the planner: every gold-set question
- * must produce five valid, genuinely distinct angles, repeatably, inside the
+ * must produce one to three valid reformulations, repeatably, inside the
  * per-attempt cap. Proving that by running whole searches would cost five database
  * fan-outs, a Voyage batch and ~600 Cohere documents per question — minutes and
  * real money per run, to measure a stage that finishes in two seconds. So this
@@ -15,10 +15,12 @@
  * The question list is the gold set, imported directly so the gate can never
  * drift from the evaluation set it claims to cover.
  */
+import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
 import goldSet from "@/tests/gold/gold-set-v1.json";
 import {
   planQuery,
-  REQUIRED_SUBQUERIES,
+  MAX_SUBQUERIES,
+  MIN_SUBQUERIES,
   type PlanFailureKind,
 } from "@/app/lib/search-v2/query-plan";
 
@@ -40,13 +42,18 @@ export const GATE_QUESTIONS: GoldQuestion[] = (goldSet.questions as GoldQuestion
  * observed, the money is arithmetic on top of a rate that should be checked
  * against Google's current pricing page before being quoted to anyone.
  */
-export const PLANNER_RATE_USD_PER_MTOK = { input: 0.3, output: 2.5 };
+const PLANNER_RATES: Record<string, { input: number; output: number }> = {
+  "gemini-3.1-flash-lite": { input: 0.25, output: 1.5 },
+  "gemini-3.5-flash-lite": { input: 0.3, output: 2.5 },
+  "gemini-2.5-flash": { input: 0.3, output: 2.5 },
+  "gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
+};
 
 /**
  * What a single planner run actually produced.
  *
  * `pointer` is a legitimate outcome, not a softened failure: the question was a
- * bare reference or a bare quotation, which does not contain five distinct
+ * bare reference or a bare quotation, which does not contain additional
  * angles to find. It is counted apart from `planned` so the report can never
  * hide either behind the other.
  */
@@ -75,7 +82,7 @@ export interface PlannerGateQuestionResult {
   category: string;
   question: string;
   runs: PlannerGateRun[];
-  /** Every run either planned its five angles or was an honest pointer outcome. */
+  /** Every run either produced a compact plan or was an honest pointer outcome. */
   passed: boolean;
   /** True when every run of this question was a pointer outcome. */
   pointer: boolean;
@@ -83,16 +90,17 @@ export interface PlannerGateQuestionResult {
 
 export interface PlannerGateReport {
   requiredAngles: number;
+  maximumAngles: number;
   questionCount: number;
   runsPerQuestion: number;
   totalRuns: number;
   acceptedRuns: number;
-  /** Runs that produced five valid angles. */
+  /** Runs that produced one to three valid reformulations. */
   plannedRuns: number;
   /** Runs recorded as pointer questions — counted, never hidden. */
   pointerRuns: number;
   passedQuestions: number;
-  /** Questions that planned five angles on every run. */
+  /** Questions that produced a compact plan on every run. */
   plannedQuestions: number;
   /** Questions that were pointer outcomes on every run. */
   pointerQuestions: number;
@@ -106,8 +114,11 @@ export interface PlannerGateReport {
   attemptDurationMs: { count: number; min: number; median: number; p95: number; max: number };
   durationMs: { min: number; median: number; p95: number; max: number };
   tokens: { promptTotal: number; outputTotal: number; thoughtsTotal: number };
-  /** Per accepted search, at the rates above. */
-  costUsd: { perSearch: number; total: number };
+  /** The model selected for this run, including an explicit override. */
+  model: string;
+  ratesUsdPerMtok: { input: number; output: number } | null;
+  /** Estimated average per attempted search, including reasoning usage. */
+  costUsd: { perSearch: number; total: number } | null;
   results: PlannerGateQuestionResult[];
 }
 
@@ -163,7 +174,7 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
   );
 
   const measured = await mapPooled(units, concurrency, async ({ question, runIndex }) => {
-    const planned = await planQuery(question.question, REQUIRED_SUBQUERIES);
+    const planned = await planQuery(question.question, MAX_SUBQUERIES);
     const accepted = planned.source === "model";
     const run: PlannerGateRun = {
       runIndex,
@@ -209,7 +220,7 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
         runs.length === runsPerQuestion
         && runs.every((r) =>
           r.outcome === "pointer"
-          || (r.accepted && r.angleCount === REQUIRED_SUBQUERIES)),
+          || (r.accepted && r.angleCount >= MIN_SUBQUERIES && r.angleCount <= MAX_SUBQUERIES)),
       pointer: runs.length > 0 && runs.every((r) => r.outcome === "pointer"),
     };
   });
@@ -226,12 +237,16 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
   }
   const promptTotal = allRuns.reduce((n, r) => n + r.promptTokens, 0);
   const outputTotal = allRuns.reduce((n, r) => n + r.outputTokens, 0);
-  const totalCost =
-    (promptTotal / 1_000_000) * PLANNER_RATE_USD_PER_MTOK.input
-    + (outputTotal / 1_000_000) * PLANNER_RATE_USD_PER_MTOK.output;
+  const model = geminiQueryPlannerModel();
+  const rates = PLANNER_RATES[model] ?? null;
+  const thoughtsTotal = allRuns.reduce((n, r) => n + r.thoughtsTokens, 0);
+  const totalCost = rates === null ? null :
+    (promptTotal / 1_000_000) * rates.input
+    + ((outputTotal + thoughtsTotal) / 1_000_000) * rates.output;
 
   return {
-    requiredAngles: REQUIRED_SUBQUERIES,
+    requiredAngles: MIN_SUBQUERIES,
+    maximumAngles: MAX_SUBQUERIES,
     questionCount: results.length,
     runsPerQuestion,
     totalRuns: allRuns.length,
@@ -259,9 +274,11 @@ export async function runPlannerGate(options: PlannerGateOptions = {}): Promise<
     tokens: {
       promptTotal,
       outputTotal,
-      thoughtsTotal: allRuns.reduce((n, r) => n + r.thoughtsTokens, 0),
+      thoughtsTotal,
     },
-    costUsd: {
+    model,
+    ratesUsdPerMtok: rates,
+    costUsd: totalCost === null ? null : {
       perSearch: allRuns.length > 0 ? round(totalCost / allRuns.length, 6) : 0,
       total: round(totalCost, 6),
     },
@@ -288,14 +305,14 @@ export function renderPlannerGateText(
   lines.push("");
   lines.push(`Questions:        ${report.questionCount}`);
   lines.push(`Runs per question:${String(report.runsPerQuestion).padStart(2)}`);
-  lines.push(`Angles required:  ${report.requiredAngles}`);
+  lines.push(`Angles allowed:   ${report.requiredAngles}–${report.maximumAngles}`);
   lines.push("");
   lines.push(
     `PASSED ${report.passedQuestions} of ${report.questionCount} questions `
     + `(${pct(report.passedQuestions, report.questionCount)})`,
   );
   lines.push(
-    `  ${report.plannedQuestions} planned five angles`
+    `  ${report.plannedQuestions} produced a compact plan`
     + `  ·  ${report.pointerQuestions} pointer questions`,
   );
   lines.push(
@@ -307,7 +324,7 @@ export function renderPlannerGateText(
     "  a pointer question is a bare reference or a bare quotation — it does not",
   );
   lines.push(
-    "  contain five distinct angles, and is counted apart rather than excused",
+    "  require additional reformulations, and is counted apart rather than excused",
   );
   lines.push("");
   lines.push(`ONE PLANNER CALL, milliseconds (${report.attemptDurationMs.count} calls)`);
@@ -326,23 +343,14 @@ export function renderPlannerGateText(
   lines.push("TOKENS AND COST");
   lines.push(`  prompt tokens   ${report.tokens.promptTotal.toLocaleString("en-US")}`);
   lines.push(`  output tokens   ${report.tokens.outputTotal.toLocaleString("en-US")}`);
-  lines.push(`  thinking tokens ${report.tokens.thoughtsTotal} (must be 0)`);
-  lines.push(
-    `  cost per search $${report.costUsd.perSearch.toFixed(6)}`
-    + `   this whole run $${report.costUsd.total.toFixed(4)}`,
-  );
-  // ONE template, not two joined by `+`.
-  //
-  // Both rates are compile-time constants, and when every interpolation folds
-  // to a constant the production minifier merges the two templates and DROPS
-  // the left one's trailing text: this line built as "at $0.3$2.5/M output",
-  // silently losing "/M input and". Verified on a clean `next build`, and only
-  // in the minified build — the source is correct and Node prints it correctly,
-  // which is what makes it worth a comment instead of a shrug. Lines above that
-  // interpolate runtime values are unaffected, because nothing folds.
-  lines.push(
-    `  at $${PLANNER_RATE_USD_PER_MTOK.input}/M input and $${PLANNER_RATE_USD_PER_MTOK.output}/M output — check these against Google's pricing page`,
-  );
+  lines.push(`  thinking tokens ${report.tokens.thoughtsTotal}`);
+  lines.push(`  planner model ${report.model}`);
+  if (report.costUsd && report.ratesUsdPerMtok) {
+    lines.push(`  estimated cost per search $${report.costUsd.perSearch.toFixed(6)}; whole run $${report.costUsd.total.toFixed(4)}`);
+    lines.push(`  rates $${report.ratesUsdPerMtok.input}/M input, $${report.ratesUsdPerMtok.output}/M output including thinking; verify against Google pricing`);
+  } else {
+    lines.push("  cost unavailable: no verified rate for this model override");
+  }
   lines.push("");
   const kinds = Object.entries(report.failureKindCounts);
   lines.push(`FAILURES BY KIND: ${kinds.length === 0 ? "none" : ""}`);

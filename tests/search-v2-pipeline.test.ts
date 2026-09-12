@@ -448,7 +448,7 @@ describe("junk floor", () => {
 
 describe("query plan validation", () => {
   /** The one fan-out size. Every question is planned to hit it exactly. */
-  const MAX_SUBQUERIES = 5;
+  const MAX_SUBQUERIES = 3;
   /** Five angles, five different roles — the shape a valid plan must have. */
   const fiveAngles = () => [
     { id: "s1", text: "why the mind becomes restless", role: "cause" as const, priority: "primary" as const },
@@ -479,18 +479,18 @@ describe("query plan validation", () => {
     const plan = {
       ...base,
       subqueries: [
-        ...fiveAngles(),
+        ...fiveAngles().slice(0, MAX_SUBQUERIES),
         { id: "s6", text: "one angle too many about steadiness", role: "context" as const, priority: "exploratory" as const },
       ],
     };
-    expect(check("how do I control my mind", plan).join(" ")).toMatch(/exactly 5 are required/);
+    expect(check("how do I control my mind", plan).join(" ")).toMatch(/1 to 3 are allowed/);
   });
 
-  it("rejects FEWER than five — this is the bug that produced 56 zero-angle searches", () => {
+  it("accepts a single reformulation without padding the search with extra angles", () => {
     // Both the old prompt and the old schema said fewer was fine, so the two
     // planner calls that beat the timeout still returned nothing to search with.
-    const plan = { ...base, subqueries: fiveAngles().slice(0, 2) };
-    expect(check("how do I control my mind", plan).join(" ")).toMatch(/exactly 5 are required/);
+    const plan = { ...base, subqueries: fiveAngles().slice(0, 1) };
+    expect(check("how do I control my mind", plan)).toEqual([]);
   });
 
   it("rejects an EMPTY subquery list — the exact shape production kept accepting", () => {
@@ -499,7 +499,7 @@ describe("query plan validation", () => {
   });
 
   it("accepts a plan that spends the budget exactly", () => {
-    const plan = { ...base, subqueries: fiveAngles() };
+    const plan = { ...base, subqueries: fiveAngles().slice(0, MAX_SUBQUERIES) };
     expect(check("how do I control my mind", plan)).toEqual([]);
   });
 
@@ -508,7 +508,7 @@ describe("query plan validation", () => {
     // per thing compared. Rejecting a repeated role threw away plans like that.
     const plan = {
       ...base,
-      subqueries: fiveAngles().map((s, i) => ({ ...s, role: "definition" as const, id: `s${i}` })),
+      subqueries: fiveAngles().slice(0, MAX_SUBQUERIES).map((s, i) => ({ ...s, role: "definition" as const, id: `s${i}` })),
     };
     expect(check("how do I control my mind", plan)).toEqual([]);
   });
@@ -519,7 +519,7 @@ describe("query plan validation", () => {
     const plan = {
       ...base,
       subqueries: [
-        ...fiveAngles().slice(0, 3),
+        ...fiveAngles().slice(0, 1),
         { id: "s4", text: "control of the restless mind", role: "practice" as const, priority: "supporting" as const },
         { id: "s5", text: "controlling the restless mind", role: "example" as const, priority: "exploratory" as const },
       ],
@@ -527,12 +527,12 @@ describe("query plan validation", () => {
     expect(check("how do I control my mind", plan).join(" ")).toMatch(/near-identical/);
   });
 
-  it("rejects a subquery equivalent to the original question", () => {
+  it("accepts a faithful reformulation even when it shares the original wording", () => {
     const plan = {
       ...base,
       subqueries: [{ id: "s1", text: "how do I control my mind", role: "reformulation" as const, priority: "primary" as const }],
     };
-    expect(check("how do I control my mind", plan).join(" ")).toMatch(/equivalent/);
+    expect(check("how do I control my mind", plan)).toEqual([]);
   });
 
   it("rejects near-identical subqueries", () => {
@@ -566,7 +566,7 @@ describe("query plan validation", () => {
   });
 
   it("accepts a well-formed plan with genuinely distinct angles", () => {
-    const plan = { ...base, subqueries: fiveAngles() };
+    const plan = { ...base, subqueries: fiveAngles().slice(0, MAX_SUBQUERIES) };
     expect(check("how do I control my mind", plan)).toEqual([]);
   });
 });

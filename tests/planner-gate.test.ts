@@ -8,7 +8,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { GATE_QUESTIONS, runPlannerGate } from "@/app/lib/search-v2/planner-gate";
-import { REQUIRED_SUBQUERIES } from "@/app/lib/search-v2/query-plan";
+import { MIN_SUBQUERIES, MAX_SUBQUERIES } from "@/app/lib/search-v2/query-plan";
 
 describe("planner gate harness", () => {
   it("covers the whole gold set, in gold-set order", () => {
@@ -22,7 +22,8 @@ describe("planner gate harness", () => {
     delete process.env.GEMINI_API_KEY;
     try {
       const report = await runPlannerGate({ runsPerQuestion: 2, limit: 3 });
-      expect(report.requiredAngles).toBe(REQUIRED_SUBQUERIES);
+      expect(report.requiredAngles).toBe(MIN_SUBQUERIES);
+      expect(report.maximumAngles).toBe(MAX_SUBQUERIES);
       expect(report.totalRuns).toBe(6);
       expect(report.acceptedRuns).toBe(0);
       expect(report.passedQuestions).toBe(0);
@@ -31,7 +32,7 @@ describe("planner gate harness", () => {
       // A run that never reached the provider spent nothing, and the report
       // must not invent a price for it.
       expect(report.tokens.promptTotal).toBe(0);
-      expect(report.costUsd.total).toBe(0);
+      expect(report.costUsd?.total).toBe(0);
     } finally {
       if (saved !== undefined) process.env.GEMINI_API_KEY = saved;
     }

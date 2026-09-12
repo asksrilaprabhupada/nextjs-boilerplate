@@ -352,8 +352,7 @@ export function allowlistedTechnicalTelemetry(
         outcome: telemetry.models.queryPlanner !== null ? "accepted" : "fallback",
         promptTokens: telemetry.planUsage.promptTokens,
         outputTokens: telemetry.planUsage.outputTokens,
-        // Must stay 0. A non-zero value means thinkingBudget: 0 stopped being
-        // honoured, which is the exact regression that broke the planner.
+        // Actual provider usage; Gemini 3 MINIMAL can report reasoning tokens.
         thoughtsTokens: telemetry.planUsage.thoughtsTokens,
         totalTokens: telemetry.planUsage.totalTokens,
       },

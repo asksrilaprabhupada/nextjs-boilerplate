@@ -66,8 +66,9 @@ describe.skipIf(!enabled)("live planner gate", () => {
       expect(report.passedQuestions).toBe(report.questionCount);
       expect(report.plannedQuestions + report.pointerQuestions).toBe(report.questionCount);
       expect(report.plannedRuns + report.pointerRuns).toBe(report.totalRuns);
-      // Thinking must stay off — it is what broke the planner in the first place.
-      expect(report.tokens.thoughtsTotal).toBe(0);
+      // MINIMAL can consume thinking tokens. Enforce the actual wall-clock
+      // budget instead of assuming that a valid Gemini 3 response reports zero.
+      expect(report.durationMs.p95).toBeLessThanOrEqual(4000);
     },
     30 * 60 * 1000,
   );

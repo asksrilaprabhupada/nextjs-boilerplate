@@ -19,13 +19,9 @@
  * passages the other misses. Ten paraphrases of one sentence reach the same
  * passages ten times and cost ten seconds.
  *
- * FIVE ANGLES ARE REQUIRED, NOT OFFERED. Between 3 and 4 August every one of
- * the 56 production searches planned zero angles: 54 because default Gemini
- * thinking overran the 3 s cap, and 2 that arrived in time and still returned
- * an empty list, because both the prompt and the schema told the model that
- * fewer was fine. Both causes are fixed here — thinking is off, and a plan
- * carrying fewer than {@link REQUIRED_SUBQUERIES} distinct angles is a recorded
- * failure rather than a quiet success.
+ * The original question is always searched. One faithful reformulation is
+ * enough for a simple question; compound questions may add up to three. Empty
+ * model output still fails explicitly, and names and constraints are validated.
  */
 import { z } from "zod";
 import { geminiQueryPlannerModel } from "@/app/lib/search-v2/config";
@@ -74,30 +70,22 @@ const SUBQUERY_ROLES = [
 
 const SOURCE_TYPES = ["verse", "purport", "book", "lecture", "conversation", "letter"] as const;
 
-/**
- * Exactly this many extra search angles, every time. One original question plus
- * five distinct angles is six searches across all five sources — the owner's
- * decision, and the reason "up to six, fewer is fine" is gone from both the
- * prompt and the schema.
- */
-export const REQUIRED_SUBQUERIES = 5;
+/** Small questions should not pay for five unrelated retrieval expansions. */
+export const MIN_SUBQUERIES = 1;
+export const MAX_SUBQUERIES = 3;
 
-/** Thinking off. Default thinking is what pushed every planner call past 3 s. */
+/** Gemini 2.5 compatibility: no thinking budget. Gemini 3 uses MINIMAL. */
 export const QUERY_PLANNER_THINKING_BUDGET = 0;
 
-/**
- * Room for five angles plus the constraint block. Measured at ~450 output
- * tokens for a full plan; the headroom is deliberate, and with thinking at 0
- * none of it is spent on reasoning the way the article planner's was.
- */
-export const QUERY_PLANNER_MAX_OUTPUT_TOKENS = 1600;
+/** Headroom for compact JSON, including explicit constraints when present. */
+export const QUERY_PLANNER_MAX_OUTPUT_TOKENS = 800;
 
 export const QueryPlanSchema = z
   .object({
-    schema_version: z.literal("query-plan-v1"),
+    schema_version: z.literal("query-plan-v1").default("query-plan-v1"),
     intent: z.enum(INTENTS),
     canonical_query: z.string().min(3).max(240),
-    preserve_terms: z.array(z.string().min(1).max(60)).max(10),
+    preserve_terms: z.array(z.string().min(1).max(60)).max(10).default([]),
     lexical_phrases: z.array(z.string().min(2).max(120)).max(8),
     vocabulary_candidates: z.array(z.string().min(2).max(60)).max(10),
     subqueries: z
@@ -115,23 +103,17 @@ export const QueryPlanSchema = z
           })
           .strict(),
       )
-      /**
-       * The SHAPE ceiling only. "Exactly five" is asserted in
-       * `semanticProblems` instead, so that a short plan is recorded as the
-       * specific failure `too_few_angles` rather than as an anonymous schema
-       * error — and so `fallbackPlan`, which legitimately carries none, still
-       * validates against the shape it must satisfy everywhere else.
-       */
-      .max(REQUIRED_SUBQUERIES),
+      // Fallback plans legitimately contain no reformulations.
+      .max(MAX_SUBQUERIES),
     constraints: z
       .object({
-        scripture_references: z.array(z.string().max(50)).max(5),
-        source_types: z.array(z.enum(SOURCE_TYPES)).max(6),
-        speaker: z.string().max(100).nullable(),
-        recipient: z.string().max(100).nullable(),
-        location: z.string().max(100).nullable(),
-        date_from: z.string().nullable(),
-        date_to: z.string().nullable(),
+        scripture_references: z.array(z.string().max(50)).max(5).default([]),
+        source_types: z.array(z.enum(SOURCE_TYPES)).max(6).default([]),
+        speaker: z.string().max(100).nullable().default(null),
+        recipient: z.string().max(100).nullable().default(null),
+        location: z.string().max(100).nullable().default(null),
+        date_from: z.string().nullable().default(null),
+        date_to: z.string().nullable().default(null),
       })
       .strict(),
     /**
@@ -142,7 +124,7 @@ export const QueryPlanSchema = z
      * column stores. Always re-derived server-side from the raw query.
      */
     exact_reference: z.string().max(50).nullable().default(null),
-    possible_false_assumption: z.boolean(),
+    possible_false_assumption: z.boolean().default(false),
   })
   .strict();
 
@@ -171,7 +153,7 @@ export type PlanFailureKind =
   | "invalid_json"
   /** Valid JSON, wrong shape. */
   | "schema_rejected"
-  /** Right shape, fewer than REQUIRED_SUBQUERIES angles. */
+  /** Right shape, no usable reformulation. */
   | "too_few_angles"
   /** Right count, but the angles repeat each other or the question. */
   | "near_duplicate_angles"
@@ -214,7 +196,7 @@ export interface PlannerUsage {
   attempts: number;
   promptTokens: number;
   outputTokens: number;
-  /** Non-zero here would mean thinkingBudget: 0 was not honoured. */
+  /** Actual reported thinking usage; MINIMAL does not promise zero. */
   thoughtsTokens: number;
   totalTokens: number;
   /** Wall-clock across every attempt, including the rejected one. */
@@ -248,31 +230,24 @@ export function queryPlanResponseSchema(maxSubqueries: number): Record<string, u
   return {
     type: "object",
     required: [
-      "schema_version",
       "intent",
       "canonical_query",
-      "preserve_terms",
       "lexical_phrases",
       "vocabulary_candidates",
       "subqueries",
       "constraints",
-      "possible_false_assumption",
     ],
     properties: {
-      schema_version: { type: "string", enum: ["query-plan-v1"] },
       intent: { type: "string", enum: [...INTENTS] },
       canonical_query: { type: "string" },
-      preserve_terms: { type: "array", maxItems: 10, items: { type: "string" } },
       lexical_phrases: { type: "array", maxItems: 8, items: { type: "string" } },
-      vocabulary_candidates: { type: "array", maxItems: 10, items: { type: "string" } },
+      vocabulary_candidates: { type: "array", maxItems: 3, items: { type: "string" } },
       subqueries: {
         type: "array",
-        // Both bounds, deliberately equal: the model is told the count is
-        // mandatory in the one place it cannot talk itself out of.
-        minItems: Math.max(0, maxSubqueries),
+        minItems: Math.min(MIN_SUBQUERIES, Math.max(0, maxSubqueries)),
         maxItems: Math.max(0, maxSubqueries),
         description:
-          `Exactly ${maxSubqueries} search angles, each with a different role and each reaching passages the others would miss.`,
+          `One faithful search reformulation. Use up to ${maxSubqueries} only for separate questions or concepts explicitly compared by the user.`,
         items: {
           type: "object",
           required: ["id", "text", "role", "priority"],
@@ -286,15 +261,7 @@ export function queryPlanResponseSchema(maxSubqueries: number): Record<string, u
       },
       constraints: {
         type: "object",
-        required: [
-          "scripture_references",
-          "source_types",
-          "speaker",
-          "recipient",
-          "location",
-          "date_from",
-          "date_to",
-        ],
+        description: "Only explicit user constraints. Omit unspecified fields; use {} when there are none.",
         properties: {
           scripture_references: { type: "array", maxItems: 5, items: { type: "string" } },
           source_types: { type: "array", maxItems: 6, items: { type: "string", enum: [...SOURCE_TYPES] } },
@@ -305,8 +272,6 @@ export function queryPlanResponseSchema(maxSubqueries: number): Record<string, u
           date_to: { type: "string", nullable: true },
         },
       },
-      exact_reference: { type: "string", nullable: true },
-      possible_false_assumption: { type: "boolean" },
     },
   };
 }
@@ -434,7 +399,7 @@ function jaccard(a: string, b: string): number {
  *   2. the input is a quotation marked as one AND long enough to be a real
  *      quotation rather than a phrase.
  *
- * Everything else falls through to five angles. "control of the mind",
+ * Everything else falls through to search reformulations. "control of the mind",
  * "chanting", "love", "krsna consciousness" and "what does BG 18.66 mean about
  * surrender" are all real questions.
  *
@@ -486,7 +451,7 @@ function significantTokens(query: string): string[] {
 export interface SemanticCheckInput {
   query: string;
   plan: QueryPlan;
-  /** The fan-out size this plan was asked to hit exactly. */
+  /** Maximum number of reformulations allowed for this plan. */
   maxSubqueries: number;
 }
 
@@ -530,12 +495,12 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     problems.push({ kind, message, repairable });
   };
 
-  // EXACTLY this many. "Fewer is fine" is what produced 56 zero-angle searches.
-  if (subs.length !== maxSubqueries) {
+  const minimum = Math.min(MIN_SUBQUERIES, maxSubqueries);
+  if (subs.length < minimum || subs.length > maxSubqueries) {
     push(
-      subs.length < maxSubqueries ? "too_few_angles" : "semantic_rejected",
-      `plan returned ${subs.length} subqueries; exactly ${maxSubqueries} are required`,
-      subs.length < maxSubqueries,
+      subs.length < minimum ? "too_few_angles" : "semantic_rejected",
+      `plan returned ${subs.length} subqueries; ${minimum} to ${maxSubqueries} are allowed`,
+      subs.length < minimum,
     );
   }
 
@@ -557,12 +522,25 @@ export function semanticProblems({ query, plan, maxSubqueries }: SemanticCheckIn
     if (sq.id === "__lexical__" || sq.id === "__tags__" || sq.id === "q_original") {
       push("semantic_rejected", `subquery id "${sq.id}" is reserved`, false);
     }
-    if (queryIsSubstantial && jaccard(sq.text, query) >= NEAR_DUPLICATE_OF_ORIGINAL) {
+    if (sq.role !== "reformulation" && queryIsSubstantial && jaccard(sq.text, query) >= NEAR_DUPLICATE_OF_ORIGINAL) {
       push(
         "near_duplicate_angles",
         `subquery "${sq.id}" is equivalent to the original question`,
         true,
       );
+    }
+    if (sq === subs[0]) {
+      const words = (text: string): Set<string> => new Set(
+        text.toLowerCase().replace(/[’']/g, "'").replace(/n't\b/g, " not")
+          .match(/[a-z]+/g) ?? [],
+      );
+      const originalWords = words(query);
+      const rewrittenWords = words(sq.text);
+      for (const qualifier of ["not", "never", "without", "only", "alone"]) {
+        if (originalWords.has(qualifier) && !rewrittenWords.has(qualifier)) {
+          push("semantic_rejected", `reformulation dropped qualifier "${qualifier}"`, false);
+        }
+      }
     }
   }
 
@@ -663,27 +641,18 @@ function buildPrompt(query: string, maxSubqueries: number, repairNotes: string[]
     "",
     "You are producing search angles for a librarian, not a reply for a reader.",
     "",
-    `Return EXACTLY ${maxSubqueries} subqueries. Not fewer, not more. A shorter`,
-    "list is a failed plan and is thrown away — even for a narrow question, even",
-    "for a bare scripture reference, even when the question looks fully covered",
-    `by itself. The library is searched with the original question PLUS your ${maxSubqueries}`,
-    `angles, so ${maxSubqueries + 1} searches run and their results are merged.`,
-    "",
-    "Each subquery must serve a DIFFERENT RETRIEVAL PURPOSE, reaching passages",
-    "the others would miss. Prefer a different `role` for each, but two angles",
-    "may share a role when they genuinely differ — comparing two things means",
-    "defining both. Rephrasing the same sentence is worthless: it retrieves the",
-    "same rows twice and wastes one of your five angles.",
-    "",
-    "Worked example — 'how do I control my mind' (the original question is",
-    "searched too, so do not restate it):",
-    '  1. "why the mind becomes restless and uncontrolled"      (cause)',
-    '  2. "what the scriptures teach about the nature of the mind" (scriptural_basis)',
-    '  3. "practice and detachment as the method of control"    (method)',
-    '  4. "obstacles a practitioner meets in steadying the mind" (practice)',
-    '  5. "analogies and examples for the wandering mind"       (example)',
-    "Bad: 'how can I control the mind', 'controlling one's mind', 'mind control'",
-    "— three rewordings of one angle.",
+    `Return 1 to ${maxSubqueries} subqueries. Use ONE for a simple question.`,
+    "Use additional subqueries only for separate questions or concepts explicitly",
+    "compared in the user's question. Do not invent additional teaching topics.",
+    "The original question is always searched and has the highest weight.",
+    "The first subquery is a concise, faithful reformulation in useful search",
+    "vocabulary. Give it role reformulation and priority primary. Keep negation,",
+    "qualifiers such as alone or only, names, dates and the original uncertainty.",
+    "For a compound question, add at most two distinct subquestions, preserving",
+    "the comparison or relationship. Never turn a question into an asserted answer.",
+    "Example: 'how can I stop unwanted thoughts?' -> 'controlling the mind'.",
+    "Example: 'is chanting alone enough?' -> 'sufficiency of chanting alone'.",
+    "Keep all text short. Use ids s1, s2, s3 and at most three vocabulary concepts.",
     "",
     "RULES",
     "- Preserve every proper name, place, recipient and scripture reference.",
@@ -692,8 +661,6 @@ function buildPrompt(query: string, maxSubqueries: number, repairNotes: string[]
     "  'chanting Hare Krsna'). Never invent database slugs or identifiers.",
     "- lexical_phrases are exact phrases worth matching verbatim, e.g. a quoted",
     "  span. Leave empty if the question quotes nothing.",
-    "- possible_false_assumption is true when the question presupposes something",
-    "  the corpus may not support.",
     "- Never write doctrine, never answer, never cite.",
     "",
     // The retry is told what was wrong with the first plan. A blind second
@@ -702,8 +669,7 @@ function buildPrompt(query: string, maxSubqueries: number, repairNotes: string[]
       ? [
           "YOUR PREVIOUS PLAN WAS REJECTED:",
           ...repairNotes.map((note) => `  - ${note}`),
-          `Return ${maxSubqueries} angles that are clearly different from one another,`,
-          "each with its own role. Do not repeat the wording of the question.",
+          `Return 1 to ${maxSubqueries} faithful subqueries. Fix only the reported problem.`,
           "",
         ]
       : []),
@@ -766,59 +732,22 @@ export interface PlannerDeps {
   privateCallUsageObserver?: PrivatePlannerCallUsageObserver;
 }
 
-/**
- * 8 s PER ATTEMPT — because 4 s was clipping the distribution, exactly as the
- * 3 s cap before it did.
- *
- * The comment this replaces recorded the previous move honestly. Over 206
- * serial planner calls the p95 landed at 2,999.96 ms against a 3,000 ms cap,
- * and it named that for what it was: the tail being TRUNCATED into timeouts
- * rather than measured. Measured p95 plus one second gave 4,000 ms.
- *
- * Four seconds then produced the same shape one level up. Over ten recent
- * production searches on the live deployment:
- *
- *   successes  2,585 – 3,869 ms, median ~3,208 ms
- *   timeouts   4 of 10, EVERY one recorded at 4,001.x ms with 0 tokens
- *
- * A timeout that always lands a millisecond past the cap, carrying no tokens,
- * is the abort cutting off live work — not slow work being measured. And the
- * successful calls now sit near 3.2 s where that 206-call run had a median of
- * 2,273 ms, so the provider is roughly 40% slower than when 4,000 ms was
- * chosen. Its real tail is still unknowable from behind a cap.
- *
- * So this number is set to CLEAR the tail rather than to trace its edge: 8 s
- * is more than twice the observed cluster's ceiling, and a healthy call near
- * 3 s never touches it. The costs are not symmetrical — a few extra seconds of
- * waiting on a bad day, against throwing away all five angles and telling a
- * devotee to search again, which is what a 34 ms overshoot did.
- *
- * Thinking is still off; this is the residual tail of a loaded provider, not
- * deliberation.
- */
-export const PLANNER_TIMEOUT_MS = 8000;
-
-/**
- * 10 s FOR THE WHOLE STAGE, retry included.
- *
- * Two attempts at the per-call cap would be 16 s spent before a single row is
- * retrieved. Planning must not be able to reach its own maximum twice, so
- * every attempt's timeout is clamped to what is left of this: the full 8 s for
- * the first, and at most the remaining 2 s for a second that follows a slow
- * first. The stage cannot outrun the number.
- */
-export const PLANNER_STAGE_BUDGET_MS = 10000;
+/** Compact planning has a bounded share of the ten-second response target.
+ * A slow provider falls back to the original question with visible degradation.
+ * These are operational budgets, not measured model latency claims. */
+export const PLANNER_TIMEOUT_MS = 3000;
+export const PLANNER_STAGE_BUDGET_MS = 3500;
 
 /**
  * A CALL failure earns the single retry only if it failed inside this.
  *
- * The retry exists to buy back five angles when the first attempt died early
+ * The retry exists to buy back search reformulations when the first attempt died early
  * and the budget is still almost whole. After a slow failure — a timeout above
  * all — the budget is spent, and a second attempt would be a paid call
  * squeezed into the seconds the first one wasted. Falling back to the original
  * question is the honest move there, and it is still a real search.
  *
- * Note what this does by construction: a timeout at the 8 s cap cannot fail
+ * Note what this does by construction: a timeout at the 3 s cap cannot fail
  * inside 2 s, so a timeout never earns a retry. That is the rule applying, not
  * a special case written for it.
  */
@@ -984,12 +913,10 @@ async function callPlanner(
           responseMimeType: "application/json",
           responseJsonSchema: queryPlanResponseSchema(maxSubqueries),
           temperature: 0.2,
-          // Thinking OFF. Default thinking is what put every 2026-08 planner
-          // call past the 3 s cap, and it is the same failure that truncated
-          // the article planner's output when it spent 1,340 of 1,400 tokens
-          // reasoning. A retrieval plan is a structural task; it does not need
-          // deliberation, it needs to arrive.
-          thinkingConfig: { thinkingBudget: QUERY_PLANNER_THINKING_BUDGET },
+          // Gemini 3 uses thinking levels; Gemini 2.5 overrides retain budget zero.
+          thinkingConfig: geminiQueryPlannerModel().startsWith("gemini-3")
+            ? { thinkingLevel: "MINIMAL" }
+            : { thinkingBudget: QUERY_PLANNER_THINKING_BUDGET },
           maxOutputTokens: QUERY_PLANNER_MAX_OUTPUT_TOKENS,
         },
       }),
@@ -1219,10 +1146,10 @@ export async function planQuery(
         rejections.push("model: no repair retry — the planning budget is spent");
       }
       if (!repairable || attempt === 2 || budgetSpent) {
-        // A POINTER question that could not be given five distinct angles is
+        // A POINTER question that could not be given distinct reformulations is
         // not a failure — it is a question with only one angle in it. The test
         // reads the QUESTION, never the plan, so a real question cannot reach
-        // this even when its angles come back repetitive: it still owes five.
+        // this even when its angles come back repetitive: it still needs a faithful reformulation.
         if (
           problems.every((p) => p.kind === "near_duplicate_angles")
           && isPointerQuestion(query)

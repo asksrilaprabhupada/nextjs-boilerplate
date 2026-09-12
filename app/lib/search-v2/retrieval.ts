@@ -1,11 +1,10 @@
 /**
- * retrieval.ts — Vocabulary resolution, batched embedding, five ordered RPCs.
+ * retrieval.ts — Vocabulary resolution, batched embedding, five RPCs with bounded concurrency.
  *
- * This is the whole retrieval stage. Five table-level calls, run serially in a
- * measured heaviest-first order, replace the ~135-RPC fan-out. Each carries the
- * original question and every approved subquery, so a subquery costs a few
- * milliseconds inside an existing call rather than twelve fresh round trips to
- * Mumbai.
+ * Five table-level calls share a two-worker queue. Each carries the original
+ * question and the approved reformulations, and every requested source is
+ * attempted even if another fails. The transcript source starts first so its
+ * work can overlap the smaller sources without launching five scans at once.
  *
  * Two honesty rules the brief is explicit about, both enforced here:
  *
@@ -142,13 +141,8 @@ export async function embedPlannedQueries(
 // 400 and clamps p_semantic_limit to it, so the truncation that could not be
 // detected also cannot be requested (migration 20260727120000).
 /**
- * Medium-compute execution order, measured 2026-08-02.
- *
- * These calls are deliberately serialized below. On the permanent Medium
- * serving tier every source completes below the eight-second Data API timeout
- * when run alone, while transcripts reached 10.61 s with only two calls in
- * flight. The measured heaviest-first order puts the highest timeout risk first
- * without changing any source, limit, query, ef_search, or candidate semantics.
+ * Heaviest source first. Two workers preserve this start order; results and
+ * failures are folded in the same deterministic order after both workers finish.
  */
 const BATCH_FUNCTIONS = [
   "search_transcripts_hybrid_batch_v3",
@@ -412,13 +406,23 @@ export async function retrieveCandidates(input: RetrievalInput): Promise<Retriev
   ): Promise<SearchInfrastructureError[]> => {
     const failures: SearchInfrastructureError[] = [];
 
-    // Preserve Phase 1's all-settled contract while removing overlap: every
-    // requested source is attempted, every result is recorded, and failure is
-    // evaluated only after the whole ordered list has settled. The singleton
-    // allSettled keeps rejection handling scoped to callOne; bookkeeping bugs
-    // must not be relabelled as source failures.
-    for (const fn of functions) {
-      const [result] = await Promise.allSettled([callOne(fn, cons, operation)]);
+    // Two workers drain the ordered queue. A slow source occupies one worker,
+    // while the other continues through the remaining sources. All results are
+    // handled in source order below, preserving deterministic fusion and error
+    // reporting even when responses arrive out of order.
+    const results = new Array<PromiseSettledResult<Awaited<ReturnType<typeof callOne>>>>(functions.length);
+    let cursor = 0;
+    await Promise.all(Array.from(
+      { length: Math.min(SEARCH_V2_CONFIG.retrievalConcurrency, functions.length) },
+      async () => {
+        while (cursor < functions.length) {
+          const index = cursor++;
+          [results[index]] = await Promise.allSettled([callOne(functions[index], cons, operation)]);
+        }
+      },
+    ));
+    for (const [index, fn] of functions.entries()) {
+      const result = results[index];
       if (result.status === "fulfilled") {
         groupsByFunction.set(fn, result.value.rows);
         recordSource(result.value.telemetry);

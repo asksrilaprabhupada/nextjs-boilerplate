@@ -38,7 +38,7 @@
 import {
   isPlanDegradation,
   planQuery,
-  REQUIRED_SUBQUERIES,
+  MAX_SUBQUERIES,
   type PlannedQuery,
   type PrivatePlannerCallUsageObserver,
   type PlannerUsage,
@@ -79,12 +79,8 @@ import { fullSha256, normalizeQuestion } from "@/app/lib/search-v2/hash";
 import { extractQueryTerms } from "@/app/lib/10-passage-fold";
 import type { DegradedStage } from "@/app/lib/search-v2/rpc";
 
-/**
- * Five angles, required — never "up to five". One original question plus five
- * distinct angles is six searches, run across all five sources and merged. See
- * REQUIRED_SUBQUERIES in query-plan.ts for why the count is mandatory.
- */
-const PLANNED_SUBQUERIES = REQUIRED_SUBQUERIES;
+/** Original question plus one faithful reformulation; up to three for compound questions. */
+const PLANNED_SUBQUERIES = MAX_SUBQUERIES;
 
 export type PipelineStage =
   | "planning"
