@@ -410,7 +410,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     expect(out.telemetry.refetchCount).toBeGreaterThan(0);
   });
 
-  it("runs table RPCs one at a time in measured heaviest-first order", async () => {
+  it("runs no more than two table RPCs concurrently in heaviest-first start order", async () => {
     const base = fakeDb();
     const started: string[] = [];
     let active = 0;
@@ -440,7 +440,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     });
 
     expect(started).toEqual(BATCH_FUNCTIONS);
-    expect(maxActive).toBe(1);
+    expect(maxActive).toBe(2);
     expect(out.telemetry.tableRpcCount).toBe(5);
     expect(base.rpcCalls.filter((call) => BATCH_FNS.has(call.fn)).map((call) => ({
       fn: call.fn,
@@ -461,7 +461,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     );
   });
 
-  it("serializes a filtered source subset in measured heaviest-first order", async () => {
+  it("bounds a filtered source subset to two concurrent RPCs", async () => {
     const base = fakeDb();
     const started: string[] = [];
     let active = 0;
@@ -498,7 +498,7 @@ describe("V2 pipeline, end to end, with every provider down", () => {
     ];
 
     expect(started).toEqual(expected);
-    expect(maxActive).toBe(1);
+    expect(maxActive).toBe(2);
     expect(out.tableRpcCount).toBe(3);
     expect(out.tableRpcAttemptCount).toBe(3);
     expect(out.sourceRetrieval.map((source) => source.internalFunction)).toEqual(expected);

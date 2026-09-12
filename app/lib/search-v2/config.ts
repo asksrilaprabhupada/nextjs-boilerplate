@@ -14,6 +14,8 @@
 
 /** Fusion and channel weighting. One weighted RRF pass consumes all of this. */
 export const SEARCH_V2_CONFIG = {
+  /** Bound database contention while allowing independent sources to overlap. */
+  retrievalConcurrency: 2,
   /** RRF damping. Benchmarked against 20/40/60 in Phase D. */
   rrfK: 50,
 
@@ -116,16 +118,15 @@ export function searchCorpusVersion(): string {
 
 /**
  * Identifies the retrieval/ranking budgets independently of code and corpus.
- * Phase 2 kept ef_search=400 and semanticLimit=300 while serialising the five
- * content RPCs for the permanent Medium serving tier.
+ * Compact planning and bounded concurrency use ef_search=200, semanticLimit=100.
  */
 export function searchConfigVersion(): string {
-  return process.env.SEARCH_CONFIG_VERSION || "2026-08-02-medium-serial-ef400-sem300-v1";
+  return process.env.SEARCH_CONFIG_VERSION || "2026-09-12-compact-plan-concurrency2-ef200-sem100-v1";
 }
 
 /** Provider model IDs. Never `NEXT_PUBLIC_*` — these sit beside secrets. */
 export function geminiQueryPlannerModel(): string {
-  return process.env.GEMINI_QUERY_PLANNER_MODEL || "gemini-2.5-flash";
+  return process.env.GEMINI_QUERY_PLANNER_MODEL || "gemini-3.1-flash-lite";
 }
 
 /*

@@ -36,10 +36,19 @@ from `search_logs.stage_durations_ms`; per-source timings come from
 `scripts/benchmark-report.sql`, so every row in this table is measured the same
 way.
 
-Two things worth remembering when reading a `retrieving` number: the five source
-RPCs run concurrently, so the stage is at least the slowest single source, and
-the difference between the stage total and that slowest source is embedding plus
-vocabulary rather than database time.
+The five source RPCs now run through a queue with **two workers**. Before the
+September compact-planner change they ran sequentially. The retrieval duration
+includes embedding, vocabulary resolution, and the whole queue; subtracting the
+slowest source does **not** isolate embedding time. Record the compute size,
+config version, planner model, and actual query count with each run.
+
+A search after inactivity measures the first search after inactivity. It does
+not prove that PostgreSQL or the operating-system cache was empty. Application
+response caching remains disabled; database page caching is a separate mechanism.
+
+The September change has passed automated correctness checks. No post-change
+production latency measurement has been made, so the ten-second target remains
+unverified.
 
 ---
 

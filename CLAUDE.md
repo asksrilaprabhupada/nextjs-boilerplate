@@ -2,6 +2,24 @@
 
 Instructions for Claude Code
 
+### Current search configuration — 12 September 2026
+
+The search now uses `gemini-3.1-flash-lite` by default with MINIMAL thinking,
+compact structured output, a 3-second attempt budget and a 3.5-second total
+planning budget. An explicit `GEMINI_QUERY_PLANNER_MODEL` still overrides the
+default. Plan one faithful reformulation for simple questions and up to three
+for compound questions; do not restore the old requirement for exactly five.
+The original question is always searched with the highest fusion weight.
+
+Five source RPCs run through two workers, retaining source-order result handling
+and the existing partial-failure and all-failure rules. Passage budgets remain
+200/150/120/150/80, with semantic limit 100 and database ef_search 200. Voyage
+context-4, Cohere 4 Pro, and verbatim passage verification are unchanged.
+
+Deployment prerequisites and verification limits are in
+`docs/search-speed-implementation.md`. These current settings supersede the older
+five-angle and fully-concurrent descriptions retained below.
+
 Project: Ask Śrīla Prabhupāda
 
 Next.js 16 App Router project. Supabase backend. The only app/ folder is the Next.js App Router directory. Run `npm install` then `npm run dev` to start at localhost:3000.
