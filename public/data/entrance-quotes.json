@@ -1,9 +1,14 @@
 {
-  "_note": "Entrance verse pool — intense bhāva and prema only, from Śrī Caitanya Mahāprabhu's Śikṣāṣṭakam, the Six Gosvāmīs, and the ācāryas of the paramparā, in the translations Śrīla Prabhupāda gave and quoted. No Bhagavad-gītā verses. One is chosen at random on every load. Citations checked against Vedabase.io; please give them one final read before this ships.",
+  "_note": "Doorway verse pool for the 2026-11 redesign: the 15 lines from the previous file (wording kept as the owner chose) plus 10 more ācārya verses copied word for word from the database, minus Śrīla Prabhupāda's own purport line. Every line names its speaker first. Rotates every 9 seconds in random order, never repeating any of the last 12.",
   "quotes": [
     {
       "text": "O my Lord, when will my eyes be decorated with tears of love flowing constantly when I chant Your holy name?",
       "source": "Śrī Caitanya Mahāprabhu · Śikṣāṣṭakam 6",
+      "theme": "bhava"
+    },
+    {
+      "text": "O my Lord, Your holy name alone can render all benediction to living beings, and thus You have hundreds and millions of names like Kṛṣṇa and Govinda. In these transcendental names You have invested all Your transcendental energies. There are not even hard and fast rules for chanting these names. O my Lord, out of kindness You enable us to easily approach You by Your holy names, but I am so unfortunate that I have no attraction for them.",
+      "source": "Śrī Caitanya Mahāprabhu · Śikṣāṣṭakam 2 · Teachings of Lord Caitanya",
       "theme": "bhava"
     },
     {
@@ -12,8 +17,18 @@
       "theme": "bhava"
     },
     {
+      "text": "I offer my respectful obeisances unto Śrī Kṛṣṇa Caitanya and Lord Nityānanda, who are like the sun and moon. They have arisen simultaneously on the horizon of Gauḍa to dissipate the darkness of ignorance and thus wonderfully bestow benediction upon all.",
+      "source": "Śrīla Kṛṣṇadāsa Kavirāja Gosvāmī · Cc. Ādi 1.2",
+      "theme": "bhava"
+    },
+    {
       "text": "O Govinda! Feeling Your separation, I am considering a moment to be like twelve years.",
       "source": "Śrī Caitanya Mahāprabhu · Śikṣāṣṭakam 7",
+      "theme": "bhava"
+    },
+    {
+      "text": "The holy name, character, pastimes and activities of Kṛṣṇa are all transcendentally sweet like sugar candy. Although the tongue of one afflicted by the jaundice of avidyā [ignorance] cannot taste anything sweet, it is wonderful that simply by carefully chanting these sweet names every day, a natural relish awakens within his tongue, and his disease is gradually destroyed at the root.",
+      "source": "Śrīla Rūpa Gosvāmī · Śrī Upadeśāmṛta 7",
       "theme": "bhava"
     },
     {
@@ -22,13 +37,28 @@
       "theme": "prema"
     },
     {
+      "text": "O son of Mahārāja Nanda [Kṛṣṇa], I am Your eternal servitor, yet somehow or other I have fallen into the ocean of birth and death. Please pick me up from this ocean of death and place me as one of the atoms at Your lotus feet.",
+      "source": "Śrī Caitanya Mahāprabhu · Śikṣāṣṭakam 5 · Teachings of Lord Caitanya",
+      "theme": "bhava"
+    },
+    {
       "text": "I do not want wealth, followers, or beautiful women. I only want Your causeless devotional service, birth after birth.",
       "source": "Śrī Caitanya Mahāprabhu · Śikṣāṣṭakam 4",
       "theme": "prema"
     },
     {
+      "text": "May the Supreme Lord who is known as the son of Śrīmatī Śacī-devī be transcendentally situated in the innermost chambers of your heart. Resplendent with the radiance of molten gold, He has appeared in the Age of Kali by His causeless mercy to bestow what no incarnation has ever offered before: the most sublime and radiant mellow of devotional service, the mellow of conjugal love.",
+      "source": "Śrīla Rūpa Gosvāmī · Cc. Ādi 1.4",
+      "theme": "bhava"
+    },
+    {
       "text": "One should chant the holy name in a humble state of mind, thinking oneself lower than the straw in the street — in such a state of mind one can chant the holy name constantly.",
       "source": "Śrī Caitanya Mahāprabhu · Śikṣāṣṭakam 3",
+      "theme": "bhava"
+    },
+    {
+      "text": "By the mercy of the spiritual master one is benedicted by the mercy of Kṛṣṇa. Without the grace of the spiritual master, one cannot make any advancement.",
+      "source": "Śrīla Viśvanātha Cakravartī Ṭhākura · quoted in Bhāg. 6.7.23, purport",
       "theme": "bhava"
     },
     {
@@ -37,9 +67,19 @@
       "theme": "prema"
     },
     {
+      "text": "When first-class devotional service develops, one must be devoid of all material desires, knowledge obtained by monistic philosophy, and fruitive action. The devotee must constantly serve Kṛṣṇa favorably, as Kṛṣṇa desires.",
+      "source": "Śrīla Rūpa Gosvāmī · Bhakti-rasāmṛta-sindhu 1.1.11 · Cc. Madhya 19.167",
+      "theme": "bhava"
+    },
+    {
       "text": "O most munificent incarnation! You are Kṛṣṇa Himself, and You are widely distributing pure love of Kṛṣṇa. We offer our respectful obeisances unto You.",
       "source": "Śrīla Rūpa Gosvāmī · Caitanya-caritāmṛta, Madhya-līlā 19.53",
       "theme": "prema"
+    },
+    {
+      "text": "The essence of all advice is that one should utilize one’s full time – twenty-four hours a day – in nicely chanting and remembering the Lord’s divine name, transcendental form, qualities and eternal pastimes, thereby gradually engaging one’s tongue and mind. In this way one should reside in Vraja [Goloka Vṛndāvana-dhāma] and serve Kṛṣṇa under the guidance of devotees. One should follow in the footsteps of the Lord’s beloved devotees, who are deeply attached to His devotional service.",
+      "source": "Śrīla Rūpa Gosvāmī · Śrī Upadeśāmṛta 8",
+      "theme": "bhava"
     },
     {
       "text": "Kaivalya, oneness in the effulgence of Brahman, appears hellish to the devotee who has received the merciful sidelong glance of Lord Gaura.",
@@ -47,19 +87,24 @@
       "theme": "prema"
     },
     {
+      "text": "Offering gifts in charity, accepting charitable gifts, revealing one’s mind in confidence, inquiring confidentially, accepting prasāda and offering prasāda are the six symptoms of love shared by one devotee and another.",
+      "source": "Śrīla Rūpa Gosvāmī · Śrī Upadeśāmṛta 4",
+      "theme": "bhava"
+    },
+    {
       "text": "O My Lord! O most merciful master! O master of Mathurā! When shall I see You again? Because of not seeing You, My agitated heart has become unsteady.",
-      "source": "Mādhavendra Purī · Caitanya-caritāmṛta, Madhya-līlā 4.197",
+      "source": "Śrī Mādhavendra Purī · Caitanya-caritāmṛta, Madhya-līlā 4.197",
+      "theme": "bhava"
+    },
+    {
+      "text": "I offer my respectful obeisances unto the spiritual masters, the devotees of the Lord, the Lord’s incarnations, His plenary portions, His energies and the primeval Lord Himself, Śrī Kṛṣṇa Caitanya.",
+      "source": "Śrīla Kṛṣṇadāsa Kavirāja Gosvāmī · Cc. Ādi 1.1",
       "theme": "bhava"
     },
     {
       "text": "My dear friend, if you are indeed attached to your worldly friends, do not look at the smiling face of Lord Govinda as He stands on the bank of the Yamunā at Keśīghāṭa.",
-      "source": "Quoted by Śrī Caitanya Mahāprabhu · Caitanya-caritāmṛta, Ādi-līlā 5.224",
+      "source": "Śrīla Rūpa Gosvāmī · Bhakti-rasāmṛta-sindhu 1.2.239 · Cc. Ādi 5.224",
       "theme": "bhava"
-    },
-    {
-      "text": "Love of Godhead is dormant in everyone's heart. It has only to be awakened by the process of hearing and chanting.",
-      "source": "Purport, Caitanya-caritāmṛta · Śrīla Prabhupāda",
-      "theme": "prema"
     },
     {
       "text": "When love of Godhead awakens in the heart, liberation herself stands before the devotee with folded hands, waiting to render service.",

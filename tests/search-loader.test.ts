@@ -54,14 +54,30 @@ describe("truthful loader progress", () => {
     expect(Number.isInteger(advanceLoaderPercent(4, 62.4, false))).toBe(true);
   });
 
-  it("uses that same integer for text, width, and progressbar semantics", () => {
+  it("uses that same integer for the progressbar semantics", () => {
     expect(loaderSource).toContain('role="progressbar"');
     expect(loaderSource).toContain("aria-valuemin={0}");
     expect(loaderSource).toContain("aria-valuemax={100}");
     expect(loaderSource).toContain("aria-valuenow={visiblePercent}");
     expect(loaderSource).toContain('aria-valuetext={`${visiblePercent}% complete`}');
-    expect(loaderSource).toContain('style={{ width: `${visiblePercent}%` }}');
-    expect(loaderSource).toContain("{visiblePercent}%</span>");
+    expect(loaderSource).toContain("advanceLoaderPercent(current, targetPercent, done)");
+  });
+
+  it("drives the four visible steps from the real stage events only", () => {
+    // Every real stage maps onto one of the four steps; nothing else moves them.
+    expect(loaderSource).toContain("const STEP_OF_STAGE: Record<SearchStageKey, number>");
+    expect(loaderSource).toContain("stage ? STEP_OF_STAGE[stage.stage] : 0");
+    for (const step of [
+      "Understanding your question",
+      "Searching the books, lectures and letters",
+      "Weighing every passage",
+      "Checking each quote against its source",
+    ]) {
+      expect(loaderSource).toContain(step);
+    }
+    // The mockup's shortcut must never reach the live site.
+    expect(loaderSource).not.toContain("Prototype only");
+    expect(loaderSource).not.toContain("Painting to come");
   });
 
   it("renders 100 only during the short result-ready handoff", () => {
@@ -72,9 +88,11 @@ describe("truthful loader progress", () => {
     expect(experienceSource).toContain('setTimeout(() => setPhase("ready"), COMPLETION_HOLD_MS)');
   });
 
-  it("has no fabricated post-weave verification timer", () => {
+  it("has no fabricated timer of any kind", () => {
     expect(loaderSource).not.toMatch(/VERIFY_AFTER_MS|VERIFY_STAGE|setVerifying|expanding/);
-    expect(loaderSource).toContain("key === active?.stage");
+    // No fallback walk through the stages: without a stream the screen stays on
+    // step I until the answer lands.
+    expect(loaderSource).not.toMatch(/setInterval|setTimeout|SEARCH_LOADER_FALLBACK_STAGES/);
   });
 
   it("keeps the live region narrow and supports reduced motion and short screens", () => {

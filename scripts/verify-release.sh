@@ -43,7 +43,10 @@ grep -q "event: stage" /tmp/sse.$$ && grep -q "event: result" /tmp/sse.$$ && ech
 rm -f /tmp/sse.$$
 
 # SEO surfaces
-curl -sf "$S/sitemap.xml" | grep -q "/journey"                     && echo "PASS sitemap +journey"
+curl -sf "$S/sitemap.xml" | { ! grep -q "/journey"; }               && echo "PASS sitemap without hidden pages"
+for hidden in journey features how-it-works; do
+  [ "$(curl -s -o /dev/null -w '%{http_code}' "$S/$hidden")" = "307" ] && echo "PASS /$hidden redirects home (307)"
+done
 curl -sf "$S/robots.txt"  | grep -q "Disallow: /search"            && echo "PASS robots /search"
 curl -sf "$S/" | grep -q '"@type":"WebSite"'                       && echo "PASS JSON-LD"
 curl -sf -o /dev/null "$S/icon.svg"                                && echo "PASS icon"

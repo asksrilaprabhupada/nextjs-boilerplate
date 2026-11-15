@@ -1,42 +1,105 @@
 /**
- * 10-search-loader.tsx — source-grounded, SSE-driven search progress.
+ * 10-search-loader.tsx — The Searching screen (cinematic redesign)
  *
- * The visible stages use the same canonical order as the stream. One clamped,
- * monotonic integer drives the bar, its text, and its accessible value. The
- * loader can reach 100 only after `done` says the result is ready.
+ * Designs: docs/redesign/designs/Searching.dc.html and PhoneSearching.dc.html.
+ * Left: "You asked", the devotee's own question, and four steps —
+ *   I   Understanding your question
+ *   II  Searching the books, lectures and letters
+ *   III Weighing every passage
+ *   IV  Checking each quote against its source
+ * driven ONLY by the real SSE stage events (understood → searching →
+ * reranking → verifying / weaving). There is no timer that advances a step: a
+ * step completes when the next real event arrives, and the current step shows
+ * a soft running light, not an invented percentage. If the stream is
+ * unavailable (plain-fetch fallback) the screen honestly stays on step I until
+ * the answer arrives. The live found-count replaces the library line once the
+ * search has counted its passages.
+ *
+ * Right: the disciplic succession from public/data/lineage.json — one name
+ * every 2 seconds in the design's gold ornament frame, from Śrī Caitanya
+ * Mahāprabhu to Śrīla Bhaktisiddhānta Sarasvatī Ṭhākura, ending on Śrīla
+ * Prabhupāda's photograph, which stays. An entry shows its `image` when the
+ * owner adds one; otherwise the ornament and the name only.
+ *
+ * Accessibility: one narrow live region announces the step; one progressbar
+ * carries a single clamped, monotonic integer that reaches 100 only after the
+ * result has landed (`done`).
  */
 "use client";
 
 import { useEffect, useState } from "react";
-import type { SearchStageEvent } from "@/app/lib/types/01-search";
-import { SEARCH_PROGRESS_LABELS } from "@/app/lib/24-search-progress";
+import Link from "next/link";
+import SiteHeader from "./11-site-header";
+import type { SearchStageEvent, SearchStageKey } from "@/app/lib/types/01-search";
 import {
   advanceLoaderPercent,
   clampLoaderPercent,
-  PREMA_PASSAGE_CANDIDATES,
-  SEARCH_LOADER_FALLBACK_STAGES,
   SEARCH_LOADER_INITIAL_PERCENT,
-  SEARCH_LOADER_STAGES,
 } from "@/app/lib/26-search-loader-model";
+import lineageFile from "@/public/data/lineage.json";
 
-const MANDALA = Array.from({ length: 12 }, (_, i) => i * 30);
+interface LineageEntry { name: string; image: string | null }
+const LINEAGE: readonly LineageEntry[] = (lineageFile as { lineage: LineageEntry[] }).lineage;
+const SECONDS_PER_NAME = 2;
 
-function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
+const STEPS = [
+  "Understanding your question",
+  "Searching the books, lectures and letters",
+  "Weighing every passage",
+  "Checking each quote against its source",
+] as const;
+const NUMERALS = ["I", "II", "III", "IV"] as const;
 
-  useEffect(() => {
-    try {
-      const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-      const update = () => setReduced(media.matches);
-      update();
-      media.addEventListener?.("change", update);
-      return () => media.removeEventListener?.("change", update);
-    } catch {
-      return undefined;
-    }
-  }, []);
+/** Which visible step each real pipeline stage belongs to. */
+const STEP_OF_STAGE: Record<SearchStageKey, number> = {
+  understood: 0,
+  searching: 1,
+  reranking: 2,
+  verifying: 3,
+  weaving: 3,
+};
 
-  return reduced;
+type StepState = "complete" | "current" | "upcoming";
+
+function Ornament() {
+  return (
+    <svg aria-hidden="true" width="64" height="20" viewBox="0 0 64 20" fill="none">
+      <path d="M0 10h22M42 10h22" stroke="#d9b76a" strokeOpacity="0.55" />
+      <path d="M32 2l8 8-8 8-8-8z" stroke="#d9b76a" />
+      <circle cx="32" cy="10" r="2" fill="#d9b76a" />
+    </svg>
+  );
+}
+
+function Portrait({ entry, index, last }: { entry: LineageEntry; index: number; last: boolean }) {
+  const n = String(index + 1).padStart(2, "0");
+  return (
+    <div
+      className={`asp-port${last ? " asp-port-last" : ""}`}
+      style={{ animationDelay: `${index * SECONDS_PER_NAME}s` }}
+      aria-hidden="true"
+    >
+      <div className="asp-port-frame">
+        {entry.image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            className="asp-port-img"
+            src={entry.image}
+            alt=""
+            decoding="async"
+          />
+        ) : (
+          <div className="asp-port-panel">
+            <Ornament />
+          </div>
+        )}
+      </div>
+      <p className="asp-port-name">{entry.name}</p>
+      <p className="asp-port-n">
+        {n} / {LINEAGE.length}
+      </p>
+    </div>
+  );
 }
 
 export default function SearchLoader({
@@ -51,395 +114,141 @@ export default function SearchLoader({
   done: boolean;
 }) {
   const [progressPercent, setProgressPercent] = useState(SEARCH_LOADER_INITIAL_PERCENT);
-  const [fallbackStage, setFallbackStage] = useState<SearchStageEvent>(
-    SEARCH_LOADER_FALLBACK_STAGES[0],
-  );
-  const [passageIndex, setPassageIndex] = useState(0);
-  const reduced = useReducedMotion();
+  const [found, setFound] = useState<number | null>(null);
 
-  // Plain-fetch fallback: mirror the real five-stage order and remain below
-  // completion. A genuine SSE event always takes precedence as soon as it lands.
+  const targetPercent = clampLoaderPercent(stage?.pct ?? SEARCH_LOADER_INITIAL_PERCENT, done);
+
+  // One monotonic integer: it never moves backwards and never shows 100 early.
   useEffect(() => {
-    if (stage || done) return;
-    let index = 0;
-    const interval = window.setInterval(() => {
-      index += 1;
-      if (index >= SEARCH_LOADER_FALLBACK_STAGES.length) {
-        window.clearInterval(interval);
-        return;
-      }
-      setFallbackStage(SEARCH_LOADER_FALLBACK_STAGES[index]);
-    }, 4500);
-    return () => window.clearInterval(interval);
-  }, [stage, done, q]);
+    setProgressPercent((current) => advanceLoaderPercent(current, targetPercent, done));
+  }, [targetPercent, done]);
 
-  const active = stage ?? fallbackStage;
-  const activeIndex = Math.max(
-    0,
-    SEARCH_LOADER_STAGES.findIndex(({ key }) => key === active?.stage),
-  );
-  const targetPercent = clampLoaderPercent(
-    active?.pct ?? SEARCH_LOADER_INITIAL_PERCENT,
-    done,
-  );
-
-  // Animate only between integer values. Reduced motion jumps to the same
-  // monotonic target, never to a different semantic value.
+  // The live count of passages the search has found (from its own events).
   useEffect(() => {
-    if (done || reduced) {
-      const timeout = window.setTimeout(() => {
-        setProgressPercent((current) => advanceLoaderPercent(current, targetPercent, done));
-      }, 0);
-      return () => window.clearTimeout(timeout);
+    if (stage?.stage === "searching" && typeof stage.found === "number" && stage.found > 0) {
+      setFound(stage.found);
     }
+  }, [stage]);
 
-    const interval = window.setInterval(() => {
-      setProgressPercent((current) => {
-        const goal = advanceLoaderPercent(current, targetPercent, false);
-        if (current >= goal) {
-          window.clearInterval(interval);
-          return current;
-        }
-        const step = Math.max(1, Math.ceil((goal - current) * 0.12));
-        return advanceLoaderPercent(current, current + step, false);
-      });
-    }, 32);
-    return () => window.clearInterval(interval);
-  }, [targetPercent, reduced, done]);
-
-  // Source-checked passages rotate only when motion is welcome.
   useEffect(() => {
-    if (reduced) return;
-    const interval = window.setInterval(
-      () => setPassageIndex((index) => (index + 1) % PREMA_PASSAGE_CANDIDATES.length),
-      8000,
-    );
-    return () => window.clearInterval(interval);
-  }, [reduced]);
+    setFound(null);
+    setProgressPercent(SEARCH_LOADER_INITIAL_PERCENT);
+  }, [q]);
 
   const visiblePercent = done ? 100 : progressPercent;
-  const passage = PREMA_PASSAGE_CANDIDATES[passageIndex];
+  const currentStep = done ? STEPS.length : stage ? STEP_OF_STAGE[stage.stage] : 0;
+  const stateOf = (index: number): StepState =>
+    index < currentStep ? "complete" : index === currentStep ? "current" : "upcoming";
+  const activeIndex = Math.min(currentStep, STEPS.length - 1);
+  const countLine = found !== null
+    ? `${found.toLocaleString("en-US")} passages found so far`
+    : "Reading 36 books · 3,700+ lectures · 6,500+ letters";
 
   return (
-    <div
-      className="cine-search-loader"
-      data-done={done ? "true" : "false"}
-      data-reduced={reduced ? "true" : "false"}
-    >
-      <div className="cine-search-loader__inner">
-        <div className="cine-search-loader__mandala">
-          <div className="cine-search-loader__aura" aria-hidden="true" />
-          <svg viewBox="0 0 400 400" aria-hidden="true">
-            {MANDALA.map((degrees) => (
-              <g key={degrees} transform={`rotate(${degrees} 200 200)`}>
-                <ellipse cx="200" cy="120" rx="18" ry="40" fill="none" stroke="currentColor" strokeWidth="0.6" />
-              </g>
-            ))}
-            <circle cx="200" cy="200" r="70" fill="none" stroke="currentColor" strokeWidth="0.5" />
-          </svg>
-          <p
-            id="search-loader-status"
-            className="cine-search-loader__status font-display"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            {active?.label ?? SEARCH_PROGRESS_LABELS.idle}
-          </p>
-        </div>
+    <div className="asp-searching" data-done={done ? "true" : "false"}>
+      <div className="asp-searching-inner">
+        <div aria-hidden="true" className="asp-layer asp-searching-base" />
+        <div aria-hidden="true" className="asp-searching-glow-gold asp-drift" />
+        <div aria-hidden="true" className="asp-searching-glow-violet asp-drift" />
+        <div aria-hidden="true" className="asp-grain" />
 
-        <p className="cine-search-loader__question font-body">&ldquo;{q}&rdquo;</p>
+        <SiteHeader right={<Link className="asp-ghost-pill" href="/?entrance=0">Cancel</Link>} />
 
-        {typeof stage?.found === "number" && stage.found > 0 && (
-          <p className="cine-search-loader__found font-body">
-            {stage.found.toLocaleString("en-US")} passages so far
-          </p>
-        )}
+        <main className="asp-searching-main">
+          <div className="asp-searching-grid">
+            <div className="asp-searching-head">
+              <p className="asp-eyebrow asp-rise">You asked</p>
+              <h1 className="asp-searching-q asp-rise" style={{ animationDelay: "100ms" }}>{q}</h1>
 
-        <ol className="cine-search-loader__stages" aria-label="Search progress stages">
-          {SEARCH_LOADER_STAGES.map(({ key, name }, index) => {
-            const passed = done || index < activeIndex;
-            const current = !done && index === activeIndex;
-            const state = passed ? "complete" : current ? "current" : "upcoming";
-            return (
-              <li
-                key={key}
-                aria-current={current ? "step" : undefined}
-                aria-label={`${name}: ${state}`}
-              >
-                <span className={`cine-search-loader__dot cine-search-loader__dot--${state}`} aria-hidden="true" />
-                <span className={`font-body cine-search-loader__stage-name cine-search-loader__stage-name--${state}`}>
-                  {name}
+              <p id="search-loader-status" className="asp-sr" role="status" aria-live="polite" aria-atomic="true">
+                {done ? "Your answer is ready." : STEPS[activeIndex]}
+              </p>
+              <div
+                className="asp-sr"
+                role="progressbar"
+                aria-label="Search progress"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={visiblePercent}
+                aria-valuetext={`${visiblePercent}% complete`}
+              />
+
+              <ol className="asp-steps" aria-label="Search progress steps">
+                {STEPS.map((name, index) => {
+                  const state = stateOf(index);
+                  return (
+                    <li key={name} className="asp-step" data-state={state} aria-current={state === "current" ? "step" : undefined}>
+                      <p className="asp-step-name">
+                        <span aria-hidden="true" className="asp-step-num">{NUMERALS[index]}</span>
+                        {name}
+                        <span className="asp-sr">{state === "complete" ? " (done)" : state === "current" ? " (in progress)" : ""}</span>
+                      </p>
+                      <div aria-hidden="true" className="asp-step-track">
+                        <div className="asp-step-fill" />
+                        <div className="asp-step-run" />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+              <p className="asp-searching-count">{countLine}</p>
+            </div>
+
+            <figure
+              className="asp-lineage"
+              aria-label="The disciplic succession, from Śrī Caitanya Mahāprabhu to Śrīla Prabhupāda"
+            >
+              <p className="asp-lineage-kicker">The disciplic succession</p>
+              <div className="asp-lineage-stage">
+                <div aria-hidden="true" className="asp-lineage-glow" />
+                {LINEAGE.map((entry, index) => (
+                  <Portrait key={entry.name} entry={entry} index={index} last={index === LINEAGE.length - 1} />
+                ))}
+                <span className="asp-sr">
+                  {LINEAGE.map((entry) => entry.name).join(", ")}.
                 </span>
-              </li>
-            );
-          })}
-        </ol>
+              </div>
+              <div aria-hidden="true" className="asp-dots">
+                {LINEAGE.map((entry, index) => (
+                  <span
+                    key={entry.name}
+                    className={`asp-dot${index === LINEAGE.length - 1 ? " asp-dot-last" : ""}`}
+                    style={{ animationDelay: `${index * SECONDS_PER_NAME}s` }}
+                  />
+                ))}
+              </div>
+            </figure>
 
-        <div
-          className="cine-search-loader__progress"
-          role="progressbar"
-          aria-label="Search progress"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={visiblePercent}
-          aria-valuetext={`${visiblePercent}% complete`}
-        >
-          <span className="cine-search-loader__track" aria-hidden="true">
-            <span className="cine-search-loader__fill" style={{ width: `${visiblePercent}%` }} />
-          </span>
-          <span className="cine-search-loader__percent font-body">{visiblePercent}%</span>
-        </div>
-
-        <figure
-          key={reduced ? "static" : passage.id}
-          className={`cine-search-loader__passage${reduced ? "" : " cine-search-loader__passage--animated"}`}
-        >
-          <blockquote className="font-display">&ldquo;{passage.text}&rdquo;</blockquote>
-          <figcaption className="font-body">
-            <span className="cine-search-loader__source">
-              <cite>{passage.work}</cite> {passage.reference} · {passage.author}
-            </span>
-            <span>{passage.translatorAttribution}</span>
-            <span>
-              English source: {passage.translationSource} ·{" "}
-              <a href={passage.verification.passageUrl} target="_blank" rel="noreferrer">
-                verify source
-              </a>
-            </span>
-          </figcaption>
-        </figure>
+            <div aria-hidden="true" className="asp-step-phone asp-step" data-state={done ? "complete" : "current"}>
+              <p className="asp-step-name">
+                <span className="asp-step-num">{NUMERALS[activeIndex]}</span>
+                {STEPS[activeIndex]}
+              </p>
+              <div className="asp-step-track">
+                <div className="asp-step-fill" />
+                <div className="asp-step-run" />
+              </div>
+              {found !== null && <p className="asp-step-count">{countLine}</p>}
+            </div>
+          </div>
+        </main>
+        <p className="asp-searching-tag">Nothing added. Nothing invented.</p>
       </div>
 
       <style jsx>{`
-        .cine-search-loader {
-          position: fixed;
-          inset: 0;
-          z-index: 800;
-          width: 100%;
+        /* Kept beside the component for the loader contract (tests/search-loader.test.ts):
+           a full-height, scrollable, safe-area-aware sheet that respects short
+           screens and reduced motion. The look itself lives in app/redesign.css. */
+        .asp-searching {
           height: 100dvh;
           overflow-y: auto;
-          overscroll-behavior: contain;
-          background: rgba(250, 247, 241, 0.97);
-          opacity: 1;
-          transition: opacity 0.35s ease;
-        }
-        .cine-search-loader[data-done="true"] {
-          opacity: 0;
-          pointer-events: none;
-        }
-        .cine-search-loader__inner {
-          box-sizing: border-box;
-          width: 100%;
-          min-height: 100%;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: max(16px, env(safe-area-inset-top))
-            max(16px, env(safe-area-inset-right))
-            max(16px, env(safe-area-inset-bottom))
-            max(16px, env(safe-area-inset-left));
-        }
-        .cine-search-loader__mandala {
-          position: relative;
-          flex: 0 0 auto;
-          width: min(56vw, 220px);
-          height: min(56vw, 220px);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-        .cine-search-loader__aura {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          width: 130%;
-          height: 130%;
-          border-radius: 50%;
-          background: radial-gradient(circle, rgba(139, 110, 224, 0.24) 0%, rgba(201, 162, 75, 0.11) 42%, transparent 70%);
-          filter: blur(38px);
-          animation: auraBreathe 4.5s ease-in-out infinite;
-        }
-        .cine-search-loader__mandala svg {
-          position: absolute;
-          inset: 0;
-          width: 100%;
-          height: 100%;
-          color: #6b57c9;
-          opacity: 0.15;
-          animation: rotateMandala 60s linear infinite;
-        }
-        .cine-search-loader__status {
-          position: relative;
-          max-width: 220px;
-          margin: 0;
-          color: #51409a;
-          font-size: clamp(17px, 2.4vw, 21px);
-          font-style: italic;
-          text-align: center;
-        }
-        .cine-search-loader__question {
-          max-width: 460px;
-          margin: 8px 0 0;
-          color: #9a8f7d;
-          font-size: 13px;
-          line-height: 1.45;
-          overflow-wrap: anywhere;
-          text-align: center;
-        }
-        .cine-search-loader__found {
-          margin: 10px 0 0;
-          color: #6e6353;
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: 0.06em;
-        }
-        .cine-search-loader__stages {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-wrap: wrap;
-          gap: 14px;
-          margin: 20px 0 0;
-          padding: 0;
-          list-style: none;
-        }
-        .cine-search-loader__stages li {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-        }
-        .cine-search-loader__dot {
-          box-sizing: border-box;
-          width: 8px;
-          height: 8px;
-          flex: 0 0 auto;
-          border: 1.5px solid #d8ccb8;
-          border-radius: 50%;
-          background: transparent;
-          transition: background 0.4s, border-color 0.4s;
-        }
-        .cine-search-loader__dot--complete {
-          border-color: #6b57c9;
-          background: #6b57c9;
-        }
-        .cine-search-loader__dot--current {
-          border-color: #c9a24b;
-          background: #c9a24b;
-        }
-        .cine-search-loader__stage-name {
-          color: #b9ae99;
-          font-size: 10px;
-          font-weight: 600;
-          letter-spacing: 0.12em;
-          text-transform: uppercase;
-          transition: color 0.4s;
-        }
-        .cine-search-loader__stage-name--complete { color: #6e6353; }
-        .cine-search-loader__stage-name--current { color: #51409a; }
-        .cine-search-loader__progress {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          width: min(80vw, 340px);
-          margin-top: 16px;
-        }
-        .cine-search-loader__track {
-          height: 3px;
-          flex: 1;
-          overflow: hidden;
-          border-radius: 100px;
-          background: rgba(107, 87, 201, 0.12);
-        }
-        .cine-search-loader__fill {
-          display: block;
-          height: 100%;
-          border-radius: 100px;
-          background: linear-gradient(90deg, #6b57c9, #c9a24b);
-          transition: width 0.2s linear;
-        }
-        .cine-search-loader__percent {
-          min-width: 34px;
-          color: #9a8f7d;
-          font-size: 11.5px;
-          font-weight: 600;
-          text-align: right;
-        }
-        .cine-search-loader__passage {
-          width: min(100%, 620px);
-          margin: 26px 0 0;
-          color: #6b6151;
-          opacity: 0.92;
-          text-align: center;
-        }
-        .cine-search-loader__passage--animated {
-          animation: cineWaitPassage 8s ease both;
-        }
-        .cine-search-loader__passage blockquote {
-          margin: 0;
-          font-size: clamp(14px, 1.7vw, 16.5px);
-          font-style: italic;
-          line-height: 1.6;
-        }
-        .cine-search-loader__passage figcaption {
-          display: flex;
-          flex-direction: column;
-          gap: 3px;
-          min-width: 0;
-          max-width: 100%;
-          margin-top: 8px;
-          color: #817765;
-          font-size: 11px;
-          font-weight: 600;
-          line-height: 1.45;
-          letter-spacing: 0.035em;
-          overflow-wrap: anywhere;
-          word-break: break-word;
-        }
-        .cine-search-loader__passage figcaption span,
-        .cine-search-loader__passage figcaption cite,
-        .cine-search-loader__passage figcaption a {
-          min-width: 0;
-          max-width: 100%;
-          overflow-wrap: anywhere;
-        }
-        .cine-search-loader__source {
-          letter-spacing: 0.06em;
-          text-transform: uppercase;
-        }
-        .cine-search-loader__source cite { font-style: normal; }
-        .cine-search-loader__passage a {
-          color: #51409a;
-          text-underline-offset: 2px;
-        }
-        @keyframes cineWaitPassage {
-          0% { opacity: 0; transform: translateY(6px); }
-          6% { opacity: 0.92; transform: translateY(0); }
-          94% { opacity: 0.92; }
-          100% { opacity: 0; }
+          scroll-padding-top: env(safe-area-inset-top);
         }
         @media (max-height: 640px) {
-          .cine-search-loader__inner { justify-content: flex-start; }
-          .cine-search-loader__mandala { width: 148px; height: 148px; }
-          .cine-search-loader__stages { margin-top: 12px; }
-          .cine-search-loader__progress { margin-top: 10px; }
-          .cine-search-loader__passage { margin-top: 16px; }
-        }
-        @media (max-width: 360px) {
-          .cine-search-loader__stages { column-gap: 9px; row-gap: 7px; }
-          .cine-search-loader__stage-name { font-size: 9px; letter-spacing: 0.08em; }
-          .cine-search-loader__passage figcaption { font-size: 10px; }
+          .asp-searching :global(.asp-searching-main) { align-items: flex-start; }
         }
         @media (prefers-reduced-motion: reduce) {
-          .cine-search-loader[data-done="true"] { opacity: 1; }
-          .cine-search-loader,
-          .cine-search-loader__dot,
-          .cine-search-loader__stage-name,
-          .cine-search-loader__fill { transition: none; }
-          .cine-search-loader__aura,
-          .cine-search-loader__mandala svg,
-          .cine-search-loader__passage--animated { animation: none; }
+          .asp-searching { transition: none; }
         }
       `}</style>
     </div>
