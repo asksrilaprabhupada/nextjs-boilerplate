@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Context on a story verse — Gajendra</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&amp;family=DM+Sans:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#faf7f1}
+*{box-sizing:border-box}
+a{color:#51409a}a:hover{color:#6b57c9}
+@keyframes asp-rise{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:none}}
+.asp-rise{animation:asp-rise 1s cubic-bezier(.16,1,.3,1) both}
+.asp-cbar{display:inline-flex;border-radius:9999px;padding:1px;background:linear-gradient(120deg,rgba(201,162,75,.95),rgba(216,204,184,.9) 50%,rgba(107,87,201,.75));box-shadow:0 6px 22px rgba(43,37,25,.08)}
+.asp-cin{display:inline-flex;align-items:stretch;border-radius:9999px;background:#fefcf8;overflow:hidden}
+.asp-cseg{display:inline-flex;align-items:center;gap:8px;min-height:46px;padding:0 18px;border:0;background:transparent;font-family:'DM Sans',system-ui,sans-serif;font-size:13.5px;font-weight:500;color:#51409a;text-decoration:none;cursor:pointer}
+.asp-cseg:hover{background:#f3f0fb;color:#51409a}
+.asp-cdiv{width:1px;align-self:stretch;margin:10px 0;background:#e8e0d2}
+.asp-medal{width:32px;height:32px;border-radius:9999px;display:inline-flex;align-items:center;justify-content:center;background:radial-gradient(circle at 35% 30%,#f7e7b8,#d9b76a 55%,#b0883a);box-shadow:inset 0 0 0 1px rgba(138,90,11,.35);font-family:'Cormorant Garamond',Georgia,serif;font-style:italic;font-weight:600;font-size:13px;color:#4d3505}
+.asp-num{font-family:'Cormorant Garamond',Georgia,serif;font-weight:600;font-size:21px;color:#201b12;font-variant-numeric:tabular-nums}
+.asp-scene{position:relative;padding:0 0 30px 44px}
+.asp-node{position:absolute;left:1px;top:6px;width:13px;height:13px;border-radius:9999px;background:#16120c;border:2px solid #d9b76a}
+.asp-lbl{margin:0;display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px 12px;font-size:11px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:#d9b76a}
+.asp-ref{letter-spacing:.04em;color:#c7b8fb;text-decoration:none}
+.asp-ref:hover{color:#e6dcff}
+.asp-txt{margin:8px 0 0;font-family:'Cormorant Garamond',Georgia,serif;font-size:21px;line-height:1.48;color:rgba(255,248,232,.93)}
+.asp-chap{position:relative;margin:4px 0 22px 44px;display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:8px 16px;border-radius:9999px;background:rgba(255,248,232,.07);border:1px solid rgba(217,183,106,.4);font-size:13px;color:#fff8e8}
+a:focus-visible,button:focus-visible{outline:3px solid #776ab0;outline-offset:3px}
+.asp-dark a:focus-visible,.asp-dark button:focus-visible{outline-color:#c7b8fb}
+@media (prefers-reduced-motion: reduce){.asp-rise{animation:none!important}}
+@media (max-width: 880px){.asp-sec{padding-left:20px!important;padding-right:20px!important}.asp-card{padding:28px 20px!important}.asp-reel{padding:26px 18px!important}.asp-g2{grid-template-columns:minmax(0,1fr)!important}}
+@keyframes asp-foil{0%,55%{background-position:130% 0,0 0}100%{background-position:-30% 0,0 0}}.asp-foil{animation:asp-foil 8s ease-in-out infinite}@media (prefers-reduced-motion: reduce){.asp-foil{animation:none!important}}
+</style>
+</helmet>
+<div style="position: relative; width: 100%; background: #faf7f1; color: #2b2519; font-family: 'DM Sans', system-ui, sans-serif; font-size: 17px; line-height: 1.6; overflow: hidden">
+
+<section class="asp-dark" aria-label="Your question" style="position: relative; background: #16120c; overflow: hidden">
+<div aria-hidden="true" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: radial-gradient(ellipse 60% 70% at 50% 60%, #3d3020 0%, #231c13 45%, #16120c 80%)"></div>
+<header class="asp-sec" style="position: relative; z-index: 2; width: 100%; max-width: 1360px; margin: 0 auto; height: 60px; padding: 0 40px; display: flex; align-items: center; justify-content: space-between">
+<a href="Ask.dc.html" style="display: inline-flex; align-items: center; gap: 12px; min-height: 44px; text-decoration: none; color: #fff8e8">
+<span aria-hidden="true" style="display: inline-block; flex-shrink: 0; box-sizing: border-box; width: 40px; height: 40px; padding: 2px; border-radius: 9999px; background: linear-gradient(140deg, #fbeec6 0%, #d9b76a 38%, #8a6a2a 68%, #e8cf8f 100%); box-shadow: 0 0 0 1px rgba(0,0,0,0.35), 0 2px 7px rgba(0,0,0,0.42)"><span style="display: block; box-sizing: border-box; width: 100%; height: 100%; padding: 1px; border-radius: 9999px; background: #120e09"><img src="/images/redesign/logo/face-gold.webp" alt="" style="display: block; width: 100%; height: 100%; border-radius: 9999px; object-fit: cover" /></span></span>
+<span aria-hidden="true" style="width: 1px; height: 32px; flex-shrink: 0; background: linear-gradient(180deg, rgba(217,183,106,0), rgba(217,183,106,0.8), rgba(217,183,106,0))"></span>
+<span style="display: inline-flex; flex-direction: column; align-items: stretch; line-height: 1; text-align: left"><span style="display: flex; align-items: center; gap: 6px; font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-weight: 500; font-size: 14px; letter-spacing: 0.02em; color: #d9b76a">Ask<span aria-hidden="true" style="flex: 1 1 auto; height: 1px; margin-top: 2px; background: linear-gradient(90deg, rgba(217,183,106,0.75), rgba(217,183,106,0))"></span></span><span class="asp-foil" style="display: inline-block; margin-top: 1px; padding-bottom: 0.08em; font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 22px; letter-spacing: -0.01em; white-space: nowrap; background-image: linear-gradient(110deg, rgba(255,255,255,0) 42%, rgba(255,251,238,0.95) 50%, rgba(255,255,255,0) 58%), linear-gradient(180deg, #fffaf0 0%, #f6e7bf 36%, #d4ae5c 54%, #b58c3f 62%, #f3dfa6 100%); background-size: 260% 100%, 100% 100%; background-position: 130% 0, 0 0; background-repeat: no-repeat; -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 1px 0 rgba(0,0,0,0.55))">Śrīla Prabhupāda</span></span>
+</a>
+</header>
+<div class="asp-sec" style="position: relative; z-index: 1; padding: 80px 40px 60px; text-align: center">
+<p style="margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.42em; text-transform: uppercase; color: #d9b76a">You asked</p>
+<h1 style="margin: 18px auto 0; font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-weight: 500; font-size: 72px; line-height: 1.04; letter-spacing: -0.02em; color: #fff8e8">What did Gajendra pray?</h1>
+</div>
+<div aria-hidden="true" style="height: 160px; background: linear-gradient(180deg, rgba(22,18,12,0) 0%, rgba(110,98,82,0.55) 45%, #d8cfbd 78%, #faf7f1 100%)"></div>
+</section>
+
+<main class="asp-sec" style="padding: 0 40px 110px">
+<div style="max-width: 820px; margin: -40px auto 0">
+
+<article class="asp-card asp-rise" aria-label="Passage 1" style="padding: 46px 50px 40px; border-radius: 24px; border: 1px solid transparent; background: linear-gradient(#fefcf8, #fefcf8) padding-box, linear-gradient(135deg, rgba(201,162,75,0.75), rgba(232,224,210,0.9) 45%, rgba(107,87,201,0.55)) border-box; box-shadow: 0 20px 60px rgba(43,37,25,0.14)">
+<div style="display: flex; align-items: baseline; gap: 16px">
+<span aria-hidden="true" style="font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 24px; color: #b0883a">01</span>
+<p style="margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: #6e6353">Verse · Śrīmad-Bhāgavatam · Canto 8 · Translation</p>
+</div>
+<p style="margin: 20px 0 0; font-family: 'Cormorant Garamond', Georgia, serif; font-size: 27px; line-height: 1.45; color: #201b12">I offer my respectful obeisances to Lord Vāsudeva, who is all-pervading, to the Lord’s fierce form as Lord Nṛsiṁhadeva, to <span style="border-bottom: 2px solid #c9a24b">the Lord’s form as an animal [Lord Varāhadeva]</span>, to Lord Dattātreya, who preached impersonalism, to Lord Buddha, and to all the other incarnations. I offer my respectful obeisances unto the Lord, who has no material qualities but who accepts the three qualities goodness, passion and ignorance within this material world. I also offer my respectful obeisances unto the impersonal Brahman effulgence.</p>
+
+<div style="margin-top: 28px">
+<div class="asp-cbar"><div class="asp-cin">
+<button class="asp-cseg" type="button" aria-expanded="true" aria-controls="asp-story" style="padding-left: 7px; background: #f3f0fb"><span class="asp-medal" aria-hidden="true">SB</span><span class="asp-num">8.3.12</span><span style="font-size: 12px; color: #6e6353">Context</span>
+<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate(180deg)"><path d="M6 9l6 6 6-6"></path></svg></button>
+<span class="asp-cdiv" aria-hidden="true"></span>
+<a class="asp-cseg" href="https://vedabase.io/en/library/sb/8/3/12/">Read in full ↗</a>
+<span class="asp-cdiv" aria-hidden="true"></span>
+<button class="asp-cseg" type="button">Copy</button>
+</div></div>
+</div>
+
+<section id="asp-story" aria-label="The story that led to SB 8.3.12" style="margin-top: 26px; border-radius: 20px; overflow: hidden; border: 1px solid #e8e0d2; box-shadow: 0 14px 40px rgba(22,18,12,0.18)">
+<div class="asp-dark asp-reel" style="position: relative; padding: 34px 34px 32px; background: radial-gradient(ellipse 60% 50% at 100% 0%, rgba(217,183,106,0.20), rgba(217,183,106,0) 60%), radial-gradient(ellipse 50% 40% at 0% 100%, rgba(139,110,224,0.22), rgba(139,110,224,0) 60%), #16120c; color: #fff8e8">
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px">
+<p style="margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: #d9b76a">The story that led here</p>
+<p style="margin: 0; font-size: 12.5px; color: rgba(255,248,232,0.68)">In story order, across three chapters. Nothing here is written by AI.</p>
+</div>
+
+<div style="position: relative; margin-top: 30px">
+<span aria-hidden="true" style="position: absolute; left: 7px; top: 14px; bottom: 34px; width: 1px; background: linear-gradient(180deg, #d9b76a, rgba(217,183,106,0.45) 70%, #a78bfa)"></span>
+
+<p class="asp-chap"><span style="font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 17px">Chapter 4 · Gajendra Returns to the Spiritual World</span><span style="font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #d9b76a">Told after this verse</span></p>
+<div class="asp-scene"><span class="asp-node" aria-hidden="true"></span>
+<p class="asp-lbl"><span>His previous life</span><a class="asp-ref" href="https://vedabase.io/en/library/sb/8/4/7/">SB 8.4.7 ↗</a></p>
+<p class="asp-txt">This Gajendra had formerly been a Vaiṣṇava and the king of the country known as Pāṇḍya, which is in the province of Draviḍa [South India]. In his previous life, he was known as Indradyumna Mahārāja.</p>
+</div>
+<div class="asp-scene"><span class="asp-node" aria-hidden="true"></span>
+<p class="asp-lbl"><span>The curse</span><a class="asp-ref" href="https://vedabase.io/en/library/sb/8/4/10/">SB 8.4.10 ↗</a></p>
+<p class="asp-txt">Agastya Muni then spoke this curse against the King: This King Indradyumna is not at all gentle. Being low and uneducated, he has insulted a brāhmaṇa. May he therefore enter the region of darkness and receive the dull, dumb body of an elephant.</p>
+</div>
+<div class="asp-scene"><span class="asp-node" aria-hidden="true"></span>
+<p class="asp-lbl"><span>Why an elephant could pray</span><a class="asp-ref" href="https://vedabase.io/en/library/sb/8/4/11-12/">SB 8.4.11–12 ↗</a></p>
+<p class="asp-txt">Śukadeva Gosvāmī continued: My dear King, after Agastya Muni had thus cursed King Indradyumna, the Muni left that place along with his disciples. Since the King was a devotee, he accepted Agastya Muni’s curse as welcome because it was the desire of the Supreme Personality of Godhead. Therefore, although in his next life he got the body of an elephant, because of devotional service he remembered how to worship and offer prayers to the Lord.</p>
+</div>
+
+<p class="asp-chap"><span style="font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 17px">Chapter 2 · The Elephant Gajendra’s Crisis</span><span style="font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #d9b76a">Told before this verse</span></p>
+<div class="asp-scene"><span class="asp-node" aria-hidden="true"></span>
+<p class="asp-lbl"><span>The crisis</span><a class="asp-ref" href="https://vedabase.io/en/library/sb/8/2/27/">SB 8.2.27 ↗</a></p>
+<p class="asp-txt">By the arrangement of providence, O King, a strong crocodile was angry at the elephant and attacked the elephant’s leg in the water. The elephant was certainly strong, and he tried his best to get free from this danger sent by providence.</p>
+</div>
+<div class="asp-scene"><span class="asp-node" aria-hidden="true"></span>
+<p class="asp-lbl"><span>He seeks shelter</span><a class="asp-ref" href="https://vedabase.io/en/library/sb/8/2/32/">SB 8.2.32 ↗</a></p>
+<p class="asp-txt">The other elephants, who are my friends and relatives, could not rescue me from this danger. What then to speak of my wives? They cannot do anything. It is by the will of providence that I have been attacked by this crocodile, and therefore I shall seek shelter of the Supreme Personality of Godhead, who is always the shelter of everyone, even of great personalities.</p>
+</div>
+
+<p class="asp-chap"><span style="font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 17px">Chapter 3 · Gajendra’s Prayers of Surrender</span><span style="font-size: 11px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: #d9b76a">This chapter</span></p>
+<div class="asp-scene"><span class="asp-node" aria-hidden="true"></span>
+<p class="asp-lbl"><span>The prayer begins</span><a class="asp-ref" href="https://vedabase.io/en/library/sb/8/3/1/">SB 8.3.1 ↗</a></p>
+<p class="asp-txt">Śrī Śukadeva Gosvāmī continued: Thereafter, the King of the elephants, Gajendra, fixed his mind in his heart with perfect intelligence and chanted a mantra which he had learned in his previous birth as Indradyumna and which he remembered by the grace of Kṛṣṇa.</p>
+</div>
+<div class="asp-scene" style="padding-bottom: 0"><span aria-hidden="true" style="position: absolute; left: -1px; top: 4px; width: 17px; height: 17px; border-radius: 9999px; background: #a78bfa; box-shadow: 0 0 0 5px rgba(167,139,250,0.25), 0 0 22px rgba(167,139,250,0.8)"></span>
+<p class="asp-lbl" style="color: #c7b8fb"><span>This verse</span></p>
+<p style="margin: 8px 0 0; font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600; font-size: 25px; line-height: 1.2; color: #fff8e8">SB 8.3.12 · in the middle of Gajendra’s prayers</p>
+</div>
+</div>
+</div>
+
+<div class="asp-g2" style="padding: 24px 34px 26px; background: #f6f1e7; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start">
+<div>
+<p style="margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #6e6353">A word with a special meaning here</p>
+<p style="margin: 8px 0 0; font-size: 15px; color: #2b2519"><span style="font-family: 'Cormorant Garamond', Georgia, serif; font-style: italic; font-weight: 600; font-size: 21px; color: #51409a">mūḍhāya</span> — the form of the Lord as an animal, such as the boar</p>
+<p style="margin: 6px 0 0; font-size: 13.5px; color: #6e6353">In 8 other verses the same word means “foolish” — for example Bg. 17.19.</p>
+</div>
+<div style="display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px">
+<a href="https://vedabase.io/en/library/sb/8/3/12/" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 9999px; background: #fefcf8; border: 1px solid #d8ccb8; color: #51409a; font-size: 13.5px; font-weight: 500; text-decoration: none">All word meanings ↗</a>
+<a href="https://vedabase.io/en/library/sb/8/4/" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 9999px; background: #fefcf8; border: 1px solid #d8ccb8; color: #51409a; font-size: 13.5px; font-weight: 500; text-decoration: none">Read the whole story ↗</a>
+</div>
+</div>
+</section>
+</article>
+
+</div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":2700}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
