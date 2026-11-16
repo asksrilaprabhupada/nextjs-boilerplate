@@ -2,23 +2,28 @@
  * 09-search-experience.tsx — Live Search Experience (client orchestrator)
  *
  * The destination of the home page's search. Opens the /api/search SSE stream
- * for the question in `q`, drives the meditative loader from real pipeline
- * stage events, then renders the woven answer with the data-driven renderer
- * (components/results/01-narrative-response) inside the cinematic chrome —
- * header, "You asked" headline, follow-up bar. A stream that never started
- * earns exactly one plain-fetch retry; a stream that died mid-search is
- * terminal and says so honestly. It never falls back to sample verses.
+ * for the question in `q`, drives the Searching screen from real pipeline stage
+ * events, then shows the Answer (cinematic redesign: dark band with "You
+ * asked" and the devotee's own question, then the passages from
+ * components/results/01-narrative-response). Dig Deeper opens as its own screen
+ * from the answer's card (#dig-deeper, so the phone's Back returns to the
+ * answer). A stream that never started earns exactly one plain-fetch retry; a
+ * stream that died mid-search is terminal and says so honestly. It never falls
+ * back to sample verses, and nothing here is written by a model: the old "Ask
+ * next" suggestions (planner-written questions) are no longer shown.
  */
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import SiteHeader from "./11-site-header";
 import SiteFooter from "./12-site-footer";
 import SearchLoader from "./10-search-loader";
+import ThemeToggle from "../layout/03-theme-toggle";
 import NarrativeResponse from "../results/01-narrative-response";
 import IncompleteSearchWarning from "../results/02-incomplete-search-warning";
+import DigDeeperPage, { type DigSource } from "../results/03-cinematic-dig-deeper";
 import { buildSearchHref } from "@/app/lib/22-search-navigation";
 import type { SearchResults, SearchStageEvent } from "@/app/lib/types/01-search";
 import {
@@ -31,11 +36,21 @@ import {
 // maxDuration stays 300 s for genuine cold-path headroom.
 const TIMEOUT_MS = 150_000;
 const COMPLETION_HOLD_MS = 400;
+const DIG_HASH = "#dig-deeper";
 
 type Phase = "loading" | "completing" | "ready" | "error";
 
 /** Why the error card is showing — each case earns different honest copy. */
 type FailureKind = "dropped" | "server" | "timeout";
+
+function SearchIcon({ color = "currentColor", size = 18 }: { color?: string; size?: number }) {
+  return (
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round">
+      <circle cx="11" cy="11" r="7" />
+      <path d="M20 20l-3.5-3.5" />
+    </svg>
+  );
+}
 
 export default function SearchExperience({ q }: { q: string }) {
   const router = useRouter();
@@ -43,9 +58,12 @@ export default function SearchExperience({ q }: { q: string }) {
   const [failureKind, setFailureKind] = useState<FailureKind>("timeout");
   const [stage, setStage] = useState<SearchStageEvent | null>(null);
   const [results, setResults] = useState<SearchResults | null>(null);
-  const [viewMode, setViewMode] = useState<"article" | "references">("article");
   const [followUp, setFollowUp] = useState("");
   const [retryNonce, setRetryNonce] = useState(0);
+  const [digOpen, setDigOpen] = useState(false);
+  const [digSource, setDigSource] = useState<DigSource | null>(null);
+  const answerScrollRef = useRef(0);
+  const pushedDigRef = useRef(false);
 
   const onSearch = useCallback(
     (next: string) => {
@@ -56,11 +74,57 @@ export default function SearchExperience({ q }: { q: string }) {
     [router],
   );
 
+  // Dig Deeper lives at #dig-deeper so Back (or a swipe) returns to the answer.
+  useEffect(() => {
+    const sync = () => {
+      const open = window.location.hash === DIG_HASH;
+      if (!open) pushedDigRef.current = false;
+      setDigOpen(open);
+      if (!open) {
+        const y = answerScrollRef.current;
+        requestAnimationFrame(() => window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior }));
+      }
+    };
+    sync();
+    window.addEventListener("popstate", sync);
+    window.addEventListener("hashchange", sync);
+    return () => {
+      window.removeEventListener("popstate", sync);
+      window.removeEventListener("hashchange", sync);
+    };
+  }, []);
+
+  const openDigDeeper = useCallback((source?: DigSource) => {
+    answerScrollRef.current = window.scrollY;
+    setDigSource(source ?? null);
+    if (window.location.hash !== DIG_HASH) {
+      window.history.pushState(window.history.state, "", `${window.location.pathname}${window.location.search}${DIG_HASH}`);
+      pushedDigRef.current = true;
+    }
+    setDigOpen(true);
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, []);
+
+  const closeDigDeeper = useCallback(() => {
+    if (window.location.hash === DIG_HASH && pushedDigRef.current) {
+      // We added this history entry, so stepping back returns to the answer.
+      pushedDigRef.current = false;
+      window.history.back();
+      return;
+    }
+    if (window.location.hash === DIG_HASH) {
+      // Arrived straight on #dig-deeper (a reload): drop the hash in place.
+      window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}`);
+    }
+    setDigOpen(false);
+    const y = answerScrollRef.current;
+    requestAnimationFrame(() => window.scrollTo({ top: y, behavior: "instant" as ScrollBehavior }));
+  }, []);
+
   useEffect(() => {
     setPhase("loading");
     setStage(null);
     setResults(null);
-    setViewMode("article");
     window.scrollTo({ top: 0 });
 
     let es: EventSource | null = null;
@@ -166,460 +230,155 @@ export default function SearchExperience({ q }: { q: string }) {
     };
   }, [q, retryNonce]);
 
-  const answered = phase === "ready" && !!results;
+  const showAnswer = (phase === "ready" || phase === "completing") && !!results;
 
   const passageCount = results?.passages?.length || 0;
   const additionalCount = results?.additionalCount ?? results?.additional?.length ?? 0;
-  const variants = (results?.queryVariants || []).slice(0, 6);
 
-  const submitFollowUp = (e: React.FormEvent) => {
+  const submitFollowUp = (e: FormEvent) => {
     e.preventDefault();
     onSearch(followUp);
   };
 
-  return (
-    <div className="search-experience">
-      <SiteHeader variant="solid" />
+  if (showAnswer && results && digOpen) {
+    return (
+      <DigDeeperPage
+        key={`${results.query}:${digSource ?? "all"}`}
+        q={results.query || q}
+        list={results.additional || []}
+        totalCount={results.additionalCount}
+        truncated={results.additionalTruncated}
+        initialSource={digSource}
+        onBack={closeDigDeeper}
+      />
+    );
+  }
 
+  const headerRight = (
+    <>
+      <form className="asp-hsearch" role="search" aria-label="Ask another question" onSubmit={submitFollowUp}>
+        <SearchIcon color="rgba(255,248,232,0.75)" />
+        <label htmlFor="asp-q-answer" className="asp-sr">Ask another question</label>
+        <input
+          id="asp-q-answer"
+          type="search"
+          value={followUp}
+          onChange={(e) => setFollowUp(e.target.value)}
+          placeholder="Ask another question"
+          autoComplete="off"
+          enterKeyHint="search"
+        />
+      </form>
+      <Link className="asp-hicon" href="/?entrance=0" aria-label="Ask another question">
+        <SearchIcon />
+      </Link>
+      <ThemeToggle variant="scene" />
+    </>
+  );
+
+  return (
+    <div className="asp-page search-experience">
       {(phase === "loading" || phase === "completing") && (
         <SearchLoader q={q} stage={stage} done={phase === "completing"} />
       )}
 
-      <main className="search-experience__main">
-        {/* ═══════ ERROR CARD — honest, never sample verses ═══════
-             Three distinct failures, three distinct truths: a lost connection
-             (retry may well succeed — the finished answer is often cached), a
-             server-side failure (an identical retry will likely fail
-             identically, and the card says so), and a timeout. */}
-        {phase === "error" && (
-          <div className="search-error" role="alert" aria-live="assertive">
-            <p className="search-error__title font-display">
-              {failureKind === "dropped" && "The connection was lost."}
-              {failureKind === "server" && "The search failed."}
-              {failureKind === "timeout" && "The library didn’t answer in time."}
-            </p>
-            <p className="search-error__message font-body">
-              {failureKind === "dropped" && (
-                <>Your question &ldquo;{q}&rdquo; was being answered when the connection dropped. The answer may already be waiting — trying again is usually quick.</>
-              )}
-              {failureKind === "server" && (
-                <>Your question &ldquo;{q}&rdquo; reached the library, but the search failed on our side. An identical retry will most likely fail the same way — if it does, please try again in a few minutes.</>
-              )}
-              {failureKind === "timeout" && (
-                <>Your question &ldquo;{q}&rdquo; reached the library, but no answer came back in time. Nothing is wrong with your question — please try again.</>
-              )}
-            </p>
-            <div className="search-error__actions">
-              <button
-                onClick={() => setRetryNonce((n) => n + 1)}
-                className="search-error__action search-error__action--primary font-body"
-              >
-                Try again
-              </button>
-              <Link href="/?entrance=0" className="search-error__action search-error__action--secondary font-body">
-                New search
-              </Link>
+      {/* ═══════ ERROR — honest, never sample verses ═══════
+           Three distinct failures, three distinct truths: a lost connection
+           (retry may well succeed — the finished answer is often cached), a
+           server-side failure (an identical retry will likely fail
+           identically, and the card says so), and a timeout. */}
+      {phase === "error" && (
+        <>
+          <section className="asp-dark" aria-label="Your question">
+            <div aria-hidden="true" className="asp-layer asp-answer-hero-base" />
+            <SiteHeader />
+            <div className="asp-answer-head asp-sec">
+              <p className="asp-eyebrow">You asked</p>
+              <h1 className="asp-answer-q">{q}</h1>
             </div>
-          </div>
-        )}
-
-        {answered && results && (
-          <div className="search-answer">
-            {/* Follow-up bar */}
-            <form onSubmit={submitFollowUp} className="search-followup">
-              <div className="search-followup__frame">
-                <input value={followUp} onChange={(e) => setFollowUp(e.target.value)} aria-label="Ask a follow-up" placeholder="Ask a follow-up question…" className="search-followup__input font-body" />
-                <Link href="/?entrance=0" aria-label="New search" title="New search" className="search-followup__control search-followup__new cine-newsearch">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
-                </Link>
-                <button type="submit" aria-label="Search" className="search-followup__control search-followup__submit cine-submit-btn">
-                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M12 5l7 7-7 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            <div aria-hidden="true" className="asp-answer-fade" />
+          </section>
+          <main className="asp-answer-main asp-sec">
+            <div className="asp-panel" role="alert" aria-live="assertive">
+              <p className="asp-panel-title">
+                {failureKind === "dropped" && "The connection was lost."}
+                {failureKind === "server" && "The search failed."}
+                {failureKind === "timeout" && "The library didn’t answer in time."}
+              </p>
+              <p className="asp-panel-text">
+                {failureKind === "dropped" && (
+                  <>Your question &ldquo;{q}&rdquo; was being answered when the connection dropped. The answer may already be waiting — trying again is usually quick.</>
+                )}
+                {failureKind === "server" && (
+                  <>Your question &ldquo;{q}&rdquo; reached the library, but the search failed on our side. An identical retry will most likely fail the same way — if it does, please try again in a few minutes.</>
+                )}
+                {failureKind === "timeout" && (
+                  <>Your question &ldquo;{q}&rdquo; reached the library, but no answer came back in time. Nothing is wrong with your question — please try again.</>
+                )}
+              </p>
+              <div className="asp-panel-actions">
+                <button type="button" className="asp-btn-primary" onClick={() => setRetryNonce((n) => n + 1)}>
+                  Try again
                 </button>
+                <Link href="/?entrance=0" className="asp-btn-ghost">
+                  New search
+                </Link>
               </div>
-            </form>
-
-            {/* You asked */}
-            <p className="search-answer__eyebrow font-body">You asked</p>
-            <h1 className="search-answer__title font-display">{results.query || q}</h1>
-            <div className="search-answer__rule" aria-hidden />
-
-            {/* A partial answer must announce itself before counts or teaching text. */}
-            <IncompleteSearchWarning
-              sources={results.degradedSources ?? []}
-              degraded={results.degraded}
-              rankingUnavailable={results.rankingUnavailable ?? false}
-            />
-
-            {/* Honest result counts, without filtering the recorded conversation. */}
-            {passageCount > 0 ? (
-              <div className="search-answer__counts">
-                <span className="search-answer__count font-body">
-                  {passageCount} {passageCount === 1 ? "passage" : "passages"} in full
-                  {additionalCount > 0 ? <> · {additionalCount.toLocaleString("en-US")} more as citations below</> : null}
-                </span>
-              </div>
-            ) : null}
-
-            {/* The woven answer — fully data-driven */}
-            <div className="search-answer__results">
-              <NarrativeResponse
-                results={results}
-                isLoading={false}
-                onSearch={onSearch}
-                searchLogId={results.searchLogId || null}
-                viewMode={viewMode}
-                onViewModeChange={setViewMode}
-              />
             </div>
+          </main>
+          <SiteFooter />
+        </>
+      )}
 
-            {/* Ask next — variant questions from the multi-query expansion */}
-            {variants.length > 0 && (
-              <section aria-label="Ask next" className="search-answer__next">
-                <p className="search-answer__next-label font-body">Ask next</p>
-                <div className="search-answer__next-list">
-                  {variants.map((v) => (
-                    <button
-                      key={v}
-                      onClick={() => onSearch(v)}
-                      className="search-answer__next-button cine-source-link font-body"
-                    >
-                      {v}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
-          </div>
-        )}
-      </main>
+      {showAnswer && results && (
+        <>
+          <section className="asp-dark" aria-label="Your question">
+            <div aria-hidden="true" className="asp-layer asp-answer-hero-base" />
+            <div aria-hidden="true" className="asp-answer-glow-gold asp-drift" />
+            <div aria-hidden="true" className="asp-answer-glow-violet asp-drift" />
+            <div aria-hidden="true" className="asp-answer-glow-phone" />
+            <div aria-hidden="true" className="asp-grain asp-grain-10" />
 
-      <SiteFooter />
+            <SiteHeader right={headerRight} />
 
-      <style jsx global>{`
-        .search-experience {
-          min-width: 0;
-          min-height: 100dvh;
-          display: flex;
-          flex-direction: column;
-        }
+            <div className="asp-answer-head asp-sec">
+              {/* The devotee's own question. There is no AI title. */}
+              <p className="asp-eyebrow asp-rise">You asked</p>
+              <h1 className="asp-answer-q asp-rise" style={{ animationDelay: "100ms" }}>{results.query || q}</h1>
 
-        .search-experience__main {
-          box-sizing: border-box;
-          width: 100%;
-          max-width: 780px;
-          min-width: 0;
-          flex: 1;
-          margin: 0 auto;
-          padding-top: calc(110px + env(safe-area-inset-top));
-          padding-right: max(clamp(16px, 4vw, 40px), env(safe-area-inset-right));
-          padding-bottom: max(80px, env(safe-area-inset-bottom));
-          padding-left: max(clamp(16px, 4vw, 40px), env(safe-area-inset-left));
-        }
+              {/* A partial answer must announce itself before counts or teaching text. */}
+              <div className="asp-answer-warning">
+                <IncompleteSearchWarning
+                  sources={results.degradedSources ?? []}
+                  degraded={results.degraded}
+                  rankingUnavailable={results.rankingUnavailable ?? false}
+                />
+              </div>
 
-        .search-error {
-          width: 100%;
-          max-width: 560px;
-          margin: min(10vh, 80px) auto 0;
-          padding: clamp(28px, 5vw, 48px);
-          overflow-wrap: anywhere;
-          text-align: center;
-          background: #fefcf8;
-          border: 1px solid #e8e0d2;
-          border-radius: 18px;
-          box-shadow: 0 2px 6px rgba(43, 37, 25, 0.04), 0 16px 44px rgba(43, 37, 25, 0.07);
-        }
+              {/* Honest result counts, without filtering the recorded conversation. */}
+              <div className="asp-answer-meta asp-rise" style={{ animationDelay: "220ms" }}>
+                <span className="asp-answer-chip">Śrīla Prabhupāda&apos;s books, lectures and letters</span>
+                {passageCount > 0 ? (
+                  <span className="asp-answer-count">
+                    {passageCount} {passageCount === 1 ? "passage" : "passages"} in full
+                    {additionalCount > 0 ? <> · {additionalCount.toLocaleString("en-US")} more as citations below</> : null}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            <div aria-hidden="true" className="asp-answer-fade" />
+          </section>
 
-        .search-error__title {
-          margin: 0;
-          color: #201b12;
-          font-size: clamp(22px, 3vw, 28px);
-          font-weight: 600;
-        }
+          <NarrativeResponse
+            results={results}
+            onSearch={onSearch}
+            searchLogId={results.searchLogId || null}
+            onOpenDigDeeper={openDigDeeper}
+          />
 
-        .search-error__message {
-          margin: 12px 0 24px;
-          color: #6e6353;
-          font-size: 14.5px;
-          line-height: 1.7;
-        }
-
-        .search-error__actions {
-          display: flex;
-          flex-wrap: wrap;
-          justify-content: center;
-          gap: 10px;
-        }
-
-        .search-error__action {
-          min-width: 124px;
-          min-height: 44px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          padding: 10px 22px;
-          border-radius: 100px;
-          font-size: 14px;
-          font-weight: 600;
-          line-height: 1.2;
-          text-decoration: none;
-          cursor: pointer;
-        }
-
-        .search-error__action--primary {
-          color: #fff;
-          background: linear-gradient(135deg, #6b57c9, #51409a);
-          border: none;
-        }
-
-        .search-error__action--secondary {
-          color: #6e6353;
-          background: #fefcf8;
-          border: 1px solid #e8e0d2;
-        }
-
-        .search-answer,
-        .search-answer__results {
-          min-width: 0;
-        }
-
-        .search-followup {
-          position: sticky;
-          top: calc(68px + env(safe-area-inset-top));
-          z-index: 60;
-          width: 100%;
-          min-width: 0;
-          margin-bottom: clamp(40px, 7vh, 64px);
-          animation: search-answer-fade 0.8s ease 0.1s both;
-        }
-
-        .search-followup__frame {
-          position: relative;
-          min-width: 0;
-          padding: 1.5px;
-          border-radius: 16px;
-          background: linear-gradient(135deg, rgba(107, 87, 201, 0.42), rgba(201, 162, 75, 0.28));
-          box-shadow: 0 8px 30px rgba(43, 37, 25, 0.1);
-        }
-
-        .search-followup__input {
-          width: 100%;
-          min-width: 0;
-          min-height: 54px;
-          display: block;
-          padding: 14px 108px 14px 18px;
-          overflow-wrap: anywhere;
-          color: #2b2519;
-          background: #fefcf8;
-          border: none;
-          border-radius: 14px;
-          outline: none;
-          font-size: 16px;
-        }
-
-        .search-followup__control {
-          position: absolute;
-          top: 6px;
-          width: 44px;
-          height: 44px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 11px;
-          text-decoration: none;
-          cursor: pointer;
-          transition: background 0.2s ease, color 0.2s ease, transform 0.3s ease;
-        }
-
-        .search-followup__new {
-          right: 52px;
-          color: #6e6353;
-        }
-
-        .search-followup__submit {
-          right: 6px;
-          color: #fff;
-          background: linear-gradient(135deg, #6b57c9, #51409a);
-          border: none;
-        }
-
-        .search-answer__eyebrow {
-          margin: 0 0 18px;
-          color: #6b57c9;
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: 0.32em;
-          text-transform: uppercase;
-          animation: search-answer-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
-        }
-
-        .search-answer__title {
-          margin: 0;
-          overflow-wrap: anywhere;
-          color: #201b12;
-          font-size: clamp(30px, 4.6vw, 54px);
-          font-weight: 600;
-          line-height: 1.12;
-          letter-spacing: -0.02em;
-          text-wrap: pretty;
-          animation: search-answer-rise 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both;
-        }
-
-        .search-answer__rule {
-          width: min(160px, 44vw);
-          height: 1px;
-          margin: 26px 0;
-          background: linear-gradient(90deg, #c9a24b, rgba(201, 162, 75, 0));
-          transform-origin: left;
-          animation: search-answer-rule 1.3s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both;
-        }
-
-        .search-answer__counts {
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          gap: 10px;
-          margin-bottom: clamp(36px, 6vh, 54px);
-        }
-
-        .search-answer__count {
-          max-width: 100%;
-          min-height: 36px;
-          display: inline-flex;
-          align-items: center;
-          padding: 7px 14px;
-          overflow-wrap: anywhere;
-          color: #6e6353;
-          background: rgba(107, 87, 201, 0.07);
-          border: 1px solid #e8e0d2;
-          border-radius: 100px;
-          font-size: 12px;
-          font-weight: 600;
-          line-height: 1.45;
-          letter-spacing: 0.06em;
-        }
-
-        .search-answer__next {
-          min-width: 0;
-          margin-top: clamp(36px, 6vh, 52px);
-        }
-
-        .search-answer__next-label {
-          margin: 0 0 12px;
-          color: #9a8f7d;
-          font-size: 12px;
-          font-weight: 600;
-          letter-spacing: 0.18em;
-          text-transform: uppercase;
-        }
-
-        .search-answer__next-list {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          min-width: 0;
-        }
-
-        .search-answer__next-button {
-          max-width: 100%;
-          min-height: 44px;
-          display: inline-flex;
-          align-items: center;
-          padding: 10px 16px;
-          overflow-wrap: anywhere;
-          white-space: normal;
-          color: #51409a;
-          background: rgba(107, 87, 201, 0.06);
-          border: 1px solid #e8e0d2;
-          border-radius: 22px;
-          font-size: 13px;
-          font-weight: 500;
-          line-height: 1.4;
-          text-align: left;
-          cursor: pointer;
-          transition: border-color 0.3s ease, color 0.3s ease, background 0.3s ease;
-        }
-
-        .search-error__action:focus-visible,
-        .search-followup__input:focus-visible,
-        .search-followup__control:focus-visible,
-        .search-answer__next-button:focus-visible {
-          outline: 3px solid rgba(107, 87, 201, 0.5);
-          outline-offset: 3px;
-        }
-
-        @keyframes search-answer-fade {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
-
-        @keyframes search-answer-rise {
-          from { opacity: 0; transform: translateY(26px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-
-        @keyframes search-answer-rule {
-          from { transform: scaleX(0); }
-          to { transform: scaleX(1); }
-        }
-
-        @media (max-width: 480px) {
-          .search-experience__main {
-            padding-top: calc(94px + env(safe-area-inset-top));
-          }
-
-          .search-error {
-            margin-top: 24px;
-            padding: 26px 18px;
-          }
-
-          .search-error__action {
-            flex: 1 1 140px;
-          }
-
-          .search-followup {
-            margin-bottom: 38px;
-          }
-
-          .search-answer__next-button {
-            flex: 1 1 100%;
-          }
-        }
-
-        @media (max-height: 500px) and (orientation: landscape) {
-          .search-experience__main {
-            padding-top: calc(76px + env(safe-area-inset-top));
-            padding-bottom: max(32px, env(safe-area-inset-bottom));
-          }
-
-          .search-error {
-            margin-top: 8px;
-            padding: 20px 24px;
-          }
-
-          .search-error__message {
-            margin-bottom: 16px;
-          }
-
-          .search-followup {
-            top: calc(62px + env(safe-area-inset-top));
-            margin-bottom: 28px;
-          }
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .search-followup,
-          .search-answer__eyebrow,
-          .search-answer__title,
-          .search-answer__rule {
-            animation: none;
-          }
-
-          .search-followup__control,
-          .search-answer__next-button {
-            transition: none;
-          }
-        }
-      `}</style>
+          <SiteFooter />
+        </>
+      )}
     </div>
   );
 }

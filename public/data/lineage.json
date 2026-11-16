@@ -1,0 +1,65 @@
+{
+  "_note": "Shown one after another while a search runs, 2 seconds each. 'image' stays null until an approved painting exists; until then the design's gold ornament frame and the name are shown. Śrīla Prabhupāda always comes last, with his photograph.",
+  "lineage": [
+    {
+      "name": "Śrī Caitanya Mahāprabhu",
+      "image": null
+    },
+    {
+      "name": "Svarūpa Dāmodara Gosvāmī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Rūpa Gosvāmī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Sanātana Gosvāmī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Raghunātha dāsa Gosvāmī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Jīva Gosvāmī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Kṛṣṇadāsa Kavirāja Gosvāmī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Narottama dāsa Ṭhākura",
+      "image": null
+    },
+    {
+      "name": "Śrīla Viśvanātha Cakravartī Ṭhākura",
+      "image": null
+    },
+    {
+      "name": "Śrīla Baladeva Vidyābhūṣaṇa",
+      "image": null
+    },
+    {
+      "name": "Śrīla Jagannātha dāsa Bābājī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Bhaktivinoda Ṭhākura",
+      "image": null
+    },
+    {
+      "name": "Śrīla Gaurakiśora dāsa Bābājī",
+      "image": null
+    },
+    {
+      "name": "Śrīla Bhaktisiddhānta Sarasvatī Ṭhākura",
+      "image": null
+    },
+    {
+      "name": "Śrīla Prabhupāda",
+      "image": "/images/redesign/photos/folded-hands.webp"
+    }
+  ]
+}

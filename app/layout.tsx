@@ -8,7 +8,9 @@ import type { Metadata, Viewport } from "next";
 import { Cormorant_Garamond, DM_Sans, Noto_Serif_Devanagari } from "next/font/google";
 import SiteModalsProvider from "./components/cinematic/13-site-modals";
 import { SITE_URL } from "@/app/lib/20-site";
+import { DOORWAY_DECISION_SCRIPT } from "@/app/lib/29-doorway-decision";
 import "./globals.css";
+import "./redesign.css";
 
 /*
  * Fonts are loaded via next/font (self-hosted, no render-blocking @import, no CLS).
@@ -103,7 +105,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#FAF7F1",
+  themeColor: "#16120c",
 };
 
 export default function RootLayout({
@@ -111,9 +113,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // suppressHydrationWarning: the theme script below and the doorway's
+  // script write to <html> (class, data-door) before React hydrates.
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${fontDisplay.variable} ${fontBody.variable} ${fontDeva.variable}`}
     >
       <body>
@@ -123,6 +128,8 @@ export default function RootLayout({
             __html: `(function(){try{if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.add('dark');}}catch(e){}})();`,
           }}
         />
+        {/* The home doorway: show or skip, decided before anything is painted. */}
+        <script dangerouslySetInnerHTML={{ __html: DOORWAY_DECISION_SCRIPT }} />
         {/* Garden Wash Background */}
         <div
           style={{
@@ -155,27 +162,20 @@ export default function RootLayout({
           />
         </div>
 
-        <svg
+        {/* Paper grain: one small PNG tile (the live SVG turbulence filter that
+            used to sit here was far too heavy for older phones). */}
+        <div
+          aria-hidden="true"
           style={{
             position: "fixed",
             inset: 0,
-            width: "100%",
-            height: "100%",
             zIndex: 1,
             opacity: 0.05,
             pointerEvents: "none",
+            backgroundImage: "url(/images/redesign/grain.png)",
+            backgroundSize: "128px 128px",
           }}
-        >
-          <filter id="grain">
-            <feTurbulence
-              type="fractalNoise"
-              baseFrequency="0.85"
-              numOctaves="4"
-              stitchTiles="stitch"
-            />
-          </filter>
-          <rect width="100%" height="100%" filter="url(#grain)" />
-        </svg>
+        />
 
         {/* Structured data: the site + its search action, and the organization. */}
         <script

@@ -51,6 +51,7 @@ COHERE_API_KEY=<cohere key>                # search result reranking (rerank-v4.
 GEMINI_QUERY_PLANNER_MODEL=gemini-2.5-flash   # optional — query-plan model
 NEXT_PUBLIC_SITE_URL=<canonical origin>       # optional — set after attaching the custom domain
 SEARCH_CORPUS_VERSION=2026-07-08-tags-v3      # optional — cache-busts a re-tagged corpus
+NEXT_PUBLIC_ADVANCED_ENABLED=true             # optional — shows the Advanced (previous ācāryas) switch, card and /advanced page. Default off: those books are not in the database yet
 ```
 
 There is no environment variable that selects a search engine or a search mode.
@@ -71,7 +72,7 @@ the original question only). No model writes a word a devotee reads.
 
 Light theme first: light aurora gradients, soft lavender, whites, gentle pastels, card-based layouts with soft gradients, clean spacing, rounded corners, subtle shadows, and elegant typography. The overall feel is spiritual, warm, clean, and modern. An opt-in "Warm Evening" dark theme exists (toggle in the header's More ▾ menu); it overrides only the primitive tokens in globals.css. All ambient animation is gated behind prefers-reduced-motion.
 
-Cinematic + simple: the dark frames (the doorway, the Journey opening, the Features interlude) are deliberate scenes, not a theme — the header goes light-on-dark over them (`variant="scene"`) so a pale bar never sits on a dark image. There is no audio anywhere on the site. The doorway shows on arrival only; every internal link home carries `?entrance=0`.
+Cinematic redesign (2026-11, docs/redesign/): every screen opens on a dark scene (#16120c) with the in-flow header — gold face medallion, gold divider, "Ask / Śrīla Prabhupāda" logotype — and light paper sections below. All its styles and keyframes live in `app/redesign.css` (copied from the approved designs in `docs/redesign/designs/`). Rules: animate only transform and opacity, never a CSS filter; grain is the PNG tile `public/images/redesign/grain.png`; no `overflow:hidden` around moving text; everything stops under reduced motion; phone layout below 768 px, desktop/iPad from 768 px. There is no audio anywhere on the site. The doorway shows on arrival only, at most once a day per device (localStorage `asp-door-date`), decided before paint into `<html data-door>`; every internal link home carries `?entrance=0`. His Journey, Features and How it works are hidden: 307 to `/` in next.config.ts, out of the sitemap, files kept.
 
 ### Search pipeline (app/api/search/route.ts)
 
@@ -91,7 +92,7 @@ Failure discipline: a retrieval RPC failure is fatal (503 with a request id) and
 
 ### File Structure
 
-Every file has a doc comment at the top explaining its purpose. Files are numbered (01-, 02-) within each folder for clear ordering. Components under `components/landing/`, `components/lockscreen/`, `components/overlays/`, `components/feedback/`, and `components/search/01-04` are a retained earlier design generation (unmounted; the live UI is the `cinematic/` family + `results/` renderers).
+Every file has a doc comment at the top explaining its purpose. Files are numbered (01-, 02-) within each folder for clear ordering. Components under `components/landing/`, `components/lockscreen/`, `components/overlays/`, `components/feedback/`, and `components/search/01-04` are a retained earlier design generation (unmounted; the live UI is the `cinematic/` family + `results/` renderers). In `cinematic/`, `01-cinematic-home.tsx` (the previous home with Moments, manifesto, 1965 teaser, sample voices) and `05/06/07` (His Journey, Features, How it works) are kept for later but not shown.
 
 ```
 /
@@ -113,20 +114,25 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   │   └── verse/route.ts             (single verse lookup by id, or by textual cross-reference)
 │   ├── components/
 │   │   ├── cinematic/                 # THE LIVE UI FAMILY
-│   │   │   ├── 01-cinematic-home.tsx  (home: doorway entrance + rotating verse, hero search, library count-up, Moments filmstrip, 1965 teaser, sample voices)
+│   │   │   ├── 01-cinematic-home.tsx  (RETAINED, unmounted: the previous home — Moments, manifesto, 1965 teaser, sample voices)
 │   │   │   ├── 04-use-cinematic-reveal.ts (scroll reveals + 1.5s failsafe; journey rail fill)
-│   │   │   ├── 05-journey-page.tsx    (His Journey chapters)
-│   │   │   ├── 06-features-page.tsx   (three core features as live UI vignettes + supporting grid)
-│   │   │   ├── 07-how-it-works-page.tsx (three steps + five under-the-hood pipeline cards)
-│   │   │   ├── 09-search-experience.tsx (SSE orchestrator: loader → results → ask-next chips)
-│   │   │   ├── 10-search-loader.tsx   (mandala loader: five ticking stages from SSE, percent, rotating verses)
-│   │   │   ├── 11-site-header.tsx     (unified header: nav, More ▾, hamburger, theme toggle; variants overlay | solid | scene)
-│   │   │   ├── 12-site-footer.tsx     (unified footer)
+│   │   │   ├── 05-journey-page.tsx · 06-features-page.tsx · 07-how-it-works-page.tsx (RETAINED; their routes redirect home for now)
+│   │   │   ├── 09-search-experience.tsx (SSE orchestrator: Searching → Answer → Dig Deeper at #dig-deeper)
+│   │   │   ├── 10-search-loader.tsx   (Searching screen: four steps driven only by SSE stages, lineage walk from public/data/lineage.json)
+│   │   │   ├── 11-site-header.tsx     (in-flow header: logo left, a screen-specific control right; no nav)
+│   │   │   ├── 12-site-footer.tsx     (three links: Support the seva · Send feedback · GitHub)
 │   │   │   ├── 13-site-modals.tsx     (provider: seva modal with India/International toggle + one Bug/Idea/General feedback form, mailto submit)
-│   │   │   └── 14-photo-slot.tsx      (path-addressed photo slot: placeholder until the exact file exists; useImageAvailable for bg swaps)
+│   │   │   ├── 14-photo-slot.tsx      (path-addressed photo slot: placeholder until the exact file exists; useImageAvailable for bg swaps)
+│   │   │   ├── 15-brand.tsx           (logo: gold face medallion, divider, foil logotype)
+│   │   │   ├── 16-doorway.tsx         (doorway: landscape/portrait photo sets with film transitions, verse every 9 s, once a day)
+│   │   │   ├── 17-self-typing.tsx     (self-typing questions from public/data/self-typing-questions.json; CSS delays, 2 state changes per question)
+│   │   │   ├── 18-search-in-switch.tsx (Śrīla Prabhupāda · Advanced switch — only when NEXT_PUBLIC_ADVANCED_ENABLED)
+│   │   │   ├── 19-ask-home.tsx        (home: doorway + dark hero, search box, bubbles, sample questions, library numbers, trust cards)
+│   │   │   └── 20-advanced-page.tsx   (Advanced screen, flagged off; never shows a passage until those books exist)
 │   │   ├── results/
-│   │   │   ├── 01-narrative-response.tsx (prints results.passages first-to-last with nothing above them: label, words, citation, copy; Essay | By source views of the same list; collapsed "N more passages" citation tier below)
-│   │   │   └── 03-cinematic-dig-deeper.tsx (live cinematic evidence explorer: search, source/book/Skandha/chapter filters, grouped cards)
+│   │   │   ├── 01-narrative-response.tsx (the answer: prints results.passages first-to-last — lead card, label, words, citation bar; short + full disclaimer; Dig Deeper card)
+│   │   │   ├── 03-cinematic-dig-deeper.tsx (Dig Deeper screen: 1 Source → 2 Book → 3 Chapter shelf, breadcrumb, Best match / Book order; source/book/hierarchy filters only)
+│   │   │   └── 04-citation-bar.tsx    (gold medal + number, "Read in full ↗" when there is a URL, Copy with reference)
 │   │   ├── verse/
 │   │   │   └── 01-verse-view.tsx      (interactive reader: toggleable layers, swipe, cross-ref preview)
 │   │   ├── layout/03-theme-toggle.tsx (light/warm-evening toggle, used by the site header)
@@ -175,24 +181,32 @@ Every file has a doc comment at the top explaining its purpose. Files are number
 │   ├── search/page.tsx                (dynamic: reads ?q server-side → SearchExperience; noindex)
 │   ├── journey/page.tsx · features/page.tsx · how-it-works/page.tsx
 │   ├── globals.css                    (design tokens, light + warm-evening themes, motion-safe gating)
+│   ├── redesign.css                   (every redesign screen's styles + keyframes; reduced-motion block at the end)
+│   ├── manifest.ts · apple-icon.png   (app icons: gold face medallion on a dark rounded square)
+│   ├── advanced/page.tsx              (404 unless NEXT_PUBLIC_ADVANCED_ENABLED is "true")
 │   ├── layout.tsx                     (root layout + fonts + JSON-LD + modals provider)
 │   ├── page.tsx                       (home page)
-│   ├── icon.svg                       (lavender "A" monogram favicon)
+│   ├── icon.svg                       (16 px tab icon: the gold book emblem)
 │   ├── robots.ts                      (allow all; disallow /api/ + /search)
-│   └── sitemap.ts                     (4 curated routes)
+│   └── sitemap.ts                     (home only while the extra pages are hidden)
 ├── docs/screenshots/                  (release verification screenshots)
 ├── public/
 │   ├── data/donate.json               (legacy; live seva rows come from app/lib/19-seva-config.ts)
-│   ├── data/entrance-quotes.json      (entrance verse pool — bhāva/prema only; add lines here, no code change)
+│   ├── data/entrance-quotes.json      (doorway verse pool, 24 verses; add lines here, no code change)
+│   ├── data/lineage.json              (the 15 names of the Searching screen; add an approved painting by setting `image`)
+│   ├── data/self-typing-questions.json (8 desktop + 8 phone questions that type themselves in the search box)
+│   ├── icons/icon-192.png · icon-512.png (PWA icons)
 │   ├── images/
 │   │   ├── README.md                  (how automatic photo discovery and validation work)
 │   │   ├── lockscreen/                (photos; auto-discovered by /api/lockscreen-images)
+│   │   ├── redesign/                  (the redesign's photos and logo crops, WebP, plus grain.png)
 │   │   ├── journey/                   (path-addressed /journey chapter photos; exact filenames in its README)
 │   │   ├── moments/                   (path-addressed landing Moments photos: moments-01.jpg … moments-04.jpg)
 │   │   ├── ChatGPT Image Aug 10, 2026, 05_51_20 AM.png (untouched social-card source)
 │   │   └── social-share-v2.jpg         (sub-300 KiB Open Graph/Twitter derivative)
 │   └── videos/lockscreen/             (optional admin video upload)
 ├── scripts/verify-release.sh          (acceptance checks: run with SITE=<url>)
+├── scripts/build-redesign-assets.py   (makes grain.png and the app icons once; outputs are committed)
 ├── supabase/migrations/               (applied migrations, committed for record)
 ├── tests/                             (vitest unit tests)
 ├── package.json · next.config.ts · tsconfig.json · vitest.config.ts · postcss.config.mjs

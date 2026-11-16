@@ -1,0 +1,2464 @@
+/*
+ * redesign.css — The cinematic redesign (2026-11), every screen's look
+ *
+ * Colours, sizes, spacing, shadows and keyframes are copied from the approved
+ * canvas in docs/redesign/designs/*.dc.html (desktop 1440 px, phone 375 px).
+ * Phone layout applies below 768 px; the desktop layout from 768 px up, which
+ * includes iPad. The designs' own "max-width: 880px" narrowing rules are kept.
+ *
+ * Rules applied while copying (docs/redesign/HANDOFF.md):
+ *   • only transform and opacity animate — the doorway's focus-pull blur is
+ *     removed from its keyframes, the gold rule grows with scaleX instead of
+ *     width, and the lineage dots light up through an opacity layer;
+ *   • the live feTurbulence grain is replaced by one small PNG tile;
+ *   • no overflow:hidden around moving text, moving photo layers sit at
+ *     inset:-8%, glows are oversized and never scale below 1, no filter on text;
+ *   • every animation stops under prefers-reduced-motion (bottom of file).
+ *
+ * The dark scenes keep the design's literal colours in both themes; the paper
+ * surfaces read the site tokens so the Warm Evening theme still re-skins them.
+ * The two text-gradient animations the owner asked for by name (the logotype
+ * glint "asp-foil" and the doorway title "asp-shine") and the letters' gold →
+ * ink settle are kept as designed: small, text-only, and stopped by reduced
+ * motion.
+ */
+
+:root {
+  --asp-serif: var(--font-display), "Cormorant Garamond", Georgia, serif;
+  --asp-sans: var(--font-body), "DM Sans", system-ui, sans-serif;
+  --asp-night: #16120c;
+  --asp-cream: #fff8e8;
+  --asp-gold: #d9b76a;
+  --asp-gold-deep: #b0883a;
+  --asp-lilac: #c7b8fb;
+  /* Paper surfaces follow the theme tokens (globals.css). */
+  --asp-paper: var(--surface);
+  --asp-card: var(--surface-raised);
+  --asp-well: var(--surface-sunken);
+  --asp-ink: var(--ink);
+  --asp-ink-strong: var(--ink-strong);
+  --asp-muted: var(--ink-muted);
+  --asp-line: var(--border-hair);
+  --asp-line-firm: var(--border-firm);
+  --asp-violet: var(--accent);
+  --asp-violet-strong: var(--accent-strong);
+  --asp-violet-tint: var(--accent-tint);
+  --asp-fade-to-paper: linear-gradient(180deg, #16120c 0%, #2e261b 22%, #6d6252 48%, #c9bea9 76%, #faf7f1 100%);
+  --asp-fade-answer: linear-gradient(180deg, rgba(22, 18, 12, 0) 0%, rgba(110, 98, 82, 0.55) 45%, #d8cfbd 78%, #faf7f1 100%);
+  --asp-fade-answer-phone: linear-gradient(180deg, rgba(22, 18, 12, 0) 0%, rgba(150, 138, 118, 0.6) 55%, #faf7f1 100%);
+}
+
+.dark {
+  --asp-fade-to-paper: linear-gradient(180deg, #16120c 0%, var(--surface) 100%);
+  --asp-fade-answer: linear-gradient(180deg, rgba(22, 18, 12, 0) 0%, var(--surface) 100%);
+  --asp-fade-answer-phone: linear-gradient(180deg, rgba(22, 18, 12, 0) 0%, var(--surface) 100%);
+}
+
+.asp-page,
+.asp-page * {
+  box-sizing: border-box;
+}
+
+.asp-page {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  background: var(--asp-paper);
+  color: var(--asp-ink);
+  font-family: var(--asp-sans);
+  font-size: 17px;
+  line-height: 1.6;
+}
+
+.asp-dark {
+  position: relative;
+  background: var(--asp-night);
+  color: var(--asp-cream);
+  overflow: hidden;
+}
+
+.asp-sr {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+}
+
+.asp-layer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.asp-grain {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+  background-image: url("/images/redesign/grain.png");
+  background-size: 128px 128px;
+  background-repeat: repeat;
+  mix-blend-mode: overlay;
+}
+
+.asp-page a:focus-visible,
+.asp-page button:focus-visible,
+.asp-page input:focus-visible,
+.asp-page select:focus-visible {
+  outline: 3px solid #776ab0;
+  outline-offset: 3px;
+}
+
+.asp-dark a:focus-visible,
+.asp-dark button:focus-visible,
+.asp-dark input:focus-visible {
+  outline-color: var(--asp-lilac);
+}
+
+/* ── Shared keyframes ─────────────────────────────────────────────── */
+
+@keyframes asp-drift {
+  0% { transform: translate3d(-4%, -2%, 0) scale(1); }
+  50% { transform: translate3d(4%, 3%, 0) scale(1.1); }
+  100% { transform: translate3d(-4%, -2%, 0) scale(1); }
+}
+@keyframes asp-drift-phone {
+  0% { transform: translate3d(-6%, -3%, 0) scale(1); }
+  50% { transform: translate3d(6%, 4%, 0) scale(1.12); }
+  100% { transform: translate3d(-6%, -3%, 0) scale(1); }
+}
+@keyframes asp-rise {
+  from { opacity: 0; transform: translateY(22px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes asp-rise-sm {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes asp-foil {
+  0%, 55% { background-position: 130% 0, 0 0; }
+  100% { background-position: -30% 0, 0 0; }
+}
+@keyframes asp-glint {
+  0%, 62% { transform: translateX(-140%) skewX(-18deg); }
+  100% { transform: translateX(460%) skewX(-18deg); }
+}
+
+.asp-drift { animation: asp-drift 24s cubic-bezier(0.2, 0, 0, 1) infinite; will-change: transform; }
+.asp-rise { animation: asp-rise 1.2s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.asp-glint { animation: asp-glint 7s cubic-bezier(0.45, 0, 0.25, 1) infinite; }
+
+/* ═════════════════════════ 1 · LOGO, HEADER, FOOTER ═════════════════════════ */
+
+.asp-hdr {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 1360px;
+  margin: 0 auto;
+  height: calc(60px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) max(40px, env(safe-area-inset-right)) 0 max(40px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.asp-hdr-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.asp-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  min-width: 0;
+  text-decoration: none;
+  color: var(--asp-cream);
+}
+
+.asp-med {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 2px;
+  border-radius: 9999px;
+  background: linear-gradient(140deg, #fbeec6 0%, #d9b76a 38%, #8a6a2a 68%, #e8cf8f 100%);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 7px rgba(0, 0, 0, 0.42);
+}
+.asp-med > span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 1px;
+  border-radius: 9999px;
+  background: #120e09;
+}
+.asp-med img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 9999px;
+  object-fit: cover;
+}
+
+.asp-brand-div {
+  width: 1px;
+  height: 32px;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, rgba(217, 183, 106, 0), rgba(217, 183, 106, 0.8), rgba(217, 183, 106, 0));
+}
+
+.asp-logotype {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  line-height: 1;
+  text-align: left;
+  min-width: 0;
+}
+
+.asp-logo-ask {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--asp-gold);
+}
+.asp-logo-ask::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  margin-top: 2px;
+  background: linear-gradient(90deg, rgba(217, 183, 106, 0.75), rgba(217, 183, 106, 0));
+}
+
+/* The design's drop-shadow filter is drawn as a plain text layer instead, so
+   no filter ever touches text. */
+.asp-logo-name-wrap {
+  position: relative;
+  display: inline-block;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+.asp-logo-name-wrap::before {
+  content: attr(data-text);
+  position: absolute;
+  top: 1px;
+  left: 0;
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  color: rgba(0, 0, 0, 0.55);
+  white-space: nowrap;
+}
+.asp-logo-name {
+  position: relative;
+  display: inline-block;
+  padding-bottom: 0.08em;
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  background-image: linear-gradient(110deg, rgba(255, 255, 255, 0) 42%, rgba(255, 251, 238, 0.95) 50%, rgba(255, 255, 255, 0) 58%),
+    linear-gradient(180deg, #fffaf0 0%, #f6e7bf 36%, #d4ae5c 54%, #b58c3f 62%, #f3dfa6 100%);
+  background-size: 260% 100%, 100% 100%;
+  background-position: 130% 0, 0 0;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.asp-foil { animation: asp-foil 8s ease-in-out infinite; }
+
+.asp-hdr-btn {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 248, 232, 0.25);
+  background: transparent;
+  color: var(--asp-cream);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+/* Touch targets stay 44 px even where the drawn circle is 40 px. */
+.asp-hdr-btn { position: relative; }
+.asp-hdr-btn::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  bottom: -2px;
+  left: -2px;
+}
+
+.asp-ghost-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 20px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 248, 232, 0.28);
+  font-size: 14px;
+  color: rgba(255, 248, 232, 0.85);
+  text-decoration: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--asp-sans);
+  white-space: nowrap;
+  transition: background 160ms;
+}
+.asp-ghost-pill:hover { background: rgba(255, 248, 232, 0.12); color: var(--asp-cream); }
+.asp-only-phone { display: none; }
+@media (max-width: 767px) {
+  .asp-only-phone { display: inline; }
+  .asp-not-phone { display: none; }
+}
+
+.asp-hsearch {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  width: 340px;
+  padding: 0 6px 0 16px;
+  border-radius: 9999px;
+  background: rgba(255, 248, 232, 0.08);
+  border: 1px solid rgba(255, 248, 232, 0.24);
+}
+.asp-hsearch input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 40px;
+  border: 0;
+  background: transparent;
+  font-family: var(--asp-sans);
+  font-size: 16px;
+  color: var(--asp-cream);
+}
+.asp-hsearch input::placeholder { color: rgba(255, 248, 232, 0.7); opacity: 1; }
+.asp-hsearch input:focus { outline: none; }
+.asp-hsearch:focus-within { outline: 3px solid var(--asp-lilac); outline-offset: 3px; }
+.asp-hicon {
+  display: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 248, 232, 0.25);
+  color: var(--asp-cream);
+  align-items: center;
+  justify-content: center;
+}
+
+/* Footer */
+.asp-foot {
+  padding: 0 max(40px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(40px, env(safe-area-inset-left));
+  background: var(--asp-paper);
+}
+.asp-foot-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding-top: 32px;
+  border-top: 1px solid var(--asp-line);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.asp-foot-brand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 16px;
+}
+.asp-foot-name {
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 20px;
+  color: var(--asp-violet-strong);
+}
+.asp-foot-copy { font-size: 13px; color: var(--asp-muted); }
+.asp-foot nav { display: flex; flex-wrap: wrap; gap: 4px; }
+.asp-foot-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  font-family: var(--asp-sans);
+  font-size: 14px;
+  color: var(--asp-muted);
+  text-decoration: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.asp-foot-link:hover { color: var(--asp-violet-strong); }
+
+@media (max-width: 880px) {
+  .asp-hdr {
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-left: max(20px, env(safe-area-inset-left));
+  }
+  .asp-foot {
+    padding-right: max(20px, env(safe-area-inset-right));
+    padding-left: max(20px, env(safe-area-inset-left));
+  }
+  .asp-hsearch { display: none; }
+  .asp-hicon { display: inline-flex; }
+}
+
+@media (max-width: 767px) {
+  .asp-hdr {
+    height: calc(56px + env(safe-area-inset-top));
+    padding-right: max(10px, env(safe-area-inset-right));
+  }
+  .asp-brand { gap: 10px; }
+  .asp-med { width: 34px; height: 34px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.42); }
+  .asp-brand-div { height: 26px; }
+  .asp-logo-ask { font-size: 12px; }
+  .asp-logo-ask::after { margin-top: 1px; }
+  .asp-logo-name,
+  .asp-logo-name-wrap::before { font-size: 18px; }
+  .asp-ghost-pill { padding: 0 14px; font-size: 13px; }
+}
+
+/* ═════════════════════════ 2 · DOORWAY ═════════════════════════ */
+
+/* <html data-door> is written before first paint by the doorway's inline
+   script: "show" → the doorway covers the page (which waits, paused);
+   "leaving" → it fades away over the page; anything else → it is not there. */
+.asp-door { display: none; }
+html[data-door="show"] .asp-door,
+html[data-door="leaving"] .asp-door { display: block; }
+html[data-door="show"] .asp-door-behind { visibility: hidden; }
+html[data-door="show"] .asp-door-behind *,
+html[data-door="show"] .asp-door-behind *::before,
+html[data-door="show"] .asp-door-behind *::after { animation-play-state: paused !important; }
+html[data-door="show"],
+html[data-door="show"] body { overflow: hidden; }
+html[data-door="leaving"] .asp-door { opacity: 0; pointer-events: none; }
+
+.asp-door {
+  position: fixed;
+  touch-action: none;
+  overscroll-behavior: none;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 1000;
+  min-height: 100%;
+  background: #0b0906;
+  color: var(--asp-cream);
+  font-family: var(--asp-sans);
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.9s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.asp-door-set { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+@media (max-width: 767px) { .asp-door-set-L { display: none; } }
+@media (min-width: 768px) { .asp-door-set-P { display: none; } }
+
+.asp-ph {
+  position: absolute;
+  top: -8%;
+  right: -8%;
+  bottom: -8%;
+  left: -8%;
+  overflow: hidden;
+  isolation: isolate;
+  opacity: 0;
+  will-change: transform, opacity;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+.asp-ph-img {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+.asp-ph-grade { position: absolute; top: 0; right: 0; bottom: 0; left: 0; }
+/* The first photo loads at once — but only the one this screen width shows. */
+@media (min-width: 768px) {
+  .asp-door-set-L .asp-ph-first .asp-ph-img { background-image: url("/images/redesign/photos/with-disciples.webp"); }
+}
+@media (max-width: 767px) {
+  .asp-door-set-P .asp-ph-first .asp-ph-img { background-image: url("/images/redesign/photos/folded-hands.webp"); }
+}
+
+@keyframes asp-weave {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  25% { transform: translate3d(0, -0.6px, 0); }
+  50% { transform: translate3d(0.4px, 0.3px, 0); }
+  75% { transform: translate3d(-0.3px, 0.5px, 0); }
+}
+.asp-weave { position: absolute; top: 0; right: 0; bottom: 0; left: 0; animation: asp-weave 0.9s steps(4) infinite; }
+
+/* Landscape set: 35 s cycle, 7 s per photo, 2.6 s transitions. The design's
+   focus-pull blur is dropped from these frames (filters never animate). */
+@keyframes asp-Lp0 {
+  0% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.166); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  7.429% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  20% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 2; animation-timing-function: linear; }
+  20.01% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  26.314% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.051); z-index: 1; animation-timing-function: linear; }
+  26.334% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.166); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.166); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Lp1 {
+  0% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+  20% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  27.429% { opacity: 1; transform: translate3d(-1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  40% { opacity: 1; transform: translate3d(1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  40.01% { opacity: 1; transform: translate3d(1.6%, 0, 0) scale(1.08); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  47.429% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.458); z-index: 1; animation-timing-function: linear; }
+  47.449% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Lp2 {
+  0% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 1; animation-timing-function: linear; }
+  40% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  47.429% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 2; animation-timing-function: linear; }
+  60% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  60.01% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.08); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  66.314% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+  66.334% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Lp3 {
+  0% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 1; animation-timing-function: linear; }
+  60% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  67.429% { opacity: 1; transform: translate3d(1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  80% { opacity: 1; transform: translate3d(-1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  80.01% { opacity: 1; transform: translate3d(-1.6%, 0, 0) scale(1.08); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  87.429% { opacity: 0; transform: translate3d(-3.6%, 0, 0) scale(1.102); z-index: 1; animation-timing-function: linear; }
+  87.449% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Lp4 {
+  0% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.1); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  0.01% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.1); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  7.429% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.188); z-index: 1; animation-timing-function: linear; }
+  7.449% { opacity: 0; transform: translate3d(2%, 0, 0) scale(1.092); z-index: 1; animation-timing-function: linear; }
+  80% { opacity: 0; transform: translate3d(2%, 0, 0) scale(1.092); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  87.429% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.04); z-index: 2; animation-timing-function: linear; }
+  100% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.1); z-index: 2; animation-timing-function: linear; }
+}
+@keyframes asp-Lleak {
+  0% { opacity: 0; transform: translate3d(-35%, 0, 0); }
+  20% { opacity: 0; transform: translate3d(-35%, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  23.714% { opacity: 0.85; transform: translate3d(0, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  27.429% { opacity: 0; transform: translate3d(35%, 0, 0); }
+  100% { opacity: 0; transform: translate3d(35%, 0, 0); }
+}
+@keyframes asp-Lbloom {
+  0% { opacity: 0; transform: scale(1); }
+  60% { opacity: 0; transform: scale(1); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  63.12% { opacity: 0.92; transform: scale(1.06); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  67.429% { opacity: 0; transform: scale(1.12); }
+  100% { opacity: 0; transform: scale(1.12); }
+}
+@keyframes asp-Lflare {
+  0% { opacity: 0; transform: translate3d(-60%, 0, 0); }
+  80% { opacity: 0; transform: translate3d(-60%, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  83.714% { opacity: 1; transform: translate3d(0, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  87.429% { opacity: 0; transform: translate3d(60%, 0, 0); }
+  100% { opacity: 0; transform: translate3d(60%, 0, 0); }
+}
+.asp-Lp0 { animation: asp-Lp0 35s linear -4s infinite; }
+.asp-Lp1 { animation: asp-Lp1 35s linear -4s infinite; }
+.asp-Lp2 { animation: asp-Lp2 35s linear -4s infinite; }
+.asp-Lp3 { animation: asp-Lp3 35s linear -4s infinite; }
+.asp-Lp4 { animation: asp-Lp4 35s linear -4s infinite; }
+.asp-Lleak { animation: asp-Lleak 35s linear -4s infinite; }
+.asp-Lbloom { animation: asp-Lbloom 35s linear -4s infinite; }
+.asp-Lflare { animation: asp-Lflare 35s linear -4s infinite; }
+
+/* Portrait set: 42 s cycle, six photos. */
+@keyframes asp-Pp0 {
+  0% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.166); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  6.19% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  16.667% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 2; animation-timing-function: linear; }
+  16.677% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  21.929% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.051); z-index: 1; animation-timing-function: linear; }
+  21.949% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.166); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.166); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Pp1 {
+  0% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+  16.667% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  22.857% { opacity: 1; transform: translate3d(-1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  33.333% { opacity: 1; transform: translate3d(1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  33.343% { opacity: 1; transform: translate3d(1.6%, 0, 0) scale(1.08); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  39.524% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.458); z-index: 1; animation-timing-function: linear; }
+  39.544% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Pp2 {
+  0% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 1; animation-timing-function: linear; }
+  33.333% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  39.524% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 2; animation-timing-function: linear; }
+  50% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  50.01% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.08); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  55.262% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.123); z-index: 1; animation-timing-function: linear; }
+  55.282% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.257); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Pp3 {
+  0% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 1; animation-timing-function: linear; }
+  50% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  56.19% { opacity: 1; transform: translate3d(1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  66.667% { opacity: 1; transform: translate3d(-1.6%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  66.677% { opacity: 1; transform: translate3d(-1.6%, 0, 0) scale(1.08); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  69.762% { opacity: 0; transform: translate3d(-1.6%, 0, 0) scale(1.102); z-index: 1; animation-timing-function: linear; }
+  69.782% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(1.6%, 0, 0) scale(1.134); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Pp4 {
+  0% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.071); z-index: 1; animation-timing-function: linear; }
+  66.667% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.071); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  69.762% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.071); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  72.857% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.04); z-index: 2; animation-timing-function: linear; }
+  83.333% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.1); z-index: 2; animation-timing-function: linear; }
+  83.343% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.1); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  89.524% { opacity: 0; transform: translate3d(-2%, 0, 0) scale(1.122); z-index: 1; animation-timing-function: linear; }
+  89.544% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.071); z-index: 1; animation-timing-function: linear; }
+  100% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.071); z-index: 1; animation-timing-function: linear; }
+}
+@keyframes asp-Pp5 {
+  0% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  0.01% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 1; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  6.19% { opacity: 0; transform: translate3d(0%, 0, 0) scale(1.061); z-index: 1; animation-timing-function: linear; }
+  6.21% { opacity: 0; transform: translate3d(2%, 0, 0) scale(1.134); z-index: 1; animation-timing-function: linear; }
+  83.333% { opacity: 0; transform: translate3d(2%, 0, 0) scale(1.134); z-index: 2; animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  89.524% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.08); z-index: 2; animation-timing-function: linear; }
+  100% { opacity: 1; transform: translate3d(0%, 0, 0) scale(1.03); z-index: 2; animation-timing-function: linear; }
+}
+@keyframes asp-Pleak {
+  0% { opacity: 0; transform: translate3d(-35%, 0, 0); }
+  16.667% { opacity: 0; transform: translate3d(-35%, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  19.762% { opacity: 0.85; transform: translate3d(0, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  22.857% { opacity: 0; transform: translate3d(35%, 0, 0); }
+  100% { opacity: 0; transform: translate3d(35%, 0, 0); }
+}
+@keyframes asp-Pbloom {
+  0% { opacity: 0; transform: scale(1); }
+  50% { opacity: 0; transform: scale(1); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  52.6% { opacity: 0.92; transform: scale(1.06); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  56.19% { opacity: 0; transform: scale(1.12); }
+  100% { opacity: 0; transform: scale(1.12); }
+}
+@keyframes asp-Pflare {
+  0% { opacity: 0; transform: translate3d(-60%, 0, 0); }
+  83.333% { opacity: 0; transform: translate3d(-60%, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  86.429% { opacity: 1; transform: translate3d(0, 0, 0); animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1); }
+  89.524% { opacity: 0; transform: translate3d(60%, 0, 0); }
+  100% { opacity: 0; transform: translate3d(60%, 0, 0); }
+}
+.asp-Pp0 { animation: asp-Pp0 42s linear -4s infinite; }
+.asp-Pp1 { animation: asp-Pp1 42s linear -4s infinite; }
+.asp-Pp2 { animation: asp-Pp2 42s linear -4s infinite; }
+.asp-Pp3 { animation: asp-Pp3 42s linear -4s infinite; }
+.asp-Pp4 { animation: asp-Pp4 42s linear -4s infinite; }
+.asp-Pp5 { animation: asp-Pp5 42s linear -4s infinite; }
+.asp-Pleak { animation: asp-Pleak 42s linear -4s infinite; }
+.asp-Pbloom { animation: asp-Pbloom 42s linear -4s infinite; }
+.asp-Pflare { animation: asp-Pflare 42s linear -4s infinite; }
+
+.asp-fx { position: absolute; z-index: 3; opacity: 0; mix-blend-mode: screen; pointer-events: none; will-change: transform, opacity; }
+.asp-fx-leak {
+  top: -10%;
+  left: -10%;
+  width: 120%;
+  height: 120%;
+  background: radial-gradient(ellipse 45% 70% at 30% 45%, rgba(255, 120, 40, 0.75), rgba(255, 120, 40, 0) 60%),
+    radial-gradient(ellipse 35% 55% at 55% 60%, rgba(255, 190, 90, 0.6), rgba(255, 190, 90, 0) 65%),
+    radial-gradient(ellipse 30% 45% at 75% 30%, rgba(214, 70, 90, 0.35), rgba(214, 70, 90, 0) 70%);
+}
+.asp-fx-bloom {
+  top: -30%;
+  left: -30%;
+  width: 160%;
+  height: 160%;
+  background: radial-gradient(ellipse 40% 40% at 53% 42%, rgba(255, 248, 230, 0.95), rgba(255, 226, 170, 0.55) 45%, rgba(255, 226, 170, 0) 100%);
+}
+.asp-fx-flare {
+  left: -20%;
+  right: -20%;
+  top: 38%;
+  height: 140px;
+  background: radial-gradient(ellipse 50% 6% at 50% 50%, rgba(255, 255, 255, 0.95), rgba(170, 200, 255, 0.55) 40%, rgba(170, 200, 255, 0) 100%),
+    radial-gradient(ellipse 18% 45% at 50% 50%, rgba(255, 214, 150, 0.55), rgba(255, 214, 150, 0) 100%);
+}
+
+.asp-door-scrim { position: absolute; z-index: 4; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
+.asp-door-scrim-1 { background: linear-gradient(180deg, rgba(22, 18, 12, 0.42) 0%, rgba(22, 18, 12, 0.1) 30%, rgba(22, 18, 12, 0.46) 60%, rgba(22, 18, 12, 0.92) 100%); }
+.asp-door-scrim-2 { background: radial-gradient(115% 62% at 50% 88%, rgba(22, 18, 12, 0.7), rgba(22, 18, 12, 0.32) 55%, rgba(22, 18, 12, 0) 78%); }
+.asp-door-scrim-3 { background: radial-gradient(120% 90% at 50% 92%, rgba(201, 162, 75, 0.16), rgba(201, 162, 75, 0) 55%); }
+.asp-door-scrim-4 { background: radial-gradient(120% 100% at 50% 42%, rgba(11, 9, 6, 0) 62%, rgba(11, 9, 6, 0.35) 100%); }
+.asp-door .asp-grain { z-index: 4; opacity: 0.07; }
+
+@keyframes asp-sweep {
+  0% { transform: translateX(-80%); }
+  55%, 100% { transform: translateX(260%); }
+}
+.asp-sweep {
+  position: absolute;
+  z-index: 4;
+  top: -30%;
+  left: 0;
+  width: 60%;
+  height: 160%;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(255, 244, 214, 0) 0%, rgba(255, 244, 214, 0.05) 30%, rgba(255, 244, 214, 0.12) 50%, rgba(255, 244, 214, 0.05) 70%, rgba(255, 244, 214, 0) 100%);
+  animation: asp-sweep 11s ease-in-out infinite;
+}
+
+@keyframes asp-up {
+  from { opacity: 0; transform: translate3d(0, 40%, 0); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes asp-shine {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 100% 50%; }
+}
+@keyframes asp-rule {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+@keyframes asp-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.asp-up1 { animation: asp-up 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.35s both; }
+.asp-shine { animation: asp-up 1.05s cubic-bezier(0.16, 1, 0.3, 1) 0.5s both, asp-shine 16s ease-in-out 1.6s infinite alternate; }
+.asp-rule-grow { animation: asp-rule 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.9s both; }
+.asp-in { animation: asp-in 1.1s ease 1.1s both; }
+
+.asp-door-copy {
+  position: relative;
+  z-index: 5;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 88px 24px clamp(56px, 13vh, 130px);
+  padding-bottom: max(clamp(56px, 13vh, 130px), env(safe-area-inset-bottom));
+  text-align: center;
+  pointer-events: none;
+}
+.asp-door-ask {
+  margin: 0 0 0 0.42em;
+  font-size: clamp(11px, 1.3vw, 14px);
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: #fff3d6;
+  text-shadow: 0 2px 18px rgba(22, 18, 12, 0.9), 0 0 34px rgba(22, 18, 12, 0.7);
+}
+.asp-door-title {
+  margin: 0;
+  font-family: var(--asp-serif);
+  font-size: clamp(2.4rem, min(9vw, 11vh), 7.4rem);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.08;
+  padding-bottom: 0.06em;
+  background: linear-gradient(100deg, #fff8e8 0%, #f3dfa6 22%, #fff8e8 40%, #e6dcff 58%, #d9b76a 78%, #fff8e8 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.asp-door-rule {
+  width: 120px;
+  height: 1px;
+  margin: 6px auto 14px;
+  background: linear-gradient(90deg, rgba(201, 162, 75, 0), rgba(201, 162, 75, 0.9), rgba(201, 162, 75, 0));
+}
+.asp-door-verse { position: relative; max-width: 640px; margin: 0 auto; }
+.asp-door-quote {
+  font-family: Georgia, serif;
+  font-size: 50px;
+  line-height: 1;
+  color: rgba(201, 162, 75, 0.42);
+  text-shadow: 0 2px 20px rgba(22, 18, 12, 0.9);
+  margin-bottom: -12px;
+}
+.asp-door-verses { display: grid; }
+.asp-v { grid-area: 1 / 1; align-self: end; opacity: 0; }
+.asp-v-text {
+  margin: 0;
+  font-family: var(--asp-serif);
+  font-size: clamp(16px, 1.95vw, 21px);
+  font-style: italic;
+  color: rgba(255, 248, 232, 0.95);
+  text-shadow: 0 2px 16px rgba(22, 18, 12, 0.85);
+  line-height: 1.56;
+}
+.asp-v-src {
+  margin: 16px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(201, 162, 75, 0.95);
+  text-shadow: 0 2px 12px rgba(22, 18, 12, 0.9);
+}
+.asp-hit {
+  position: absolute;
+  z-index: 6;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.asp-hit:focus-visible { outline: 3px solid var(--asp-lilac); outline-offset: -6px; }
+
+@media (max-width: 767px) {
+  .asp-door-copy { padding: 88px 24px 52px; padding-bottom: max(52px, env(safe-area-inset-bottom)); }
+  .asp-door-ask { font-size: 11px; }
+  .asp-door-title { font-size: 38px; }
+  .asp-v-text { font-size: 16px; }
+}
+
+/* ═════════════════════════ 3 · ASK (HOME) ═════════════════════════ */
+
+.asp-ask-hero {
+  min-height: 880px;
+  display: flex;
+  flex-direction: column;
+}
+.asp-ask-base { position: absolute; top: -4%; right: -4%; bottom: -4%; left: -4%; background: radial-gradient(ellipse 55% 65% at 50% 42%, #4d3c22 0%, #2b2217 42%, #16120c 78%); }
+.asp-ask-photo { position: absolute; top: 0; right: 0; bottom: 0; left: 0; overflow: hidden; opacity: 0.4; }
+.asp-ask-photo-img {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background-image: url("/images/redesign/photos/vrindavan-deities.webp");
+  background-size: cover;
+  background-position: 56% 30%;
+  will-change: transform;
+}
+@keyframes asp-kb {
+  from { transform: scale(1.02); }
+  to { transform: scale(1.1); }
+}
+.asp-kb { animation: asp-kb 24s ease-out infinite alternate; }
+.asp-ask-dim { background: radial-gradient(ellipse 50% 45% at 50% 48%, rgba(22, 18, 12, 0.6), rgba(22, 18, 12, 0) 100%); }
+.asp-ask-glow-gold {
+  position: absolute;
+  left: 36%;
+  top: -22%;
+  width: 980px;
+  height: 980px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(217, 183, 106, 0.28) 0%, rgba(217, 183, 106, 0) 62%);
+  pointer-events: none;
+}
+.asp-ask-glow-violet {
+  position: absolute;
+  left: -18%;
+  bottom: -42%;
+  width: 1000px;
+  height: 1000px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139, 110, 224, 0.24) 0%, rgba(139, 110, 224, 0) 60%);
+  animation-delay: -11s;
+  pointer-events: none;
+}
+.asp-ask-glow-phone { display: none; }
+.asp-ask-shade { background: linear-gradient(180deg, rgba(22, 18, 12, 0.55) 0%, rgba(22, 18, 12, 0.1) 34%, rgba(22, 18, 12, 0.5) 74%, #16120c 100%); }
+.asp-ask-hero .asp-grain { opacity: 0.1; }
+
+/* Floating light bubbles */
+@keyframes asp-bub-dA { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(-14px, -280px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(28px, -560px, 0); opacity: 0; } }
+@keyframes asp-bub-dB { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(20px, -314px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(-40px, -627px, 0); opacity: 0; } }
+@keyframes asp-bub-dC { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(-28px, -246px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(55px, -493px, 0); opacity: 0; } }
+@keyframes asp-bub-dD { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(9px, -336px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(-18px, -672px, 0); opacity: 0; } }
+@keyframes asp-bub-pA { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(-14px, -190px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(28px, -380px, 0); opacity: 0; } }
+@keyframes asp-bub-pB { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(20px, -213px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(-40px, -426px, 0); opacity: 0; } }
+@keyframes asp-bub-pC { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(-28px, -167px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(55px, -334px, 0); opacity: 0; } }
+@keyframes asp-bub-pD { 0% { transform: translate3d(0, 0, 0); opacity: 0; } 14% { opacity: 1; } 50% { transform: translate3d(9px, -228px, 0); } 86% { opacity: 1; } 100% { transform: translate3d(-18px, -456px, 0); opacity: 0; } }
+.asp-bubs { position: absolute; top: 0; right: 0; bottom: 0; left: 0; pointer-events: none; }
+.asp-bub { position: absolute; pointer-events: none; will-change: transform, opacity; }
+.asp-bub > span { display: block; width: 100%; height: 100%; border-radius: 50%; }
+.asp-bubs-phone { display: none; }
+
+.asp-hero {
+  position: relative;
+  z-index: 1;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 90px 40px 150px;
+}
+.asp-eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: var(--asp-gold);
+}
+.asp-word {
+  margin: 16px 0 0;
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 112px;
+  line-height: 1.02;
+  letter-spacing: -0.03em;
+  background: linear-gradient(100deg, #fff8e8 10%, #e6dcff 52%, #d9b76a 96%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  padding-bottom: 0.04em;
+}
+.asp-word-br { display: none; }
+.asp-tagline {
+  margin: 18px 0 0;
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 24px;
+  color: rgba(255, 248, 232, 0.8);
+}
+
+/* The search box */
+.asp-ask-form { margin: 52px 0 0; width: 100%; max-width: 760px; }
+.asp-box { position: relative; border-radius: 21.5px; box-shadow: 0 30px 90px rgba(0, 0, 0, 0.55); }
+@keyframes asp-halo {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.03); }
+}
+.asp-halo {
+  position: absolute;
+  top: -26px;
+  left: -40px;
+  right: -40px;
+  bottom: -26px;
+  border-radius: 60px;
+  background: radial-gradient(ellipse 50% 60% at 50% 50%, rgba(217, 183, 106, 0.3), rgba(217, 183, 106, 0) 72%);
+  pointer-events: none;
+  animation: asp-halo 6s ease-in-out infinite;
+}
+.asp-frame {
+  position: relative;
+  padding: 1.5px;
+  border-radius: 21.5px;
+  overflow: hidden;
+  isolation: isolate;
+  -webkit-mask-image: linear-gradient(#000, #000);
+  mask-image: linear-gradient(#000, #000);
+  background: rgba(217, 183, 106, 0.45);
+}
+@keyframes asp-rim {
+  to { transform: rotate(360deg); }
+}
+.asp-rim {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 900px;
+  height: 900px;
+  margin: -450px 0 0 -450px;
+  background: conic-gradient(from 0deg, rgba(255, 240, 200, 0) 0deg, rgba(255, 240, 200, 0) 240deg, rgba(255, 236, 190, 0.95) 296deg, rgba(165, 140, 240, 0.9) 326deg, rgba(255, 240, 200, 0) 360deg);
+  animation: asp-rim 9s linear infinite;
+  will-change: transform;
+}
+.asp-box-inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px 22px;
+  background: #fefcf8;
+  border-radius: 20px;
+}
+.asp-box-icon { flex-shrink: 0; }
+.asp-qwrap {
+  position: relative;
+  flex: 1 1 200px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 52px;
+}
+.asp-qwrap input {
+  width: 100%;
+  height: 52px;
+  border: 0;
+  background: transparent;
+  font-family: var(--asp-sans);
+  font-size: 19px;
+  color: #201b12;
+  -webkit-appearance: none;
+  appearance: none;
+  border-radius: 0;
+}
+.asp-qwrap input:focus { outline: none; }
+.asp-qwrap input::-webkit-search-cancel-button { -webkit-appearance: none; }
+.asp-frame:focus-within { box-shadow: 0 0 0 3px var(--asp-lilac); }
+/* The self-typing overlay: on top of the real input, never in its way. It
+   carries no overflow clipping, so a letter's rise is never cut by a box. */
+.asp-tw {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  pointer-events: none;
+  white-space: nowrap;
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 23px;
+  color: #6e6353;
+  transition: opacity 200ms;
+}
+.asp-qwrap:focus-within .asp-tw,
+.asp-tw[data-hidden="true"] { opacity: 0; }
+.asp-tw-line { display: inline-flex; align-items: center; }
+.asp-tw-line[data-phase="out"] { opacity: 0; transform: translate3d(0, -8px, 0); transition: opacity 0.7s ease, transform 0.7s ease; }
+.asp-ch { display: inline-block; }
+@keyframes asp-chA {
+  from { opacity: 0; transform: translate3d(0, 0.32em, 0); color: #c9a24b; }
+  to { opacity: 1; transform: none; color: #6e6353; }
+}
+@keyframes asp-chB {
+  from { opacity: 0; transform: translate3d(0, 0.32em, 0); color: #c9a24b; }
+  to { opacity: 1; transform: none; color: #6e6353; }
+}
+@keyframes asp-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.asp-caret-wrap { display: inline-flex; }
+.asp-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.05em;
+  margin-left: 3px;
+  border-radius: 1px;
+  background: #6b57c9;
+  animation: asp-caret 1s steps(1) infinite;
+}
+
+.asp-mic {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 9999px;
+  border: 1px solid #d8ccb8;
+  background: #fefcf8;
+  color: #51409a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+.asp-mic[aria-pressed="true"] { background: #ece8f9; border-color: #6b57c9; }
+
+.asp-cta {
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 28px;
+  border: 0;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #6b57c9, #51409a);
+  color: #ffffff;
+  font-family: var(--asp-sans);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  box-shadow: 0 10px 34px rgba(107, 87, 201, 0.3);
+  cursor: pointer;
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+.asp-cta:hover { transform: translateY(-2px); color: #ffffff; }
+.asp-cta:active { transform: scale(0.97); }
+.asp-cta-glint {
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  left: 0;
+  width: 34%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0));
+  pointer-events: none;
+  animation-delay: -3.5s;
+}
+.asp-cta-arrow-phone { display: none; }
+
+/* "Search in" switch — only built when NEXT_PUBLIC_ADVANCED_ENABLED is "true" */
+.asp-searchin { margin-top: 22px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.asp-searchin-lbl {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--asp-gold);
+}
+.asp-searchin-lbl::before,
+.asp-searchin-lbl::after { content: ""; width: 56px; height: 1px; }
+.asp-searchin-lbl::before { background: linear-gradient(90deg, rgba(217, 183, 106, 0), rgba(217, 183, 106, 0.75)); }
+.asp-searchin-lbl::after { background: linear-gradient(90deg, rgba(217, 183, 106, 0.75), rgba(217, 183, 106, 0)); }
+.asp-segwrap {
+  display: flex;
+  padding: 5px;
+  gap: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, rgba(255, 248, 232, 0.09), rgba(255, 248, 232, 0.03));
+  border: 1px solid rgba(217, 183, 106, 0.38);
+  box-shadow: inset 0 1px 0 rgba(255, 248, 232, 0.08), 0 22px 60px rgba(0, 0, 0, 0.35);
+}
+.asp-seg {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 58px;
+  padding: 7px 24px 7px 8px;
+  border: 0;
+  border-radius: 9999px;
+  color: rgba(255, 248, 232, 0.88);
+  background: transparent;
+  text-decoration: none;
+  cursor: pointer;
+  font-family: var(--asp-sans);
+  transition: background 220ms, color 220ms, box-shadow 220ms;
+}
+.asp-seg:hover { background: rgba(255, 248, 232, 0.09); color: var(--asp-cream); box-shadow: inset 0 0 0 1px rgba(217, 183, 106, 0.45); }
+.asp-seg[aria-pressed="true"] {
+  color: #201b12;
+  background: linear-gradient(180deg, #fffaf0 0%, #f4e6bf 55%, #ecd59a 100%);
+  box-shadow: inset 0 0 0 1px rgba(201, 162, 75, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 8px 26px rgba(0, 0, 0, 0.38), 0 0 36px rgba(217, 183, 106, 0.3);
+}
+.asp-seg-glint {
+  position: absolute;
+  top: -10%;
+  bottom: -10%;
+  left: 0;
+  width: 30%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+.asp-seg-body { position: relative; display: inline-flex; align-items: center; gap: 12px; }
+.asp-seg .asp-med { width: 42px; height: 42px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.42); }
+.asp-seg-ico {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 9999px;
+  border: 1px solid rgba(217, 183, 106, 0.55);
+  background: radial-gradient(circle at 50% 35%, #3a2d1b, #120e09 75%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.asp-seg-text { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.05; text-align: left; }
+.asp-seg-name { font-family: var(--asp-serif); font-weight: 600; font-size: 21px; white-space: nowrap; }
+.asp-seg-sub { margin-top: 3px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: rgba(217, 183, 106, 0.85); }
+.asp-seg[aria-pressed="true"] .asp-seg-sub { color: #7a500a; }
+.asp-searchin-note { display: none; }
+
+.asp-chips { margin-top: 30px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+.asp-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 9999px;
+  background: rgba(255, 248, 232, 0.07);
+  border: 1px solid rgba(255, 248, 232, 0.22);
+  color: rgba(255, 248, 232, 0.88);
+  font-family: var(--asp-sans);
+  font-size: 14px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 160ms, border-color 160ms;
+}
+.asp-chip:hover { background: rgba(255, 248, 232, 0.16); border-color: rgba(255, 248, 232, 0.45); color: var(--asp-cream); }
+
+@keyframes asp-cue {
+  0% { transform: scaleY(0); transform-origin: top; }
+  45% { transform: scaleY(1); transform-origin: top; }
+  55% { transform: scaleY(1); transform-origin: bottom; }
+  100% { transform: scaleY(0); transform-origin: bottom; }
+}
+.asp-scrollcue {
+  position: absolute;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  z-index: 1;
+}
+.asp-scrollcue-label { font-size: 10px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: rgba(255, 248, 232, 0.5); }
+.asp-scrollcue-track { position: relative; width: 1px; height: 44px; background: rgba(255, 248, 232, 0.15); overflow: hidden; }
+.asp-scrollcue-line { position: absolute; top: 0; left: 0; width: 1px; height: 44px; background: var(--asp-gold); animation: asp-cue 2.6s cubic-bezier(0.2, 0, 0, 1) infinite; }
+
+.asp-fade { height: 260px; background: var(--asp-fade-to-paper); }
+
+.asp-sec { padding-left: max(40px, env(safe-area-inset-left)); padding-right: max(40px, env(safe-area-inset-right)); }
+.asp-lib {
+  position: relative;
+  padding-top: 40px;
+  padding-bottom: 130px;
+  background: radial-gradient(ellipse 45% 40% at 12% 10%, rgba(139, 110, 224, 0.08), rgba(139, 110, 224, 0) 70%),
+    radial-gradient(ellipse 45% 45% at 92% 95%, rgba(201, 162, 75, 0.11), rgba(201, 162, 75, 0) 70%), var(--asp-paper);
+}
+.asp-wrap { max-width: 1280px; margin: 0 auto; }
+.asp-kicker { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: var(--asp-violet); }
+.asp-h2 {
+  margin: 20px 0 0;
+  max-width: 17ch;
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 64px;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+  color: var(--asp-ink-strong);
+}
+.asp-h2 em,
+.asp-grad-em {
+  font-style: italic;
+  background: linear-gradient(100deg, #b0883a, #6b57c9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dark .asp-h2 em,
+.dark .asp-grad-em { background: linear-gradient(100deg, #d9b76a, #c7b8fb); -webkit-background-clip: text; background-clip: text; }
+.asp-g3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.asp-stats { margin-top: 80px; gap: 0; }
+.asp-stat { padding: 36px 40px 8px 40px; border-left: 1px solid var(--asp-line); }
+.asp-stat:first-child { padding-left: 0; border-left: 0; }
+.asp-stat:last-child { padding-right: 0; }
+.asp-stat-n {
+  margin: 0;
+  font-family: var(--asp-serif);
+  font-weight: 500;
+  font-size: 120px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(170deg, #201b12 35%, #c9a24b 120%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.dark .asp-stat-n { background: linear-gradient(170deg, #f6efdf 35%, #c9a24b 120%); -webkit-background-clip: text; background-clip: text; }
+/* The real counts carry a "+" the mockup did not, so between the design's
+   1440 px and the single-column 880 px layout the numbers scale with the
+   window instead of spilling out of their column (iPad landscape is 1024). */
+.asp-stat-n { white-space: nowrap; }
+@media (min-width: 881px) and (max-width: 1279px) {
+  .asp-stat-n { font-size: 7.8vw; }
+}
+.asp-stat-label { margin: 22px 0 0; font-size: 13px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--asp-violet); }
+.asp-stat-desc { margin: 12px 0 0; max-width: 34ch; font-size: 16px; color: var(--asp-muted); }
+
+.asp-trust { position: relative; padding-top: 20px; padding-bottom: 140px; background: var(--asp-paper); }
+.asp-trust-rule { height: 1px; background: var(--asp-line); margin-bottom: 110px; }
+.asp-trust .asp-h2 { margin: 0; max-width: 20ch; font-size: 58px; line-height: 1.1; }
+.asp-cards { margin-top: 60px; gap: 24px; }
+.asp-card {
+  padding: 36px 32px 40px;
+  background: var(--asp-card);
+  border: 1px solid var(--asp-line);
+  border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(43, 37, 25, 0.04), 0 10px 30px rgba(43, 37, 25, 0.06);
+  transition: transform 240ms cubic-bezier(0.2, 0, 0, 1), box-shadow 240ms;
+}
+.asp-card:hover { transform: translateY(-2px); box-shadow: 0 2px 4px rgba(43, 37, 25, 0.05), 0 16px 40px rgba(43, 37, 25, 0.09); }
+.asp-card-num { margin: 0; font-family: var(--asp-serif); font-weight: 600; font-size: 22px; color: var(--asp-gold-deep); }
+.asp-card h3 { margin: 16px 0 0; font-family: var(--asp-serif); font-weight: 600; font-size: 30px; line-height: 1.15; color: var(--asp-ink-strong); }
+.asp-card p.asp-card-body { margin: 14px 0 0; font-size: 16px; color: var(--asp-muted); }
+
+@media (max-width: 880px) {
+  .asp-word { font-size: 58px; }
+  .asp-hero { padding: 72px 20px 130px; }
+  .asp-g3 { grid-template-columns: minmax(0, 1fr); }
+  .asp-stat,
+  .asp-stat:first-child { border-left: 0; padding-left: 0; padding-right: 0; border-top: 1px solid var(--asp-line); }
+  .asp-h2,
+  .asp-trust .asp-h2 { font-size: 38px; }
+  .asp-sec { padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
+  .asp-mic { display: none; }
+  .asp-segwrap { flex-direction: column; border-radius: 22px; }
+}
+
+@media (max-width: 767px) {
+  .asp-ask-hero { min-height: 0; }
+  .asp-ask-base { top: 0; right: 0; bottom: 0; left: 0; background: radial-gradient(ellipse 90% 55% at 60% 28%, #4d3c22 0%, #2b2217 48%, #16120c 84%); }
+  .asp-ask-photo { opacity: 0.38; }
+  .asp-ask-photo-img { background-position: 57% 30%; }
+  .asp-ask-dim,
+  .asp-ask-glow-gold,
+  .asp-ask-glow-violet,
+  .asp-ask-hero .asp-grain,
+  .asp-bubs-desk,
+  .asp-scrollcue { display: none; }
+  .asp-ask-shade { background: linear-gradient(180deg, rgba(22, 18, 12, 0.4) 0%, rgba(22, 18, 12, 0.55) 45%, rgba(22, 18, 12, 0.85) 100%); }
+  .asp-ask-glow-phone {
+    display: block;
+    position: absolute;
+    left: -40%;
+    bottom: -30%;
+    width: 520px;
+    height: 520px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(139, 110, 224, 0.26) 0%, rgba(139, 110, 224, 0) 60%);
+    animation: asp-drift-phone 22s cubic-bezier(0.2, 0, 0, 1) infinite;
+    pointer-events: none;
+  }
+  .asp-bubs-phone { display: block; }
+  .asp-hero { justify-content: flex-start; padding: 24px 20px 56px; }
+  .asp-hero .asp-rise { animation-name: asp-rise-sm; animation-duration: 1.1s; }
+  .asp-eyebrow { font-size: 11px; }
+  .asp-word { margin-top: 10px; font-size: 54px; line-height: 0.98; background: linear-gradient(100deg, #fff8e8 10%, #e6dcff 55%, #d9b76a 100%); -webkit-background-clip: text; background-clip: text; }
+  .asp-word-br { display: inline; }
+  .asp-tagline { margin-top: 12px; font-size: 17px; }
+  .asp-ask-form { margin-top: 24px; }
+  .asp-box { border-radius: 19.5px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55); }
+  .asp-halo { top: -18px; left: -24px; right: -24px; bottom: -18px; }
+  .asp-frame { border-radius: 19.5px; }
+  .asp-rim { width: 520px; height: 520px; margin: -260px 0 0 -260px; }
+  .asp-box-inner { gap: 6px; padding: 6px 6px 6px 16px; border-radius: 18px; }
+  .asp-box-icon { display: none; }
+  .asp-qwrap,
+  .asp-qwrap input { height: 48px; }
+  /* 16 px keeps iOS Safari from zooming the page when the box is tapped. */
+  .asp-qwrap input { font-size: 16px; }
+  .asp-tw { font-size: 19px; }
+  .asp-mic { display: inline-flex; width: 44px; height: 44px; }
+  .asp-cta { width: 48px; height: 48px; padding: 0; box-shadow: 0 8px 24px rgba(107, 87, 201, 0.35); }
+  .asp-cta-label,
+  .asp-cta-arrow-desk { display: none; }
+  .asp-cta-arrow-phone { display: block; }
+  .asp-searchin { margin-top: 14px; gap: 0; display: block; }
+  .asp-searchin-lbl { display: none; }
+  .asp-segwrap {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 4px;
+    gap: 4px;
+    border-radius: 9999px;
+    flex-direction: row;
+  }
+  .asp-seg { gap: 8px; min-height: 48px; padding: 4px 8px 4px 5px; }
+  .asp-seg-body { gap: 7px; }
+  .asp-seg .asp-med,
+  .asp-seg-ico { width: 32px; height: 32px; }
+  .asp-seg-ico svg { width: 20px; height: 20px; }
+  .asp-seg-name { font-size: 15px; }
+  .asp-seg-sub { display: none; }
+  .asp-searchin-note { display: block; margin: 8px 0 0; text-align: center; font-size: 12px; color: rgba(255, 248, 232, 0.62); }
+  .asp-chips { margin-top: 22px; flex-direction: column; align-items: center; gap: 8px; }
+  .asp-chip { padding: 0 16px; color: rgba(255, 248, 232, 0.9); }
+  .asp-fade { height: 140px; }
+  .asp-lib { padding-bottom: 90px; }
+  .asp-stat-n { font-size: 88px; }
+  .asp-trust { padding-bottom: 96px; }
+  .asp-trust-rule { margin-bottom: 72px; }
+}
+
+/* ═════════════════════════ 4 · SEARCHING ═════════════════════════ */
+
+.asp-searching {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 800;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: var(--asp-night);
+  color: var(--asp-cream);
+  font-family: var(--asp-sans);
+  font-size: 17px;
+  line-height: 1.6;
+  opacity: 1;
+  transition: opacity 0.35s ease;
+}
+.asp-searching[data-done="true"] { opacity: 0; pointer-events: none; }
+.asp-searching-inner {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.asp-searching-base { background: radial-gradient(ellipse 50% 70% at 70% 48%, #3a2e1d 0%, #221b13 45%, #16120c 80%); }
+.asp-searching-glow-gold {
+  position: absolute;
+  left: 45%;
+  top: -30%;
+  width: 1000px;
+  height: 1000px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(217, 183, 106, 0.2) 0%, rgba(217, 183, 106, 0) 60%);
+  pointer-events: none;
+}
+.asp-searching-glow-violet {
+  position: absolute;
+  left: -25%;
+  bottom: -50%;
+  width: 1000px;
+  height: 1000px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139, 110, 224, 0.2) 0%, rgba(139, 110, 224, 0) 60%);
+  animation-delay: -12s;
+  pointer-events: none;
+}
+.asp-searching .asp-grain { opacity: 0.1; }
+
+.asp-searching-main {
+  position: relative;
+  z-index: 1;
+  flex-grow: 1;
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 30px max(40px, env(safe-area-inset-right)) 60px max(40px, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+}
+.asp-searching-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 72px;
+  align-items: center;
+}
+.asp-searching .asp-rise { animation: asp-rise-18 1.1s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes asp-rise-18 {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
+}
+.asp-searching-q {
+  margin: 20px 0 0;
+  max-width: 14ch;
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 72px;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: var(--asp-cream);
+  overflow-wrap: anywhere;
+}
+.asp-steps { margin: 56px 0 0; padding: 0; list-style: none; max-width: 460px; display: flex; flex-direction: column; gap: 20px; }
+.asp-step { transition: opacity 0.5s ease; }
+.asp-step[data-state="upcoming"] { opacity: 0.45; }
+.asp-step-name { margin: 0; display: flex; align-items: baseline; gap: 14px; font-size: 15px; line-height: 1.4; }
+.asp-step-num { width: 26px; flex-shrink: 0; font-family: var(--asp-serif); font-weight: 600; font-size: 18px; color: var(--asp-gold); }
+.asp-step-track { position: relative; margin: 10px 0 0 40px; height: 2px; background: rgba(255, 248, 232, 0.16); border-radius: 2px; overflow: hidden; }
+.asp-step-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, #a78bfa, #d9b76a);
+  transform-origin: left;
+  transform: scaleX(0);
+  transition: transform 0.9s cubic-bezier(0.2, 0, 0, 1);
+}
+.asp-step[data-state="complete"] .asp-step-fill { transform: scaleX(1); }
+/* The current step has no fake percentage: a soft light runs along it to say
+   "working", and it fills only when the next real stage event arrives. */
+@keyframes asp-step-run {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(260%); }
+}
+.asp-step-run {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(167, 139, 250, 0), #a78bfa 40%, #d9b76a 70%, rgba(217, 183, 106, 0));
+  opacity: 0;
+}
+.asp-step[data-state="current"] .asp-step-run { opacity: 1; animation: asp-step-run 1.8s cubic-bezier(0.45, 0, 0.25, 1) infinite; }
+.asp-searching-count { margin: 40px 0 0; font-size: 14px; color: rgba(255, 248, 232, 0.62); }
+.asp-searching-tag {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 32px;
+  text-align: center;
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 20px;
+  color: rgba(255, 248, 232, 0.6);
+}
+.asp-step-phone { display: none; }
+
+/* The disciplic succession */
+.asp-lineage { margin: 0; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.asp-lineage-kicker { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.32em; text-transform: uppercase; color: rgba(255, 248, 232, 0.62); }
+.asp-lineage-stage { position: relative; margin-top: 22px; width: 320px; height: 520px; }
+@keyframes asp-breathe {
+  0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+  50% { opacity: 0.95; transform: translate(-50%, -50%) scale(1.06); }
+}
+.asp-lineage-glow {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: 560px;
+  height: 560px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle, rgba(217, 183, 106, 0.26) 0%, rgba(217, 183, 106, 0) 60%);
+  animation: asp-breathe 7s ease-in-out infinite;
+  pointer-events: none;
+}
+/* One name every 2 s, as in the design's 30 s timeline; the walk runs once
+   and ends on Śrīla Prabhupāda's photograph, which stays. */
+/* The design's 30 s keyframe, cut to one name's 2.52 s window: 0.48 s in,
+   held to 2.01 s, out by 2.52 s (the next name has begun at 2 s). */
+@keyframes asp-port {
+  0% { opacity: 0; transform: scale(1.04); }
+  19.05% { opacity: 1; }
+  79.76% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.99); }
+}
+@keyframes asp-port-last {
+  0% { opacity: 0; transform: scale(1.04); }
+  23.88% { opacity: 1; }
+  100% { opacity: 1; transform: scale(1); }
+}
+.asp-port {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 320px;
+  height: 520px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 0;
+  animation: asp-port 2.52s linear backwards;
+}
+.asp-port-last { animation: asp-port-last 2.01s linear both; }
+.asp-port-frame {
+  position: relative;
+  width: 300px;
+  height: 380px;
+  border-radius: 150px 150px 20px 20px;
+  padding: 10px;
+  background: linear-gradient(160deg, rgba(217, 183, 106, 0.75), rgba(217, 183, 106, 0.15) 45%, rgba(167, 139, 250, 0.5));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6);
+}
+.asp-port-last .asp-port-frame {
+  background: linear-gradient(160deg, rgba(217, 183, 106, 0.85), rgba(217, 183, 106, 0.2) 45%, rgba(167, 139, 250, 0.55));
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.6), 0 0 80px rgba(217, 183, 106, 0.25);
+}
+.asp-port-panel {
+  width: 100%;
+  height: 100%;
+  border-radius: 140px 140px 12px 12px;
+  background: radial-gradient(ellipse 70% 55% at 50% 38%, #4a3a24 0%, #261e14 60%, #1a150e 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.asp-port-img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 140px 140px 12px 12px;
+  object-fit: cover;
+  object-position: 50% 18%;
+}
+.asp-port-name { margin: 26px 0 0; font-family: var(--asp-serif); font-weight: 600; font-size: 30px; line-height: 1.15; color: var(--asp-cream); }
+.asp-port-n { margin: 8px 0 0; font-size: 12px; letter-spacing: 0.16em; color: var(--asp-gold); font-variant-numeric: tabular-nums; }
+.asp-dots { margin-top: 6px; display: flex; gap: 10px; }
+.asp-dot { position: relative; width: 6px; height: 6px; border-radius: 9999px; background: rgba(255, 248, 232, 0.22); }
+/* The dot's gold is its own layer, so only opacity and transform animate. */
+.asp-dot::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 9999px;
+  background: var(--asp-gold);
+  opacity: 0;
+}
+@keyframes asp-dot {
+  0% { opacity: 0; transform: scale(1); }
+  19.05% { opacity: 1; transform: scale(1.7); }
+  79.76% { opacity: 1; transform: scale(1.7); }
+  100% { opacity: 0; transform: scale(1); }
+}
+@keyframes asp-dot-last {
+  0% { opacity: 0; transform: scale(1); }
+  23.88% { opacity: 1; transform: scale(1.7); }
+  100% { opacity: 1; transform: scale(1.7); }
+}
+.asp-dot::after { animation: asp-dot 2.52s linear backwards; animation-delay: inherit; }
+.asp-dot-last::after { animation: asp-dot-last 2.01s linear both; animation-delay: inherit; }
+
+@media (max-width: 880px) {
+  .asp-searching-grid { grid-template-columns: minmax(0, 1fr); gap: 40px; }
+  .asp-searching-q { font-size: 40px; }
+  .asp-searching-main { padding-left: max(20px, env(safe-area-inset-left)); padding-right: max(20px, env(safe-area-inset-right)); }
+}
+
+@media (max-width: 767px) {
+  .asp-searching-base { background: radial-gradient(ellipse 100% 55% at 50% 48%, #3a2e1d 0%, #221b13 50%, #16120c 85%); }
+  .asp-searching-glow-gold,
+  .asp-searching-glow-violet,
+  .asp-searching .asp-grain,
+  .asp-searching-tag,
+  .asp-steps,
+  .asp-searching-count,
+  .asp-lineage-kicker { display: none; }
+  .asp-searching-main { display: block; padding: 12px 0 24px; }
+  .asp-searching-grid { display: flex; flex-direction: column; gap: 0; }
+  .asp-searching-head { padding: 0 24px; text-align: center; }
+  .asp-searching .asp-eyebrow { font-size: 10.5px; }
+  .asp-searching-q { margin: 8px auto 0; max-width: none; font-size: 32px; line-height: 1.08; letter-spacing: 0; }
+  .asp-searching .asp-rise { animation: none; }
+  .asp-lineage { margin-top: 18px; }
+  .asp-lineage-stage { margin-top: 0; width: 300px; height: 330px; }
+  .asp-lineage-glow { left: 50%; top: 50%; width: 380px; height: 380px; }
+  .asp-port { width: 300px; height: 330px; }
+  .asp-port-frame { width: 196px; height: 248px; border-radius: 98px 98px 16px 16px; padding: 7px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }
+  .asp-port-last .asp-port-frame { box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 60px rgba(217, 183, 106, 0.25); }
+  .asp-port-panel,
+  .asp-port-img { border-radius: 91px 91px 10px 10px; }
+  .asp-port-panel svg { width: 52px; height: 16px; }
+  .asp-port-name { margin-top: 14px; font-size: 22px; }
+  .asp-port-n { margin-top: 4px; font-size: 11px; }
+  .asp-dots { gap: 6px; margin-top: 0; }
+  .asp-dot { width: 5px; height: 5px; }
+  .asp-step-phone { display: block; position: relative; z-index: 1; margin: 22px 24px 0; }
+  .asp-step-phone .asp-step-name { gap: 10px; font-size: 14px; line-height: 1.35; }
+  .asp-step-phone .asp-step-num { width: auto; font-size: 16px; }
+  .asp-step-phone .asp-step-track { margin: 8px 0 0; border-radius: 0; }
+  .asp-step-phone .asp-step-count { margin: 10px 0 0; font-size: 12.5px; color: rgba(255, 248, 232, 0.62); }
+}
+
+/* ═════════════════════════ 5 · ANSWER ═════════════════════════ */
+
+.asp-answer-hero-base { background: radial-gradient(ellipse 60% 70% at 50% 55%, #3d3020 0%, #231c13 45%, #16120c 80%); }
+.asp-answer-glow-gold {
+  position: absolute;
+  left: 35%;
+  top: -40%;
+  width: 900px;
+  height: 900px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(217, 183, 106, 0.24) 0%, rgba(217, 183, 106, 0) 60%);
+  pointer-events: none;
+}
+.asp-answer-glow-violet {
+  position: absolute;
+  left: -15%;
+  bottom: -60%;
+  width: 900px;
+  height: 900px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139, 110, 224, 0.22) 0%, rgba(139, 110, 224, 0) 60%);
+  animation-delay: -10s;
+  pointer-events: none;
+}
+.asp-answer-glow-phone { display: none; }
+.asp-dark .asp-grain.asp-grain-10 { opacity: 0.1; }
+
+.asp-answer-head { position: relative; z-index: 1; padding-top: 120px; padding-bottom: 70px; text-align: center; }
+.asp-answer-head .asp-rise { animation-name: asp-rise; animation-duration: 1.1s; }
+.asp-answer-q {
+  margin: 22px auto 0;
+  max-width: 18ch;
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 500;
+  font-size: 84px;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  color: var(--asp-cream);
+  overflow-wrap: anywhere;
+}
+.asp-answer-meta {
+  margin-top: 30px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px 18px;
+}
+.asp-answer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 0 14px;
+  border-radius: 9999px;
+  background: rgba(255, 248, 232, 0.1);
+  border: 1px solid rgba(255, 248, 232, 0.22);
+  font-size: 13px;
+  color: var(--asp-cream);
+}
+.asp-answer-chip::before { content: ""; width: 7px; height: 7px; border-radius: 9999px; background: #a78bfa; flex-shrink: 0; }
+.asp-answer-count { font-size: 14px; color: rgba(255, 248, 232, 0.72); }
+.asp-answer-warning { max-width: 800px; margin: 28px auto 0; text-align: left; }
+.asp-answer-warning > div { margin: 0 !important; }
+.asp-answer-fade { position: relative; height: 240px; background: var(--asp-fade-answer); }
+
+.asp-answer-main {
+  position: relative;
+  padding-bottom: 100px;
+  background: radial-gradient(ellipse 40% 30% at 85% 30%, rgba(201, 162, 75, 0.08), rgba(201, 162, 75, 0) 70%), var(--asp-paper);
+}
+.asp-answer-col { max-width: 800px; margin: 0 auto; }
+
+.asp-disc-short {
+  position: relative;
+  margin-top: -70px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px 20px;
+  border-radius: 16px;
+  background: var(--asp-card);
+  background: color-mix(in srgb, var(--asp-card) 85%, transparent);
+  border: 1px solid var(--asp-line);
+}
+.asp-disc-short svg { flex-shrink: 0; margin-top: 2px; }
+.asp-disc-short p { margin: 0; font-size: 14.5px; line-height: 1.55; color: var(--asp-ink); color: color-mix(in srgb, var(--asp-ink) 82%, var(--asp-muted)); }
+.asp-disc-short a { color: var(--asp-violet-strong); font-weight: 500; }
+
+.asp-passages { margin-top: 32px; }
+
+.asp-passage {
+  padding: 48px 8px 48px;
+  border-bottom: 1px solid var(--asp-line);
+}
+.asp-passage:first-child { padding-top: 56px; }
+.asp-passage-lead {
+  padding: 48px 52px 40px !important;
+  border-radius: 24px;
+  border: 1px solid transparent;
+  background: linear-gradient(var(--asp-card), var(--asp-card)) padding-box,
+    linear-gradient(135deg, rgba(201, 162, 75, 0.75), rgba(232, 224, 210, 0.9) 45%, rgba(107, 87, 201, 0.55)) border-box;
+  box-shadow: 0 20px 60px rgba(43, 37, 25, 0.14);
+}
+.asp-passage-lead + .asp-passage { padding-top: 56px; }
+.asp-passage-head { display: flex; align-items: baseline; gap: 16px; min-width: 0; }
+.asp-passage-idx { font-family: var(--asp-serif); font-weight: 600; font-size: 22px; color: var(--asp-gold-deep); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.asp-passage-lead .asp-passage-idx { font-size: 24px; }
+.asp-passage-label { margin: 0; min-width: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.09em; text-transform: uppercase; color: var(--asp-muted); overflow-wrap: anywhere; }
+.asp-passage-note { margin: 10px 0 0; font-size: 13.5px; line-height: 1.5; color: #8a5a0b; overflow-wrap: anywhere; }
+.dark .asp-passage-note { color: #e3bd6d; }
+.asp-passage-context { margin: 10px 0 0; font-size: 13.5px; font-style: italic; color: var(--asp-muted); overflow-wrap: anywhere; }
+.asp-ptext {
+  margin: 18px 0 0;
+  min-width: 0;
+  font-family: var(--asp-serif);
+  font-weight: 400;
+  font-size: 27px;
+  line-height: 1.45;
+  color: var(--asp-ink-strong);
+  overflow-wrap: anywhere;
+}
+.asp-passage-lead .asp-ptext { margin-top: 20px; font-size: 36px; line-height: 1.38; }
+.asp-ptext .pp { margin: 0 0 0.6em; }
+.asp-ptext .pp:last-child { margin-bottom: 0; }
+.asp-passage[data-passage-type="letter"] .asp-body { font-style: italic; }
+/* Bodies of purports, prose, talks and letters read as body text under the
+   verse translation, as before; only their type is restyled. */
+.asp-body {
+  margin: 18px 0 0;
+  min-width: 0;
+  font-family: var(--asp-serif);
+  font-size: 22px;
+  line-height: 1.5;
+  color: var(--asp-ink);
+  overflow-wrap: anywhere;
+}
+.asp-body .pp { margin: 0 0 0.6em; }
+.asp-body .pp:last-child { margin-bottom: 0; }
+.asp-purport { margin-top: 22px; padding-left: 16px; border-left: 2px solid var(--asp-line); }
+.asp-purport .asp-passage-label { margin-bottom: 8px; }
+.asp-purport .asp-body { margin-top: 0; }
+.asp-fold-btn {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--asp-sans);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--asp-violet-strong);
+}
+.asp-fold-btn:hover { text-decoration: underline; }
+.asp-also { margin: 12px 0 0; font-size: 13px; color: var(--asp-muted); }
+
+/* The existing match highlight, restyled as the design's violet mark. */
+mark.hl-sentence,
+mark.hl-word { color: inherit; }
+.asp-page .hl-sentence {
+  background: linear-gradient(180deg, rgba(236, 232, 249, 0) 48%, #ece8f9 48%);
+  box-shadow: inset 0 -2px 0 rgba(107, 87, 201, 0.6);
+  padding: 0 2px;
+  border-radius: 0;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.dark .asp-page .hl-sentence {
+  background: linear-gradient(180deg, rgba(167, 139, 250, 0) 48%, rgba(167, 139, 250, 0.22) 48%);
+  box-shadow: inset 0 -2px 0 rgba(199, 184, 251, 0.7);
+}
+.asp-page .hl-word { background: none; font-weight: 500; color: inherit; }
+
+/* The citation bar */
+.asp-cbar-row { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.asp-passage-lead .asp-cbar-row { margin-top: 30px; }
+.asp-cbar {
+  display: inline-flex;
+  max-width: 100%;
+  border-radius: 9999px;
+  padding: 1px;
+  background: linear-gradient(120deg, rgba(201, 162, 75, 0.95), rgba(216, 204, 184, 0.9) 50%, rgba(107, 87, 201, 0.75));
+  box-shadow: 0 6px 22px rgba(43, 37, 25, 0.08);
+}
+.asp-cin {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  border-radius: 9999px;
+  background: var(--asp-card);
+  overflow: hidden;
+}
+.asp-cseg {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+  min-width: 0;
+  padding: 0 18px;
+  border: 0;
+  background: transparent;
+  font-family: var(--asp-sans);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--asp-violet-strong);
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 160ms;
+}
+a.asp-cseg:hover,
+button.asp-cseg:hover { background: var(--asp-violet-tint); background: color-mix(in srgb, var(--asp-violet-tint) 60%, var(--asp-card)); color: var(--asp-violet-strong); }
+.asp-cseg-cite { padding-left: 7px; cursor: default; }
+.asp-cseg[data-copied="true"] { background: var(--asp-violet-tint); }
+.asp-cdiv { width: 1px; align-self: stretch; margin: 10px 0; background: var(--asp-line); flex-shrink: 0; }
+@keyframes asp-medal-glint {
+  0%, 70% { transform: translateX(-120%); }
+  100% { transform: translateX(220%); }
+}
+.asp-medal {
+  position: relative;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: radial-gradient(circle at 35% 30%, #f7e7b8, #d9b76a 55%, #b0883a);
+  box-shadow: inset 0 0 0 1px rgba(138, 90, 11, 0.35), 0 2px 6px rgba(138, 90, 11, 0.25);
+  font-family: var(--asp-serif);
+  font-style: italic;
+  font-weight: 600;
+  font-size: 14px;
+  color: #4d3505;
+  white-space: nowrap;
+}
+.asp-medal-glint {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0));
+  animation: asp-medal-glint 6s cubic-bezier(0.2, 0, 0, 1) infinite;
+}
+.asp-medal[data-long="true"] { font-size: 11.5px; letter-spacing: -0.02em; }
+.asp-num {
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 21px;
+  letter-spacing: -0.01em;
+  color: var(--asp-ink-strong);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 14ch;
+}
+.asp-copy-status { margin: 8px 0 0; font-size: 12px; color: var(--asp-violet-strong); }
+.asp-copy-status:empty { margin: 0; }
+/* On desktop the button itself says "Copied with reference"; the status line
+   is for screen readers, and is shown only if copying failed. */
+@media (min-width: 768px) {
+  .asp-copy-status:not([data-state="failed"]) {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+.asp-feedback-slot { margin-top: 40px; }
+
+/* Dig deeper and Advanced cards */
+.asp-digcard {
+  position: relative;
+  margin-top: 52px;
+  padding: 42px 46px 42px 50px;
+  border-radius: 24px;
+  background: var(--asp-card);
+  border: 1px solid var(--asp-line);
+  box-shadow: 0 1px 2px rgba(43, 37, 25, 0.04), 0 10px 30px rgba(43, 37, 25, 0.06);
+  overflow: hidden;
+}
+.asp-digcard::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: linear-gradient(180deg, #6b57c9, #c9a24b); }
+.asp-digcard h2 {
+  margin: 14px 0 0;
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 38px;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  color: var(--asp-ink-strong);
+}
+.asp-digcard-sub { margin: 12px 0 0; font-size: 15.5px; color: var(--asp-muted); }
+.asp-digcard-actions { margin-top: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.asp-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0 26px;
+  border: 0;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #6b57c9, #51409a);
+  color: #ffffff;
+  font-family: var(--asp-sans);
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  box-shadow: 0 10px 34px rgba(107, 87, 201, 0.3);
+  cursor: pointer;
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+.asp-btn-primary:hover { transform: translateY(-2px); color: #ffffff; }
+.asp-btn-primary:active { transform: scale(0.97); }
+.asp-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 9999px;
+  background: var(--asp-card);
+  border: 1px solid var(--asp-line-firm);
+  color: var(--asp-violet-strong);
+  font-family: var(--asp-sans);
+  font-size: 14px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 160ms, border-color 160ms;
+}
+.asp-btn-ghost:hover { background: var(--asp-violet-tint); border-color: #c9bdf0; }
+
+.asp-advcard {
+  position: relative;
+  margin-top: 28px;
+  padding: 44px 48px;
+  border-radius: 24px;
+  background: #16141c;
+  color: #ece5d5;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(22, 20, 28, 0.25);
+}
+.asp-advcard-glow-a { position: absolute; right: -120px; top: -160px; width: 460px; height: 460px; border-radius: 50%; background: radial-gradient(circle, rgba(167, 139, 250, 0.28) 0%, rgba(167, 139, 250, 0) 62%); pointer-events: none; }
+.asp-advcard-glow-b { position: absolute; left: -100px; bottom: -200px; width: 420px; height: 420px; border-radius: 50%; background: radial-gradient(circle, rgba(217, 183, 106, 0.2) 0%, rgba(217, 183, 106, 0) 62%); pointer-events: none; }
+.asp-advcard h2 { margin: 14px 0 0; font-family: var(--asp-serif); font-weight: 600; font-size: 38px; line-height: 1.12; letter-spacing: -0.02em; color: #f6efdf; }
+.asp-advcard h2 em { font-style: italic; color: var(--asp-lilac); }
+.asp-advcard p.asp-advcard-sub { margin: 12px 0 0; max-width: 56ch; font-size: 15.5px; color: #b4aa94; }
+.asp-advcard-link {
+  margin-top: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 0 24px;
+  border-radius: 9999px;
+  background: rgba(236, 229, 213, 0.08);
+  border: 1px solid rgba(217, 183, 106, 0.6);
+  color: #f6efdf;
+  font-size: 15px;
+  font-weight: 500;
+  text-decoration: none;
+}
+.asp-advcard-link:hover { color: #ffffff; }
+.asp-advcard a:focus-visible { outline-color: var(--asp-lilac); }
+
+.asp-disc-full { margin-top: 96px; text-align: center; }
+.asp-disc-fig { margin: 0 auto; width: 240px; }
+.asp-disc-frame {
+  border-radius: 18px;
+  padding: 6px;
+  background: linear-gradient(150deg, rgba(201, 162, 75, 0.85), rgba(232, 224, 210, 0.9) 50%, rgba(107, 87, 201, 0.5));
+  box-shadow: 0 20px 60px rgba(43, 37, 25, 0.14);
+}
+.asp-disc-frame img { display: block; width: 100%; height: auto; border-radius: 13px; }
+.asp-disc-full .asp-kicker { margin-top: 24px; }
+.asp-disc-full h2 { margin: 14px 0 0; font-family: var(--asp-serif); font-weight: 600; font-size: 44px; line-height: 1.1; letter-spacing: -0.02em; color: var(--asp-ink-strong); }
+.asp-disc-text { margin: 18px auto 0; max-width: 58ch; font-size: 16.5px; line-height: 1.65; color: var(--asp-muted); }
+.asp-disc-tag { margin: 36px 0 0; font-family: var(--asp-serif); font-style: italic; font-weight: 500; font-size: 24px; color: var(--asp-muted); }
+.asp-disc-full .asp-btn-ghost { margin-top: 26px; min-height: 48px; padding: 0 24px; font-size: 15px; font-weight: 500; }
+
+/* Empty, error */
+.asp-panel {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: clamp(28px, 5vw, 48px);
+  text-align: center;
+  background: var(--asp-card);
+  border: 1px solid var(--asp-line);
+  border-radius: 18px;
+  box-shadow: 0 2px 6px rgba(43, 37, 25, 0.04), 0 16px 44px rgba(43, 37, 25, 0.07);
+  overflow-wrap: anywhere;
+}
+.asp-panel-title { margin: 0; font-family: var(--asp-serif); font-size: clamp(22px, 3vw, 28px); font-weight: 600; color: var(--asp-ink-strong); }
+.asp-panel-text { margin: 12px 0 24px; font-size: 15px; line-height: 1.7; color: var(--asp-muted); }
+.asp-panel-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+
+@media (max-width: 880px) {
+  .asp-answer-q { font-size: 44px; }
+  .asp-ptext { font-size: 22px; }
+  .asp-passage-lead .asp-ptext { font-size: 26px; }
+  .asp-passage-lead { padding: 28px 20px !important; }
+  .asp-advcard { padding: 32px 24px; }
+}
+
+@media (max-width: 767px) {
+  .asp-answer-glow-gold,
+  .asp-answer-glow-violet,
+  .asp-dark .asp-grain.asp-grain-10 { display: none; }
+  .asp-answer-hero-base { background: radial-gradient(ellipse 100% 80% at 60% 60%, #3d3020 0%, #231c13 50%, #16120c 85%); }
+  .asp-answer-glow-phone { display: block; position: absolute; right: -35%; top: -60%; width: 420px; height: 420px; border-radius: 50%; background: radial-gradient(circle, rgba(217, 183, 106, 0.26) 0%, rgba(217, 183, 106, 0) 60%); pointer-events: none; }
+  .asp-answer-head { padding: 16px 24px 20px; }
+  .asp-answer-head .asp-rise { animation-name: asp-rise-sm; }
+  .asp-answer-head .asp-eyebrow { font-size: 10.5px; }
+  .asp-answer-q { margin-top: 10px; font-size: 38px; max-width: none; letter-spacing: 0; }
+  .asp-answer-meta { margin-top: 12px; gap: 6px 12px; }
+  .asp-answer-chip { min-height: 0; padding: 0; background: none; border: 0; font-size: 12.5px; color: rgba(255, 248, 232, 0.78); gap: 7px; }
+  .asp-answer-chip::before { width: 6px; height: 6px; }
+  .asp-answer-count { font-size: 12.5px; color: rgba(255, 248, 232, 0.78); }
+  .asp-answer-warning { margin-top: 16px; }
+  .asp-answer-fade { height: 48px; background: var(--asp-fade-answer-phone); }
+  .asp-answer-main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); padding-bottom: 72px; }
+  .asp-disc-short { margin-top: -10px; gap: 10px; padding: 12px 14px; border-radius: 14px; background: var(--asp-card); }
+  .asp-disc-short svg { width: 18px; height: 18px; margin-top: 1px; }
+  .asp-disc-short p { font-size: 13px; line-height: 1.5; }
+  .asp-passages { margin-top: 16px; }
+  .asp-passage,
+  .asp-passage:first-child,
+  .asp-passage-lead + .asp-passage { padding: 30px 4px 26px; }
+  .asp-passage-lead { padding: 22px 18px 18px !important; border-radius: 20px; box-shadow: 0 16px 44px rgba(43, 37, 25, 0.14); }
+  .asp-passage-head { gap: 12px; }
+  .asp-passage-idx { font-size: 18px; }
+  .asp-passage-lead .asp-passage-idx { font-size: 20px; }
+  .asp-passage-label { font-size: 10.5px; }
+  .asp-ptext { margin-top: 10px; font-size: 21px; line-height: 1.42; }
+  .asp-passage-lead .asp-ptext { margin-top: 12px; font-size: 23px; line-height: 1.36; }
+  .asp-body { font-size: 19px; }
+  .asp-cbar-row,
+  .asp-passage-lead .asp-cbar-row { margin-top: 16px; }
+  .asp-passage-lead .asp-cbar-row { margin-top: 18px; }
+  .asp-cbar { display: flex; width: 100%; box-shadow: 0 6px 18px rgba(43, 37, 25, 0.08); }
+  .asp-cin { display: flex; flex: 1 1 auto; }
+  .asp-cseg { justify-content: center; gap: 7px; padding: 0 13px; font-size: 13px; }
+  .asp-cseg-cite { flex: 1 1 auto; justify-content: flex-start; padding-left: 7px; }
+  .asp-cseg-copy { width: 50px; flex: 0 0 50px; padding: 0; }
+  .asp-cseg-copy .asp-cseg-copy-label { display: none; }
+  .asp-medal { width: 30px; height: 30px; font-size: 13px; box-shadow: inset 0 0 0 1px rgba(138, 90, 11, 0.35); }
+  .asp-num { font-size: 20px; letter-spacing: 0; }
+  .asp-medal-glint { display: none; }
+  .asp-copy-status { text-align: right; }
+  .asp-digcard { margin-top: 36px; padding: 30px 22px 30px 26px; }
+  .asp-digcard h2,
+  .asp-advcard h2 { font-size: 30px; }
+  .asp-disc-full { margin-top: 72px; }
+  .asp-disc-full h2 { font-size: 34px; }
+  .asp-disc-text { font-size: 15.5px; }
+}
+
+/* ═════════════════════════ 6 · DIG DEEPER ═════════════════════════ */
+
+.asp-dig-band-base {
+  background: radial-gradient(ellipse 55% 80% at 20% 70%, rgba(139, 110, 224, 0.22), rgba(139, 110, 224, 0) 65%),
+    radial-gradient(ellipse 50% 80% at 85% 20%, rgba(217, 183, 106, 0.22), rgba(217, 183, 106, 0) 65%), #16120c;
+}
+.asp-dig-head { position: relative; z-index: 1; width: 100%; max-width: 1280px; margin: 0 auto; padding-top: 70px; padding-bottom: 64px; }
+.asp-dig-head .asp-rise { animation: asp-rise-18 1s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.asp-dig-h1 {
+  margin: 16px 0 0;
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 72px;
+  line-height: 1.04;
+  letter-spacing: -0.03em;
+  color: var(--asp-cream);
+}
+.asp-dig-h1 em {
+  font-style: italic;
+  background: linear-gradient(100deg, #e6dcff, #d9b76a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.asp-dig-sub { margin: 16px 0 0; font-size: 16px; color: rgba(255, 248, 232, 0.72); overflow-wrap: anywhere; }
+
+.asp-dig-main { padding-top: 48px; padding-bottom: 110px; }
+.asp-dig-layout { max-width: 1280px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 48px; }
+.asp-shelf {
+  flex: 0 1 300px;
+  min-width: 0;
+  padding: 22px 14px 18px;
+  border-radius: 20px;
+  background: var(--asp-card);
+  border: 1px solid var(--asp-line);
+  box-shadow: 0 1px 2px rgba(43, 37, 25, 0.04), 0 10px 30px rgba(43, 37, 25, 0.06);
+}
+.asp-shelf-step { margin: 0 14px; font-size: 11px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; color: var(--asp-muted); }
+.asp-shelf-list { margin: 8px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 2px; }
+.asp-shelf-rule { margin: 16px 14px; height: 1px; background: var(--asp-line); }
+.asp-f {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font-family: var(--asp-sans);
+  font-size: 14.5px;
+  line-height: 1.3;
+  color: var(--asp-ink);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 160ms;
+}
+.asp-f:hover { background: var(--asp-well); color: var(--asp-ink); }
+.asp-f[aria-pressed="true"] { background: var(--asp-violet-tint); color: var(--asp-violet-strong); font-weight: 600; }
+.asp-f-count { font-size: 12px; font-weight: 500; color: var(--asp-muted); font-variant-numeric: tabular-nums; }
+.asp-f[aria-pressed="true"] .asp-f-count { color: var(--asp-violet-strong); }
+.asp-f-more { color: var(--asp-violet-strong); }
+.asp-shelf-hint { margin: 10px 14px 0; font-size: 12.5px; color: var(--asp-muted); }
+
+.asp-dig-results { flex: 999 1 560px; min-width: 0; }
+.asp-dig-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; }
+.asp-crumbs { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; color: var(--asp-muted); min-width: 0; }
+.asp-crumbs strong { color: var(--asp-ink-strong); font-weight: 600; }
+.asp-crumb-clear {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  font-family: var(--asp-sans);
+  font-size: 13px;
+  color: var(--asp-violet-strong);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.asp-order { display: inline-flex; padding: 3px; border-radius: 9999px; background: var(--asp-well); }
+.asp-order button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  font-family: var(--asp-sans);
+  font-size: 13.5px;
+  color: var(--asp-muted);
+  cursor: pointer;
+}
+.asp-order button[aria-pressed="true"] { background: var(--asp-card); box-shadow: 0 2px 8px rgba(43, 37, 25, 0.08); font-weight: 600; color: var(--asp-ink-strong); }
+
+.asp-dig-group-head { margin-top: 34px; display: flex; align-items: baseline; gap: 18px; }
+.asp-dig-group-head h2 {
+  margin: 0;
+  font-family: var(--asp-serif);
+  font-weight: 600;
+  font-size: 46px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--asp-ink-strong);
+}
+.asp-dig-group-head h2 em { font-style: italic; font-weight: 500; color: var(--asp-violet-strong); }
+.asp-dig-group-head::after { content: ""; flex: 1 1 auto; height: 1px; background: linear-gradient(90deg, #c9a24b, rgba(201, 162, 75, 0)); }
+.asp-dig-status { margin: 8px 0 0; font-size: 13px; color: var(--asp-muted); }
+.asp-rows { margin: 22px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.asp-row { padding: 26px 20px; border-top: 1px solid var(--asp-line); border-radius: 4px; transition: background 200ms; }
+.asp-row:last-child { border-bottom: 1px solid var(--asp-line); }
+.asp-row:hover { background: var(--asp-card); }
+.asp-row .asp-passage-label { margin-bottom: 8px; }
+.asp-row-text { margin: 0; font-family: var(--asp-serif); font-size: 22px; line-height: 1.45; color: var(--asp-ink-strong); overflow-wrap: anywhere; }
+.asp-row .asp-cbar-row { margin-top: 14px; }
+.asp-row .asp-cbar { box-shadow: none; }
+.asp-row .asp-cseg { min-height: 44px; padding: 0 16px; font-size: 13px; }
+.asp-row .asp-cseg-cite { padding-left: 7px; }
+.asp-row .asp-medal { width: 28px; height: 28px; font-size: 13px; box-shadow: inset 0 0 0 1px rgba(138, 90, 11, 0.35); }
+.asp-row .asp-num { font-size: 19px; }
+.asp-row .asp-medal-glint { display: none; }
+.asp-dig-foot { margin: 40px 0 0; font-size: 14px; line-height: 1.6; color: var(--asp-muted); }
+.asp-dig-more { margin-top: 22px; }
+
+@media (max-width: 880px) {
+  .asp-dig-h1 { font-size: 46px; }
+  .asp-shelf { flex-basis: 100%; }
+}
+@media (max-width: 767px) {
+  .asp-dig-head { padding-top: 32px; padding-bottom: 40px; }
+  .asp-dig-h1 { font-size: 38px; }
+  .asp-dig-sub { font-size: 14.5px; }
+  .asp-dig-main { padding-top: 28px; padding-bottom: 72px; }
+  .asp-dig-layout { gap: 28px; }
+  .asp-dig-group-head h2 { font-size: 34px; }
+  .asp-row { padding: 22px 4px; }
+  .asp-row-text { font-size: 20px; }
+}
+
+/* ═════════════════════════ ADVANCED (flagged off by default) ═════════════════════════ */
+
+.asp-adv-page { background: #16141c; color: #ece5d5; }
+.asp-adv-top { position: relative; overflow: hidden; background: #100e16; }
+.asp-adv-glow-a { position: absolute; right: -15%; top: -60%; width: 1000px; height: 1000px; border-radius: 50%; background: radial-gradient(circle, rgba(167, 139, 250, 0.26) 0%, rgba(167, 139, 250, 0) 60%); animation-duration: 26s; pointer-events: none; }
+.asp-adv-glow-b { position: absolute; left: -20%; bottom: -80%; width: 900px; height: 900px; border-radius: 50%; background: radial-gradient(circle, rgba(217, 183, 106, 0.16) 0%, rgba(217, 183, 106, 0) 60%); animation-duration: 26s; animation-delay: -13s; pointer-events: none; }
+.asp-adv-top .asp-grain { opacity: 0.08; }
+.asp-adv-top .asp-brand { color: #f6efdf; }
+.asp-adv-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 9999px;
+  border: 1px solid #3a3547;
+  font-size: 14px;
+  color: #ece5d5;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.asp-adv-head { position: relative; z-index: 1; padding-top: 110px; padding-bottom: 80px; text-align: center; }
+.asp-adv-head .asp-rise { animation: asp-rise-20 1.1s cubic-bezier(0.16, 1, 0.3, 1) both; }
+@keyframes asp-rise-20 {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: none; }
+}
+.asp-adv-q { margin: 22px auto 0; max-width: 18ch; font-family: var(--asp-serif); font-style: italic; font-weight: 500; font-size: 84px; line-height: 1.04; letter-spacing: -0.02em; color: #f6efdf; overflow-wrap: anywhere; }
+.asp-adv-chip { margin: 26px 0 0; display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 14px; border-radius: 9999px; background: rgba(236, 229, 213, 0.08); border: 1px solid #3a3547; font-size: 13px; color: #f6efdf; }
+.asp-adv-chip::before { content: ""; width: 7px; height: 7px; border-radius: 9999px; background: var(--asp-gold); }
+.asp-adv-main { padding-bottom: 110px; }
+.asp-adv-col { max-width: 900px; margin: 0 auto; }
+.asp-adv-pick { margin-top: -34px; position: relative; padding: 26px 28px 24px; border-radius: 22px; background: #201c2a; border: 1px solid #3a3547; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35); }
+.asp-adv-pick-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; }
+.asp-adv-pick h2 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.28em; text-transform: uppercase; color: var(--asp-gold); }
+.asp-adv-summary { margin: 0; font-size: 13.5px; color: #b4aa94; }
+.asp-adv-chips { margin-top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+.asp-adv-chipbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  font-family: var(--asp-sans);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  background: rgba(236, 229, 213, 0.05);
+  color: #ece5d5;
+  border: 1px solid #3a3547;
+  transition: background 160ms, border-color 160ms;
+}
+.asp-adv-chipbtn:hover { border-color: var(--asp-gold); }
+.asp-adv-chipbtn[aria-pressed="true"] { background: #f6efdf; color: #16141c; border-color: #f6efdf; font-weight: 600; }
+.asp-adv-hint { margin: 14px 0 0; font-size: 12.5px; color: #b4aa94; }
+.asp-adv-about { margin-top: 22px; display: flex; align-items: flex-start; gap: 12px; padding: 14px 18px; border-radius: 14px; background: rgba(32, 28, 42, 0.6); border: 1px solid #2c2836; }
+.asp-adv-about::before { content: ""; flex-shrink: 0; margin-top: 8px; width: 8px; height: 8px; border-radius: 9999px; background: var(--asp-gold); }
+.asp-adv-about p { margin: 0; font-size: 14.5px; line-height: 1.55; color: #ece5d5; }
+.asp-adv-empty { margin: 26px 0 0; padding: 30px; border-radius: 18px; border: 1px dashed #3a3547; text-align: center; font-size: 15px; color: #b4aa94; }
+.asp-adv-end { margin-top: 70px; padding-top: 36px; border-top: 1px solid #2c2836; text-align: center; }
+.asp-adv-end p { margin: 0 auto; max-width: 58ch; font-size: 15.5px; line-height: 1.65; color: #b4aa94; }
+.asp-adv-backbtn {
+  margin-top: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 50px;
+  padding: 0 24px;
+  border-radius: 9999px;
+  background: linear-gradient(135deg, #a78bfa, #c7b8fb);
+  color: #16141c;
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 10px 34px rgba(167, 139, 250, 0.3);
+}
+.asp-adv-page a:focus-visible,
+.asp-adv-page button:focus-visible { outline: 3px solid var(--asp-lilac); outline-offset: 3px; }
+@media (max-width: 880px) {
+  .asp-adv-q { font-size: 44px; }
+}
+@media (max-width: 767px) {
+  .asp-adv-head { padding-top: 32px; padding-bottom: 56px; }
+  .asp-adv-q { font-size: 34px; }
+  .asp-adv-pick { padding: 20px 16px; }
+}
+
+/* ═════════════════════════ REDUCED MOTION — nothing moves ═════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  .asp-page *,
+  .asp-page *::before,
+  .asp-page *::after,
+  .asp-door *,
+  .asp-searching *,
+  .asp-searching *::before,
+  .asp-searching *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .asp-door,
+  .asp-searching { transition: none !important; }
+  .asp-bubs,
+  .asp-glint,
+  .asp-cta-glint,
+  .asp-seg-glint,
+  .asp-medal-glint,
+  .asp-step-run,
+  .asp-sweep,
+  .asp-scrollcue-line,
+  .asp-fx { display: none !important; }
+  /* The doorway rests on its first photograph. */
+  .asp-Lp0,
+  .asp-Pp0 { opacity: 1 !important; transform: scale(1.03) !important; }
+  .asp-door .asp-up1,
+  .asp-door .asp-shine,
+  .asp-door .asp-in,
+  .asp-rise { opacity: 1 !important; transform: none !important; }
+  .asp-rule-grow { transform: none !important; }
+  .asp-ch { opacity: 1 !important; transform: none !important; }
+  .asp-tw-line[data-phase="out"] { opacity: 1; transform: none; }
+  /* The lineage rests on Śrīla Prabhupāda's photograph. */
+  .asp-port { opacity: 0 !important; }
+  .asp-port-last { opacity: 1 !important; transform: none !important; }
+  .asp-dot-last::after { opacity: 1 !important; }
+  .asp-card:hover,
+  .asp-cta:hover,
+  .asp-btn-primary:hover { transform: none; }
+}
